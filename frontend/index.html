@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline';" />
+  <title>Nexus</title>
+  <link rel="stylesheet" href="src/styles.css" />
+</head>
+<body>
+
+  <!-- ── Top bar ─────────────────────────────────────────────────── -->
+  <header class="topbar">
+    <div class="topbar-nav">
+      <button class="btn-icon" id="btn-back"    title="Back (Alt+Left)">&larr;</button>
+      <button class="btn-icon" id="btn-forward" title="Forward (Alt+Right)">&rarr;</button>
+      <button class="btn-icon" id="btn-up"      title="Up (Alt+Up)">&uarr;</button>
+    </div>
+
+    <div class="address-bar-wrap">
+      <input
+        class="address-bar"
+        id="address-bar"
+        type="text"
+        placeholder="C:\NexusTestSandbox"
+        spellcheck="false"
+        aria-label="Address bar"
+      />
+    </div>
+
+    <div class="topbar-actions">
+      <input
+        class="search-input"
+        id="search-input"
+        type="search"
+        placeholder="Search files..."
+        aria-label="Search"
+      />
+      <button class="btn-icon" id="btn-toggle-sidebar" title="Toggle sidebar (Ctrl+B)">&#9776;</button>
+    </div>
+  </header>
+
+  <!-- ── Body: sidebar | main | preview ───────────────────────────── -->
+  <div class="body-wrap">
+
+    <!-- Sidebar -->
+    <aside class="sidebar" id="sidebar">
+      <div class="panel-header">
+        <span class="panel-title">Navigator</span>
+      </div>
+      <nav class="sidebar-nav">
+        <div class="nav-section-label">Favourites</div>
+        <a class="nav-item nav-item--active" href="#">&#127968; Home</a>
+        <a class="nav-item" href="#">&#128229; Downloads</a>
+        <a class="nav-item" href="#">&#128196; Documents</a>
+        <a class="nav-item" href="#">&#128444; Pictures</a>
+
+        <div class="nav-section-label">Smart Folders</div>
+        <a class="nav-item" href="#">&#127381; Recent</a>
+        <a class="nav-item" href="#">&#128203; Untagged</a>
+        <a class="nav-item" href="#">&#128465; Large Files</a>
+        <a class="nav-item" href="#">&#9889; Everything Folder</a>
+
+        <div class="nav-section-label">Tags</div>
+        <a class="nav-item" href="#"><span class="tag-dot" style="background:#4A90D9"></span>Work</a>
+        <a class="nav-item" href="#"><span class="tag-dot" style="background:#7ED321"></span>Personal</a>
+      </nav>
+    </aside>
+
+    <!-- Main content -->
+    <main class="main-content" id="main-content">
+      <div class="main-toolbar">
+        <span class="breadcrumb" id="breadcrumb">NexusTestSandbox</span>
+        <div class="view-toggles">
+          <button class="btn-icon btn-view active" data-view="list"   title="List view">&#9776;</button>
+          <button class="btn-icon btn-view"         data-view="grid"   title="Grid view">&#8862;</button>
+          <button class="btn-icon btn-view"         data-view="detail" title="Detail view">&#9783;</button>
+        </div>
+      </div>
+
+      <div class="file-area" id="file-area">
+        <div class="empty-state">
+          <p class="empty-state-title">No folder loaded</p>
+          <p class="empty-state-sub">Type a path in the address bar or connect the backend.</p>
+        </div>
+      </div>
+    </main>
+
+    <!-- Preview panel -->
+    <aside class="preview-panel" id="preview-panel">
+      <div class="panel-header">
+        <span class="panel-title">Preview</span>
+        <button class="btn-icon btn-close-panel" id="btn-close-preview" title="Close preview">&times;</button>
+      </div>
+      <div class="preview-body" id="preview-body">
+        <div class="empty-state">
+          <p class="empty-state-sub">Select a file to preview it here.</p>
+        </div>
+      </div>
+    </aside>
+
+  </div><!-- /.body-wrap -->
+
+  <!-- ── Status bar ───────────────────────────────────────────────── -->
+  <footer class="statusbar" id="statusbar">
+    <span id="status-count">0 items</span>
+    <span class="statusbar-sep">|</span>
+    <span id="status-selected">Nothing selected</span>
+    <span class="statusbar-spacer"></span>
+    <span id="status-backend" class="status-dot status-dot--unknown" title="Backend status">&#9679; Backend</span>
+  </footer>
+
+  <script src="src/app.js"></script>
+</body>
+</html>

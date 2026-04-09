@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+python-dotenv
+xxhash
+watchdog
+aiohttp
+aiosqlite
+pillow
+mutagen
+python-magic-bin
