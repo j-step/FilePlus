@@ -67,10 +67,10 @@ fileplus/
 
 ## Current State
 
-Phase 0 scaffolding in progress, no features implemented yet.
+Phase 1 complete: hasher, indexer, database schema implemented and tested (18/18 passing).
 
 ---
 
 ## Next Task
 
-Complete Phase 0 scaffolding per PLAN.md.
+Phase 2 per PLAN.md: tagger.py (metadata extraction via Pillow / mutagen / python-magic-bin).
