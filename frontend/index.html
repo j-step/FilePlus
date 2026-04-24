@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en" class="dark">
+<html lang="en" data-theme="dark">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -10,107 +10,498 @@
 </head>
 <body>
 
-  <!-- ── Top bar ─────────────────────────────────────────────────── -->
-  <header class="topbar">
-    <div class="topbar-nav">
-      <button class="btn-icon" id="btn-back"    title="Back (Alt+Left)">&larr;</button>
-      <button class="btn-icon" id="btn-forward" title="Forward (Alt+Right)">&rarr;</button>
-      <button class="btn-icon" id="btn-up"      title="Up (Alt+Up)">&uarr;</button>
-    </div>
+<div class="app" id="app">
 
-    <div class="address-bar-wrap">
-      <input
-        class="address-bar"
-        id="address-bar"
-        type="text"
-        placeholder="C:\FilePlusTestSandbox"
-        spellcheck="false"
-        aria-label="Address bar"
-      />
+  <!-- ═══════════════════════════════════════════════════════════════════
+       A.1.1  TITLEBAR  (32px)
+  ════════════════════════════════════════════════════════════════════════ -->
+  <header class="fp-titlebar" id="titlebar">
+    <div class="fp-brand" style="display:flex;align-items:center;gap:6px;-webkit-app-region:no-drag">
+      <!-- 14×14 brand mark -->
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+        <rect x="1" y="1" width="12" height="12" rx="3" fill="var(--accent)" opacity="0.9"/>
+        <path d="M4 7h6M7 4v6" stroke="var(--text-on-accent)" stroke-width="1.5" stroke-linecap="round"/>
+      </svg>
+      <span style="font:500 var(--t-compact) var(--font-ui);color:var(--text-secondary);letter-spacing:var(--track-body)">FilePlus</span>
     </div>
-
-    <div class="topbar-actions">
-      <input
-        class="search-input"
-        id="search-input"
-        type="search"
-        placeholder="Search files..."
-        aria-label="Search"
-      />
-      <button class="btn-icon" id="btn-toggle-sidebar" title="Toggle sidebar (Ctrl+B)">&#9776;</button>
+    <!-- drag region fills center -->
+    <div style="flex:1;height:100%;-webkit-app-region:drag"></div>
+    <!-- window controls -->
+    <div class="fp-titlebar__controls" style="-webkit-app-region:no-drag">
+      <button class="fp-titlebar__btn" id="btn-minimize" data-action="window-minimize" aria-label="Minimize">
+        <svg width="10" height="1" viewBox="0 0 10 1"><rect width="10" height="1" fill="currentColor"/></svg>
+      </button>
+      <button class="fp-titlebar__btn" id="btn-maximize" data-action="window-maximize" aria-label="Maximize">
+        <svg width="10" height="10" viewBox="0 0 10 10"><rect x="1" y="1" width="8" height="8" rx="1" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>
+      </button>
+      <button class="fp-titlebar__btn fp-titlebar__btn--close" id="btn-close" data-action="window-close" aria-label="Close">
+        <svg width="10" height="10" viewBox="0 0 10 10"><path d="M1 1l8 8M9 1l-8 8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+      </button>
     </div>
   </header>
 
-  <!-- ── Body: sidebar | main | preview ───────────────────────────── -->
-  <div class="body-wrap">
+  <!-- ═══════════════════════════════════════════════════════════════════
+       A.1.2  TAB BAR  (32px) — explorer-style tabs
+       Active tab: 2px accent underline, bg-content bg (connects to work area)
+       Inactive: bg-chrome, text-secondary
+       Underline slides at dur-slide; content swaps instant
+  ════════════════════════════════════════════════════════════════════════ -->
+  <div class="fp-tabbar" id="tabbar" role="tablist">
+    <!-- Tab: Home (active by default) -->
+    <button class="fp-tab fp-tab--active" role="tab" aria-selected="true"
+            data-tab-screen="home" data-action="switch-tab"
+            title="Home">
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+        <path d="M1 6.5L7 1l6 5.5V13H9V9H5v4H1V6.5z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
+      </svg>
+      <span class="fp-tab__label">Home</span>
+      <button class="fp-tab__close" data-action="close-tab" title="Close tab" tabindex="-1">
+        <svg width="10" height="10" viewBox="0 0 10 10"><path d="M2 2l6 6M8 2l-6 6" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+      </button>
+    </button>
+    <!-- Tab: Browser (sample open tab) -->
+    <button class="fp-tab" role="tab" aria-selected="false"
+            data-tab-screen="browser" data-action="switch-tab"
+            title="C:\Users\Justin">
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+        <path d="M1 4a1 1 0 0 1 1-1h4l1.5 1.5H12a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V4z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
+      </svg>
+      <span class="fp-tab__label">C:\Users\Justin</span>
+      <button class="fp-tab__close" data-action="close-tab" title="Close tab" tabindex="-1">
+        <svg width="10" height="10" viewBox="0 0 10 10"><path d="M2 2l6 6M8 2l-6 6" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+      </button>
+    </button>
+    <!-- New tab button -->
+    <button class="fp-icon-btn fp-icon-btn--sm" id="btn-new-tab" data-action="new-tab" title="New tab (Ctrl+T)" style="margin-left:2px;flex-shrink:0">
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 2v10M2 7h10" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+    </button>
+    <!-- tab bar spacer fills rest -->
+    <div style="flex:1"></div>
+  </div>
 
-    <!-- Sidebar -->
-    <aside class="sidebar" id="sidebar">
-      <div class="panel-header">
-        <span class="panel-title">Navigator</span>
-      </div>
-      <nav class="sidebar-nav">
-        <div class="nav-section-label">Favourites</div>
-        <a class="nav-item nav-item--active" href="#">&#127968; Home</a>
-        <a class="nav-item" href="#">&#128229; Downloads</a>
-        <a class="nav-item" href="#">&#128196; Documents</a>
-        <a class="nav-item" href="#">&#128444; Pictures</a>
+  <!-- ═══════════════════════════════════════════════════════════════════
+       SHELL: sidebar + main (fills remaining height)
+  ════════════════════════════════════════════════════════════════════════ -->
+  <div class="shell" id="shell">
 
-        <div class="nav-section-label">Smart Folders</div>
-        <a class="nav-item" href="#">&#127381; Recent</a>
-        <a class="nav-item" href="#">&#128203; Untagged</a>
-        <a class="nav-item" href="#">&#128465; Large Files</a>
-        <a class="nav-item" href="#">&#9889; Everything Folder</a>
+    <!-- ═══════════════════════════════════════════════════════════════
+         A.1.3  SIDEBAR  (240px expanded / 52px collapsed)
+         1px border-hairline right edge (the structural seam)
+    ════════════════════════════════════════════════════════════════════ -->
+    <aside class="fp-sidebar" id="sidebar">
 
-        <div class="nav-section-label">Tags</div>
-        <a class="nav-item" href="#"><span class="tag-dot" style="background:#4A90D9"></span>Work</a>
-        <a class="nav-item" href="#"><span class="tag-dot" style="background:#7ED321"></span>Personal</a>
-      </nav>
-    </aside>
-
-    <!-- Main content -->
-    <main class="main-content" id="main-content">
-      <div class="main-toolbar">
-        <span class="breadcrumb" id="breadcrumb">FilePlusTestSandbox</span>
-        <div class="view-toggles">
-          <button class="btn-icon btn-view active" data-view="list"   title="List view">&#9776;</button>
-          <button class="btn-icon btn-view"         data-view="grid"   title="Grid view">&#8862;</button>
-          <button class="btn-icon btn-view"         data-view="detail" title="Detail view">&#9783;</button>
+      <!-- Sidebar header (56px) -->
+      <div class="fp-sidebar__header">
+        <svg class="fp-sidebar__brand-mark" width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <rect x="2" y="2" width="20" height="20" rx="5" fill="var(--accent)" opacity="0.85"/>
+          <path d="M8 12h8M12 8v8" stroke="var(--text-on-accent)" stroke-width="1.8" stroke-linecap="round"/>
+        </svg>
+        <div style="flex:1;min-width:0">
+          <div class="fp-sidebar__brand-name">FilePlus</div>
+          <!-- INTEGRATION: drive label from GET /api/drives/active -->
+          <div class="fp-sidebar__brand-sub">
+            <span class="mono" id="sb-drive-label">D:\</span>
+            <span style="color:var(--text-tertiary)"> · </span>
+            <span class="mono" id="sb-indexed-count">214k indexed</span>
+          </div>
         </div>
+        <button class="fp-icon-btn fp-icon-btn--sm" id="btn-sidebar-collapse"
+                data-action="toggle-sidebar" title="Collapse sidebar (Ctrl+B)" style="-webkit-app-region:no-drag">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+            <path d="M9 2L4 7l5 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </button>
       </div>
 
-      <div class="file-area" id="file-area">
-        <div class="empty-state">
-          <p class="empty-state-title">No folder loaded</p>
-          <p class="empty-state-sub">Type a path in the address bar or connect the backend.</p>
+      <div class="fp-sidebar__scroll">
+
+        <!-- ── QUICK ACCESS ─────────────────────────────────────── -->
+        <!-- SPEC RESOLUTION C2: "Quick Access" section per spec A.1.3 -->
+        <div class="fp-sidebar__section-label">Quick Access</div>
+
+        <button class="fp-sidebar__item fp-sidebar__item--active" id="nav-home"
+                data-screen="home" data-action="navigate-screen" title="Home">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M1.5 7.5L8 1l6.5 6.5V15h-4v-4.5H9.5v-.5h-3V15H2.5V7.5z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
+          </svg>
+          <span class="fp-sidebar__item__label">Home</span>
+        </button>
+
+        <!-- Review Bin with accent badge when non-zero -->
+        <button class="fp-sidebar__item" id="nav-review-bin"
+                data-screen="review-bin" data-action="navigate-screen" title="Review Bin (Ctrl+Shift+R)">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <rect x="2" y="3" width="12" height="11" rx="1.5" stroke="currentColor" stroke-width="1.2"/>
+            <path d="M5 3V2a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v1M2 6h12" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+            <path d="M6 9l1.5 1.5L10 9" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <span class="fp-sidebar__item__label">Review Bin</span>
+          <!-- INTEGRATION: count from GET /api/review-bin/count -->
+          <span class="fp-badge fp-badge--accent fp-sidebar__item__badge" id="sb-review-bin-count" style="display:none">0</span>
+          <!-- Shown when count > 0: -->
+          <!-- <span class="fp-badge fp-badge--accent fp-sidebar__item__badge" id="sb-review-bin-count">12</span> -->
+        </button>
+
+        <!-- User-pinned folders (drag to reorder) -->
+        <!-- INTEGRATION: pinned folders from localStorage / GET /api/pins -->
+        <div id="sb-pinned-folders">
+          <!-- Sample pinned folder -->
+          <button class="fp-sidebar__item" data-screen="browser" data-path="D:\Projects"
+                  data-action="navigate-path" title="D:\Projects">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <path d="M1 4a1 1 0 0 1 1-1h4l1.5 1.5H14a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V4z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
+            </svg>
+            <span class="fp-sidebar__item__label">Projects</span>
+          </button>
         </div>
-      </div>
-    </main>
 
-    <!-- Preview panel -->
-    <aside class="preview-panel" id="preview-panel">
-      <div class="panel-header">
-        <span class="panel-title">Preview</span>
-        <button class="btn-icon btn-close-panel" id="btn-close-preview" title="Close preview">&times;</button>
-      </div>
-      <div class="preview-body" id="preview-body">
-        <div class="empty-state">
-          <p class="empty-state-sub">Select a file to preview it here.</p>
+        <!-- ── TREE ─────────────────────────────────────────────── -->
+        <!-- INTEGRATION: drives from GET /api/drives -->
+        <div class="fp-sidebar__section-label" style="margin-top:8px">Tree</div>
+
+        <!-- Drive with usage bar -->
+        <div class="fp-sidebar__drive-item">
+          <button class="fp-sidebar__item" data-screen="browser" data-path="C:\"
+                  data-action="navigate-path" title="C: Drive">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <ellipse cx="8" cy="6" rx="6" ry="2.5" stroke="currentColor" stroke-width="1.2"/>
+              <path d="M2 6v4c0 1.4 2.7 2.5 6 2.5s6-1.1 6-2.5V6" stroke="currentColor" stroke-width="1.2"/>
+            </svg>
+            <span class="fp-sidebar__item__label">C: Drive</span>
+          </button>
+          <!-- Usage bar: bg-pressed track, accent fill -->
+          <div class="fp-sidebar__drive-bar" title="127 GB / 512 GB used">
+            <div class="fp-sidebar__drive-bar__fill" style="width:25%"></div>
+          </div>
         </div>
+
+        <!-- AI-organised drive branch gets accent dot at right -->
+        <div class="fp-sidebar__drive-item">
+          <button class="fp-sidebar__item" data-screen="browser" data-path="D:\"
+                  data-action="navigate-path" title="D: Drive">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <ellipse cx="8" cy="6" rx="6" ry="2.5" stroke="currentColor" stroke-width="1.2"/>
+              <path d="M2 6v4c0 1.4 2.7 2.5 6 2.5s6-1.1 6-2.5V6" stroke="currentColor" stroke-width="1.2"/>
+            </svg>
+            <span class="fp-sidebar__item__label">D: Drive</span>
+            <!-- AI-organised indicator dot -->
+            <span style="width:6px;height:6px;border-radius:999px;background:var(--accent);flex-shrink:0;margin-left:auto"></span>
+          </button>
+          <div class="fp-sidebar__drive-bar" title="843 GB / 2 TB used">
+            <div class="fp-sidebar__drive-bar__fill" style="width:41%"></div>
+          </div>
+        </div>
+
+        <!-- ── TAGS ─────────────────────────────────────────────── -->
+        <!-- INTEGRATION: top tags from GET /api/tags?limit=8 -->
+        <div class="fp-sidebar__section-label" style="margin-top:8px">Tags</div>
+        <div id="sb-tags" style="padding:0 8px 4px;display:flex;flex-wrap:wrap;gap:4px">
+          <button class="fp-chip fp-chip--tinted" data-action="filter-by-tag" data-tag="work" title="Filter by tag: work">
+            work <span class="mono" style="opacity:.6;font-size:10px">42</span>
+          </button>
+          <button class="fp-chip" data-action="filter-by-tag" data-tag="photos" title="Filter by tag: photos">
+            photos <span class="mono" style="opacity:.6;font-size:10px">214</span>
+          </button>
+          <button class="fp-chip" data-action="filter-by-tag" data-tag="docs" title="Filter by tag: docs">
+            docs <span class="mono" style="opacity:.6;font-size:10px">88</span>
+          </button>
+          <button class="fp-chip" data-action="filter-by-tag" data-tag="code" title="Filter by tag: code">
+            code <span class="mono" style="opacity:.6;font-size:10px">371</span>
+          </button>
+          <button class="fp-btn fp-btn--ghost" style="height:20px;padding:0 6px;font-size:11px"
+                  data-action="open-tag-canvas" title="View all tags">View all →</button>
+        </div>
+
+        <!-- ── SYSTEM ───────────────────────────────────────────── -->
+        <div class="fp-sidebar__section-label" style="margin-top:8px">System</div>
+
+        <button class="fp-sidebar__item" id="nav-ftree"
+                data-screen="ftree" data-action="navigate-screen" title="File Tree canvas">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <rect x="6" y="1" width="4" height="4" rx="0.5" stroke="currentColor" stroke-width="1.1"/>
+            <rect x="1" y="11" width="4" height="4" rx="0.5" stroke="currentColor" stroke-width="1.1"/>
+            <rect x="6" y="11" width="4" height="4" rx="0.5" stroke="currentColor" stroke-width="1.1"/>
+            <rect x="11" y="11" width="4" height="4" rx="0.5" stroke="currentColor" stroke-width="1.1"/>
+            <path d="M8 5v3M8 8H3v3M8 8h5v3" stroke="currentColor" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <span class="fp-sidebar__item__label">File Tree</span>
+        </button>
+
+        <button class="fp-sidebar__item" id="nav-scan"
+                data-screen="scan-config" data-action="navigate-screen" title="Scan &amp; Index">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.2"/>
+            <path d="M8 5v3l2.5 1.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <span class="fp-sidebar__item__label">Scan</span>
+        </button>
+
+      </div><!-- /.fp-sidebar__scroll -->
+
+      <!-- ── BOTTOM ANCHOR (always visible) ────────────────────── -->
+      <!-- SPEC: Everything Folder + Settings pinned to sidebar bottom -->
+      <div class="fp-sidebar__bottom">
+        <button class="fp-sidebar__item" id="nav-everything"
+                data-screen="everything" data-action="navigate-screen" title="Everything Folder">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <rect x="1" y="3" width="14" height="11" rx="1.5" stroke="currentColor" stroke-width="1.2"/>
+            <path d="M1 7h14" stroke="currentColor" stroke-width="1.2"/>
+            <path d="M5 5h6" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+          </svg>
+          <span class="fp-sidebar__item__label">Everything Folder</span>
+          <!-- INTEGRATION: error count from GET /api/everything/errors -->
+          <!-- badge uses bad-wash bg + bad text + bad-edge border when errors exist -->
+          <!-- <span class="fp-badge" style="background:var(--bad-wash);border-color:var(--bad-edge);color:var(--bad)" id="sb-everything-errors">3</span> -->
+        </button>
+
+        <button class="fp-sidebar__item" id="nav-settings"
+                data-screen="settings" data-action="navigate-screen" title="Settings (Ctrl+,)">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <circle cx="8" cy="8" r="2.5" stroke="currentColor" stroke-width="1.2"/>
+            <path d="M8 2v1.5M8 12.5V14M2 8h1.5M12.5 8H14M3.5 3.5l1 1M11.5 11.5l1 1M3.5 12.5l1-1M11.5 4.5l1-1" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+          </svg>
+          <span class="fp-sidebar__item__label">Settings</span>
+        </button>
       </div>
-    </aside>
 
-  </div><!-- /.body-wrap -->
+    </aside><!-- /.fp-sidebar -->
 
-  <!-- ── Status bar ───────────────────────────────────────────────── -->
-  <footer class="statusbar" id="statusbar">
-    <span id="status-count">0 items</span>
-    <span class="statusbar-sep">|</span>
-    <span id="status-selected">Nothing selected</span>
-    <span class="statusbar-spacer"></span>
-    <span id="status-backend" class="status-dot status-dot--unknown" title="Backend status">&#9679; Backend</span>
+    <!-- ═══════════════════════════════════════════════════════════════
+         MAIN  (toolbar + screens)
+    ════════════════════════════════════════════════════════════════════ -->
+    <div class="main" id="main">
+
+      <!-- ═════════════════════════════════════════════════════════
+           A.1.4  TOOLBAR  (48px)
+           Back/Forward/Up | Breadcrumb (flex-grow) | Search | View seg | Inspector toggle
+      ══════════════════════════════════════════════════════════════ -->
+      <div class="fp-toolbar" id="toolbar">
+
+        <!-- Nav: Back / Forward / Up -->
+        <div style="display:flex;gap:2px;flex-shrink:0">
+          <button class="fp-icon-btn" id="btn-back" data-action="nav-back" title="Back (Alt+Left)">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M10 3L5 8l5 5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+          <button class="fp-icon-btn" id="btn-forward" data-action="nav-forward" title="Forward (Alt+Right)">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M6 3l5 5-5 5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+          <button class="fp-icon-btn" id="btn-up" data-action="nav-up" title="Up (Alt+Up)">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M3 10l5-5 5 5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+        </div>
+
+        <!-- Breadcrumb / address bar (flex grow) -->
+        <!-- middot separator, never > or / — per spec A.1.4 -->
+        <nav class="fp-breadcrumb" id="breadcrumb" aria-label="Location" style="flex:1;min-width:0">
+          <button class="fp-breadcrumb__crumb" data-action="navigate-crumb" data-path="home">Home</button>
+          <!-- Sample deeper path:
+          <span class="fp-breadcrumb__sep">·</span>
+          <button class="fp-breadcrumb__crumb" data-action="navigate-crumb" data-path="D:\">D:\</button>
+          <span class="fp-breadcrumb__sep">·</span>
+          <button class="fp-breadcrumb__crumb fp-breadcrumb__crumb--current" data-action="navigate-crumb" data-path="D:\Projects">Projects</button>
+          -->
+        </nav>
+
+        <!-- Search field (concave chrome, ⌘K hint) -->
+        <div class="fp-search" id="search-wrap" style="flex-shrink:0">
+          <svg class="fp-search__icon" width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+            <circle cx="6" cy="6" r="4.5" stroke="currentColor" stroke-width="1.3"/>
+            <path d="M10 10l2.5 2.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+          </svg>
+          <input class="fp-search__input" id="search-input" type="search"
+                 placeholder="Search files…" aria-label="Search files"
+                 spellcheck="false" autocomplete="off"
+                 data-action="focus-search" />
+          <!-- ⌘K hint -->
+          <kbd class="fp-search__kbd">⌘K</kbd>
+        </div>
+
+        <!-- View toggle: List / Grid segmented control -->
+        <div class="fp-segmented" id="view-toggle" role="group" aria-label="View mode"
+             style="flex-shrink:0;height:30px">
+          <button class="fp-segmented__opt active" id="btn-view-list"
+                  data-view="list" data-action="set-view-mode" title="List view">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M2 3.5h10M2 7h10M2 10.5h10" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+          </button>
+          <button class="fp-segmented__opt" id="btn-view-grid"
+                  data-view="grid" data-action="set-view-mode" title="Grid view">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><rect x="2" y="2" width="4" height="4" rx="0.5" stroke="currentColor" stroke-width="1.2"/><rect x="8" y="2" width="4" height="4" rx="0.5" stroke="currentColor" stroke-width="1.2"/><rect x="2" y="8" width="4" height="4" rx="0.5" stroke="currentColor" stroke-width="1.2"/><rect x="8" y="8" width="4" height="4" rx="0.5" stroke="currentColor" stroke-width="1.2"/></svg>
+          </button>
+        </div>
+
+        <!-- Inspector toggle -->
+        <button class="fp-icon-btn" id="btn-inspector-toggle"
+                data-action="toggle-inspector" title="Toggle inspector (⌘I)">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <rect x="1" y="2" width="14" height="12" rx="1.5" stroke="currentColor" stroke-width="1.2"/>
+            <path d="M10 2v12" stroke="currentColor" stroke-width="1.2"/>
+          </svg>
+        </button>
+
+        <!-- Theme toggle (keep from old toolbar) -->
+        <button class="fp-icon-btn" id="btn-theme" data-action="toggle-theme" title="Toggle theme">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><circle cx="8" cy="8" r="3" stroke="currentColor" stroke-width="1.2"/><path d="M8 1v1.5M8 13.5V15M1 8h1.5M13.5 8H15M3 3l1.1 1.1M11.9 11.9l1.1 1.1M3 13l1.1-1.1M11.9 4.1l1.1-1.1" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+        </button>
+
+      </div><!-- /.fp-toolbar -->
+
+      <!-- ═════════════════════════════════════════════════════════
+           SCREENS
+      ══════════════════════════════════════════════════════════════ -->
+      <div class="screens" id="screens">
+
+        <!-- Screen: Home (A.2) -->
+        <div class="screen screen--home active" id="screen-home">
+          <!-- Filled in A.2 pass -->
+          <div style="padding:40px;color:var(--text-tertiary);font:500 var(--t-body) var(--font-ui)">Home screen — A.2 pass pending</div>
+        </div>
+
+        <!-- Screen: Browser (A.3) -->
+        <div class="screen screen--browser" id="screen-browser">
+          <!-- Filled in A.3 pass -->
+          <div style="padding:40px;color:var(--text-tertiary);font:500 var(--t-body) var(--font-ui)">Browser screen — A.3 pass pending</div>
+        </div>
+
+        <!-- Screen: File Tree Canvas (A.4) -->
+        <div class="screen screen--ftree" id="screen-ftree">
+          <!-- Filled in A.4 pass -->
+          <div style="padding:40px;color:var(--text-tertiary);font:500 var(--t-body) var(--font-ui)">File Tree Canvas — A.4 pass pending</div>
+        </div>
+
+        <!-- Screen: Scan Configuration (A.5) -->
+        <div class="screen screen--scan-config" id="screen-scan-config">
+          <!-- Filled in A.5–A.7 pass -->
+          <div style="padding:40px;color:var(--text-tertiary);font:500 var(--t-body) var(--font-ui)">Scan Configuration — A.5 pass pending</div>
+        </div>
+
+        <!-- Screen: Scan Progress (A.6) -->
+        <div class="screen screen--scan-progress" id="screen-scan-progress">
+          <div style="padding:40px;color:var(--text-tertiary);font:500 var(--t-body) var(--font-ui)">Scan Progress — A.6 pass pending</div>
+        </div>
+
+        <!-- Screen: Scan Results (A.7) -->
+        <div class="screen screen--scan-results" id="screen-scan-results">
+          <div style="padding:40px;color:var(--text-tertiary);font:500 var(--t-body) var(--font-ui)">Scan Results — A.7 pass pending</div>
+        </div>
+
+        <!-- Screen: Review Bin (A.8) — filter on Everything Folder -->
+        <div class="screen screen--review-bin" id="screen-review-bin">
+          <!-- Filled in A.8 pass -->
+          <div style="padding:40px;color:var(--text-tertiary);font:500 var(--t-body) var(--font-ui)">Review Bin — A.8 pass pending</div>
+        </div>
+
+        <!-- Screen: Everything Folder (A.9) -->
+        <div class="screen screen--everything" id="screen-everything">
+          <!-- Filled in A.9 pass -->
+          <div style="padding:40px;color:var(--text-tertiary);font:500 var(--t-body) var(--font-ui)">Everything Folder — A.9 pass pending</div>
+        </div>
+
+        <!-- Screen: Settings (A.12) -->
+        <div class="screen screen--settings" id="screen-settings">
+          <!-- Filled in A.12 pass -->
+          <div style="padding:40px;color:var(--text-tertiary);font:500 var(--t-body) var(--font-ui)">Settings — A.12 pass pending</div>
+        </div>
+
+      </div><!-- /.screens -->
+
+    </div><!-- /.main -->
+  </div><!-- /.shell -->
+
+  <!-- ═══════════════════════════════════════════════════════════════════
+       A.1.5  STATUS BAR  (24px)
+       bg-chrome + 1px border-hairline top
+       Left: file count · selection | Center: background task | Right: Review Bin pill
+  ════════════════════════════════════════════════════════════════════════ -->
+  <footer class="fp-statusbar" id="statusbar">
+    <div class="fp-statusbar__left">
+      <!-- INTEGRATION: counts from active directory listing -->
+      <span class="mono" id="status-count">0 items</span>
+      <span class="fp-statusbar__sep">·</span>
+      <span id="status-selected">Nothing selected</span>
+    </div>
+    <div class="fp-statusbar__center" id="status-task" style="display:none">
+      <!-- INTEGRATION: background task from GET /api/tasks/active -->
+      <!-- Sample active task:
+      <span class="fp-pill fp-pill--live">
+        <span class="fp-pill__dot fp-pill__dot--accent"></span>
+        <span>Indexing 12%</span>
+        <span class="mono" style="color:var(--text-tertiary)">· 8m</span>
+      </span>
+      -->
+    </div>
+    <div class="fp-statusbar__right">
+      <!-- Review Bin count pill — shown when non-zero -->
+      <!-- INTEGRATION: count from GET /api/review-bin/count -->
+      <!-- Active:
+      <button class="fp-pill" id="status-review-bin-pill" data-action="open-review-bin" title="Open Review Bin">
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M1 2h10M1 5h7M1 8h5" stroke="var(--accent)" stroke-width="1.2" stroke-linecap="round"/></svg>
+        <span style="color:var(--accent)">12 to review</span>
+      </button>
+      -->
+      <!-- Backend connection indicator -->
+      <span class="fp-statusbar__backend" id="status-backend" data-state="unknown"
+            title="Backend connection" style="display:flex;align-items:center;gap:4px">
+        <span class="fp-statusbar__backend-dot" style="width:6px;height:6px;border-radius:50%;background:var(--text-tertiary)"></span>
+        <span class="fp-statusbar__backend-label" style="font:400 var(--t-small) var(--font-ui);color:var(--text-tertiary)">Backend</span>
+      </span>
+    </div>
   </footer>
 
-  <script src="src/app.js"></script>
+</div><!-- /#app -->
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     OVERLAYS  (outside #app so they can cover everything)
+════════════════════════════════════════════════════════════════════════════ -->
+
+<!-- A.11.1 Command Palette -->
+<div class="fp-scrim" id="palette-scrim" aria-hidden="true" style="display:none">
+  <div class="fp-palette" id="palette" role="dialog" aria-label="Command palette" aria-modal="true">
+    <!-- palette content filled in A.11 pass -->
+    <input class="fp-palette__input" id="palette-input" type="text"
+           placeholder="Type a command or path…" spellcheck="false" aria-label="Command" />
+    <div class="fp-palette__results" id="palette-results" role="listbox">
+      <div class="fp-palette__section">Screens</div>
+      <button class="fp-palette__item" role="option" data-action="navigate-screen" data-screen="home">Home</button>
+      <button class="fp-palette__item" role="option" data-action="navigate-screen" data-screen="browser">Browser</button>
+      <button class="fp-palette__item" role="option" data-action="navigate-screen" data-screen="ftree">File Tree</button>
+      <button class="fp-palette__item" role="option" data-action="navigate-screen" data-screen="scan-config">Scan</button>
+      <button class="fp-palette__item" role="option" data-action="navigate-screen" data-screen="review-bin">Review Bin</button>
+      <button class="fp-palette__item" role="option" data-action="navigate-screen" data-screen="everything">Everything Folder</button>
+      <button class="fp-palette__item" role="option" data-action="navigate-screen" data-screen="settings">Settings</button>
+      <div class="fp-palette__section">Actions</div>
+      <button class="fp-palette__item" role="option" data-action="toggle-theme">Toggle Theme</button>
+      <button class="fp-palette__item" role="option" data-action="toggle-sidebar">Toggle Sidebar</button>
+      <button class="fp-palette__item" role="option" data-action="toggle-inspector">Toggle Inspector</button>
+    </div>
+  </div>
+</div>
+
+<!-- Context menu (shared template, filled per A.10 pass) -->
+<div class="fp-context-menu" id="context-menu" style="display:none" role="menu">
+  <!-- populated dynamically by app.js -->
+</div>
+
+<!-- Confirmation modal (filled per A.11.3 pass) -->
+<div class="fp-scrim" id="modal-scrim" aria-hidden="true" style="display:none">
+  <div class="fp-modal" id="modal" role="dialog" aria-modal="true">
+    <!-- filled dynamically -->
+  </div>
+</div>
+
+<!-- Snackbar container -->
+<div id="snackbar-container" style="
+  position:fixed;bottom:40px;left:50%;transform:translateX(-50%);
+  display:flex;flex-direction:column;gap:8px;align-items:center;
+  z-index:900;pointer-events:none
+"></div>
+
+<!-- Toast container (bottom-right) -->
+<div id="toast-container" style="
+  position:fixed;bottom:40px;right:16px;
+  display:flex;flex-direction:column;gap:8px;
+  z-index:900;pointer-events:none
+"></div>
+
+<script src="src/app.js"></script>
 </body>
 </html>
