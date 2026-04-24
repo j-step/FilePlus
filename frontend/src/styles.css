@@ -3074,6 +3074,80 @@ svg { flex-shrink: 0; }
 .fp-empty-state__title { font: 600 var(--t-title-sm) var(--font-ui); letter-spacing: var(--track-button); color: var(--text-primary); margin: 0; }
 .fp-empty-state__desc  { font: 400 var(--t-body) var(--font-ui); color: var(--text-secondary); max-width: 360px; line-height: 1.5; margin: 0; }
 
+/* ── A.3 Browser — file row states ───────────────────────────────────────── */
+.fp-row--drag-target {
+  background: var(--accent-wash-strong) !important;
+  box-shadow: inset 0 0 0 2px var(--accent-edge-strong) !important;
+}
+.fp-row--drag-target .fp-row__icon { transform: scale(1.05); }
+/* AI-just-filed: 200ms fade-in amber border that fades out after 1.5s */
+.fp-row--ai-filed {
+  animation: fp-ai-filed 1700ms var(--ease-out) forwards;
+}
+@keyframes fp-ai-filed {
+  0%   { box-shadow: inset 0 0 0 2px var(--accent-edge-strong); background: var(--accent-wash); }
+  12%  { box-shadow: inset 0 0 0 2px var(--accent-edge-strong); background: var(--accent-wash); }
+  100% { box-shadow: none; background: transparent; }
+}
+
+/* Inspector panel (docked) */
+.inspector {
+  width: 340px;
+  flex-shrink: 0;
+  display: none; /* closed by default; js adds --open */
+  flex-direction: column;
+  background: var(--bg-content);
+  border-left: 1px solid var(--border-hairline);
+  padding: var(--s-16);
+  overflow: hidden;
+}
+.inspector--open { display: flex; }
+
+/* Inspector drag handle (left edge, 4px hit area) */
+.resizer {
+  width: 4px;
+  flex-shrink: 0;
+  background: transparent;
+  cursor: col-resize;
+  transition: background var(--dur-fast) var(--ease-snap);
+}
+.resizer:hover { background: var(--accent); }
+
+.inspector__filename {
+  font: 600 var(--t-title-sm) var(--font-ui);
+  letter-spacing: var(--track-button);
+  color: var(--text-primary);
+  margin: var(--s-8) 0 var(--s-4);
+  word-break: break-word;
+}
+.inspector__meta { display: flex; flex-direction: column; gap: var(--s-4); }
+.inspector__meta-row {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--s-8);
+  font: 400 var(--t-body) var(--font-ui);
+  color: var(--text-secondary);
+}
+.inspector__meta-key { color: var(--text-tertiary); white-space: nowrap; }
+.inspector__meta-val { color: var(--text-primary); text-align: right; min-width: 0; word-break: break-all; }
+.inspector__meta-val.mono { font-family: var(--font-mono); font-size: 11px; }
+.inspector__meta-val--hash { font-size: 10px; color: var(--text-tertiary); }
+
+/* Inspector tags wrap */
+.inspector__tags-wrap { display: flex; flex-wrap: wrap; gap: var(--s-6); }
+
+/* When inspector open: list compacts — size/modified/tags collapse into single mono line */
+/* This is done via JS adding .list-pane--compact class */
+.list-pane--compact .list-col--size,
+.list-pane--compact .list-col--modified,
+.list-pane--compact .list-col--tags { display: none; }
+.list-pane--compact .fp-row__size,
+.list-pane--compact .fp-row__modified,
+.list-pane--compact .fp-row__tags { display: none; }
+/* compact single-line for size+date shown instead */
+.fp-row__compact-meta { display: none; font: 400 var(--t-compact) var(--font-mono); color: var(--text-secondary); text-align: right; white-space: nowrap; }
+.list-pane--compact .fp-row__compact-meta { display: block; }
+
 /* ── A.2 Home screen ──────────────────────────────────────────────────────── */
 .home-section {
   padding: var(--s-20) var(--s-20) var(--s-8);

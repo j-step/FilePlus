@@ -493,11 +493,214 @@
 
         </div><!-- /#screen-home -->
 
-        <!-- Screen: Browser (A.3) -->
+        <!-- ═══════════════════════════════════════════════════════════
+             A.3  BROWSER  (3-pane: sidebar / file list / inspector)
+        ════════════════════════════════════════════════════════════ -->
         <div class="screen screen--browser" id="screen-browser">
-          <!-- Filled in A.3 pass -->
-          <div style="padding:40px;color:var(--text-tertiary);font:500 var(--t-body) var(--font-ui)">Browser screen — A.3 pass pending</div>
-        </div>
+          <div class="content">
+
+            <!-- ── File list pane ──────────────────────────── -->
+            <div class="list-pane" id="list-pane">
+
+              <!-- Column header (32px, bg-content, sticky) -->
+              <div class="list-head" id="list-head">
+                <div class="list-col list-col--icon"></div>
+                <div class="list-col list-col--name fp-sortable active" data-sort="name"
+                     data-action="sort-by" style="cursor:default">
+                  Name
+                  <svg class="list-col__caret" width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden="true"><path d="M2 4l3 3 3-3" stroke="var(--accent)" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </div>
+                <div class="list-col list-col--size fp-sortable" data-sort="size" data-action="sort-by" style="cursor:default">Size</div>
+                <div class="list-col list-col--modified fp-sortable" data-sort="modified" data-action="sort-by" style="cursor:default">Modified</div>
+                <div class="list-col list-col--tags">Tags</div>
+              </div>
+
+              <!-- File scroll area -->
+              <div class="list-scroll" id="list-scroll" role="listbox"
+                   aria-label="Files" tabindex="0" data-view="list">
+
+                <!-- INTEGRATION: directory listing from GET /api/browse?path=... -->
+
+                <!-- Folder row (default) -->
+                <div class="fp-row fp-row--folder" role="option"
+                     data-path="D:\Projects" data-action="navigate-path" tabindex="-1">
+                  <svg class="fp-row__icon" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M1 4a1 1 0 0 1 1-1h4l1.5 1.5H14a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V4z" fill="var(--accent)" opacity=".75" stroke="var(--accent-edge)" stroke-width="0.8"/></svg>
+                  <span class="fp-row__name">Projects</span>
+                  <span class="fp-row__size">—</span>
+                  <span class="fp-row__modified">Today</span>
+                  <div class="fp-row__tags"></div>
+                </div>
+
+                <!-- File row — selected state (accent-wash + 2px left bar) -->
+                <div class="fp-row fp-row--selected" role="option" aria-selected="true"
+                     data-path="D:\design-brief.md" data-action="select-file" tabindex="-1">
+                  <svg class="fp-row__icon" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="2" y="1" width="9" height="13" rx="1.5" fill="var(--bg-raised)" stroke="var(--border-subtle)" stroke-width="0.8"/><path d="M11 1v4h3" stroke="var(--border-subtle)" stroke-width="0.8" stroke-linejoin="round"/><path d="M5 6h6M5 8.5h6M5 11h4" stroke="var(--text-tertiary)" stroke-width="0.8" stroke-linecap="round"/></svg>
+                  <span class="fp-row__name">design-brief.md</span>
+                  <span class="fp-row__size mono">18.7 KB</span>
+                  <span class="fp-row__modified mono">1 hr ago</span>
+                  <div class="fp-row__tags" style="display:flex;gap:4px">
+                    <span class="fp-chip fp-chip--tinted">design</span>
+                    <span class="fp-chip">docs</span>
+                  </div>
+                </div>
+
+                <!-- File row — default/unprocessed state -->
+                <div class="fp-row" role="option" data-path="D:\README.md"
+                     data-action="select-file" tabindex="-1">
+                  <svg class="fp-row__icon" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="2" y="1" width="9" height="13" rx="1.5" fill="var(--bg-raised)" stroke="var(--border-subtle)" stroke-width="0.8"/><path d="M11 1v4h3" stroke="var(--border-subtle)" stroke-width="0.8" stroke-linejoin="round"/></svg>
+                  <span class="fp-row__name">README.md</span>
+                  <span class="fp-row__size mono">4.2 KB</span>
+                  <span class="fp-row__modified mono">3d ago</span>
+                  <div class="fp-row__tags"></div>
+                </div>
+
+                <!--
+                DRAG-TARGET ROW state (comment in to show):
+                <div class="fp-row fp-row--drag-target" role="option" data-path="D:\Docs">
+                  ... same content ...
+                </div>
+
+                AI-JUST-FILED ROW state:
+                <div class="fp-row fp-row--ai-filed" role="option" data-path="...">
+                  ...
+                </div>
+
+                EMPTY STATE (comment in when folder is empty):
+                <div class="fp-empty-state">
+                  <svg class="fp-empty-state__icon" viewBox="0 0 48 48" fill="none"><rect x="4" y="8" width="40" height="32" rx="4" stroke="currentColor" stroke-width="2"/><path d="M4 17h40" stroke="currentColor" stroke-width="2"/></svg>
+                  <p class="fp-empty-state__title">This folder is empty.</p>
+                  <p class="fp-empty-state__desc">Navigate to a folder using the address bar or sidebar.</p>
+                </div>
+
+                ERROR STATE (comment in when directory fails to load):
+                <div class="fp-error-banner">
+                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="6" stroke="currentColor" stroke-width="1.2"/><path d="M7 4v4M7 10v.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+                  This folder no longer exists.
+                  <button class="fp-error-banner__action" data-action="nav-back">Go back</button>
+                </div>
+                -->
+
+              </div><!-- /#list-scroll -->
+            </div><!-- /.list-pane -->
+
+            <!-- Resizer handle -->
+            <div class="resizer" id="resizer" title="Drag to resize inspector"></div>
+
+            <!-- ── Inspector (right pane, closed by default) ────── -->
+            <!-- Opens on first file click; push-style (list pane shrinks) -->
+            <!-- Docked: bg-content bg + 1px border-hairline left edge     -->
+            <aside class="inspector" id="inspector">
+              <!-- Preview area: 16:10, bg-raised bg, 8px radius, 1px border-subtle -->
+              <div class="inspector__preview" id="inspector-preview"
+                   style="
+                     background:var(--bg-raised);
+                     border:1px solid var(--border-subtle);
+                     border-radius:var(--r-card);
+                     box-shadow:var(--highlight-top);
+                     aspect-ratio:16/10;
+                     display:flex;align-items:center;justify-content:center;
+                     flex-shrink:0;overflow:hidden;
+                   ">
+                <!-- INTEGRATION: file preview rendered per type -->
+                <!-- Preview fail state:
+                <div style="display:flex;flex-direction:column;align-items:center;gap:8px;color:var(--text-tertiary)">
+                  <svg width="48" height="48" viewBox="0 0 48 48" fill="none"><rect x="8" y="4" width="28" height="40" rx="3" stroke="currentColor" stroke-width="1.5"/><path d="M32 4v12h8" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M16 24l16 0M16 31h10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+                  <span style="font:400 var(--t-compact) var(--font-ui)">Preview unavailable</span>
+                </div>
+                -->
+                <svg width="40" height="40" viewBox="0 0 40 40" fill="none" style="color:var(--text-tertiary)" aria-hidden="true"><rect x="5" y="3" width="23" height="33" rx="3" fill="var(--bg-raised)" stroke="var(--border-subtle)" stroke-width="1.2"/><path d="M28 3v10h10" stroke="var(--border-subtle)" stroke-width="1.2" stroke-linejoin="round"/><path d="M12 17h16M12 22h16M12 27h10" stroke="var(--text-tertiary)" stroke-width="1.5" stroke-linecap="round"/></svg>
+              </div>
+
+              <!-- Filename + path -->
+              <h3 class="inspector__filename" id="inspector-filename">design-brief.md</h3>
+              <p class="inspector__filepath mono" id="inspector-filepath" style="font:400 var(--t-compact) var(--font-mono);color:var(--text-tertiary);word-break:break-all;line-height:1.4;margin:0 0 8px">D:\design-brief.md</p>
+
+              <!-- Inspector tabs: Preview / Tags / History (underline style) -->
+              <div class="fp-tabs fp-inspector__tabs" style="border-bottom:1px solid var(--border-hairline);margin:0 -16px;padding:0 16px">
+                <button class="fp-tabs__item fp-inspector__tab fp-tabs__item--active"
+                        data-tab="preview" data-action="switch-inspector-tab">Preview</button>
+                <button class="fp-tabs__item fp-inspector__tab"
+                        data-tab="tags" data-action="switch-inspector-tab">Tags</button>
+                <button class="fp-tabs__item fp-inspector__tab"
+                        data-tab="history" data-action="switch-inspector-tab">History</button>
+                <div class="fp-tabs__indicator"></div>
+              </div>
+
+              <!-- Inspector panes -->
+              <div class="inspector__body" id="inspector-body" style="flex:1;overflow-y:auto;min-height:0;padding-top:12px">
+
+                <!-- Preview pane (metadata) -->
+                <div class="fp-inspector__pane" data-pane="preview">
+                  <div class="inspector__meta">
+                    <div class="inspector__meta-row">
+                      <span class="inspector__meta-key">Kind</span>
+                      <span class="inspector__meta-val">Markdown Document</span>
+                    </div>
+                    <div class="inspector__meta-row">
+                      <span class="inspector__meta-key">Size</span>
+                      <span class="inspector__meta-val mono" id="inspector-size">18.7 KB</span>
+                    </div>
+                    <div class="inspector__meta-row">
+                      <span class="inspector__meta-key">Modified</span>
+                      <span class="inspector__meta-val mono" id="inspector-modified">1 hr ago</span>
+                    </div>
+                    <div class="inspector__meta-row">
+                      <span class="inspector__meta-key">Created</span>
+                      <span class="inspector__meta-val mono" id="inspector-created">Apr 22, 2026</span>
+                    </div>
+                    <div class="inspector__meta-row">
+                      <span class="inspector__meta-key">Hash</span>
+                      <!-- INTEGRATION: xxh64 hash from GET /api/file/hash -->
+                      <span class="inspector__meta-val mono inspector__meta-val--hash" id="inspector-hash">—</span>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Tags pane -->
+                <div class="fp-inspector__pane" data-pane="tags" style="display:none">
+                  <div class="inspector__tags-wrap fp-chip-group" id="inspector-tags">
+                    <span class="fp-chip fp-chip--tinted">design</span>
+                    <span class="fp-chip">docs</span>
+                    <button class="fp-chip fp-chip--add" data-action="add-tag" id="btn-add-tag">+ Add tag</button>
+                  </div>
+                </div>
+
+                <!-- History pane -->
+                <div class="fp-inspector__pane" data-pane="history" style="display:none">
+                  <!-- INTEGRATION: file version history from GET /api/file/history -->
+                  <p style="font:400 var(--t-body) var(--font-ui);color:var(--text-tertiary);padding:8px 0">No history available yet.</p>
+                </div>
+
+                <!-- Multi-select state (comment in when multiple files selected):
+                <div class="fp-inspector__pane" data-pane="multi">
+                  <div style="font:500 var(--t-title-sm) var(--font-ui);color:var(--text-primary);margin-bottom:8px">
+                    <span id="inspector-multi-count">3</span> items selected
+                  </div>
+                  <div style="font:400 var(--t-compact) var(--font-mono);color:var(--text-secondary)">
+                    Total: <span id="inspector-multi-size">42.1 KB</span>
+                  </div>
+                </div>
+                -->
+
+              </div><!-- /.inspector__body -->
+
+              <!-- Bottom action row: 1px border-hairline top -->
+              <div class="inspector__actions" style="
+                display:flex;gap:8px;padding-top:12px;
+                border-top:1px solid var(--border-hairline);
+                flex-shrink:0">
+                <button class="fp-btn fp-btn--primary fp-btn--sm" data-action="open-file" id="btn-open-file">Open</button>
+                <button class="fp-btn fp-btn--secondary fp-btn--sm" data-action="open-file-with">Open with…</button>
+                <button class="fp-btn fp-btn--secondary fp-btn--sm" data-action="reveal-in-explorer" id="btn-reveal-file">Reveal</button>
+                <button class="fp-icon-btn fp-icon-btn--sm" data-action="inspector-more" title="More actions" style="margin-left:auto">
+                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><circle cx="7" cy="3" r="1.2" fill="currentColor"/><circle cx="7" cy="7" r="1.2" fill="currentColor"/><circle cx="7" cy="11" r="1.2" fill="currentColor"/></svg>
+                </button>
+              </div>
+
+            </aside><!-- /.inspector -->
+
+          </div><!-- /.content -->
+        </div><!-- /#screen-browser -->
 
         <!-- Screen: File Tree Canvas (A.4) -->
         <div class="screen screen--ftree" id="screen-ftree">
