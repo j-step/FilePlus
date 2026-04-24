@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<!--
+  FilePlus — Tray Popout Window
+  Standalone window anchored above the Windows system tray icon.
+  Dimensions: 380px wide × 500–600px tall.
+  Phase 6 implementation target.
+-->
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FilePlus</title>
+  <link rel="stylesheet" href="../src/styles.css" />
+  <style>
+    /* Tray-specific overrides — full spec in docs/design-tokens.md Section 31 */
+    body {
+      width: 380px;
+      /* height set by Electron BrowserWindow; range 500–600px */
+      background: var(--bg-backdrop);
+      border: 1px solid var(--border-strong);
+      border-radius: var(--r-tray); /* 12px */
+      box-shadow: var(--shadow-modal);
+      overflow: hidden;
+      margin: 0;
+    }
+  </style>
+</head>
+<body>
+  <!-- TODO: implement in Phase 6 per docs/design-brief.md A.14 -->
+
+  <!-- Header -->
+  <header class="tray-header" data-action="tray-header">
+    <!-- brand mark + title + icon buttons -->
+  </header>
+
+  <!-- Sub-tab toggle: Recent / Favorites -->
+  <div class="tray-tabs" data-action="tray-tab-switch">
+    <!-- segmented control -->
+  </div>
+
+  <!-- Active download block (shown only when downloading) -->
+  <div class="tray-active-download" style="display:none;" data-action="tray-active-download">
+    <!-- download progress -->
+  </div>
+
+  <!-- File list (Recent or Favorites) -->
+  <main class="tray-list" data-action="tray-list">
+    <!-- file rows with state dots -->
+  </main>
+
+  <!-- Currently moving section -->
+  <div class="tray-move-queue" data-action="tray-move-queue">
+    <!-- collapsible card with progress bar -->
+  </div>
+
+  <!-- Footer -->
+  <footer class="tray-footer" data-action="tray-footer">
+    <!-- icon buttons + Open FilePlus primary button + settings icon -->
+  </footer>
+
+  <script src="../src/actions.js"></script>
+  <script>
+    // TODO: implement tray popout logic in Phase 6
+  </script>
+</body>
+</html>
