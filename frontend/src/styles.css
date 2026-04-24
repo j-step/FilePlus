@@ -3074,6 +3074,43 @@ svg { flex-shrink: 0; }
 .fp-empty-state__title { font: 600 var(--t-title-sm) var(--font-ui); letter-spacing: var(--track-button); color: var(--text-primary); margin: 0; }
 .fp-empty-state__desc  { font: 400 var(--t-body) var(--font-ui); color: var(--text-secondary); max-width: 360px; line-height: 1.5; margin: 0; }
 
+/* ── A.2 Home screen ──────────────────────────────────────────────────────── */
+.home-section {
+  padding: var(--s-20) var(--s-20) var(--s-8);
+}
+.home-section__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--s-8);
+}
+.home-section__title {
+  font: 600 var(--t-title-sm) var(--font-ui);
+  letter-spacing: var(--track-button);
+  color: var(--text-primary);
+}
+/* Recent file rows have inline path + time + hover actions */
+.fp-row--recent {
+  display: grid;
+  grid-template-columns: 16px 1fr minmax(0, 160px) 120px auto auto;
+  gap: var(--s-8);
+  padding: 0 var(--s-14);
+}
+.fp-row--recent:hover { background: var(--bg-raised); box-shadow: var(--highlight-top); }
+.fp-row--recent:hover .fp-row__hover-actions { opacity: 1 !important; pointer-events: all !important; }
+.fp-row--recent.fp-row--selected {
+  background: var(--accent-wash);
+}
+/* 2px accent left bar on selected recent row */
+.fp-row--recent.fp-row--selected::before {
+  content: "";
+  position: absolute;
+  left: 0; top: 4px; bottom: 4px;
+  width: 2px;
+  background: var(--accent);
+  border-radius: 999px;
+}
+
 /* ── Reduced motion ────────────────────────────────────────────────────────── */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
