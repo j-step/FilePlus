@@ -2,26 +2,33 @@
 
 Uses xxHash (xxh64) for non-cryptographic, high-speed file hashing.
 Hashes are stored in the files table and used for deduplication.
-
-Phase 1 implementation target.
 """
 import logging
 from pathlib import Path
 
+import xxhash
+
 logger = logging.getLogger(__name__)
 
-# xxhash imported at call site to avoid hard failure if not yet installed
-# import xxhash
+_CHUNK = 65_536  # 64 KB read chunks
 
 
 def hash_file(path: Path) -> str:
     """Return the xxh64 hex digest of the file at *path*.
 
+    Reads in 64 KB chunks so large files never load fully into memory.
+
     Args:
         path: Absolute path to the file.
 
     Returns:
-        Hex string of the xxh64 hash (16 characters).
+        16-character hex string (xxh64 digest).
+
+    Raises:
+        OSError: If the file cannot be opened or read.
     """
-    # TODO: implement in Phase 1
-    pass
+    h = xxhash.xxh64()
+    with open(path, "rb") as f:
+        while chunk := f.read(_CHUNK):
+            h.update(chunk)
+    return h.hexdigest()

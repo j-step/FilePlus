@@ -8,3 +8,6 @@ aiosqlite
 pillow
 mutagen
 python-magic-bin
+anthropic
+pytest
+pytest-asyncio
