@@ -1,4 +1,4 @@
-"""Nexus file indexer — scans directories and populates the files table.
+"""FilePlus file indexer — scans directories and populates the files table.
 
 Responsible for:
 - Walking the filesystem and recording file metadata in SQLite

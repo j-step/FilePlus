@@ -1,4 +1,4 @@
-# Nexus File Explorer — Complete Feature List
+# FilePlus File Explorer — Complete Feature List
 
 ---
 

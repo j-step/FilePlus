@@ -1,4 +1,4 @@
-"""Nexus tagging engine — manages tags and auto-tagging rules.
+"""FilePlus tagging engine — manages tags and auto-tagging rules.
 
 Handles three tag types:
 - system: automatically assigned by the indexer (e.g. 'image', 'large-file')

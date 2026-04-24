@@ -1,4 +1,4 @@
-# Nexus — AI-Powered Windows File Explorer
+# FilePlus — AI-Powered Windows File Explorer
 
 **One-line description:** A Windows desktop file explorer replacement with local-first AI file organisation, tagging, smart folders, and a complete undo system.
 
@@ -26,17 +26,17 @@
 Electron renderer (index.html + app.js)
         │  fetch() only — no FS access
         ▼
-FastAPI backend (localhost:9876)  ←→  SQLite DB (nexus.db, WAL)
+FastAPI backend (localhost:9876)  ←→  SQLite DB (fileplus.db, WAL)
         │  path_guard() enforced
         ▼
-Filesystem (NEXUS_SANDBOX_PATH in dev, real FS in prod)
+Filesystem (FILEPLUS_SANDBOX_PATH in dev, real FS in prod)
 ```
 
 - **Backend is the single source of authority** for all business logic.
 - **SQLite is a cache** of filesystem state — it must always adapt to the real filesystem, never the other way around.
 - **Filesystem is reality.** If a file exists on disk but not in the DB, the DB is wrong.
 - All config comes from `.env` → `backend/config.py`. Nothing is ever hardcoded.
-- `SAFETY_MODE=true` (default) restricts ALL file operations to `NEXUS_SANDBOX_PATH`.
+- `SAFETY_MODE=true` (default) restricts ALL file operations to `FILEPLUS_SANDBOX_PATH`.
 
 ---
 

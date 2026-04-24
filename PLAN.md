@@ -1,6 +1,6 @@
-# Nexus Build Plan
+# FilePlus Build Plan
 
-Complete phase-by-phase implementation roadmap for the Nexus file explorer.
+Complete phase-by-phase implementation roadmap for the FilePlus file explorer.
 
 ---
 
@@ -19,13 +19,13 @@ Complete phase-by-phase implementation roadmap for the Nexus file explorer.
 - `index_file`: extract `filename`, `extension`, `size`, `os.stat().st_mtime` (as ISO string), call `hash_file`; upsert into `files` with `INSERT OR REPLACE`
 - `scan_directory`: call `path_guard()` first; use `os.walk()` to recurse; skip hidden files/dirs (names starting with `.`); call `index_file` for each file
 - `remove_stale_entries`: query all paths from DB; check each with `os.path.exists()`; delete missing ones
-- DB connection: use `async with aiosqlite.connect(NEXUS_DB_PATH)` — do not hold a global connection
+- DB connection: use `async with aiosqlite.connect(FILEPLUS_DB_PATH)` — do not hold a global connection
 
 **Dependencies:** None.
 
 **Testing criteria:**
 - `pytest tests/test_indexer.py` passes
-- Scan `C:\NexusTestSandbox` (populate it with test files first), query DB with `SELECT COUNT(*) FROM files`, verify count matches
+- Scan `C:\FilePlusTestSandbox` (populate it with test files first), query DB with `SELECT COUNT(*) FROM files`, verify count matches
 - Delete a test file, re-scan, verify it's removed from DB
 - Confirm `path_guard()` raises `ValueError` for paths outside sandbox
 
@@ -181,17 +181,17 @@ Complete phase-by-phase implementation roadmap for the Nexus file explorer.
 **Goal:** Watch a configured inbox directory and automatically classify new files.
 
 **Files to modify/create:**
-- `backend/watcher.py` — implement `NexusEventHandler`, `start_watcher()`, `stop_watcher()`
+- `backend/watcher.py` — implement `FilePlusEventHandler`, `start_watcher()`, `stop_watcher()`
 - `backend/api.py` — add `POST /watcher/start` and `POST /watcher/stop`
 - `frontend/src/app.js` — add Everything Folder badge/indicator
 
 **Key implementation details:**
-- `NexusEventHandler` extends `watchdog.events.FileSystemEventHandler`
+- `FilePlusEventHandler` extends `watchdog.events.FileSystemEventHandler`
 - `on_created`: call `index_file()`, then `classify()`, then `auto_tag()` for the new file
 - `on_moved`: update the `path` in the DB; log the move in `operations_log`
 - Observer runs in a daemon thread started by `start_watcher()`
 - Global `_observer` variable holds the Observer instance for `stop_watcher()` to join
-- Config: `NEXUS_EVERYTHING_PATH` (add to config.py and .env.example) — the watched inbox
+- Config: `FILEPLUS_EVERYTHING_PATH` (add to config.py and .env.example) — the watched inbox
 
 **Dependencies:** Phases 1, 2, 3, 4.
 
@@ -294,7 +294,7 @@ Complete phase-by-phase implementation roadmap for the Nexus file explorer.
 **Goal:** Produce a single installable package for Windows.
 
 **Key implementation details:**
-- **Backend**: use PyInstaller to bundle Python + all dependencies into a single `.exe` (or folder): `pyinstaller --onefile --name nexus-backend backend/api.py`
+- **Backend**: use PyInstaller to bundle Python + all dependencies into a single `.exe` (or folder): `pyinstaller --onefile --name fileplus-backend backend/api.py`
 - **Frontend**: use `electron-builder` to package the Electron app; configure it to launch the bundled backend `.exe` as a child process on startup
 - `electron-builder` config in `package.json` under `"build"` key: `target: "nsis"` for Windows installer
 - The packaged Electron app should: (1) start the backend child process, (2) wait for `/health` to respond, (3) then load `index.html`
@@ -308,4 +308,4 @@ Complete phase-by-phase implementation roadmap for the Nexus file explorer.
 
 ---
 
-*Last updated: Phase 0 scaffolding complete — 2026-04-08*
+*Last updated: Renamed from Nexus to FilePlus — 2026-04-23*

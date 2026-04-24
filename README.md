@@ -1,4 +1,4 @@
-# Nexus
+# FilePlus
 
 AI-powered Windows file explorer replacement with local-first organisation, tagging, smart folders, and a complete undo system.
 
@@ -23,8 +23,8 @@ AI-powered Windows file explorer replacement with local-first organisation, tagg
 
 ```bash
 # 1. Clone and enter the repo
-git clone <repo-url>
-cd nexus
+git clone https://github.com/j-step/FilePlus.git
+cd FilePlus
 
 # 2. Create and activate a virtual environment
 python -m venv .venv

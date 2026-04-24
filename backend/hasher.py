@@ -1,4 +1,4 @@
-"""Nexus file hasher — fast content fingerprinting via xxhash.
+"""FilePlus file hasher — fast content fingerprinting via xxhash.
 
 Uses xxHash (xxh64) for non-cryptographic, high-speed file hashing.
 Hashes are stored in the files table and used for deduplication.

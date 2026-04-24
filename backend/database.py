@@ -1,4 +1,4 @@
-"""Nexus database layer — async SQLite via aiosqlite with WAL mode.
+"""FilePlus database layer — async SQLite via aiosqlite with WAL mode.
 
 Provides init_db() to create all tables and handle schema migrations.
 Single source of indexed state; filesystem is the true source of reality.
@@ -6,7 +6,7 @@ Single source of indexed state; filesystem is the true source of reality.
 import aiosqlite
 import logging
 from pathlib import Path
-from backend.config import NEXUS_DB_PATH
+from backend.config import FILEPLUS_DB_PATH
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +86,7 @@ async def run_migrations(db: aiosqlite.Connection, current: int) -> None:
     pass
 
 
-async def init_db(db_path: Path = NEXUS_DB_PATH) -> None:
+async def init_db(db_path: Path = FILEPLUS_DB_PATH) -> None:
     """Create all tables and run pending migrations. Safe to call on every startup."""
     db_path.parent.mkdir(parents=True, exist_ok=True)
     async with aiosqlite.connect(db_path) as db:

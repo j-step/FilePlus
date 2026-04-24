@@ -1,4 +1,4 @@
-"""Nexus AI classifier — categorises files using local LLM or cloud fallback.
+"""FilePlus AI classifier — categorises files using local LLM or cloud fallback.
 
 Classification pipeline:
 1. Try local Ollama (llama3.1:8b) — zero cost, private

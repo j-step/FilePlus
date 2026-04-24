@@ -1,5 +1,5 @@
 /**
- * Nexus Electron main process.
+ * FilePlus Electron main process.
  *
  * Creates the application window, configures security settings,
  * and wires up the dev-tools shortcut.
@@ -16,7 +16,7 @@ function createWindow() {
     minWidth: 800,
     minHeight: 500,
     backgroundColor: '#0d0d0d',
-    title: 'Nexus',
+    title: 'FilePlus',
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,

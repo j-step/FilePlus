@@ -1,4 +1,4 @@
-"""Nexus operations log — records and reverses file operations.
+"""FilePlus operations log — records and reverses file operations.
 
 Every file operation (move, rename, tag change) is written here before
 it happens. This is the basis for per-operation and batch undo.

@@ -1,5 +1,5 @@
 {
-  "name": "nexus",
+  "name": "fileplus",
   "version": "0.1.0",
   "description": "AI-powered Windows file explorer replacement",
   "main": "electron.js",

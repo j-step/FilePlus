@@ -1,4 +1,4 @@
-"""Nexus file mover — safe, logged file move operations.
+"""FilePlus file mover — safe, logged file move operations.
 
 All moves are:
 1. Validated against path_guard() before execution

@@ -1,5 +1,5 @@
 /**
- * Nexus renderer — base UI logic.
+ * FilePlus renderer — base UI logic.
  *
  * Handles layout interactions (sidebar/preview toggles, view modes)
  * and will serve as the integration point for backend API calls.
@@ -80,7 +80,7 @@ document.addEventListener('keydown', e => {
 
 // ── Init ──────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
-  console.log('Nexus UI initialized');
+  console.log('FilePlus UI initialized');
   checkBackend();
   // Ping backend every 30s to keep status indicator current
   setInterval(checkBackend, 30_000);

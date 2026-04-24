@@ -1,4 +1,4 @@
-"""Nexus filesystem watcher — monitors the Everything Folder for new files.
+"""FilePlus filesystem watcher — monitors the Everything Folder for new files.
 
 Uses watchdog to watch a configured inbox directory. On file creation or
 modification, triggers the classification pipeline and queues the file
@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 # from watchdog.events import FileSystemEventHandler
 
 
-class NexusEventHandler:
+class FilePlusEventHandler:
     """Handles filesystem events from the watchdog Observer.
 
     Phase 7 implementation target.

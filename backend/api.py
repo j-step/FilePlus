@@ -1,4 +1,4 @@
-"""Nexus FastAPI backend — HTTP API served on localhost:9876.
+"""FilePlus FastAPI backend — HTTP API served on localhost:9876.
 
 The Electron frontend communicates exclusively through this API.
 All business logic lives here; the renderer never touches the filesystem directly.
@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Nexus API", version="0.1.0")
+app = FastAPI(title="FilePlus API", version="0.1.0")
 
 # Allow the Electron renderer (file:// origin) to call the API
 app.add_middleware(
@@ -103,7 +103,7 @@ async def undo_batch(batch_id: str):
 
 if __name__ == "__main__":
     import uvicorn
-    from backend.config import NEXUS_DB_PATH
+    from backend.config import FILEPLUS_DB_PATH
     from backend.database import init_db
     import asyncio
 
