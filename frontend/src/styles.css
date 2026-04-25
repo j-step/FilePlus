@@ -3898,6 +3898,94 @@ svg { flex-shrink: 0; }
 }
 .settings-about-row:last-child { border-bottom: none; }
 
+/* ══════════════════════════════════════════════════════════════════════════════
+   40e. EDGE CASE STYLE CLASSES (A.17)
+   ══════════════════════════════════════════════════════════════════════════════ */
+
+/* A.17 #1 — Vanished file row: strikethrough + 60% opacity + 1s fade-out */
+.fp-row--vanished {
+  opacity: 0.6;
+  text-decoration: line-through;
+  transition: opacity 1s var(--ease-out);
+  pointer-events: none;
+}
+.fp-row--vanished.fp-row--fade-out {
+  opacity: 0;
+}
+
+/* A.17 #3 — File drop target: tab receives a dragged file */
+.fp-tab--drop-target {
+  background: var(--accent-wash) !important;
+  border-color: var(--accent-edge) !important;
+  color: var(--accent) !important;
+}
+.fp-tab--drop-target::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border: 1.5px dashed var(--accent);
+  border-radius: 4px;
+  pointer-events: none;
+}
+
+/* A.17 #4 — Second instance: taskbar icon pulse */
+@keyframes fp-taskbar-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+.fp-taskbar-pulse {
+  animation: fp-taskbar-pulse 1.2s var(--ease-out) infinite;
+}
+
+/* A.17 #5 — Background scan amber pulse on tray icon */
+@keyframes fp-tray-scan-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(var(--warn-rgb, 234 179 8) / 0.6); }
+  50% { box-shadow: 0 0 0 4px rgba(var(--warn-rgb, 234 179 8) / 0); }
+}
+.fp-tray-icon--scanning {
+  animation: fp-tray-scan-pulse 2s ease-in-out infinite;
+}
+
+/* A.17 #10 — Invalid filename input */
+.fp-input--invalid {
+  border-color: var(--bad) !important;
+  box-shadow: var(--inset-recess), 0 0 0 3px color-mix(in oklch, var(--bad) 20%, transparent) !important;
+}
+.fp-field-error {
+  font: var(--t-small) var(--font-ui);
+  color: var(--bad);
+  margin-top: 4px;
+}
+
+/* A.17 #14 — Tab bar overflow (many tabs) */
+.fp-tabbar--overflow {
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.fp-tabbar--overflow::-webkit-scrollbar { display: none; }
+/* Fade gradient edges to signal clipped content */
+.fp-tabbar--overflow::before,
+.fp-tabbar--overflow::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 24px;
+  pointer-events: none;
+  z-index: 1;
+}
+.fp-tabbar--overflow::before {
+  left: 0;
+  background: linear-gradient(to right, var(--bg-chrome), transparent);
+}
+.fp-tabbar--overflow::after {
+  right: 0;
+  background: linear-gradient(to left, var(--bg-chrome), transparent);
+}
+
+/* A.17 #11 — Inspector preview fail (already commented inline in HTML) */
+/* .inspector__preview--fail → uses existing fp-empty-state pattern, no new class needed */
+
 /* ── Reduced motion ────────────────────────────────────────────────────────── */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {

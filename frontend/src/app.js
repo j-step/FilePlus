@@ -748,6 +748,23 @@ document.addEventListener('DOMContentLoaded', () => {
   const last = sessionStorage.getItem('fp-active-screen') || 'home';
   switchScreen(last);
 
+  // ── A.17 Edge case INTEGRATION stubs ──────────────────────────────────────
+  // #2  External folder missing on navigation → show fp-error-banner "This folder no longer exists"
+  //     INTEGRATION: catch 404/ENOENT from GET /api/ls?path=... → toggle .fp-error-banner in browser screen
+  // #6  Files added to Everything Folder while tray is closed → update count badge on next open
+  //     INTEGRATION: GET /api/ef/count on tray show event → update #tray-rb-badge
+  // #8  Drop file onto sidebar folder → accept drag event, call POST /api/move (requires approval)
+  //     INTEGRATION: sidebar items need dragover + drop listeners → openModal('move', {src, dest})
+  // #9  Inspector opened on a file that has been deleted externally → show preview fail state
+  //     INTEGRATION: GET /api/file/preview?path=... → on 404 show commented preview-fail HTML
+  // #12 Scan starts while one is already running → show toast "Scan already in progress"
+  //     INTEGRATION: POST /api/scan/start → if 409 response → showToast('Scan already running', 'warn')
+  // #13 Ollama model not downloaded when classification starts → show error banner with install CTA
+  //     INTEGRATION: GET /api/ai/status → if model_status !== 'ready' → show #banner-ai-offline
+
+  // Crash recovery check on startup
+  // INTEGRATION: on app init, call GET /api/crash-recovery → if crash_detected → uncomment + show #crash-modal-scrim
+
   // File row clicks (for existing rows in browser screen)
   document.querySelectorAll('.fp-row').forEach(row => {
     row.addEventListener('click', () => {
