@@ -731,6 +731,8 @@ svg { flex-shrink: 0; }
 .fp-palette__backdrop {
   position: fixed; inset: 0;
   background: rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
   animation: fp-fade-in var(--dur-fast) var(--ease-out);
 }
 @keyframes fp-fade-in { from { opacity: 0; } to { opacity: 1; } }
