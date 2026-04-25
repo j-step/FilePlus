@@ -2098,9 +2098,16 @@
   </div>
 </div>
 
-<!-- Context menu (shared template, filled per A.10 pass) -->
-<div class="fp-context-menu" id="context-menu" style="display:none" role="menu">
-  <!-- populated dynamically by app.js -->
+<!-- Context menu — A.10 (single shared instance, content populated by app.js CONTEXT_MENUS map)
+     Menu type determined by right-click target via getMenuTypeForTarget().
+     A.10.1 file / A.10.2 folder / A.10.3 empty-area / A.10.4 tab / A.10.5 sidebar-item
+     Chrome: bg-raised + border-subtle + 8px radius + highlight-top + shadow-popover + 4px padding + 180px min-width.
+     Items 28px tall, 5px radius, optional 14×14 leading icon, optional right kbd in t-small JetBrains Mono.
+     Hover: accent-wash + accent text/icon. Destructive: bad text + bad-wash hover.
+     Separator: 1px border-subtle, 4px margin.
+-->
+<div class="fp-context-menu" id="context-menu" style="display:none" role="menu" aria-label="Context menu">
+  <!-- populated dynamically by showContextMenu() in app.js -->
 </div>
 
 <!-- Confirmation modal (filled per A.11.3 pass) -->

@@ -106,7 +106,101 @@ function toggleTheme() {
   localStorage.setItem('fp-theme', next);
 }
 
-// ── Context menu ─────────────���──────────────────────────────────────────────────
+// ── Context menu ──────────────────────────────────────────────────────────────
+// A.10: five menu type definitions (items rendered dynamically into #context-menu)
+const CONTEXT_MENUS = {
+  // A.10.1 — File context menu
+  file: [
+    { label: 'Open',            action: 'cm-open',            icon: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="1" y="1" width="12" height="12" rx="2" stroke="currentColor" stroke-width="1.2"/><path d="M5 5l4 2-4 2V5z" fill="currentColor"/></svg>' },
+    { label: 'Open with…',      action: 'cm-open-with' },
+    { label: 'Open in new tab', action: 'cm-open-new-tab',    icon: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="1" y="3" width="12" height="10" rx="1.5" stroke="currentColor" stroke-width="1.2"/><path d="M1 6h12" stroke="currentColor" stroke-width="1.2"/></svg>' },
+    { label: 'Reveal in Browser', action: 'cm-reveal-browser' },
+    'sep',
+    { label: 'Cut',    action: 'cm-cut',    kbd: 'Ctrl+X' },
+    { label: 'Copy',   action: 'cm-copy',   kbd: 'Ctrl+C' },
+    { label: 'Paste',  action: 'cm-paste',  kbd: 'Ctrl+V' },
+    { label: 'Rename', action: 'cm-rename', kbd: 'F2' },
+    { label: 'Delete', action: 'cm-delete', kbd: 'Del', danger: true, icon: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M2 4h10M5 4V2.5h4V4M5.5 6v5M8.5 6v5M3 4l.8 8h6.4L11 4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>' },
+    'sep',
+    { label: 'Add tag…',         action: 'cm-add-tag',     icon: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M2 8.5L7.5 3l3.5 3.5L5.5 12 2 8.5z" stroke="currentColor" stroke-width="1.2"/><circle cx="5" cy="5" r="1" fill="currentColor"/></svg>' },
+    { label: 'Reclassify',       action: 'cm-reclassify' },
+    { label: 'Add to Favorites', action: 'cm-favorite' },
+    'sep',
+    { label: 'Compress to .zip',       action: 'cm-compress' },
+    { label: 'Properties',             action: 'cm-properties' },
+    { label: 'Show in Windows Explorer', action: 'cm-reveal-explorer' },
+  ],
+
+  // A.10.2 — Folder context menu
+  folder: [
+    { label: 'Open',             action: 'cm-open', icon: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M1 3.5a1 1 0 0 1 1-1h3l1 1.5H12a1 1 0 0 1 1 1V11a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V3.5z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>' },
+    { label: 'Open in new tab',  action: 'cm-open-new-tab' },
+    { label: 'Open in new window', action: 'cm-open-new-window' },
+    'sep',
+    { label: 'Cut',    action: 'cm-cut',    kbd: 'Ctrl+X' },
+    { label: 'Copy',   action: 'cm-copy',   kbd: 'Ctrl+C' },
+    { label: 'Paste',  action: 'cm-paste',  kbd: 'Ctrl+V' },
+    { label: 'Rename', action: 'cm-rename', kbd: 'F2' },
+    { label: 'Delete', action: 'cm-delete', kbd: 'Del', danger: true, icon: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M2 4h10M5 4V2.5h4V4M5.5 6v5M8.5 6v5M3 4l.8 8h6.4L11 4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>' },
+    'sep',
+    { label: 'New folder inside', action: 'cm-new-folder' },
+    { label: 'New file',          action: 'cm-new-file' },
+    'sep',
+    { label: 'Add to Favorites',   action: 'cm-favorite' },
+    { label: 'Pin to sidebar',     action: 'cm-pin-sidebar' },
+    { label: 'Reclassify contents', action: 'cm-reclassify-folder' },
+    'sep',
+    { label: 'Properties',              action: 'cm-properties' },
+    { label: 'Show in Windows Explorer', action: 'cm-reveal-explorer' },
+  ],
+
+  // A.10.3 — Empty area context menu
+  'empty-area': [
+    { label: 'New folder', action: 'cm-new-folder', icon: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M1 3.5a1 1 0 0 1 1-1h3l1 1.5H12a1 1 0 0 1 1 1V11a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V3.5z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>' },
+    { label: 'New file',   action: 'cm-new-file' },
+    { label: 'Paste',      action: 'cm-paste',      kbd: 'Ctrl+V' },
+    { label: 'Refresh',    action: 'cm-refresh',    kbd: 'F5' },
+    'sep',
+    { label: 'View → List',       action: 'cm-view-list' },
+    { label: 'View → Grid',       action: 'cm-view-grid' },
+    { label: 'Sort by → name',    action: 'cm-sort-name' },
+    { label: 'Sort by → modified', action: 'cm-sort-modified' },
+    { label: 'Group by → type',   action: 'cm-group-type' },
+    { label: 'Group by → none',   action: 'cm-group-none' },
+    'sep',
+    { label: 'Show hidden files', action: 'cm-toggle-hidden' },
+    { label: 'Properties',        action: 'cm-properties' },
+  ],
+
+  // A.10.4 — Tab context menu
+  tab: [
+    { label: 'New tab',            action: 'cm-new-tab' },
+    { label: 'Duplicate tab',      action: 'cm-duplicate-tab' },
+    { label: 'Close tab',          action: 'cm-close-tab',  kbd: 'Ctrl+W' },
+    { label: 'Close other tabs',   action: 'cm-close-other-tabs' },
+    'sep',
+    { label: 'Pin tab',            action: 'cm-pin-tab' },
+    { label: 'Rename tab',         action: 'cm-rename-tab' },
+  ],
+
+  // A.10.5 — Sidebar item context menu
+  'sidebar-item': [
+    { label: 'Open in new tab',    action: 'cm-open-new-tab' },
+    { label: 'Unpin',              action: 'cm-unpin-sidebar' },
+    { label: 'Pin to top',         action: 'cm-pin-top' },
+    { label: 'Rename label',       action: 'cm-rename-sidebar-item' },
+    { label: 'Remove from sidebar', action: 'cm-remove-sidebar', danger: true },
+  ],
+};
+
+function getMenuTypeForTarget(target) {
+  if (target.closest('.fp-tab')) return 'tab';
+  if (target.closest('.fp-sidebar__item, .fp-sidebar__section')) return 'sidebar-item';
+  if (target.closest('.fp-row[data-type="folder"], .ef-row[data-type="folder"]')) return 'folder';
+  if (target.closest('.fp-row, .ef-row, .rb-row, .home-row')) return 'file';
+  return 'empty-area';
+}
+
 const contextMenu = document.getElementById('context-menu');
 
 function showContextMenu(x, y, items) {
@@ -385,6 +479,14 @@ document.addEventListener('keydown', e => {
   if (e.altKey && e.key === 'ArrowLeft')  { e.preventDefault(); /* nav back stub */ }
   if (e.altKey && e.key === 'ArrowRight') { e.preventDefault(); /* nav forward stub */ }
   if (e.altKey && e.key === 'ArrowUp')    { e.preventDefault(); /* nav up stub */ }
+});
+
+// ── Context menu event listener (A.10) ────────────────────────────────────────
+document.addEventListener('contextmenu', e => {
+  e.preventDefault();
+  const type = getMenuTypeForTarget(e.target);
+  const items = CONTEXT_MENUS[type] || CONTEXT_MENUS.file;
+  showContextMenu(e.clientX, e.clientY, items);
 });
 
 // ── Init ───────────────────────────────────────────────────────────────────────
