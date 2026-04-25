@@ -1534,11 +1534,307 @@
 
         </div><!-- /#screen-scan-results -->
 
-        <!-- Screen: Review Bin (A.8) — filter on Everything Folder -->
+        <!-- ═══════════════════════════════════════════════════════════════
+             A.8  REVIEW BIN  (filter on Everything Folder — "needs review" state)
+             Reached via: sidebar badge, Ctrl+Shift+R
+        ═══════════════════════════════════════════════════════════════ -->
         <div class="screen screen--review-bin" id="screen-review-bin">
-          <!-- Filled in A.8 pass -->
-          <div style="padding:40px;color:var(--text-tertiary);font:500 var(--t-body) var(--font-ui)">Review Bin — A.8 pass pending</div>
-        </div>
+
+          <!-- Two-pane: list left, detail right (340px) -->
+          <div class="rb-layout">
+
+            <!-- ── List pane ─────────────────────────────────────────── -->
+            <div class="rb-list">
+
+              <!-- Header: A.8.2 -->
+              <div class="rb-list__header">
+                <h1 class="rb-list__title" style="font:600 var(--t-title) var(--font-ui);color:var(--text-primary);margin:0">
+                  Review Bin
+                  <!-- INTEGRATION: live count from GET /api/review-bin/count -->
+                  <span class="fp-mono" style="font:600 var(--t-title) var(--font-mono);color:var(--text-primary)">14</span>
+                  <span style="font:500 var(--t-title) var(--font-ui);color:var(--text-secondary)">files need a decision</span>
+                </h1>
+              </div>
+
+              <!-- Scrollable group list -->
+              <div class="rb-list__scroll">
+                <!-- INTEGRATION: groups from GET /api/review-bin?grouped=true -->
+
+                <!-- ─── Destination group: high confidence ─── -->
+                <div class="rb-group" data-group="album-mix-2024">
+                  <div class="rb-group__header">
+                    <!-- 16×16 folder icon in text-secondary -->
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style="flex-shrink:0;color:var(--text-secondary)">
+                      <path d="M2 4a1 1 0 0 1 1-1h3.5l1 1.5H13a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V4z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
+                    </svg>
+                    <span class="rb-group__dest" style="font:500 var(--t-body) var(--font-ui);color:var(--text-primary);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">→ /album-mix-2024</span>
+                    <span class="fp-mono rb-group__meta" style="font:400 var(--t-compact) var(--font-mono);color:var(--text-tertiary);flex-shrink:0;white-space:nowrap">3 files · avg 82%</span>
+                    <div class="rb-group__actions">
+                      <button class="fp-btn fp-btn--ghost fp-btn--sm" data-action="rb-group-review" data-group="album-mix-2024">Review each</button>
+                      <button class="fp-btn fp-btn--secondary fp-btn--sm" data-action="rb-group-approve-all" data-group="album-mix-2024">Approve all</button>
+                      <button class="rb-btn-danger-ghost" data-action="rb-group-reject-all" data-group="album-mix-2024">Reject all</button>
+                    </div>
+                  </div>
+
+                  <!-- File rows (26px each) — A.8.2 -->
+                  <!-- Active row (selected state) -->
+                  <div class="rb-row rb-row--selected" data-action="rb-select-file" data-file-id="f001" role="button" tabindex="0">
+                    <span class="rb-row__name" style="font:500 var(--t-body) var(--font-ui);color:var(--text-primary);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">beach_holiday_2024.jpg</span>
+                    <span class="rb-row__route fp-mono" style="font:400 11px var(--font-mono);color:var(--text-tertiary);flex-shrink:0">
+                      <span style="color:var(--bad);text-decoration:line-through">…\Downloads\beach_holiday…</span>
+                      <span style="margin:0 4px;color:var(--text-tertiary)">→</span>
+                      <span style="color:var(--good)">…\album-mix-2024\beach…</span>
+                    </span>
+                    <span class="fp-chip fp-chip--tinted" style="background:var(--accent-wash);border-color:var(--accent-edge);color:var(--accent);flex-shrink:0">move</span>
+                    <!-- Confidence bar: 4px, fill colored by score (82% = good) -->
+                    <div class="rb-conf-bar" title="82% confidence">
+                      <div class="rb-conf-bar__fill" style="width:82%;background:var(--good)"></div>
+                    </div>
+                    <button class="fp-icon-btn fp-icon-btn--sm" data-action="rb-row-overflow" data-file-id="f001" title="More options" style="flex-shrink:0">
+                      <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="3" r="1" fill="currentColor"/><circle cx="7" cy="7" r="1" fill="currentColor"/><circle cx="7" cy="11" r="1" fill="currentColor"/></svg>
+                    </button>
+                  </div>
+
+                  <div class="rb-row" data-action="rb-select-file" data-file-id="f002" role="button" tabindex="0">
+                    <span class="rb-row__name" style="font:500 var(--t-body) var(--font-ui);color:var(--text-primary);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">sunset_costa_rica.raw</span>
+                    <span class="rb-row__route fp-mono" style="font:400 11px var(--font-mono);color:var(--text-tertiary);flex-shrink:0">
+                      <span style="color:var(--bad);text-decoration:line-through">…\Camera\sunset_costa…</span>
+                      <span style="margin:0 4px;color:var(--text-tertiary)">→</span>
+                      <span style="color:var(--good)">…\album-mix-2024\sunset…</span>
+                    </span>
+                    <span class="fp-chip fp-chip--tinted" style="background:var(--accent-wash);border-color:var(--accent-edge);color:var(--accent);flex-shrink:0">move</span>
+                    <div class="rb-conf-bar" title="79% confidence">
+                      <div class="rb-conf-bar__fill" style="width:79%;background:var(--good)"></div>
+                    </div>
+                    <button class="fp-icon-btn fp-icon-btn--sm" data-action="rb-row-overflow" data-file-id="f002" title="More options" style="flex-shrink:0">
+                      <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="3" r="1" fill="currentColor"/><circle cx="7" cy="7" r="1" fill="currentColor"/><circle cx="7" cy="11" r="1" fill="currentColor"/></svg>
+                    </button>
+                  </div>
+
+                  <div class="rb-row" data-action="rb-select-file" data-file-id="f003" role="button" tabindex="0">
+                    <span class="rb-row__name" style="font:500 var(--t-body) var(--font-ui);color:var(--text-primary);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">weekend_trip_jan.mp4</span>
+                    <span class="rb-row__route fp-mono" style="font:400 11px var(--font-mono);color:var(--text-tertiary);flex-shrink:0">
+                      <span style="color:var(--bad);text-decoration:line-through">…\Videos\weekend…</span>
+                      <span style="margin:0 4px;color:var(--text-tertiary)">→</span>
+                      <span style="color:var(--good)">…\album-mix-2024\weekend…</span>
+                    </span>
+                    <span class="fp-chip fp-chip--tinted" style="background:var(--accent-wash);border-color:var(--accent-edge);color:var(--accent);flex-shrink:0">move</span>
+                    <div class="rb-conf-bar" title="85% confidence">
+                      <div class="rb-conf-bar__fill" style="width:85%;background:var(--good)"></div>
+                    </div>
+                    <button class="fp-icon-btn fp-icon-btn--sm" data-action="rb-row-overflow" data-file-id="f003" title="More options" style="flex-shrink:0">
+                      <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="3" r="1" fill="currentColor"/><circle cx="7" cy="7" r="1" fill="currentColor"/><circle cx="7" cy="11" r="1" fill="currentColor"/></svg>
+                    </button>
+                  </div>
+                </div><!-- /.rb-group -->
+
+                <!-- ─── Destination group: medium confidence ─── -->
+                <div class="rb-group" data-group="work-invoices-2025">
+                  <div class="rb-group__header">
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style="flex-shrink:0;color:var(--text-secondary)">
+                      <path d="M2 4a1 1 0 0 1 1-1h3.5l1 1.5H13a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V4z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
+                    </svg>
+                    <span class="rb-group__dest" style="font:500 var(--t-body) var(--font-ui);color:var(--text-primary);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">→ /work-invoices-2025</span>
+                    <span class="fp-mono rb-group__meta" style="font:400 var(--t-compact) var(--font-mono);color:var(--text-tertiary);flex-shrink:0;white-space:nowrap">5 files · avg 63%</span>
+                    <div class="rb-group__actions">
+                      <button class="fp-btn fp-btn--ghost fp-btn--sm" data-action="rb-group-review" data-group="work-invoices-2025">Review each</button>
+                      <button class="fp-btn fp-btn--secondary fp-btn--sm" data-action="rb-group-approve-all" data-group="work-invoices-2025">Approve all</button>
+                      <button class="rb-btn-danger-ghost" data-action="rb-group-reject-all" data-group="work-invoices-2025">Reject all</button>
+                    </div>
+                  </div>
+
+                  <div class="rb-row" data-action="rb-select-file" data-file-id="f004" role="button" tabindex="0">
+                    <span class="rb-row__name" style="font:500 var(--t-body) var(--font-ui);color:var(--text-primary);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">invoice_webflow_jan2025.pdf</span>
+                    <span class="rb-row__route fp-mono" style="font:400 11px var(--font-mono);color:var(--text-tertiary);flex-shrink:0">
+                      <span style="color:var(--bad);text-decoration:line-through">…\Desktop\invoice_webflow…</span>
+                      <span style="margin:0 4px;color:var(--text-tertiary)">→</span>
+                      <span style="color:var(--good)">…\work-invoices-2025\jan…</span>
+                    </span>
+                    <span class="fp-chip fp-chip--tinted" style="background:var(--accent-wash);border-color:var(--accent-edge);color:var(--accent);flex-shrink:0">move</span>
+                    <div class="rb-conf-bar" title="67% confidence">
+                      <div class="rb-conf-bar__fill" style="width:67%;background:var(--warn)"></div>
+                    </div>
+                    <button class="fp-icon-btn fp-icon-btn--sm" data-action="rb-row-overflow" data-file-id="f004" title="More options" style="flex-shrink:0">
+                      <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="3" r="1" fill="currentColor"/><circle cx="7" cy="7" r="1" fill="currentColor"/><circle cx="7" cy="11" r="1" fill="currentColor"/></svg>
+                    </button>
+                  </div>
+
+                  <!-- Rename action variant -->
+                  <div class="rb-row" data-action="rb-select-file" data-file-id="f005" role="button" tabindex="0">
+                    <span class="rb-row__name" style="font:500 var(--t-body) var(--font-ui);color:var(--text-primary);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">scan0047.pdf</span>
+                    <span class="rb-row__route fp-mono" style="font:400 11px var(--font-mono);color:var(--text-tertiary);flex-shrink:0">
+                      <span style="color:var(--bad);text-decoration:line-through">scan0047.pdf</span>
+                      <span style="margin:0 4px;color:var(--text-tertiary)">→</span>
+                      <span style="color:var(--good)">invoice_vercel_feb2025.pdf</span>
+                    </span>
+                    <!-- rename chip variant -->
+                    <span class="fp-chip fp-chip--tinted" style="background:var(--good-wash);border-color:var(--good-edge);color:var(--good);flex-shrink:0">rename</span>
+                    <div class="rb-conf-bar" title="58% confidence">
+                      <div class="rb-conf-bar__fill" style="width:58%;background:var(--warn)"></div>
+                    </div>
+                    <button class="fp-icon-btn fp-icon-btn--sm" data-action="rb-row-overflow" data-file-id="f005" title="More options" style="flex-shrink:0">
+                      <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="3" r="1" fill="currentColor"/><circle cx="7" cy="7" r="1" fill="currentColor"/><circle cx="7" cy="11" r="1" fill="currentColor"/></svg>
+                    </button>
+                  </div>
+                </div><!-- /.rb-group -->
+
+                <!-- ─── Uncertain group (confidence < 0.5) — A.8.2 special group ─── -->
+                <div class="rb-group rb-group--uncertain" data-group="uncertain">
+                  <div class="rb-group__header" style="background:var(--warn-wash);border:1px solid var(--warn-edge);box-shadow:var(--highlight-top);border-radius:var(--r-card) var(--r-card) 0 0;margin:0 -1px">
+                    <!-- 14×14 alert-triangle in warn -->
+                    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" style="flex-shrink:0;color:var(--warn)">
+                      <path d="M7 2L1.5 12h11L7 2z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>
+                      <path d="M7 6v3M7 10.5v.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+                    </svg>
+                    <span class="rb-group__dest" style="font:500 var(--t-body) var(--font-ui);color:var(--text-primary);flex:1;min-width:0">Uncertain — individual review</span>
+                    <span class="fp-mono rb-group__meta" style="font:400 var(--t-compact) var(--font-mono);color:var(--text-tertiary);flex-shrink:0;white-space:nowrap">6 files · avg 38%</span>
+                    <div class="rb-group__actions">
+                      <button class="fp-btn fp-btn--ghost fp-btn--sm" data-action="rb-group-review" data-group="uncertain">Review each</button>
+                      <button class="rb-btn-danger-ghost" data-action="rb-group-reject-all" data-group="uncertain">Reject all</button>
+                    </div>
+                  </div>
+
+                  <!-- flag action variant -->
+                  <div class="rb-row" data-action="rb-select-file" data-file-id="f010" role="button" tabindex="0">
+                    <span class="rb-row__name" style="font:500 var(--t-body) var(--font-ui);color:var(--text-primary);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">doc_untitled_final_v3.docx</span>
+                    <span class="rb-row__route fp-mono" style="font:400 11px var(--font-mono);color:var(--text-tertiary);flex-shrink:0">
+                      <span style="color:var(--bad);text-decoration:line-through">…\Desktop\doc_untitled…</span>
+                      <span style="margin:0 4px;color:var(--text-tertiary)">→</span>
+                      <span style="color:var(--good)">…\work-docs\contracts\…</span>
+                    </span>
+                    <!-- flag chip variant -->
+                    <span class="fp-chip fp-chip--tinted" style="background:var(--warn-wash);border-color:var(--warn-edge);color:var(--warn);flex-shrink:0">flag</span>
+                    <div class="rb-conf-bar" title="38% confidence">
+                      <div class="rb-conf-bar__fill" style="width:38%;background:var(--bad)"></div>
+                    </div>
+                    <button class="fp-icon-btn fp-icon-btn--sm" data-action="rb-row-overflow" data-file-id="f010" title="More options" style="flex-shrink:0">
+                      <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="3" r="1" fill="currentColor"/><circle cx="7" cy="7" r="1" fill="currentColor"/><circle cx="7" cy="11" r="1" fill="currentColor"/></svg>
+                    </button>
+                  </div>
+
+                  <div class="rb-row" data-action="rb-select-file" data-file-id="f011" role="button" tabindex="0">
+                    <span class="rb-row__name" style="font:500 var(--t-body) var(--font-ui);color:var(--text-primary);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">screenshot_2024-11-07.png</span>
+                    <span class="rb-row__route fp-mono" style="font:400 11px var(--font-mono);color:var(--text-tertiary);flex-shrink:0">
+                      <span style="color:var(--bad);text-decoration:line-through">…\Screenshots\screenshot…</span>
+                      <span style="margin:0 4px;color:var(--text-tertiary)">→</span>
+                      <span style="color:var(--good)">…\archive\screenshots\…</span>
+                    </span>
+                    <span class="fp-chip fp-chip--tinted" style="background:var(--accent-wash);border-color:var(--accent-edge);color:var(--accent);flex-shrink:0">move</span>
+                    <div class="rb-conf-bar" title="41% confidence">
+                      <div class="rb-conf-bar__fill" style="width:41%;background:var(--bad)"></div>
+                    </div>
+                    <button class="fp-icon-btn fp-icon-btn--sm" data-action="rb-row-overflow" data-file-id="f011" title="More options" style="flex-shrink:0">
+                      <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="3" r="1" fill="currentColor"/><circle cx="7" cy="7" r="1" fill="currentColor"/><circle cx="7" cy="11" r="1" fill="currentColor"/></svg>
+                    </button>
+                  </div>
+                </div><!-- /.rb-group rb-group--uncertain -->
+
+                <!-- Empty state (A.8.4) — shown when no files in queue -->
+                <!--
+                <div class="fp-empty" style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:60px 24px">
+                  <svg width="48" height="48" viewBox="0 0 48 48" fill="none" style="color:var(--good)"><circle cx="24" cy="24" r="20" stroke="currentColor" stroke-width="2"/><path d="M16 24l6 6 10-12" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  <h2 style="font:600 var(--t-title-sm) var(--font-ui);color:var(--text-primary);margin:0">Nothing to review.</h2>
+                  <p style="font:400 var(--t-body) var(--font-ui);color:var(--text-secondary);text-align:center;max-width:360px;margin:0">The AI is handling everything within your confidence threshold.</p>
+                </div>
+                -->
+
+              </div><!-- /.rb-list__scroll -->
+            </div><!-- /.rb-list -->
+
+            <!-- ── Detail pane (340px) — A.8.3 ───────────────────────── -->
+            <!-- INTEGRATION: populated when rb-select-file fires, data from GET /api/review-bin/file/:id -->
+            <div class="rb-detail" id="rb-detail-pane">
+
+              <div class="rb-detail__body">
+
+                <!-- Header -->
+                <div style="margin-bottom:var(--s-16)">
+                  <div style="font:400 var(--t-micro) var(--font-ui);color:var(--text-tertiary);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px">Proposed move</div>
+                  <h2 style="font:600 var(--t-title-sm) var(--font-ui);color:var(--text-primary);margin:0;word-break:break-all">beach_holiday_2024.jpg</h2>
+                </div>
+
+                <!-- Proposed route: − bad strikethrough / + good -->
+                <div class="rb-detail__route" style="display:flex;flex-direction:column;gap:6px;margin-bottom:var(--s-20);padding:var(--s-12);background:var(--bg-content);border:1px solid var(--border-subtle);border-radius:var(--r-card);box-shadow:var(--inset-recess)">
+                  <div style="display:flex;align-items:baseline;gap:8px">
+                    <span style="font:600 13px var(--font-mono);color:var(--bad);flex-shrink:0;width:12px">−</span>
+                    <span class="fp-mono" style="font:400 11px var(--font-mono);color:var(--bad);text-decoration:line-through;word-break:break-all;line-height:1.5">C:\Downloads\beach_holiday_2024.jpg</span>
+                  </div>
+                  <div style="display:flex;align-items:baseline;gap:8px">
+                    <span style="font:600 13px var(--font-mono);color:var(--good);flex-shrink:0;width:12px">+</span>
+                    <span class="fp-mono" style="font:400 11px var(--font-mono);color:var(--good);word-break:break-all;line-height:1.5">D:\Photos\album-mix-2024\beach_holiday_2024.jpg</span>
+                  </div>
+                </div>
+
+                <!-- Why section -->
+                <div style="margin-bottom:var(--s-20)">
+                  <h3 style="font:600 var(--t-title-sm) var(--font-ui);color:var(--text-primary);margin:0 0 8px">Why</h3>
+                  <!-- INTEGRATION: AI rationale from file classification result -->
+                  <p style="font:400 var(--t-body) var(--font-ui);color:var(--text-secondary);margin:0;line-height:1.6">EXIF data places this photo in Costa Rica, January 2024 — same trip as 18 other files already in <code class="fp-mono" style="font-size:11px">album-mix-2024</code>. Filename pattern and camera model match the batch.</p>
+                </div>
+
+                <!-- Confidence + tags -->
+                <div style="display:flex;align-items:center;gap:var(--s-12);margin-bottom:var(--s-20);flex-wrap:wrap">
+                  <span class="fp-mono" style="font:600 var(--t-body) var(--font-mono);color:var(--good)">82%</span>
+                  <span style="font:400 var(--t-small) var(--font-ui);color:var(--text-tertiary)">confidence</span>
+                  <div style="display:flex;gap:6px;flex-wrap:wrap">
+                    <span class="fp-chip">photography</span>
+                    <span class="fp-chip">vacation</span>
+                    <span class="fp-chip">2024</span>
+                  </div>
+                </div>
+
+                <!-- Similar past decisions -->
+                <div>
+                  <h3 style="font:600 var(--t-title-sm) var(--font-ui);color:var(--text-primary);margin:0 0 10px">Similar past decisions</h3>
+                  <!-- INTEGRATION: from GET /api/review-bin/similar/:file-id -->
+                  <div style="display:flex;flex-direction:column;gap:6px">
+
+                    <div style="display:flex;align-items:center;gap:8px;height:26px">
+                      <svg width="14" height="14" viewBox="0 0 14 14" fill="none" style="flex-shrink:0;color:var(--good)"><path d="M2 7l4 4 6-7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                      <span style="font:400 var(--t-body) var(--font-ui);color:var(--text-primary);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">costa_rica_2024_01.jpg → album-mix-2024</span>
+                      <span class="fp-mono" style="font:400 var(--t-small) var(--font-mono);color:var(--text-tertiary);flex-shrink:0">2 days ago</span>
+                    </div>
+
+                    <div style="display:flex;align-items:center;gap:8px;height:26px">
+                      <svg width="14" height="14" viewBox="0 0 14 14" fill="none" style="flex-shrink:0;color:var(--good)"><path d="M2 7l4 4 6-7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                      <span style="font:400 var(--t-body) var(--font-ui);color:var(--text-primary);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">trip_jan_photos_bulk.zip → album-mix-2024</span>
+                      <span class="fp-mono" style="font:400 var(--t-small) var(--font-mono);color:var(--text-tertiary);flex-shrink:0">5 days ago</span>
+                    </div>
+
+                    <div style="display:flex;align-items:center;gap:8px;height:26px">
+                      <!-- Rejected past decision -->
+                      <svg width="14" height="14" viewBox="0 0 14 14" fill="none" style="flex-shrink:0;color:var(--bad)"><path d="M2 2l10 10M12 2L2 12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+                      <span style="font:400 var(--t-body) var(--font-ui);color:var(--text-secondary);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">scan0022.jpg → album-mix-2024 (rejected)</span>
+                      <span class="fp-mono" style="font:400 var(--t-small) var(--font-mono);color:var(--text-tertiary);flex-shrink:0">1 wk ago</span>
+                    </div>
+
+                  </div>
+                </div>
+
+              </div><!-- /.rb-detail__body -->
+
+              <!-- Sticky footer: actions + keyboard hints — A.8.3 -->
+              <div class="rb-detail__footer">
+                <div class="rb-detail__actions">
+                  <button class="fp-btn fp-btn--danger fp-btn--sm" data-action="rb-reject" title="Reject this proposal">Reject</button>
+                  <button class="fp-btn fp-btn--secondary fp-btn--sm" data-action="rb-modify-path" title="Edit the proposed destination">Modify path…</button>
+                  <button class="fp-btn fp-btn--secondary fp-btn--sm" data-action="rb-snooze" title="Snooze for 7 days">Snooze 7d</button>
+                  <button class="fp-btn fp-btn--primary fp-btn--sm" data-action="rb-approve" title="Approve and queue move">Approve →</button>
+                </div>
+                <div class="rb-detail__kbd fp-mono">
+                  <span>←</span> reject
+                  <span style="margin:0 8px">·</span>
+                  <span>m</span> modify
+                  <span style="margin:0 8px">·</span>
+                  <span>→</span> approve
+                </div>
+              </div>
+
+            </div><!-- /.rb-detail -->
+
+          </div><!-- /.rb-layout -->
+
+        </div><!-- /#screen-review-bin -->
 
         <!-- Screen: Everything Folder (A.9) -->
         <div class="screen screen--everything" id="screen-everything">

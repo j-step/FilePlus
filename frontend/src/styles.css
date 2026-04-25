@@ -2328,6 +2328,152 @@ svg { flex-shrink: 0; }
 }
 
 /* =============================================================================
+   40b. REVIEW BIN  (A.8)
+   ============================================================================= */
+.rb-layout {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.rb-list {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--border-hairline);
+  overflow: hidden;
+}
+
+.rb-list__header {
+  padding: var(--s-16) var(--s-20);
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border-hairline);
+  display: flex;
+  align-items: center;
+}
+
+.rb-list__scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--s-8) 0;
+}
+
+.rb-group {
+  margin-bottom: var(--s-4);
+}
+
+.rb-group__header {
+  height: 32px;
+  padding: 0 var(--s-16);
+  display: flex;
+  align-items: center;
+  gap: var(--s-8);
+  background: var(--bg-chrome);
+  border-top: 1px solid var(--border-hairline);
+  border-bottom: 1px solid var(--border-hairline);
+}
+
+.rb-group__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--s-4);
+  flex-shrink: 0;
+}
+
+/* Danger ghost — `bad` text, hover `bad-wash` */
+.rb-btn-danger-ghost {
+  height: 24px;
+  padding: 0 var(--s-8);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  font: 500 var(--t-compact) var(--font-ui);
+  color: var(--bad);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  transition: background var(--dur-fast) var(--ease-ui), border-color var(--dur-fast) var(--ease-ui);
+}
+.rb-btn-danger-ghost:hover {
+  background: var(--bad-wash);
+  border-color: var(--bad-edge);
+}
+
+.rb-row {
+  height: 26px;
+  padding: 0 var(--s-16);
+  display: flex;
+  align-items: center;
+  gap: var(--s-8);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-ui);
+}
+.rb-row:hover { background: var(--bg-raised); }
+.rb-row--selected {
+  background: var(--accent-wash);
+  border-left: 2px solid var(--accent);
+}
+.rb-row--selected:hover { background: var(--accent-wash); }
+
+/* Confidence bar: 4px tall track with inset recess */
+.rb-conf-bar {
+  width: 52px;
+  height: 4px;
+  flex-shrink: 0;
+  border-radius: 999px;
+  background: var(--bg-pressed);
+  box-shadow: var(--inset-recess);
+  overflow: hidden;
+}
+.rb-conf-bar__fill {
+  height: 100%;
+  border-radius: 999px;
+  transition: width var(--dur-slide) var(--ease-ui);
+}
+
+/* Detail pane */
+.rb-detail {
+  width: 340px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-content);
+  overflow: hidden;
+}
+
+.rb-detail__body {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--s-20);
+  display: flex;
+  flex-direction: column;
+}
+
+.rb-detail__footer {
+  flex-shrink: 0;
+  border-top: 1px solid var(--border-hairline);
+  padding: var(--s-12) var(--s-16);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-8);
+  background: var(--bg-chrome);
+}
+
+.rb-detail__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--s-8);
+}
+
+.rb-detail__kbd {
+  font: 500 var(--t-small) var(--font-mono);
+  color: var(--text-tertiary);
+  text-align: center;
+}
+
+/* =============================================================================
    41. FILE LIST PANE
    ============================================================================= */
 .content {
