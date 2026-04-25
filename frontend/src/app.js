@@ -415,6 +415,10 @@ function showToast(message, variant = '') {
   container.appendChild(el);
 }
 
+// Expose for actions.js
+window.__appShowSnackbar = showSnackbar;
+window.__appShowToast    = showToast;
+
 // ── Backend health ─────────────────────��──────────────────────���───────────────
 async function checkBackend() {
   const el = document.getElementById('status-backend');
