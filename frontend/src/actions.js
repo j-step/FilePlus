@@ -10,7 +10,8 @@
  * Wire implementation in Phase 4+.
  */
 
-const API_BASE = 'http://localhost:9876';
+// API_BASE is declared in app.js. Actions that call apiFetch() reference it
+// directly — it is in scope by the time any action fires at runtime.
 
 /**
  * showSnackbar / showToast are defined in app.js (A.11 real implementations).
