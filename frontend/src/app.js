@@ -538,6 +538,117 @@ function showToast(message, variant = '') {
 window.__appShowSnackbar = showSnackbar;
 window.__appShowToast    = showToast;
 
+// ── File list loading ─────────────────────────────────────────────────────────
+
+const ICON_FILE = `<svg class="fp-row__icon" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="2" y="1" width="9" height="13" rx="1.5" fill="var(--bg-raised)" stroke="var(--border-subtle)" stroke-width="0.8"/><path d="M11 1v4h3" stroke="var(--border-subtle)" stroke-width="0.8" stroke-linejoin="round"/></svg>`;
+const ICON_IMG  = `<svg class="fp-row__icon" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="1" y="2" width="14" height="12" rx="1.5" fill="var(--bg-raised)" stroke="var(--border-subtle)" stroke-width="0.8"/><circle cx="5.5" cy="7" r="1.5" stroke="var(--text-tertiary)" stroke-width="0.8"/><path d="M1 12l4-4 4 4 2-2 4 2" stroke="var(--text-tertiary)" stroke-width="0.8" stroke-linejoin="round"/></svg>`;
+const ICON_TXT  = `<svg class="fp-row__icon" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="2" y="1" width="9" height="13" rx="1.5" fill="var(--bg-raised)" stroke="var(--border-subtle)" stroke-width="0.8"/><path d="M11 1v4h3" stroke="var(--border-subtle)" stroke-width="0.8" stroke-linejoin="round"/><path d="M5 6h6M5 8.5h6M5 11h4" stroke="var(--text-tertiary)" stroke-width="0.8" stroke-linecap="round"/></svg>`;
+
+const EXT_IMG   = new Set(['.jpg','.jpeg','.png','.gif','.bmp','.webp','.heic','.svg','.tiff']);
+const EXT_TXT   = new Set(['.txt','.md','.csv','.log','.json','.xml','.yaml','.yml','.toml','.ini','.cfg','.html','.css','.js','.ts','.py','.rs','.go','.java','.c','.cpp','.h']);
+
+function iconForExt(ext) {
+  if (EXT_IMG.has(ext)) return ICON_IMG;
+  if (EXT_TXT.has(ext)) return ICON_TXT;
+  return ICON_FILE;
+}
+
+function formatSize(bytes) {
+  if (bytes == null) return '—';
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+  if (bytes < 1073741824) return (bytes / 1048576).toFixed(1) + ' MB';
+  return (bytes / 1073741824).toFixed(2) + ' GB';
+}
+
+function formatModified(isoStr) {
+  if (!isoStr) return '—';
+  const d = new Date(isoStr);
+  if (isNaN(d)) return isoStr;
+  const now = new Date();
+  const diff = now - d;
+  const sameDay = d.toDateString() === now.toDateString();
+  if (sameDay) return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  if (diff < 86400000 * 2) return 'Yesterday';
+  if (diff < 86400000 * 7) return d.toLocaleDateString([], { weekday: 'short' });
+  return d.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function fileToRowHtml(file) {
+  return `<div class="fp-row" role="option" data-path="${escapeHtml(file.path)}" data-id="${file.id}">
+    ${iconForExt((file.extension || '').toLowerCase())}
+    <span class="fp-row__name">${escapeHtml(file.filename)}</span>
+    <span class="fp-row__size mono">${formatSize(file.size)}</span>
+    <span class="fp-row__modified mono">${formatModified(file.modified)}</span>
+    <div class="fp-row__tags"></div>
+  </div>`;
+}
+
+const EMPTY_STATE_HTML = `<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:12px;color:var(--text-tertiary);">
+  <svg width="48" height="48" viewBox="0 0 48 48" fill="none"><rect x="6" y="4" width="28" height="37" rx="4" stroke="currentColor" stroke-width="1.5"/><path d="M34 4v10h8" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M14 18h20M14 25h20M14 32h12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+  <span style="font:500 var(--t-title-sm) var(--font-ui)">No files indexed</span>
+  <span style="font:400 var(--t-body) var(--font-ui);text-align:center;max-width:220px">Trigger a scan to index this directory</span>
+</div>`;
+
+async function loadDirectory(path) {
+  const listScroll = document.getElementById('list-scroll');
+  if (!listScroll) return;
+
+  listScroll.innerHTML = `<div style="padding:24px;color:var(--text-tertiary);font:400 var(--t-body) var(--font-mono)">Loading…</div>`;
+  try {
+    const url = path
+      ? `${API_BASE}/files?path=${encodeURIComponent(path)}`
+      : `${API_BASE}/files`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const files = await res.json();
+    listScroll.innerHTML = files.length === 0
+      ? EMPTY_STATE_HTML
+      : files.map(fileToRowHtml).join('');
+    updateBreadcrumb(path);
+    const countEl = document.getElementById('status-file-count');
+    if (countEl) countEl.textContent = `${files.length} item${files.length !== 1 ? 's' : ''}`;
+  } catch (err) {
+    listScroll.innerHTML = `<div style="padding:24px;color:var(--bad)">Failed to load: ${escapeHtml(err.message)}</div>`;
+  }
+}
+
+function updateBreadcrumb(path) {
+  const crumb = document.getElementById('breadcrumb');
+  if (!crumb || !path) return;
+  const parts = path.replace(/\\/g, '/').split('/').filter(Boolean);
+  crumb.innerHTML = parts.map((part, i) => {
+    const partial = parts.slice(0, i + 1).join('\\');
+    return `<button class="fp-breadcrumb__item" data-action="navigate-path" data-path="${escapeHtml(partial + '\\')}">${escapeHtml(part)}</button>`;
+  }).join('<span class="fp-breadcrumb__sep">·</span>');
+}
+
+async function triggerScan(path) {
+  const body = path ? JSON.stringify({ path }) : '{}';
+  showToast('Scanning…', 'default');
+  try {
+    const res = await fetch(`${API_BASE}/scan`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body,
+      signal: AbortSignal.timeout(60000),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    showSnackbar(`Scan complete — ${data.count} file${data.count !== 1 ? 's' : ''} indexed`);
+    switchScreen('browser');
+    await loadDirectory(data.path);
+  } catch (err) {
+    showToast(`Scan failed: ${err.message}`, 'error');
+  }
+}
+
 // ── Backend health ─────────────────────��──────────────────────���───────────────
 async function checkBackend() {
   const el = document.getElementById('status-backend');
@@ -622,7 +733,7 @@ function initUnderlineTabs(container) {
 // ── data-action global delegation ─────────────────────────────────────────────
 // In-scope actions are handled here; out-of-scope show "not implemented" stub.
 const IN_SCOPE_ACTIONS = new Set([
-  'navigate-screen', 'navigate-path', 'switch-tab', 'close-tab', 'new-tab',
+  'navigate-screen', 'navigate-path', 'switch-tab', 'close-tab', 'new-tab', 'scan',
   'toggle-sidebar', 'toggle-inspector', 'toggle-theme', 'set-view-mode',
   'focus-search', 'filter-by-tag', 'open-tag-canvas', 'close-tag-canvas',
   'tag-canvas-select',
@@ -646,10 +757,12 @@ document.addEventListener('click', e => {
     case 'navigate-screen':
       switchScreen(btn.dataset.screen || btn.dataset.target);
       break;
-    case 'navigate-path':
+    case 'navigate-path': {
+      const navPath = btn.dataset.path;
       switchScreen('browser');
-      // INTEGRATION: load path from backend
+      if (navPath) loadDirectory(navPath);
       break;
+    }
     case 'switch-tab':
       switchScreen(btn.dataset.tabScreen);
       break;
@@ -659,6 +772,9 @@ document.addEventListener('click', e => {
       break;
     case 'new-tab':
       openNewTab();
+      break;
+    case 'scan':
+      triggerScan(btn.dataset.path || null);
       break;
     case 'toggle-sidebar':
       toggleSidebar();
@@ -1024,23 +1140,21 @@ document.addEventListener('DOMContentLoaded', () => {
   // Crash recovery check on startup
   // INTEGRATION: on app init, call GET /api/crash-recovery → if crash_detected → uncomment + show #crash-modal-scrim
 
-  // File row clicks (for existing rows in browser screen)
-  document.querySelectorAll('.fp-row').forEach(row => {
-    row.addEventListener('click', () => {
-      document.querySelectorAll('.fp-row').forEach(r => {
-        r.classList.remove('fp-row--selected');
-        r.removeAttribute('aria-selected');
-      });
-      row.classList.add('fp-row--selected');
-      row.setAttribute('aria-selected', 'true');
-      const name = row.querySelector('.fp-row__name')?.textContent;
-      const path = row.dataset.path;
-      const filenameEl = document.getElementById('inspector-filename');
-      const filepathEl = document.getElementById('inspector-filepath');
-      if (filenameEl && name) filenameEl.textContent = name;
-      if (filepathEl && path) filepathEl.textContent = path;
-      const statusSel = document.getElementById('status-selected');
-      if (statusSel) statusSel.textContent = name ? `"${name}" selected` : 'Nothing selected';
+  // Delegated file row click — works for both static and dynamically rendered rows
+  document.getElementById('list-scroll')?.addEventListener('click', e => {
+    const row = e.target.closest('.fp-row');
+    if (!row) return;
+    const listScroll = document.getElementById('list-scroll');
+    listScroll?.querySelectorAll('.fp-row').forEach(r => {
+      r.classList.remove('fp-row--selected');
+      r.removeAttribute('aria-selected');
     });
+    row.classList.add('fp-row--selected');
+    row.setAttribute('aria-selected', 'true');
+    const name = row.querySelector('.fp-row__name')?.textContent;
+    const path = row.dataset.path;
+    updateInspector('single', { name, path });
+    const statusSel = document.getElementById('status-selected');
+    if (statusSel) statusSel.textContent = name ? `"${name}" selected` : 'Nothing selected';
   });
 });
