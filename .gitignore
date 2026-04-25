@@ -31,3 +31,6 @@ venv/
 # OS
 .DS_Store
 Thumbs.db
+
+# Superpowers brainstorm session artifacts
+.superpowers/
