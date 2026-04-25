@@ -632,7 +632,7 @@ const IN_SCOPE_ACTIONS = new Set([
   'open-palette', 'close-palette', 'palette-set-mode',
   'modal-cancel', 'modal-confirm', 'modal-confirm-type',
   'ef-filter', 'ef-sort', 'ef-toggle-pause-ai', 'ef-toggle-moving-card',
-  'scan-config-switch-mode',
+  'scan-config-switch-mode', 'scan-baseline-confirm',
   'settings-nav', 'settings-set-theme', 'settings-set-density', 'settings-set-accent',
   'settings-set-font-scale', 'settings-reset-shortcuts',
 ]);
@@ -700,12 +700,15 @@ document.addEventListener('click', e => {
     case 'scan-config-switch-mode': {
       const conv = document.querySelector('.scan-conv');
       const form = document.querySelector('.scan-form');
-      const modeBtn = document.getElementById('btn-scan-switch-mode');
+      const switchBtn = document.getElementById('btn-scan-switch');
       if (!conv || !form) break;
-      const isConv = conv.style.display !== 'none';
-      conv.style.display = isConv ? 'none' : '';
-      form.style.display = isConv ? '' : 'none';
-      if (modeBtn) modeBtn.textContent = isConv ? 'Switch to chat' : 'Switch to structured form';
+      const goingToForm = btn.dataset.mode === 'form';
+      conv.style.display = goingToForm ? 'none' : '';
+      form.style.display = goingToForm ? '' : 'none';
+      if (switchBtn) {
+        switchBtn.textContent = goingToForm ? 'Switch to conversational' : 'Switch to structured form';
+        switchBtn.dataset.mode = goingToForm ? 'conversational' : 'form';
+      }
       break;
     }
     case 'ef-filter': {
@@ -717,6 +720,14 @@ document.addEventListener('click', e => {
       // INTEGRATION: filter file list by state
       break;
     }
+    case 'scan-baseline-confirm':
+      openModal('warn', {
+        title: 'Create baseline snapshot',
+        body: 'FilePlus will take a snapshot of your current folder structure before scanning. This lets you restore to the current state at any time. The snapshot runs in the background and takes about 30 seconds.',
+        confirmLabel: 'Create baseline & scan',
+        // INTEGRATION: onConfirm → POST /api/scan/start (after POST /api/snapshots/baseline)
+      });
+      break;
     case 'ef-sort':
       // INTEGRATION: sort file list by column
       break;
