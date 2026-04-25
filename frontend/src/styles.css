@@ -2474,6 +2474,145 @@ svg { flex-shrink: 0; }
 }
 
 /* =============================================================================
+   40c. EVERYTHING FOLDER  (A.9)
+   ============================================================================= */
+.ef-header {
+  padding: var(--s-12) var(--s-20);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-16);
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border-hairline);
+}
+
+.ef-header__left {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ef-header__right {
+  display: flex;
+  align-items: center;
+  gap: var(--s-12);
+  flex-shrink: 0;
+}
+
+.ef-pause-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--s-8);
+  cursor: pointer;
+  user-select: none;
+}
+
+/* Column header */
+.ef-col-header {
+  height: 28px;
+  padding: 0 var(--s-16);
+  display: flex;
+  align-items: center;
+  gap: var(--s-8);
+  background: var(--bg-chrome);
+  border-bottom: 1px solid var(--border-hairline);
+  flex-shrink: 0;
+}
+
+.ef-col {
+  font: 400 var(--t-compact) var(--font-ui);
+  color: var(--text-tertiary);
+  background: transparent;
+  border: none;
+  padding: 0;
+  cursor: default;
+  text-align: left;
+  display: flex;
+  align-items: center;
+}
+
+.ef-col--sortable { cursor: pointer; }
+.ef-col--sortable:hover { color: var(--text-secondary); }
+.ef-col--sorted-asc,
+.ef-col--sorted-desc { color: var(--text-primary); }
+
+.ef-col--name { flex: 1; min-width: 0; }
+.ef-col--landed { width: 90px; flex-shrink: 0; }
+.ef-col--state { width: 52px; flex-shrink: 0; }
+.ef-col--dest { width: 200px; flex-shrink: 0; }
+
+/* File list */
+.ef-list {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.ef-row {
+  height: 26px;
+  padding: 0 var(--s-16);
+  display: flex;
+  align-items: center;
+  gap: var(--s-8);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-ui);
+}
+.ef-row:hover { background: var(--bg-raised); box-shadow: var(--highlight-top); }
+.ef-row--error .ef-row__name { color: var(--text-secondary); }
+
+.ef-row__icon { flex-shrink: 0; width: 16px; height: 16px; display: flex; align-items: center; }
+.ef-row__name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ef-row__landed { width: 90px; flex-shrink: 0; white-space: nowrap; }
+.ef-row__state { width: 52px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; position: relative; }
+.ef-row__dest { width: 200px; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* State dot — 6px filled circle, semantic color */
+.ef-state-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  flex-shrink: 0;
+  display: inline-block;
+}
+
+/* Error tooltip: shown on dot hover */
+.ef-error-tooltip {
+  display: none;
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: calc(100% + 6px);
+  background: var(--bg-raised);
+  border: 1px solid var(--bad-edge);
+  border-radius: var(--r-sm);
+  box-shadow: var(--highlight-top), var(--shadow-popover);
+  padding: 4px 8px;
+  font: 400 var(--t-small) var(--font-ui);
+  color: var(--bad);
+  white-space: nowrap;
+  z-index: 20;
+  pointer-events: none;
+}
+.ef-state-dot--hoverable:hover + .ef-error-tooltip,
+.ef-row__state:hover .ef-error-tooltip { display: block; }
+
+/* "Currently moving" card */
+.ef-moving-card {
+  flex-shrink: 0;
+  margin: var(--s-8) var(--s-16);
+  padding: var(--s-12) var(--s-16);
+  cursor: pointer;
+}
+
+.ef-moving-card__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-8);
+  margin-bottom: 2px;
+}
+
+/* =============================================================================
    41. FILE LIST PANE
    ============================================================================= */
 .content {

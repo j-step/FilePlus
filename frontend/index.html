@@ -1836,11 +1836,187 @@
 
         </div><!-- /#screen-review-bin -->
 
-        <!-- Screen: Everything Folder (A.9) -->
+        <!-- ═══════════════════════════════════════════════════════════════
+             A.9  EVERYTHING FOLDER  (sidebar bottom-anchor screen)
+        ═══════════════════════════════════════════════════════════════ -->
         <div class="screen screen--everything" id="screen-everything">
-          <!-- Filled in A.9 pass -->
-          <div style="padding:40px;color:var(--text-tertiary);font:500 var(--t-body) var(--font-ui)">Everything Folder — A.9 pass pending</div>
-        </div>
+
+          <!-- Header — A.9.1 -->
+          <div class="ef-header">
+            <div class="ef-header__left">
+              <h1 style="font:600 var(--t-title) var(--font-ui);color:var(--text-primary);margin:0">Everything Folder</h1>
+              <!-- INTEGRATION: actual path from GET /api/settings/everything-folder -->
+              <span class="fp-mono" style="font:400 var(--t-compact) var(--font-mono);color:var(--text-tertiary)">C:\EverythingFolder</span>
+            </div>
+            <div class="ef-header__right">
+              <!-- Pause AI toggle: 32×18 track, inset-recess off, accent on, 14×14 thumb -->
+              <label class="ef-pause-toggle" title="Pause AI processing">
+                <input type="checkbox" id="ef-pause-ai" data-action="ef-toggle-pause-ai" style="position:absolute;opacity:0;width:0;height:0">
+                <div class="fp-toggle" id="ef-pause-toggle-track">
+                  <div class="fp-toggle__thumb"></div>
+                </div>
+                <span style="font:400 var(--t-body) var(--font-ui);color:var(--text-secondary)">Pause AI</span>
+              </label>
+              <!-- Filter chips: segmented control A / U / R / M / E -->
+              <div class="fp-segmented" id="ef-filter-bar" role="group" aria-label="Filter by state">
+                <button class="fp-segmented__opt active" data-action="ef-filter" data-filter="all">All</button>
+                <button class="fp-segmented__opt" data-action="ef-filter" data-filter="unprocessed">Unprocessed</button>
+                <button class="fp-segmented__opt" data-action="ef-filter" data-filter="needs-review">Needs Review</button>
+                <button class="fp-segmented__opt" data-action="ef-filter" data-filter="moving">Moving</button>
+                <button class="fp-segmented__opt" data-action="ef-filter" data-filter="errors">Errors</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Column header / sort controls — per v2 Section 24 / Browser pattern -->
+          <div class="ef-col-header">
+            <button class="ef-col ef-col--name ef-col--sortable ef-col--sorted-asc" data-action="ef-sort" data-col="name">
+              Name
+              <svg width="10" height="10" viewBox="0 0 10 10" fill="none" style="margin-left:4px;opacity:.6"><path d="M5 2v6M2 5l3-3 3 3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+            <button class="ef-col ef-col--landed ef-col--sortable" data-action="ef-sort" data-col="landed">
+              Landed
+            </button>
+            <div class="ef-col ef-col--state">State</div>
+            <button class="ef-col ef-col--dest ef-col--sortable" data-action="ef-sort" data-col="destination">
+              Proposed destination
+            </button>
+          </div>
+
+          <!-- Main file list — A.9.2 -->
+          <!-- INTEGRATION: rows from GET /api/everything-folder?filter=all&sort=name -->
+          <div class="ef-list" id="ef-file-list" role="list">
+
+            <!-- Row state: settled (no dot) -->
+            <div class="ef-row" data-action="ef-select-file" data-file-id="ef001" role="listitem" tabindex="0">
+              <div class="ef-row__icon">
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2" y="1" width="9" height="13" rx="1.5" fill="var(--bg-raised)" stroke="var(--border-subtle)" stroke-width="1"/><path d="M11 1v4h3" stroke="var(--border-subtle)" stroke-width="1" stroke-linejoin="round"/><path d="M4 7h7M4 9.5h7M4 12h4" stroke="var(--text-tertiary)" stroke-width="1" stroke-linecap="round"/></svg>
+              </div>
+              <span class="ef-row__name" style="font:500 var(--t-body) var(--font-ui);color:var(--text-primary)">project_proposal_final.pdf</span>
+              <span class="ef-row__landed fp-mono" style="font:400 var(--t-compact) var(--font-mono);color:var(--text-secondary)">3 hr ago</span>
+              <!-- Settled: no dot -->
+              <span class="ef-row__state"></span>
+              <span class="ef-row__dest fp-mono" style="font:400 var(--t-compact) var(--font-mono);color:var(--text-tertiary)">—</span>
+            </div>
+
+            <!-- Row state: unprocessed (grey dot) -->
+            <div class="ef-row" data-action="ef-select-file" data-file-id="ef002" role="listitem" tabindex="0">
+              <div class="ef-row__icon">
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="1" y="3" width="14" height="11" rx="1.5" fill="var(--bg-raised)" stroke="var(--border-subtle)" stroke-width="1"/><circle cx="6" cy="7.5" r="2" stroke="var(--text-tertiary)" stroke-width="1"/><path d="M1 10l4-3.5 4 3.5 2-2 4 2" stroke="var(--text-tertiary)" stroke-width="1" stroke-linejoin="round"/></svg>
+              </div>
+              <span class="ef-row__name" style="font:500 var(--t-body) var(--font-ui);color:var(--text-primary)">screenshot_2026-04-24.png</span>
+              <span class="ef-row__landed fp-mono" style="font:400 var(--t-compact) var(--font-mono);color:var(--text-secondary)">12 min ago</span>
+              <!-- Unprocessed: text-tertiary grey dot -->
+              <span class="ef-row__state">
+                <span class="ef-state-dot" style="background:var(--text-tertiary)" title="Unprocessed — queued for AI classification"></span>
+              </span>
+              <span class="ef-row__dest fp-mono" style="font:400 var(--t-compact) var(--font-mono);color:var(--text-tertiary)">Pending</span>
+            </div>
+
+            <!-- Row state: needs review (warn dot) -->
+            <div class="ef-row" data-action="ef-select-file" data-file-id="ef003" role="listitem" tabindex="0">
+              <div class="ef-row__icon">
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2" y="1" width="9" height="13" rx="1.5" fill="var(--bg-raised)" stroke="var(--border-subtle)" stroke-width="1"/><path d="M11 1v4h3" stroke="var(--border-subtle)" stroke-width="1" stroke-linejoin="round"/><path d="M4 7h7M4 9.5h7M4 12h4" stroke="var(--text-tertiary)" stroke-width="1" stroke-linecap="round"/></svg>
+              </div>
+              <span class="ef-row__name" style="font:500 var(--t-body) var(--font-ui);color:var(--text-primary)">doc_untitled_final_v3.docx</span>
+              <span class="ef-row__landed fp-mono" style="font:400 var(--t-compact) var(--font-mono);color:var(--text-secondary)">Yesterday</span>
+              <!-- Needs review: warn dot -->
+              <span class="ef-row__state">
+                <span class="ef-state-dot" style="background:var(--warn)" title="Needs review — low confidence classification"></span>
+              </span>
+              <span class="ef-row__dest fp-mono" style="font:400 var(--t-compact) var(--font-mono);color:var(--text-tertiary)">\work-docs\contracts</span>
+            </div>
+
+            <!-- Row state: moving / in progress (accent dot) -->
+            <div class="ef-row" data-action="ef-select-file" data-file-id="ef004" role="listitem" tabindex="0">
+              <div class="ef-row__icon">
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="1" y="3" width="14" height="11" rx="1.5" fill="var(--bg-raised)" stroke="var(--border-subtle)" stroke-width="1"/><circle cx="6" cy="7.5" r="2" stroke="var(--text-tertiary)" stroke-width="1"/><path d="M1 10l4-3.5 4 3.5 2-2 4 2" stroke="var(--text-tertiary)" stroke-width="1" stroke-linejoin="round"/></svg>
+              </div>
+              <span class="ef-row__name" style="font:500 var(--t-body) var(--font-ui);color:var(--text-primary)">beach_holiday_2024.jpg</span>
+              <span class="ef-row__landed fp-mono" style="font:400 var(--t-compact) var(--font-mono);color:var(--text-secondary)">2 days ago</span>
+              <!-- Moving: accent dot -->
+              <span class="ef-row__state">
+                <span class="ef-state-dot" style="background:var(--accent)" title="Moving — transfer in progress"></span>
+              </span>
+              <span class="ef-row__dest fp-mono" style="font:400 var(--t-compact) var(--font-mono);color:var(--text-tertiary)">\Photos\album-mix-2024</span>
+            </div>
+
+            <!-- Row state: error (bad dot) + hover tooltip placeholder -->
+            <div class="ef-row ef-row--error" data-action="ef-select-file" data-file-id="ef005" role="listitem" tabindex="0">
+              <div class="ef-row__icon">
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2" y="1" width="9" height="13" rx="1.5" fill="var(--bg-raised)" stroke="var(--border-subtle)" stroke-width="1"/><path d="M11 1v4h3" stroke="var(--border-subtle)" stroke-width="1" stroke-linejoin="round"/><path d="M4 7h7M4 9.5h7M4 12h4" stroke="var(--text-tertiary)" stroke-width="1" stroke-linecap="round"/></svg>
+              </div>
+              <span class="ef-row__name" style="font:500 var(--t-body) var(--font-ui);color:var(--text-primary)">budget_final_LOCKED.xlsx</span>
+              <span class="ef-row__landed fp-mono" style="font:400 var(--t-compact) var(--font-mono);color:var(--text-secondary)">3 days ago</span>
+              <!-- Error: bad dot — hover for tooltip (A.9.4) -->
+              <span class="ef-row__state" style="position:relative">
+                <!-- INTEGRATION: tooltip text from error log entry -->
+                <span class="ef-state-dot ef-state-dot--hoverable" style="background:var(--bad)" title="Error: file locked by another process. Retry or skip."></span>
+                <!-- Tooltip shell (shown on dot hover via JS or CSS :hover) -->
+                <div class="ef-error-tooltip" role="tooltip">File locked by another process</div>
+              </span>
+              <span class="ef-row__dest fp-mono" style="font:400 var(--t-compact) var(--font-mono);color:var(--text-tertiary)">\Finance\2025</span>
+            </div>
+
+            <div class="ef-row" data-action="ef-select-file" data-file-id="ef006" role="listitem" tabindex="0">
+              <div class="ef-row__icon">
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2" y="1" width="9" height="13" rx="1.5" fill="var(--bg-raised)" stroke="var(--border-subtle)" stroke-width="1"/><path d="M11 1v4h3" stroke="var(--border-subtle)" stroke-width="1" stroke-linejoin="round"/><path d="M4 7h7M4 9.5h7M4 12h4" stroke="var(--text-tertiary)" stroke-width="1" stroke-linecap="round"/></svg>
+              </div>
+              <span class="ef-row__name" style="font:500 var(--t-body) var(--font-ui);color:var(--text-primary)">invoice_stripe_march.pdf</span>
+              <span class="ef-row__landed fp-mono" style="font:400 var(--t-compact) var(--font-mono);color:var(--text-secondary)">1 hr ago</span>
+              <span class="ef-row__state">
+                <span class="ef-state-dot" style="background:var(--text-tertiary)" title="Unprocessed"></span>
+              </span>
+              <span class="ef-row__dest fp-mono" style="font:400 var(--t-compact) var(--font-mono);color:var(--text-tertiary)">Pending</span>
+            </div>
+
+            <!-- Empty state (A.9) — shown when folder is empty or filter returns zero rows -->
+            <!--
+            <div class="fp-empty" style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:60px 24px">
+              <svg width="48" height="48" viewBox="0 0 48 48" fill="none" style="color:var(--text-tertiary)"><rect x="4" y="8" width="40" height="32" rx="4" stroke="currentColor" stroke-width="2"/><path d="M4 18h40" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="13" r="2" fill="currentColor"/></svg>
+              <h2 style="font:600 var(--t-title-sm) var(--font-ui);color:var(--text-primary);margin:0">Everything Folder is empty.</h2>
+              <p style="font:400 var(--t-body) var(--font-ui);color:var(--text-secondary);text-align:center;max-width:360px;margin:0">Files will appear here as they arrive. Run a scan or drop files to get started.</p>
+            </div>
+            -->
+
+          </div><!-- /.ef-list -->
+
+          <!-- "Currently moving" card — A.9.3 -->
+          <!-- Default expanded when 1-3 active; collapsed if 4+ (handled by JS) -->
+          <div class="ef-moving-card fp-card" id="ef-moving-card" data-action="ef-toggle-moving-card">
+            <div class="ef-moving-card__header">
+              <span style="font:600 var(--t-title-sm) var(--font-ui);color:var(--text-primary)">
+                Moving
+                <!-- INTEGRATION: live counter from file mover queue -->
+                <span class="fp-mono" style="font:600 var(--t-title-sm) var(--font-mono)">1</span>
+                of
+                <span class="fp-mono" style="font:600 var(--t-title-sm) var(--font-mono)">3</span>
+                files
+              </span>
+              <button class="fp-icon-btn fp-icon-btn--sm" data-action="ef-toggle-moving-card" title="Collapse">
+                <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M2 4l4 4 4-4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </button>
+            </div>
+            <!-- 4px progress bar: accent fill on inset-recess track -->
+            <div class="fp-progress fp-progress--sm" style="margin:var(--s-8) 0">
+              <!-- INTEGRATION: width from current file transfer progress 0-100% -->
+              <div class="fp-progress__fill" style="width:62%"></div>
+            </div>
+            <!-- Current filename in t-compact JetBrains Mono -->
+            <!-- INTEGRATION: current file being transferred -->
+            <span class="fp-mono" style="font:400 var(--t-compact) var(--font-mono);color:var(--text-primary);display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">beach_holiday_2024.jpg → D:\Photos\album-mix-2024\</span>
+          </div><!-- /.ef-moving-card -->
+
+          <!-- Collapsed state of the moving card (swap via JS) -->
+          <!--
+          <div class="ef-moving-card-collapsed" data-action="ef-toggle-moving-card" style="height:28px;display:flex;align-items:center;padding:0 var(--s-16);gap:var(--s-8);border-top:1px solid var(--border-hairline);cursor:pointer;background:var(--bg-chrome)">
+            <span class="ef-state-dot" style="background:var(--accent)"></span>
+            <span style="font:400 var(--t-compact) var(--font-ui);color:var(--text-secondary)">Moving 1 of 3 files</span>
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="none" style="margin-left:auto;transform:rotate(-90deg)"><path d="M2 4l3 3 3-3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </div>
+          -->
+
+        </div><!-- /#screen-everything -->
 
         <!-- Screen: Settings (A.12) -->
         <div class="screen screen--settings" id="screen-settings">
