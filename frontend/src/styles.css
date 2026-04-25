@@ -3297,7 +3297,93 @@ svg { flex-shrink: 0; }
   will-change: transform;
 }
 .ftree-canvas.dragging { cursor: grabbing; }
-.ftree-world { position: absolute; top: 40px; left: 50%; transform: translateX(-50%); width: 1400px; }
+.ftree-world { position: absolute; top: 40px; left: 50%; transform: translateX(-50%); min-width: max-content; width: 1400px; }
+
+/* ── Canvas nodes (A.4) ──────────────────────────────────────────────────────── */
+.ftree-node {
+  position: absolute;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-6);
+  padding: var(--s-6) var(--s-10);
+  background: var(--bg-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-card);
+  box-shadow: var(--highlight-top), var(--shadow-card);
+  font: 500 var(--t-compact) var(--font-ui);
+  color: var(--text-primary);
+  white-space: nowrap;
+  cursor: default;
+  user-select: none;
+  transition: border-color var(--dur-fast), background var(--dur-fast);
+}
+.ftree-node:hover { background: var(--bg-pressed); }
+.ftree-node__name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.ftree-node__count { font-family: var(--font-mono); color: var(--text-tertiary); font-size: calc(var(--t-small)); }
+.ftree-node__expand-badge {
+  background: var(--bg-chrome);
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  color: var(--accent);
+  font: 500 var(--t-micro) var(--font-ui);
+  padding: 0 6px;
+  height: 16px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.ftree-node__expand-badge:hover { background: var(--accent-wash); border-color: var(--accent-edge); }
+
+/* Node connection line (SVG) — uses border-subtle color, 1px */
+.ftree-edge { stroke: var(--border-subtle); stroke-width: 1; fill: none; }
+
+/* A.4 node state classes */
+/* AI-suggested addition (new folder proposal) */
+.ftree-node--ai-add {
+  border-color: var(--good-edge);
+  background: var(--good-wash);
+}
+/* AI-suggested removal */
+.ftree-node--ai-remove {
+  border-color: var(--bad-edge);
+  background: var(--bad-wash);
+  opacity: 0.75;
+}
+.ftree-node--ai-remove .ftree-node__name { text-decoration: line-through; color: var(--text-tertiary); }
+/* AI-suggested move */
+.ftree-node--ai-move {
+  border-color: var(--warn-edge);
+  background: var(--warn-wash);
+}
+/* User-approved proposal */
+.ftree-node--approved {
+  border-color: var(--good-edge);
+  background: var(--good-wash);
+  box-shadow: var(--highlight-top), var(--shadow-card), 0 0 0 2px color-mix(in oklch, var(--good) 20%, transparent);
+}
+/* User-rejected proposal */
+.ftree-node--rejected {
+  border-color: var(--bad-edge);
+  opacity: 0.5;
+}
+.ftree-node--rejected .ftree-node__name { text-decoration: line-through; }
+/* Conflicting rename/move (two proposals clash) */
+.ftree-node--conflict {
+  border-color: var(--bad-edge);
+  background: var(--bad-wash);
+}
+.ftree-node--conflict::after {
+  content: "!";
+  position: absolute;
+  top: -6px; right: -6px;
+  width: 14px; height: 14px;
+  background: var(--bad);
+  color: #fff;
+  border-radius: 50%;
+  font: 700 10px var(--font-ui);
+  display: flex; align-items: center; justify-content: center;
+  line-height: 14px;
+  text-align: center;
+}
 
 /* =============================================================================
    A.1 REFINEMENT PASS — new and updated layout classes

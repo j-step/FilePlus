@@ -846,34 +846,26 @@
                               data-path="D:\">+14</button>
                     </div>
 
-                    <!-- AI-suggested addition -->
-                    <!--
-                    <div class="ftree-node ftree-node--ai-add" data-path="D:\Archive" style="top:20px;left:200px">
-                      <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M2 5a1 1 0 0 1 1-1h5l2 2h8a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V5z" fill="var(--good)" opacity=".4" stroke="var(--good-edge)" stroke-width="0.8"/></svg>
+                    <!-- AI-suggested addition (inline — shows ftree-node--ai-add state) -->
+                    <div class="ftree-node ftree-node--ai-add" data-path="D:\Archive" style="top:20px;left:220px"
+                         data-action="ftree-select-node">
+                      <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M2 5a1 1 0 0 1 1-1h5l2 2h8a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V5z" fill="var(--good)" opacity=".4" stroke="var(--good-edge)" stroke-width="0.8"/></svg>
                       <span class="ftree-node__name">Archive</span>
                       <span class="ftree-node__count mono">0 files</span>
-                      <span class="fp-chip fp-chip--good" style="font-size:10px;height:16px;padding:0 4px">new</span>
+                      <span class="fp-chip" style="font-size:10px;height:16px;padding:0 4px;background:var(--good-wash);border-color:var(--good-edge);color:var(--good)">new</span>
                     </div>
+                    <!-- ftree-node--ai-remove state:
+                    <div class="ftree-node ftree-node--ai-remove" data-path="D:\Old Stuff" data-action="ftree-select-node">...</div>
+                    ftree-node--ai-move state:
+                    <div class="ftree-node ftree-node--ai-move" data-path="D:\Downloads" data-action="ftree-select-node">...</div>
+                    ftree-node--conflict state:
+                    <div class="ftree-node ftree-node--conflict" data-path="D:\Docs" data-action="ftree-select-node">...</div>
+                    ftree-node--approved state:
+                    <div class="ftree-node ftree-node--approved" data-path="D:\Work" data-action="ftree-select-node">...</div>
+                    ftree-node--rejected state:
+                    <div class="ftree-node ftree-node--rejected" data-path="D:\Temp" data-action="ftree-select-node">...</div>
                     -->
 
-                    <!-- AI-suggested removal -->
-                    <!--
-                    <div class="ftree-node ftree-node--ai-remove" data-path="D:\Old Stuff">
-                      <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M2 5a1 1 0 0 1 1-1h5l2 2h8a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V5z" fill="var(--bad)" opacity=".2" stroke="var(--bad-edge)" stroke-width="0.8"/></svg>
-                      <span class="ftree-node__name" style="text-decoration:line-through">Old Stuff</span>
-                      <span class="ftree-node__count mono">147 files</span>
-                    </div>
-                    -->
-
-                    <!-- AI-suggested move (warn) -->
-                    <!--
-                    <div class="ftree-node ftree-node--ai-move" data-path="D:\Downloads">
-                      <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="..." .../></svg>
-                      <span class="ftree-node__name">Downloads</span>
-                      <span class="ftree-node__count mono">42 files</span>
-                      <svg class="ftree-node__move-arrow" width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M3 8h10M9 4l4 4-4 4" stroke="var(--warn)" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                    </div>
-                    -->
 
                     <!--
                     EMPTY STATE (no nodes):
