@@ -3659,6 +3659,245 @@ svg { flex-shrink: 0; }
   border-radius: 999px;
 }
 
+/* ══════════════════════════════════════════════════════════════════════════════
+   40d. SETTINGS (A.12)
+   ══════════════════════════════════════════════════════════════════════════════ */
+
+.settings-layout {
+  display: flex;
+  flex-direction: row;
+  flex: 1;
+  overflow: hidden;
+  height: 100%;
+}
+
+/* ── Nav rail ── */
+.settings-nav {
+  width: 200px;
+  flex-shrink: 0;
+  background: var(--bg-chrome);
+  border-right: 1px solid var(--border-hairline);
+  overflow-y: auto;
+  padding: var(--s-12) 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.settings-nav__section-label {
+  font: 500 var(--t-micro) var(--font-ui);
+  letter-spacing: var(--track-heading);
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  padding: var(--s-6) var(--s-14) var(--s-4);
+}
+.settings-nav__item {
+  display: flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 var(--s-14);
+  margin: 0 var(--s-6);
+  border-radius: 6px;
+  font: 500 var(--t-body) var(--font-ui);
+  color: var(--text-primary);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  position: relative;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+.settings-nav__item:hover { background: var(--bg-pressed); }
+.settings-nav__item--active {
+  background: var(--bg-pressed);
+  color: var(--text-primary);
+}
+.settings-nav__item--active::before {
+  content: "";
+  position: absolute;
+  left: calc(-1 * var(--s-6));
+  top: 4px;
+  bottom: 4px;
+  width: 2px;
+  background: var(--accent);
+  border-radius: 999px;
+}
+
+/* ── Content area ── */
+.settings-content {
+  flex: 1;
+  background: var(--bg-content);
+  overflow-y: auto;
+  padding: var(--s-24);
+}
+.settings-pane {
+  max-width: 640px;
+}
+.settings-pane__title {
+  font: 600 var(--t-title) var(--font-ui);
+  color: var(--text-primary);
+  margin-bottom: var(--s-20);
+}
+
+/* ── Setting cards & rows ── */
+.settings-card {
+  background: var(--bg-raised);
+  border: 1px solid var(--border-subtle);
+  box-shadow: var(--highlight-top), var(--shadow-card);
+  border-radius: 8px;
+  padding: var(--s-14);
+  margin-bottom: var(--s-12);
+}
+.settings-card__title {
+  font: 500 var(--t-compact) var(--font-ui);
+  letter-spacing: var(--track-heading);
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  margin-bottom: var(--s-12);
+}
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 36px;
+  gap: var(--s-12);
+}
+.settings-row--col {
+  flex-direction: column;
+  align-items: flex-start;
+  min-height: unset;
+  gap: var(--s-8);
+  padding: var(--s-8) 0;
+}
+.settings-row__label {
+  font: 500 var(--t-body) var(--font-ui);
+  color: var(--text-primary);
+}
+.settings-row__desc {
+  font: var(--t-compact) var(--font-ui);
+  color: var(--text-secondary);
+  margin-top: 2px;
+}
+.settings-sep {
+  height: 1px;
+  background: var(--border-hairline);
+  margin: 2px 0;
+}
+
+/* ── Slider value display ── */
+.settings-slider-value {
+  font: 500 var(--t-compact) var(--font-mono);
+  color: var(--text-secondary);
+  min-width: 32px;
+  text-align: right;
+}
+
+/* ── Radio rows ── */
+.settings-radio-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s-8);
+  cursor: pointer;
+  padding: var(--s-6) 0;
+  font: var(--t-body) var(--font-ui);
+  color: var(--text-primary);
+}
+.settings-radio-row input[type="radio"] {
+  accent-color: var(--accent);
+}
+
+/* ── Keyboard shortcut rows ── */
+.settings-kbd-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 32px;
+  padding: 0 var(--s-8);
+  border-bottom: 1px solid var(--border-hairline);
+  font: var(--t-body) var(--font-ui);
+  color: var(--text-primary);
+}
+.settings-kbd-row:last-child { border-bottom: none; }
+.settings-kbd-row:hover { background: var(--bg-raised); }
+.settings-kbd-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.settings-kbd-pill kbd {
+  background: var(--bg-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  padding: 1px 6px;
+  font: 500 var(--t-small) var(--font-mono);
+  color: var(--text-secondary);
+}
+
+/* ── Custom file types table ── */
+.settings-filetypes-header,
+.settings-filetypes-row {
+  display: grid;
+  grid-template-columns: 80px 80px 1fr 100px 48px;
+  align-items: center;
+  height: 32px;
+  padding: 0 var(--s-8);
+  gap: var(--s-8);
+}
+.settings-filetypes-header {
+  font: 500 var(--t-micro) var(--font-ui);
+  letter-spacing: var(--track-heading);
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  border-bottom: 1px solid var(--border-hairline);
+}
+.settings-filetypes-row {
+  border-bottom: 1px solid var(--border-hairline);
+  font: var(--t-compact) var(--font-ui);
+  color: var(--text-primary);
+}
+.settings-filetypes-row:last-child { border-bottom: none; }
+.settings-filetypes-row:hover { background: var(--bg-raised); }
+
+/* ── Accent swatch picker ── */
+.settings-accent-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-6);
+}
+.settings-accent-swatch {
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  border: 2px solid transparent;
+  cursor: pointer;
+  transition: border-color var(--dur-fast) var(--ease-out);
+}
+.settings-accent-swatch:hover,
+.settings-accent-swatch.active {
+  border-color: var(--text-primary);
+}
+
+/* ── About pane ── */
+.settings-about-logo {
+  display: flex;
+  align-items: center;
+  gap: var(--s-12);
+  margin-bottom: var(--s-20);
+}
+.settings-about-version {
+  font: var(--t-compact) var(--font-mono);
+  color: var(--text-tertiary);
+}
+.settings-about-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  height: 32px;
+  font: var(--t-body) var(--font-ui);
+  color: var(--text-primary);
+  border-bottom: 1px solid var(--border-hairline);
+}
+.settings-about-row:last-child { border-bottom: none; }
+
 /* ── Reduced motion ────────────────────────────────────────────────────────── */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {

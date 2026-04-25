@@ -180,8 +180,60 @@ function closeModal() {
 function toggleTheme() {
   const html = document.documentElement;
   const next = html.dataset.theme === 'dark' ? 'light' : 'dark';
-  html.dataset.theme = next;
-  localStorage.setItem('fp-theme', next);
+  applyTheme(next);
+}
+
+// ── Settings: pane switching + persistence ────────────────────────────────────
+
+function switchSettingsPane(pane) {
+  if (!pane) return;
+  document.querySelectorAll('.settings-nav__item').forEach(btn => {
+    btn.classList.toggle('settings-nav__item--active', btn.dataset.pane === pane);
+  });
+  document.querySelectorAll('.settings-pane').forEach(p => {
+    p.style.display = p.dataset.pane === pane ? '' : 'none';
+  });
+  sessionStorage.setItem('fp-settings-pane', pane);
+}
+
+function applyTheme(theme) {
+  document.documentElement.dataset.theme = theme;
+  localStorage.setItem('fp-theme', theme);
+  // Sync segmented controls in personalization pane
+  document.querySelectorAll('[data-action="settings-set-theme"]').forEach(btn => {
+    const v = btn.dataset.theme || btn.dataset.val;
+    btn.classList.toggle('active', v === theme);
+  });
+}
+
+function applyDensity(density) {
+  document.documentElement.dataset.density = density;
+  localStorage.setItem('fp-density', density);
+  document.querySelectorAll('[data-action="settings-set-density"]').forEach(btn => {
+    const v = btn.dataset.density || btn.dataset.val;
+    btn.classList.toggle('active', v === density);
+  });
+}
+
+function applyAccent(accent) {
+  if (!accent) return;
+  document.documentElement.style.setProperty('--accent', accent);
+  localStorage.setItem('fp-accent', accent);
+  document.querySelectorAll('[data-action="settings-set-accent"]').forEach(s => {
+    const v = s.dataset.accent || s.dataset.val;
+    s.classList.toggle('active', v === accent);
+  });
+}
+
+function restoreSettings() {
+  const theme = localStorage.getItem('fp-theme');
+  if (theme) applyTheme(theme);
+  const density = localStorage.getItem('fp-density');
+  if (density) applyDensity(density);
+  const accent = localStorage.getItem('fp-accent');
+  if (accent) applyAccent(accent);
+  const fontScale = localStorage.getItem('fp-font-scale');
+  if (fontScale) document.documentElement.style.fontSize = fontScale + 'px';
 }
 
 // ── Context menu ──────────────────────────────────────────────────────────────
@@ -458,6 +510,8 @@ const IN_SCOPE_ACTIONS = new Set([
   'modal-cancel', 'modal-confirm', 'modal-confirm-type',
   'ef-filter', 'ef-sort', 'ef-toggle-pause-ai', 'ef-toggle-moving-card',
   'scan-config-switch-mode',
+  'settings-nav', 'settings-set-theme', 'settings-set-density', 'settings-set-accent',
+  'settings-set-font-scale', 'settings-reset-shortcuts',
 ]);
 
 document.addEventListener('click', e => {
@@ -553,6 +607,27 @@ document.addEventListener('click', e => {
     }
     case 'open-review-bin':
       switchScreen('review-bin');
+      break;
+    case 'settings-nav':
+      switchSettingsPane(btn.dataset.pane);
+      break;
+    case 'settings-set-theme':
+      applyTheme(btn.dataset.theme || btn.dataset.val);
+      break;
+    case 'settings-set-density':
+      applyDensity(btn.dataset.density || btn.dataset.val);
+      break;
+    case 'settings-set-accent':
+      applyAccent(btn.dataset.accent || btn.dataset.val);
+      break;
+    case 'settings-set-font-scale': {
+      const scale = btn.dataset.scale;
+      document.documentElement.style.fontSize = scale + 'px';
+      localStorage.setItem('fp-font-scale', scale);
+      break;
+    }
+    case 'settings-reset-shortcuts':
+      // INTEGRATION: reset to default keybindings
       break;
     case 'switch-home-tab': {
       const container = btn.closest('.fp-tabs');
@@ -665,6 +740,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Init underline tabs in any pre-existing tab containers
   document.querySelectorAll('.fp-tabs').forEach(initUnderlineTabs);
+
+  // Restore persisted settings (theme, density, accent, font scale)
+  restoreSettings();
 
   // Restore last active screen
   const last = sessionStorage.getItem('fp-active-screen') || 'home';

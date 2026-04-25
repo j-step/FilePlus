@@ -2019,10 +2019,787 @@
         </div><!-- /#screen-everything -->
 
         <!-- Screen: Settings (A.12) -->
+        <!-- ═══════════════════════════════════════════════════════════════
+             A.12  SETTINGS  (two-column: 200px nav + content)
+        ═══════════════════════════════════════════════════════════════ -->
         <div class="screen screen--settings" id="screen-settings">
-          <!-- Filled in A.12 pass -->
-          <div style="padding:40px;color:var(--text-tertiary);font:500 var(--t-body) var(--font-ui)">Settings — A.12 pass pending</div>
-        </div>
+          <div class="settings-layout">
+
+            <!-- ── Settings nav (200px) ──────────────────────────────── -->
+            <nav class="settings-nav" role="navigation" aria-label="Settings sections">
+
+              <div class="settings-nav__section-label">Application</div>
+              <button class="settings-nav__item settings-nav__item--active" data-action="settings-nav" data-pane="personalization">Personalization</button>
+              <button class="settings-nav__item" data-action="settings-nav" data-pane="scan-index">Scan &amp; Index</button>
+              <button class="settings-nav__item" data-action="settings-nav" data-pane="everything-folder">Everything Folder</button>
+              <button class="settings-nav__item" data-action="settings-nav" data-pane="downloads">Downloads Folder</button>
+              <button class="settings-nav__item" data-action="settings-nav" data-pane="organization">Organization Engine</button>
+              <button class="settings-nav__item" data-action="settings-nav" data-pane="ai-config">AI Configuration</button>
+              <button class="settings-nav__item" data-action="settings-nav" data-pane="custom-types">Custom File Types</button>
+
+              <div class="settings-nav__section-label" style="margin-top:var(--s-12)">Account</div>
+              <button class="settings-nav__item" data-action="settings-nav" data-pane="privacy">Privacy</button>
+              <button class="settings-nav__item" data-action="settings-nav" data-pane="shortcuts">Shortcuts</button>
+              <button class="settings-nav__item" data-action="settings-nav" data-pane="data">Data</button>
+
+              <div class="settings-nav__section-label" style="margin-top:var(--s-12)">System</div>
+              <button class="settings-nav__item" data-action="settings-nav" data-pane="about">About</button>
+
+            </nav><!-- /.settings-nav -->
+
+            <!-- ── Settings content area ─────────────────────────────── -->
+            <div class="settings-content">
+
+              <!-- ────────────────────────────────────────────────────────
+                   A.12.1  PERSONALIZATION
+              ──────────────────────────────────────────────────────────── -->
+              <div class="settings-pane" id="settings-pane-personalization" data-pane="personalization">
+                <h2 class="settings-pane__title">Personalization</h2>
+
+                <div class="fp-card settings-card">
+                  <div class="settings-row">
+                    <div class="settings-row__label">Theme</div>
+                    <div class="fp-segmented" data-action="settings-theme">
+                      <button class="fp-segmented__opt active" data-value="dark" data-action="settings-set-theme" data-setting="theme" data-val="dark">Dark</button>
+                      <button class="fp-segmented__opt" data-value="light" data-action="settings-set-theme" data-setting="theme" data-val="light">Light</button>
+                      <button class="fp-segmented__opt" data-value="system" data-action="settings-set-theme" data-setting="theme" data-val="system">System</button>
+                    </div>
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row">
+                    <div class="settings-row__label">Accent palette</div>
+                    <div class="fp-segmented" data-action="settings-accent">
+                      <button class="fp-segmented__opt" data-action="settings-set-accent" data-val="lavender">Lavender</button>
+                      <button class="fp-segmented__opt" data-action="settings-set-accent" data-val="indigo">Indigo</button>
+                      <button class="fp-segmented__opt active" data-action="settings-set-accent" data-val="violet">Violet</button>
+                      <button class="fp-segmented__opt" data-action="settings-set-accent" data-val="sky">Sky</button>
+                      <button class="fp-segmented__opt" data-action="settings-set-accent" data-val="mix">Mix</button>
+                    </div>
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row">
+                    <div class="settings-row__label">Density</div>
+                    <div class="fp-segmented">
+                      <button class="fp-segmented__opt" data-action="settings-set-density" data-val="compact">Compact</button>
+                      <button class="fp-segmented__opt active" data-action="settings-set-density" data-val="comfortable">Comfortable</button>
+                      <button class="fp-segmented__opt" data-action="settings-set-density" data-val="spacious">Spacious</button>
+                    </div>
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row">
+                    <div class="settings-row__label">Tab style</div>
+                    <div class="fp-segmented">
+                      <button class="fp-segmented__opt active" data-action="settings-set-tab-style" data-val="compact">Compact</button>
+                      <button class="fp-segmented__opt" data-action="settings-set-tab-style" data-val="standard">Standard</button>
+                    </div>
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row">
+                    <div class="settings-row__label">
+                      Inspector default width
+                      <span class="fp-mono settings-slider-value" id="val-inspector-width">360px</span>
+                    </div>
+                    <input type="range" class="fp-slider" id="slider-inspector-width"
+                           min="280" max="520" value="360" step="8"
+                           data-action="settings-inspector-width"
+                           style="width:180px" />
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row">
+                    <div class="settings-row__label">Show file extensions</div>
+                    <label class="fp-toggle-label">
+                      <input type="checkbox" class="fp-toggle-input" checked data-action="settings-toggle" data-setting="show-extensions" />
+                      <span class="fp-toggle"><span class="fp-toggle__thumb"></span></span>
+                    </label>
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row">
+                    <div class="settings-row__label">View hidden files</div>
+                    <label class="fp-toggle-label">
+                      <input type="checkbox" class="fp-toggle-input" data-action="settings-toggle" data-setting="show-hidden" />
+                      <span class="fp-toggle"><span class="fp-toggle__thumb"></span></span>
+                    </label>
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row">
+                    <div class="settings-row__label">Open on click</div>
+                    <div class="fp-segmented">
+                      <button class="fp-segmented__opt active" data-action="settings-set-click-mode" data-val="single">Single-click</button>
+                      <button class="fp-segmented__opt" data-action="settings-set-click-mode" data-val="double">Double-click</button>
+                    </div>
+                  </div>
+                </div>
+              </div><!-- /#settings-pane-personalization -->
+
+              <!-- ────────────────────────────────────────────────────────
+                   A.12.2  SCAN & INDEX
+              ──────────────────────────────────────────────────────────── -->
+              <div class="settings-pane" id="settings-pane-scan-index" data-pane="scan-index" style="display:none">
+                <h2 class="settings-pane__title">Scan &amp; Index</h2>
+
+                <div class="fp-card settings-card">
+                  <div class="settings-row settings-row--col">
+                    <div class="settings-row__label">Indexed drives &amp; folders</div>
+                    <!-- INTEGRATION: list from config -->
+                    <div style="display:flex;flex-direction:column;gap:6px;margin-top:var(--s-8)">
+                      <div style="display:flex;align-items:center;gap:var(--s-8);height:32px;padding:0 var(--s-8);background:var(--bg-content);border:1px solid var(--border-subtle);border-radius:var(--r-sm)">
+                        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" style="color:var(--text-secondary)"><rect x="1" y="2" width="12" height="10" rx="1.5" stroke="currentColor" stroke-width="1.2"/><circle cx="5" cy="7" r="1.5" stroke="currentColor" stroke-width="1.1"/><path d="M1 9l3-3 3 3 2-2 4 2" stroke="currentColor" stroke-width="1.1"/></svg>
+                        <span class="fp-mono" style="font-size:11px;color:var(--text-primary);flex:1">C:\</span>
+                        <button class="fp-icon-btn fp-icon-btn--sm" data-action="settings-remove-drive" data-drive="C:">
+                          <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><path d="M1 1l8 8M9 1L1 9" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+                        </button>
+                      </div>
+                      <button class="fp-btn fp-btn--ghost fp-btn--sm" data-action="settings-add-drive" style="align-self:flex-start">+ Add drive or folder</button>
+                    </div>
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row settings-row--col">
+                    <div class="settings-row__label">Ignore patterns</div>
+                    <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:var(--s-8)">
+                      <span class="fp-chip">node_modules</span>
+                      <span class="fp-chip">.git</span>
+                      <span class="fp-chip">*.tmp</span>
+                      <span class="fp-chip">~$*</span>
+                      <button class="fp-chip" data-action="settings-add-ignore-pattern" style="background:transparent;border-style:dashed">+ Add pattern</button>
+                    </div>
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row">
+                    <div class="settings-row__label">File content analysis</div>
+                    <label class="fp-toggle-label">
+                      <input type="checkbox" class="fp-toggle-input" checked data-action="settings-toggle" data-setting="content-analysis" />
+                      <span class="fp-toggle"><span class="fp-toggle__thumb"></span></span>
+                    </label>
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row">
+                    <div class="settings-row__label">Re-scan schedule</div>
+                    <div class="fp-segmented">
+                      <button class="fp-segmented__opt active" data-action="settings-set-scan-schedule" data-val="manual">Manual</button>
+                      <button class="fp-segmented__opt" data-action="settings-set-scan-schedule" data-val="daily">Daily</button>
+                      <button class="fp-segmented__opt" data-action="settings-set-scan-schedule" data-val="weekly">Weekly</button>
+                    </div>
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row">
+                    <button class="fp-btn fp-btn--primary fp-btn--sm" data-action="navigate-screen" data-screen="scan-config">Run new scan</button>
+                  </div>
+                </div>
+              </div><!-- /#settings-pane-scan-index -->
+
+              <!-- ────────────────────────────────────────────────────────
+                   A.12.3  EVERYTHING FOLDER
+              ──────────────────────────────────────────────────────────── -->
+              <div class="settings-pane" id="settings-pane-everything-folder" data-pane="everything-folder" style="display:none">
+                <h2 class="settings-pane__title">Everything Folder</h2>
+
+                <div class="fp-card settings-card">
+                  <div class="settings-row">
+                    <div class="settings-row__label">Watched folder path</div>
+                    <div style="display:flex;align-items:center;gap:var(--s-8)">
+                      <input type="text" class="fp-input" value="C:\EverythingFolder" data-action="settings-set-ef-path" style="width:220px" />
+                      <button class="fp-btn fp-btn--secondary fp-btn--sm" data-action="settings-browse-ef-path">Browse…</button>
+                    </div>
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row">
+                    <div class="settings-row__label">
+                      Auto-sort confidence threshold
+                      <span class="fp-mono settings-slider-value" id="val-ef-confidence">80%</span>
+                    </div>
+                    <input type="range" class="fp-slider" id="slider-ef-confidence"
+                           min="0" max="100" value="80" step="5"
+                           data-action="settings-ef-confidence"
+                           style="width:180px" />
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row settings-row--col">
+                    <div class="settings-row__label">Excluded file types</div>
+                    <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:var(--s-8)">
+                      <span class="fp-chip">.lnk</span>
+                      <span class="fp-chip">.url</span>
+                      <button class="fp-chip" data-action="settings-add-ef-exclusion" style="background:transparent;border-style:dashed">+ Add type</button>
+                    </div>
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row">
+                    <div class="settings-row__label">
+                      Max time before forcing review prompt
+                      <span class="fp-mono settings-slider-value" id="val-ef-review-timeout">7d</span>
+                    </div>
+                    <input type="range" class="fp-slider" id="slider-ef-review-timeout"
+                           min="1" max="30" value="7" step="1"
+                           data-action="settings-ef-review-timeout"
+                           style="width:180px" />
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row settings-row--col">
+                    <div class="settings-row__label">Browser download redirect</div>
+                    <div style="display:flex;flex-direction:column;gap:6px;margin-top:var(--s-8)">
+                      <div class="settings-row" style="padding:0">
+                        <span style="display:flex;align-items:center;gap:var(--s-8);font:400 var(--t-body) var(--font-ui);color:var(--text-primary)">
+                          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style="flex-shrink:0"><circle cx="8" cy="8" r="6.5" stroke="var(--text-tertiary)" stroke-width="1"/><path d="M8 1.5C6 4 5.5 6 5.5 8s.5 4 2.5 6.5M8 1.5C10 4 10.5 6 10.5 8S10 12 8 14.5M1.5 8h13" stroke="var(--text-tertiary)" stroke-width="1" stroke-linecap="round"/></svg>
+                          Chrome
+                        </span>
+                        <label class="fp-toggle-label">
+                          <input type="checkbox" class="fp-toggle-input" checked data-action="settings-toggle" data-setting="redirect-chrome" />
+                          <span class="fp-toggle"><span class="fp-toggle__thumb"></span></span>
+                        </label>
+                      </div>
+                      <div class="settings-row" style="padding:0">
+                        <span style="font:400 var(--t-body) var(--font-ui);color:var(--text-primary)">Firefox</span>
+                        <label class="fp-toggle-label">
+                          <input type="checkbox" class="fp-toggle-input" data-action="settings-toggle" data-setting="redirect-firefox" />
+                          <span class="fp-toggle"><span class="fp-toggle__thumb"></span></span>
+                        </label>
+                      </div>
+                      <div class="settings-row" style="padding:0">
+                        <span style="font:400 var(--t-body) var(--font-ui);color:var(--text-primary)">Edge</span>
+                        <label class="fp-toggle-label">
+                          <input type="checkbox" class="fp-toggle-input" checked data-action="settings-toggle" data-setting="redirect-edge" />
+                          <span class="fp-toggle"><span class="fp-toggle__thumb"></span></span>
+                        </label>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row">
+                    <div class="settings-row__label">Notifications</div>
+                    <div class="fp-segmented">
+                      <button class="fp-segmented__opt" data-action="settings-set-ef-notify" data-val="off">Off</button>
+                      <button class="fp-segmented__opt active" data-action="settings-set-ef-notify" data-val="uncertain">Only uncertain</button>
+                      <button class="fp-segmented__opt" data-action="settings-set-ef-notify" data-val="all">Every sort</button>
+                    </div>
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row">
+                    <div class="settings-row__label">
+                      Stuck-detection threshold
+                      <span class="fp-mono settings-slider-value" id="val-ef-stuck">24h</span>
+                    </div>
+                    <input type="range" class="fp-slider" id="slider-ef-stuck"
+                           min="1" max="72" value="24" step="1"
+                           data-action="settings-ef-stuck"
+                           style="width:180px" />
+                  </div>
+                </div>
+              </div><!-- /#settings-pane-everything-folder -->
+
+              <!-- ────────────────────────────────────────────────────────
+                   A.12.4  DOWNLOADS FOLDER
+              ──────────────────────────────────────────────────────────── -->
+              <div class="settings-pane" id="settings-pane-downloads" data-pane="downloads" style="display:none">
+                <h2 class="settings-pane__title">Downloads Folder</h2>
+                <div class="fp-card settings-card">
+                  <div class="settings-row">
+                    <div class="settings-row__label">Path</div>
+                    <div style="display:flex;align-items:center;gap:var(--s-8)">
+                      <input type="text" class="fp-input" value="C:\Users\justi\Downloads" data-action="settings-set-dl-path" style="width:220px" />
+                      <button class="fp-btn fp-btn--secondary fp-btn--sm" data-action="settings-browse-dl-path">Browse…</button>
+                    </div>
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row">
+                    <div class="settings-row__label">Auto-purge after</div>
+                    <div class="fp-segmented">
+                      <button class="fp-segmented__opt" data-action="settings-set-purge-after" data-val="7d">7d</button>
+                      <button class="fp-segmented__opt active" data-action="settings-set-purge-after" data-val="30d">30d</button>
+                      <button class="fp-segmented__opt" data-action="settings-set-purge-after" data-val="60d">60d</button>
+                      <button class="fp-segmented__opt" data-action="settings-set-purge-after" data-val="never">Never</button>
+                    </div>
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row settings-row--col">
+                    <div class="settings-row__label">Purge action</div>
+                    <div style="display:flex;flex-direction:column;gap:var(--s-8);margin-top:var(--s-8)">
+                      <label class="settings-radio-row">
+                        <input type="radio" name="purge-action" value="recycle" checked data-action="settings-set-purge-action" />
+                        <span>Move to Recycle Bin (recommended)</span>
+                      </label>
+                      <label class="settings-radio-row" style="color:var(--bad)">
+                        <input type="radio" name="purge-action" value="hard-delete" data-action="settings-set-purge-action" />
+                        <span>Hard delete <span style="font:400 var(--t-compact) var(--font-ui);color:var(--text-tertiary)">— cannot be undone</span></span>
+                      </label>
+                    </div>
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row settings-row--col">
+                    <div class="settings-row__label">Excluded file types</div>
+                    <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:var(--s-8)">
+                      <span class="fp-chip">.iso</span>
+                      <span class="fp-chip">.dmg</span>
+                      <button class="fp-chip" data-action="settings-add-dl-exclusion" style="background:transparent;border-style:dashed">+ Add type</button>
+                    </div>
+                  </div>
+                </div>
+              </div><!-- /#settings-pane-downloads -->
+
+              <!-- ────────────────────────────────────────────────────────
+                   A.12.5  ORGANIZATION ENGINE
+              ──────────────────────────────────────────────────────────── -->
+              <div class="settings-pane" id="settings-pane-organization" data-pane="organization" style="display:none">
+                <h2 class="settings-pane__title">Organization Engine</h2>
+                <div class="fp-card settings-card">
+                  <div class="settings-row">
+                    <div class="settings-row__label">Autonomy level</div>
+                    <div class="fp-segmented">
+                      <button class="fp-segmented__opt" data-action="settings-set-autonomy" data-val="passive">Passive</button>
+                      <button class="fp-segmented__opt active" data-action="settings-set-autonomy" data-val="suggest">Suggest</button>
+                      <button class="fp-segmented__opt" data-action="settings-set-autonomy" data-val="proactive">Proactive</button>
+                    </div>
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row">
+                    <div class="settings-row__label">
+                      Suggestion batch size
+                      <span class="fp-mono settings-slider-value" id="val-batch-size">100</span>
+                    </div>
+                    <input type="range" class="fp-slider" id="slider-batch-size"
+                           min="10" max="500" value="100" step="10"
+                           data-action="settings-batch-size"
+                           style="width:180px" />
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row">
+                    <div class="settings-row__label">
+                      Review Bin confidence threshold
+                      <span class="fp-mono settings-slider-value" id="val-review-threshold">75%</span>
+                    </div>
+                    <input type="range" class="fp-slider" id="slider-review-threshold"
+                           min="0" max="100" value="75" step="5"
+                           data-action="settings-review-threshold"
+                           style="width:180px" />
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row">
+                    <div class="settings-row__label">Propose rename of files</div>
+                    <label class="fp-toggle-label">
+                      <input type="checkbox" class="fp-toggle-input" checked data-action="settings-toggle" data-setting="propose-rename" />
+                      <span class="fp-toggle"><span class="fp-toggle__thumb"></span></span>
+                    </label>
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row">
+                    <div class="settings-row__label">Propose deletion of duplicates</div>
+                    <label class="fp-toggle-label">
+                      <input type="checkbox" class="fp-toggle-input" data-action="settings-toggle" data-setting="propose-delete-dupes" />
+                      <span class="fp-toggle"><span class="fp-toggle__thumb"></span></span>
+                    </label>
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row">
+                    <div class="settings-row__label">Time Machine retention</div>
+                    <button class="fp-btn fp-btn--ghost fp-btn--sm" data-action="settings-nav" data-pane="data">View in Data settings →</button>
+                  </div>
+                </div>
+              </div><!-- /#settings-pane-organization -->
+
+              <!-- ────────────────────────────────────────────────────────
+                   A.12.6  AI CONFIGURATION
+              ──────────────────────────────────────────────────────────── -->
+              <div class="settings-pane" id="settings-pane-ai-config" data-pane="ai-config" style="display:none">
+                <h2 class="settings-pane__title">AI Configuration</h2>
+
+                <!-- Local LLM card -->
+                <div class="fp-card settings-card" style="margin-bottom:var(--s-12)">
+                  <div class="settings-card__title">Local LLM</div>
+                  <div class="settings-row">
+                    <!-- INTEGRATION: live Ollama status from GET /api/health/ollama -->
+                    <div style="display:flex;align-items:center;gap:var(--s-8)">
+                      <span class="ef-state-dot" style="background:var(--good)"></span>
+                      <span style="font:400 var(--t-body) var(--font-ui);color:var(--text-secondary)">Ollama detected — llama3.1:8b</span>
+                    </div>
+                    <button class="fp-btn fp-btn--secondary fp-btn--sm" data-action="ai-test-classification">Test classification</button>
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row">
+                    <div class="settings-row__label">Model</div>
+                    <select class="fp-input" data-action="settings-set-ollama-model" style="width:200px">
+                      <option value="llama3.1:8b" selected>llama3.1:8b</option>
+                      <option value="llama3.1:70b">llama3.1:70b</option>
+                      <option value="mistral:7b">mistral:7b</option>
+                    </select>
+                  </div>
+                </div>
+
+                <!-- Cloud (Claude API) card -->
+                <div class="fp-card settings-card" style="margin-bottom:var(--s-12)">
+                  <div class="settings-card__title">Cloud (Claude API)</div>
+                  <div class="settings-row">
+                    <div class="settings-row__label">Cloud inference</div>
+                    <label class="fp-toggle-label">
+                      <input type="checkbox" class="fp-toggle-input" checked data-action="settings-toggle" data-setting="cloud-inference" />
+                      <span class="fp-toggle"><span class="fp-toggle__thumb"></span></span>
+                    </label>
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row">
+                    <div class="settings-row__label">API key</div>
+                    <div style="position:relative;width:240px">
+                      <input type="password" id="settings-api-key" class="fp-input" placeholder="sk-ant-…" data-action="settings-set-api-key" style="width:100%;padding-right:36px" />
+                      <button class="fp-icon-btn fp-icon-btn--sm" id="btn-toggle-api-key" data-action="settings-toggle-api-key-visibility"
+                              style="position:absolute;right:4px;top:50%;transform:translateY(-50%)">
+                        <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><ellipse cx="6.5" cy="6.5" rx="5" ry="3" stroke="currentColor" stroke-width="1.2"/><circle cx="6.5" cy="6.5" r="1.5" stroke="currentColor" stroke-width="1.2"/></svg>
+                      </button>
+                    </div>
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row">
+                    <div class="settings-row__label">Default model</div>
+                    <div style="display:flex;flex-direction:column;gap:var(--s-8)">
+                      <label class="settings-radio-row">
+                        <input type="radio" name="claude-model" value="sonnet" checked data-action="settings-set-claude-model" />
+                        <span>claude-sonnet-4-6 (recommended)</span>
+                      </label>
+                      <label class="settings-radio-row">
+                        <input type="radio" name="claude-model" value="haiku" data-action="settings-set-claude-model" />
+                        <span>claude-haiku-4-5 (faster, cheaper)</span>
+                      </label>
+                    </div>
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row">
+                    <div class="settings-row__label">Monthly cost cap</div>
+                    <div style="position:relative">
+                      <span style="position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--text-tertiary);font:400 var(--t-body) var(--font-ui)">$</span>
+                      <input type="number" class="fp-input" value="10" min="0" max="999" data-action="settings-set-cost-cap" style="width:100px;padding-left:22px" />
+                    </div>
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row">
+                    <div class="settings-row__label">Monthly token cap</div>
+                    <input type="number" class="fp-input" value="1000000" data-action="settings-set-token-cap" style="width:120px" />
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row">
+                    <div class="settings-row__label">
+                      Temperature
+                      <span class="fp-mono settings-slider-value" id="val-temp">0.3</span>
+                    </div>
+                    <input type="range" class="fp-slider" id="slider-temp"
+                           min="0" max="10" value="3" step="1"
+                           data-action="settings-temperature"
+                           style="width:180px" />
+                  </div>
+                </div>
+
+                <!-- Usage stats card -->
+                <div class="fp-card settings-card">
+                  <div class="settings-card__title">Usage this month</div>
+                  <!-- INTEGRATION: from GET /api/ai/usage -->
+                  <div style="display:flex;gap:var(--s-24);margin-bottom:var(--s-12)">
+                    <div>
+                      <div style="font:400 var(--t-micro) var(--font-ui);color:var(--text-tertiary);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px">Tokens used</div>
+                      <div class="fp-mono" style="font:600 var(--t-display-sm) var(--font-mono);color:var(--text-primary)">247,312</div>
+                    </div>
+                    <div>
+                      <div style="font:400 var(--t-micro) var(--font-ui);color:var(--text-tertiary);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px">Est. cost</div>
+                      <div class="fp-mono" style="font:600 var(--t-display-sm) var(--font-mono);color:var(--text-primary)">$0.74</div>
+                    </div>
+                  </div>
+                  <!-- Local vs cloud stacked bar -->
+                  <div style="margin-bottom:var(--s-8)">
+                    <div style="display:flex;justify-content:space-between;font:400 var(--t-compact) var(--font-ui);color:var(--text-tertiary);margin-bottom:4px">
+                      <span>Local: 89%</span><span>Cloud: 11%</span>
+                    </div>
+                    <div class="fp-progress fp-progress--sm">
+                      <div class="fp-progress__fill" style="width:89%"></div>
+                    </div>
+                  </div>
+                  <button class="fp-btn fp-btn--ghost fp-btn--sm" data-action="ai-reset-stats">Reset stats</button>
+                </div>
+              </div><!-- /#settings-pane-ai-config -->
+
+              <!-- ────────────────────────────────────────────────────────
+                   A.12.7  CUSTOM FILE TYPES
+              ──────────────────────────────────────────────────────────── -->
+              <div class="settings-pane" id="settings-pane-custom-types" data-pane="custom-types" style="display:none">
+                <h2 class="settings-pane__title">Custom File Types</h2>
+                <div class="fp-card settings-card" style="padding:0;overflow:hidden">
+                  <!-- Table header -->
+                  <div class="settings-filetypes-row settings-filetypes-row--header">
+                    <span class="settings-filetypes-col settings-filetypes-col--ext">Extension</span>
+                    <span class="settings-filetypes-col settings-filetypes-col--cat">Category</span>
+                    <span class="settings-filetypes-col settings-filetypes-col--tags">Default tags</span>
+                    <span class="settings-filetypes-col settings-filetypes-col--desc">Description</span>
+                    <span class="settings-filetypes-col settings-filetypes-col--act"></span>
+                  </div>
+                  <!-- INTEGRATION: rows from GET /api/custom-file-types -->
+                  <div class="settings-filetypes-row">
+                    <span class="settings-filetypes-col settings-filetypes-col--ext fp-mono">.sketch</span>
+                    <span class="settings-filetypes-col settings-filetypes-col--cat">Design</span>
+                    <span class="settings-filetypes-col settings-filetypes-col--tags">
+                      <span class="fp-chip" style="padding:1px 6px;font-size:10px">design</span>
+                      <span class="fp-chip" style="padding:1px 6px;font-size:10px">figma</span>
+                    </span>
+                    <span class="settings-filetypes-col settings-filetypes-col--desc" style="color:var(--text-secondary)">Sketch design files</span>
+                    <span class="settings-filetypes-col settings-filetypes-col--act">
+                      <button class="fp-icon-btn fp-icon-btn--sm" data-action="settings-edit-filetype"><svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M8.5 1.5l2 2-7 7H1.5v-2l7-7z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg></button>
+                      <button class="fp-icon-btn fp-icon-btn--sm" data-action="settings-delete-filetype"><svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M1.5 3h9M4 3V1.5h4V3M4.5 5v4M7.5 5v4M2.5 3l.8 7h5.4l.8-7" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+                    </span>
+                  </div>
+                  <div class="settings-filetypes-row">
+                    <span class="settings-filetypes-col settings-filetypes-col--ext fp-mono">.fig</span>
+                    <span class="settings-filetypes-col settings-filetypes-col--cat">Design</span>
+                    <span class="settings-filetypes-col settings-filetypes-col--tags">
+                      <span class="fp-chip" style="padding:1px 6px;font-size:10px">design</span>
+                    </span>
+                    <span class="settings-filetypes-col settings-filetypes-col--desc" style="color:var(--text-secondary)">Figma local files</span>
+                    <span class="settings-filetypes-col settings-filetypes-col--act">
+                      <button class="fp-icon-btn fp-icon-btn--sm" data-action="settings-edit-filetype"><svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M8.5 1.5l2 2-7 7H1.5v-2l7-7z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg></button>
+                      <button class="fp-icon-btn fp-icon-btn--sm" data-action="settings-delete-filetype"><svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M1.5 3h9M4 3V1.5h4V3M4.5 5v4M7.5 5v4M2.5 3l.8 7h5.4l.8-7" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+                    </span>
+                  </div>
+                </div>
+                <div style="display:flex;gap:var(--s-8);margin-top:var(--s-12)">
+                  <button class="fp-btn fp-btn--primary fp-btn--sm" data-action="settings-add-filetype">Add file type</button>
+                  <button class="fp-btn fp-btn--secondary fp-btn--sm" data-action="navigate-screen" data-screen="scan-config">Re-run setup conversation</button>
+                </div>
+              </div><!-- /#settings-pane-custom-types -->
+
+              <!-- ────────────────────────────────────────────────────────
+                   A.12.8  PRIVACY
+              ──────────────────────────────────────────────────────────── -->
+              <div class="settings-pane" id="settings-pane-privacy" data-pane="privacy" style="display:none">
+                <h2 class="settings-pane__title">Privacy</h2>
+                <div class="fp-card settings-card">
+                  <div class="settings-row">
+                    <div class="settings-row__label">Cloud inference (mirrors AI Config)</div>
+                    <label class="fp-toggle-label">
+                      <input type="checkbox" class="fp-toggle-input" checked data-action="settings-toggle" data-setting="cloud-inference" />
+                      <span class="fp-toggle"><span class="fp-toggle__thumb"></span></span>
+                    </label>
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row">
+                    <div class="settings-row__label">Analytics</div>
+                    <label class="fp-toggle-label">
+                      <input type="checkbox" class="fp-toggle-input" data-action="settings-toggle" data-setting="analytics" />
+                      <span class="fp-toggle"><span class="fp-toggle__thumb"></span></span>
+                    </label>
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row">
+                    <div class="settings-row__label">Redact file contents from logs</div>
+                    <label class="fp-toggle-label">
+                      <input type="checkbox" class="fp-toggle-input" checked data-action="settings-toggle" data-setting="redact-logs" />
+                      <span class="fp-toggle"><span class="fp-toggle__thumb"></span></span>
+                    </label>
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row">
+                    <div class="settings-row__label">Index encryption</div>
+                    <div class="fp-segmented">
+                      <button class="fp-segmented__opt active" data-action="settings-set-encryption" data-val="off">Off</button>
+                      <button class="fp-segmented__opt" data-action="settings-set-encryption" data-val="aes256">On (AES-256)</button>
+                    </div>
+                  </div>
+                </div>
+              </div><!-- /#settings-pane-privacy -->
+
+              <!-- ────────────────────────────────────────────────────────
+                   A.12.9  SHORTCUTS
+              ──────────────────────────────────────────────────────────── -->
+              <div class="settings-pane" id="settings-pane-shortcuts" data-pane="shortcuts" style="display:none">
+                <h2 class="settings-pane__title">Shortcuts</h2>
+                <div class="fp-card settings-card" style="padding:0;overflow:hidden">
+                  <!-- INTEGRATION: editable shortcuts from config; click row to rebind -->
+                  <div class="settings-kbd-row" data-action="settings-rebind" data-binding="palette">
+                    <span class="settings-kbd-action">Open command palette</span>
+                    <span class="settings-kbd-pill fp-mono">⌘K</span>
+                  </div>
+                  <div class="settings-kbd-row" data-action="settings-rebind" data-binding="review-bin">
+                    <span class="settings-kbd-action">Open Review Bin</span>
+                    <span class="settings-kbd-pill fp-mono">⌘⇧R</span>
+                  </div>
+                  <div class="settings-kbd-row" data-action="settings-rebind" data-binding="focus-search">
+                    <span class="settings-kbd-action">Focus search</span>
+                    <span class="settings-kbd-pill fp-mono">/</span>
+                  </div>
+                  <div class="settings-kbd-row" data-action="settings-rebind" data-binding="go-home">
+                    <span class="settings-kbd-action">Switch to Home</span>
+                    <span class="settings-kbd-pill fp-mono">⌘1</span>
+                  </div>
+                  <div class="settings-kbd-row" data-action="settings-rebind" data-binding="go-browser">
+                    <span class="settings-kbd-action">Switch to Browser</span>
+                    <span class="settings-kbd-pill fp-mono">⌘2</span>
+                  </div>
+                  <div class="settings-kbd-row" data-action="settings-rebind" data-binding="file-tree">
+                    <span class="settings-kbd-action">Open File Tree</span>
+                    <span class="settings-kbd-pill fp-mono">⌘T</span>
+                  </div>
+                  <div class="settings-kbd-row" data-action="settings-rebind" data-binding="toggle-inspector">
+                    <span class="settings-kbd-action">Toggle inspector</span>
+                    <span class="settings-kbd-pill fp-mono">⌘I</span>
+                  </div>
+                  <div class="settings-kbd-row" data-action="settings-rebind" data-binding="new-folder">
+                    <span class="settings-kbd-action">New folder</span>
+                    <span class="settings-kbd-pill fp-mono">⌘⇧N</span>
+                  </div>
+                  <div class="settings-kbd-row" data-action="settings-rebind" data-binding="rename">
+                    <span class="settings-kbd-action">Rename</span>
+                    <span class="settings-kbd-pill fp-mono">F2</span>
+                  </div>
+                  <div class="settings-kbd-row" data-action="settings-rebind" data-binding="delete">
+                    <span class="settings-kbd-action">Delete</span>
+                    <span class="settings-kbd-pill fp-mono">Del</span>
+                  </div>
+                  <div class="settings-kbd-row" data-action="settings-rebind" data-binding="undo">
+                    <span class="settings-kbd-action">Undo</span>
+                    <span class="settings-kbd-pill fp-mono">⌘Z</span>
+                  </div>
+                  <div class="settings-kbd-row" data-action="settings-rebind" data-binding="summon">
+                    <span class="settings-kbd-action">Summon FilePlus</span>
+                    <span class="settings-kbd-pill fp-mono">⊞⇧F</span>
+                  </div>
+                  <div class="settings-kbd-row" data-action="settings-rebind" data-binding="last-download">
+                    <span class="settings-kbd-action">Open last download</span>
+                    <span class="settings-kbd-pill fp-mono">⊞⇧D</span>
+                  </div>
+                  <!-- Rebinding active state variant (uncomment when editing):
+                  <div class="settings-kbd-row settings-kbd-row--rebinding" ...>
+                    <span class="settings-kbd-action">Summon FilePlus</span>
+                    <span class="settings-kbd-pill fp-mono" style="border-color:var(--accent-edge);color:var(--accent)">Press new keys…</span>
+                  </div>
+                  -->
+                </div>
+              </div><!-- /#settings-pane-shortcuts -->
+
+              <!-- ────────────────────────────────────────────────────────
+                   A.12.10  DATA
+              ──────────────────────────────────────────────────────────── -->
+              <div class="settings-pane" id="settings-pane-data" data-pane="data" style="display:none">
+                <h2 class="settings-pane__title">Data</h2>
+                <div class="fp-card settings-card" style="margin-bottom:var(--s-12)">
+                  <!-- INTEGRATION: sizes from GET /api/data/stats -->
+                  <div class="settings-row">
+                    <div class="settings-row__label">Index size</div>
+                    <span class="fp-mono" style="font:600 var(--t-display-sm) var(--font-mono);color:var(--text-primary)">142 MB</span>
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row">
+                    <div class="settings-row__label">Snapshot storage</div>
+                    <div style="display:flex;align-items:center;gap:var(--s-8)">
+                      <span class="fp-mono" style="font:600 var(--t-display-sm) var(--font-mono);color:var(--text-primary)">2.4 GB</span>
+                      <button class="fp-btn fp-btn--secondary fp-btn--sm" data-action="settings-cleanup-snapshots">Cleanup snapshots</button>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="fp-card settings-card" style="margin-bottom:var(--s-12)">
+                  <div class="settings-card__title">Snapshot retention rules</div>
+                  <div class="settings-row">
+                    <label class="settings-radio-row" style="gap:var(--s-8)">
+                      <input type="checkbox" class="fp-toggle-input" data-action="settings-toggle" data-setting="snap-daily" />
+                      Daily
+                    </label>
+                    <div style="display:flex;align-items:center;gap:6px;font:400 var(--t-body) var(--font-ui);color:var(--text-secondary)">
+                      keep last <input type="number" value="7" style="width:44px" class="fp-input fp-input--sm" data-action="settings-snap-daily-count" />
+                    </div>
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row">
+                    <label class="settings-radio-row" style="gap:var(--s-8)">
+                      <input type="checkbox" class="fp-toggle-input" checked data-action="settings-toggle" data-setting="snap-weekly" />
+                      Weekly
+                    </label>
+                    <div style="display:flex;align-items:center;gap:6px;font:400 var(--t-body) var(--font-ui);color:var(--text-secondary)">
+                      keep last <input type="number" value="4" style="width:44px" class="fp-input fp-input--sm" data-action="settings-snap-weekly-count" />
+                    </div>
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row">
+                    <label class="settings-radio-row" style="gap:var(--s-8)">
+                      <input type="checkbox" class="fp-toggle-input" checked data-action="settings-toggle" data-setting="snap-monthly" />
+                      Monthly
+                    </label>
+                    <div style="display:flex;align-items:center;gap:6px;font:400 var(--t-body) var(--font-ui);color:var(--text-secondary)">
+                      keep last <input type="number" value="12" style="width:44px" class="fp-input fp-input--sm" data-action="settings-snap-monthly-count" />
+                    </div>
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row">
+                    <span style="font:400 var(--t-body) var(--font-ui);color:var(--text-tertiary)">AI-task snapshots</span>
+                    <span style="font:400 var(--t-compact) var(--font-ui);color:var(--text-tertiary)">Kept 30d automatically</span>
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row">
+                    <span style="font:400 var(--t-body) var(--font-ui);color:var(--text-tertiary)">User-bookmarked</span>
+                    <span style="font:400 var(--t-compact) var(--font-ui);color:var(--text-tertiary)">Kept forever</span>
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row">
+                    <span style="font:400 var(--t-body) var(--font-ui);color:var(--text-tertiary)">Major scan</span>
+                    <span style="font:400 var(--t-compact) var(--font-ui);color:var(--text-tertiary)">Kept forever</span>
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row">
+                    <div class="settings-row__label">
+                      Warn when snapshot storage exceeds
+                      <span class="fp-mono settings-slider-value" id="val-snap-warn">10 GB</span>
+                    </div>
+                    <input type="range" class="fp-slider" id="slider-snap-warn" min="1" max="50" value="10" step="1" data-action="settings-snap-warn" style="width:180px" />
+                  </div>
+                </div>
+
+                <div class="fp-card settings-card">
+                  <div class="settings-card__title">Database</div>
+                  <div class="settings-row">
+                    <button class="fp-btn fp-btn--secondary fp-btn--sm" data-action="settings-export-db">Export backup (.zip)</button>
+                    <button class="fp-btn fp-btn--secondary fp-btn--sm" data-action="settings-import-db">Import backup</button>
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row" style="flex-direction:column;align-items:flex-start;gap:var(--s-8)">
+                    <button class="fp-btn fp-btn--danger fp-btn--sm" data-action="settings-clear-ai-tags">Clear all AI tags</button>
+                    <button class="fp-btn fp-btn--danger fp-btn--sm" data-action="settings-reset-organization">Reset all organization</button>
+                    <button class="fp-btn fp-btn--secondary fp-btn--sm" data-action="settings-reset-defaults">Reset settings to defaults</button>
+                  </div>
+                </div>
+              </div><!-- /#settings-pane-data -->
+
+              <!-- ────────────────────────────────────────────────────────
+                   A.12.11  ABOUT
+              ──────────────────────────────────────────────────────────── -->
+              <div class="settings-pane" id="settings-pane-about" data-pane="about" style="display:none">
+                <h2 class="settings-pane__title">About</h2>
+                <div class="fp-card settings-card">
+                  <!-- INTEGRATION: version from app manifest, file count from DB -->
+                  <div class="settings-row">
+                    <span style="font:400 var(--t-body) var(--font-ui);color:var(--text-secondary)">Version</span>
+                    <span class="fp-mono" style="font:400 var(--t-compact) var(--font-mono);color:var(--text-primary)">0.1.0-dev</span>
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row">
+                    <span style="font:400 var(--t-body) var(--font-ui);color:var(--text-secondary)">Build</span>
+                    <span class="fp-mono" style="font:400 var(--t-compact) var(--font-mono);color:var(--text-primary)">2026-04-24 · main@77b006d</span>
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row">
+                    <span style="font:400 var(--t-body) var(--font-ui);color:var(--text-secondary)">Index size</span>
+                    <span class="fp-mono" style="font:400 var(--t-compact) var(--font-mono);color:var(--text-primary)">142 MB</span>
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row">
+                    <span style="font:400 var(--t-body) var(--font-ui);color:var(--text-secondary)">Files indexed</span>
+                    <span class="fp-mono" style="font:400 var(--t-compact) var(--font-mono);color:var(--text-primary)">214,823</span>
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row">
+                    <span style="font:400 var(--t-body) var(--font-ui);color:var(--text-secondary)">Local LLM</span>
+                    <span class="fp-mono" style="font:400 var(--t-compact) var(--font-mono);color:var(--text-primary)">llama3.1:8b · Ollama 0.6.3</span>
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row" style="flex-wrap:wrap;gap:var(--s-8)">
+                    <button class="fp-btn fp-btn--ghost fp-btn--sm" data-action="settings-export-diagnostics">Export diagnostics</button>
+                    <button class="fp-btn fp-btn--ghost fp-btn--sm" data-action="settings-open-licenses">Open source licenses</button>
+                    <button class="fp-btn fp-btn--danger fp-btn--sm" data-action="settings-reset-defaults">Reset to defaults</button>
+                  </div>
+                </div>
+              </div><!-- /#settings-pane-about -->
+
+            </div><!-- /.settings-content -->
+          </div><!-- /.settings-layout -->
+        </div><!-- /#screen-settings -->
 
       </div><!-- /.screens -->
 
