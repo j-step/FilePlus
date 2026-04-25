@@ -50,7 +50,7 @@
     <!-- Tab: Home (active by default) -->
     <button class="fp-tab fp-tab--active" role="tab" aria-selected="true"
             data-tab-screen="home" data-action="switch-tab"
-            title="Home">
+            title="Home" draggable="true">
       <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
         <path d="M1 6.5L7 1l6 5.5V13H9V9H5v4H1V6.5z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
       </svg>
@@ -62,7 +62,7 @@
     <!-- Tab: Browser (sample open tab) -->
     <button class="fp-tab" role="tab" aria-selected="false"
             data-tab-screen="browser" data-action="switch-tab"
-            title="C:\Users\Justin">
+            title="C:\Users\Justin" draggable="true">
       <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
         <path d="M1 4a1 1 0 0 1 1-1h4l1.5 1.5H12a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V4z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
       </svg>
@@ -2881,15 +2881,15 @@
       <span class="fp-statusbar__sep">·</span>
       <span id="status-selected">Nothing selected</span>
     </div>
+    <!-- INTEGRATION: show #status-task when GET /api/tasks/active returns a running task -->
     <div class="fp-statusbar__center" id="status-task" style="display:none">
-      <!-- INTEGRATION: background task from GET /api/tasks/active -->
-      <!-- Sample active task:
-      <span class="fp-pill fp-pill--live">
-        <span class="fp-pill__dot fp-pill__dot--accent"></span>
-        <span>Indexing 12%</span>
-        <span class="mono" style="color:var(--text-tertiary)">· 8m</span>
+      <!-- Active task state (inline) — JS sets display:flex when a task is running -->
+      <span class="fp-pill fp-pill--live" id="status-task-pill">
+        <span class="fp-pill__dot fp-pill__dot--accent statusbar__task--active"></span>
+        <span id="status-task-label">Indexing 12%</span>
+        <span class="mono" style="color:var(--text-tertiary)">· <span id="status-task-eta">8m</span></span>
       </span>
-      -->
+      <!-- IDLE state (no task): container is display:none, nothing shown -->
     </div>
     <div class="fp-statusbar__right">
       <!-- Review Bin count pill — shown when non-zero -->

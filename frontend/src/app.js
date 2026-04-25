@@ -536,10 +536,10 @@ document.addEventListener('click', e => {
       break;
     case 'close-tab':
       e.stopPropagation();
-      // INTEGRATION: tab history management
+      closeCurrentTab();
       break;
     case 'new-tab':
-      // INTEGRATION: open new tab
+      openNewTab();
       break;
     case 'toggle-sidebar':
       toggleSidebar();
@@ -666,7 +666,115 @@ document.addEventListener('click', e => {
   }
 });
 
-// ── Keyboard shortcuts ─────────────────────────────��────────────────────────────
+// ── Tab management (A.1.2) ────────────────────────────────────────────────────
+let _closedTabs = []; // stack of { screen, label, icon }
+
+function openNewTab() {
+  const tabbar = document.getElementById('tabbar');
+  if (!tabbar) return;
+  const newBtn = document.createElement('button');
+  newBtn.className = 'fp-tab';
+  newBtn.setAttribute('role', 'tab');
+  newBtn.setAttribute('aria-selected', 'false');
+  newBtn.setAttribute('data-tab-screen', 'home');
+  newBtn.setAttribute('data-action', 'switch-tab');
+  newBtn.setAttribute('title', 'New tab');
+  newBtn.setAttribute('draggable', 'true');
+  newBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M1 6.5L7 1l6 5.5V13H9V9H5v4H1V6.5z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg><span class="fp-tab__label">Home</span><button class="fp-tab__close" data-action="close-tab" title="Close tab" tabindex="-1"><svg width="10" height="10" viewBox="0 0 10 10"><path d="M2 2l6 6M8 2l-6 6" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg></button>`;
+  // Insert before new-tab button
+  const newTabBtn = document.getElementById('btn-new-tab');
+  tabbar.insertBefore(newBtn, newTabBtn);
+  initTabDrag(newBtn);
+  newBtn.click();
+  showSnackbar('New tab opened', null, null);
+}
+
+function closeCurrentTab() {
+  const active = document.querySelector('.fp-tab--active');
+  if (!active) return;
+  _closedTabs.push({
+    screen: active.dataset.tabScreen,
+    label: active.querySelector('.fp-tab__label')?.textContent,
+    icon: active.querySelector('svg')?.outerHTML,
+  });
+  const prev = active.previousElementSibling;
+  const next = active.nextElementSibling;
+  const neighbor = (prev && prev.classList.contains('fp-tab')) ? prev
+                 : (next && next.classList.contains('fp-tab')) ? next : null;
+  active.remove();
+  if (neighbor) neighbor.click();
+  showSnackbar('Tab closed · Ctrl+Shift+T to reopen', null, null);
+}
+
+function reopenLastTab() {
+  if (!_closedTabs.length) { showToast('No recently closed tabs', 'warn'); return; }
+  const tab = _closedTabs.pop();
+  const newBtn = document.createElement('button');
+  newBtn.className = 'fp-tab';
+  newBtn.setAttribute('role', 'tab');
+  newBtn.setAttribute('aria-selected', 'false');
+  newBtn.setAttribute('data-tab-screen', tab.screen || 'home');
+  newBtn.setAttribute('data-action', 'switch-tab');
+  newBtn.setAttribute('title', tab.label || 'Tab');
+  newBtn.setAttribute('draggable', 'true');
+  newBtn.innerHTML = `${tab.icon || ''}<span class="fp-tab__label">${tab.label || 'Home'}</span><button class="fp-tab__close" data-action="close-tab" title="Close tab" tabindex="-1"><svg width="10" height="10" viewBox="0 0 10 10"><path d="M2 2l6 6M8 2l-6 6" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg></button>`;
+  const newTabBtn = document.getElementById('btn-new-tab');
+  document.getElementById('tabbar')?.insertBefore(newBtn, newTabBtn);
+  initTabDrag(newBtn);
+  newBtn.click();
+}
+
+// Tab drag-reorder (A.1.2)
+let _dragTab = null;
+
+function initTabDrag(tab) {
+  tab.addEventListener('dragstart', e => {
+    _dragTab = tab;
+    tab.style.opacity = '0.4';
+    e.dataTransfer.effectAllowed = 'move';
+  });
+  tab.addEventListener('dragend', () => {
+    _dragTab = null;
+    tab.style.opacity = '';
+    document.querySelectorAll('.fp-tab').forEach(t => {
+      t.classList.remove('fp-tab--drag-over-before', 'fp-tab--drag-over-after');
+    });
+    showSnackbar('Tab order saved', null, null);
+    // INTEGRATION: POST /api/ui/tabs with new order for persistence
+  });
+  tab.addEventListener('dragover', e => {
+    if (!_dragTab || _dragTab === tab) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    const rect = tab.getBoundingClientRect();
+    const mid = rect.left + rect.width / 2;
+    document.querySelectorAll('.fp-tab').forEach(t => {
+      t.classList.remove('fp-tab--drag-over-before', 'fp-tab--drag-over-after');
+    });
+    if (e.clientX < mid) {
+      tab.classList.add('fp-tab--drag-over-before');
+    } else {
+      tab.classList.add('fp-tab--drag-over-after');
+    }
+  });
+  tab.addEventListener('dragleave', () => {
+    tab.classList.remove('fp-tab--drag-over-before', 'fp-tab--drag-over-after');
+  });
+  tab.addEventListener('drop', e => {
+    if (!_dragTab || _dragTab === tab) return;
+    e.preventDefault();
+    const tabbar = tab.parentElement;
+    const rect = tab.getBoundingClientRect();
+    if (e.clientX < rect.left + rect.width / 2) {
+      tabbar.insertBefore(_dragTab, tab);
+    } else {
+      tabbar.insertBefore(_dragTab, tab.nextSibling);
+    }
+    tab.classList.remove('fp-tab--drag-over-before', 'fp-tab--drag-over-after');
+  });
+}
+
+// ── Keyboard shortcuts ────────────────────────────────────────────────────────
 document.addEventListener('keydown', e => {
   // ⌘K / Ctrl+K — command palette
   if ((e.metaKey || e.ctrlKey) && e.key === 'k') { e.preventDefault(); openPalette(); }
@@ -676,6 +784,12 @@ document.addEventListener('keydown', e => {
   if ((e.metaKey || e.ctrlKey) && e.key === 'i') { e.preventDefault(); toggleInspector(); }
   // Ctrl+Shift+R — Review Bin
   if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'R') { e.preventDefault(); switchScreen('review-bin'); }
+  // Ctrl+T — new tab
+  if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key === 't') { e.preventDefault(); openNewTab(); }
+  // Ctrl+W — close current tab
+  if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key === 'w') { e.preventDefault(); closeCurrentTab(); }
+  // Ctrl+Shift+T — reopen last closed tab
+  if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'T') { e.preventDefault(); reopenLastTab(); }
   // Ctrl+1..9 — numbered shortcuts (screen navigation stubs)
   // Escape — close all overlays
   if (e.key === 'Escape') {
@@ -741,6 +855,9 @@ document.addEventListener('DOMContentLoaded', () => {
   document.querySelectorAll('.fp-palette__item, .palette__item').forEach(btn => {
     btn.addEventListener('click', () => handlePaletteAction(btn));
   });
+
+  // Init tab drag-reorder for existing tabs (A.1.2)
+  document.querySelectorAll('.fp-tab[draggable]').forEach(initTabDrag);
 
   // Init underline tabs in any pre-existing tab containers
   document.querySelectorAll('.fp-tabs').forEach(initUnderlineTabs);
