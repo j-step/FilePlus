@@ -3759,6 +3759,34 @@ button.fp-pill:hover {
   100% { box-shadow: none; background: transparent; }
 }
 
+/* A.17 animation — file-op flash (80ms white flash on row) */
+@keyframes fp-dur-flash {
+  0%   { background: color-mix(in oklch, white 30%, transparent); }
+  100% { background: transparent; }
+}
+.fp-row--flash {
+  animation: fp-dur-flash 80ms var(--ease-out);
+}
+
+/* A.3.1 — Tag chip fan-out stagger (120ms between each chip appearing) */
+/* Chips set --chip-delay via JS or nth-child for up to 8 chips */
+.fp-chip-group .fp-chip:nth-child(1) { animation-delay: 0ms; }
+.fp-chip-group .fp-chip:nth-child(2) { animation-delay: 120ms; }
+.fp-chip-group .fp-chip:nth-child(3) { animation-delay: 240ms; }
+.fp-chip-group .fp-chip:nth-child(4) { animation-delay: 360ms; }
+.fp-chip-group .fp-chip:nth-child(5) { animation-delay: 480ms; }
+.fp-chip-group .fp-chip:nth-child(6) { animation-delay: 600ms; }
+.fp-chip-group .fp-chip:nth-child(7) { animation-delay: 720ms; }
+.fp-chip-group .fp-chip:nth-child(8) { animation-delay: 840ms; }
+/* Fan-out animation applied to chip groups that opt in via .fp-chip-group--animate */
+@keyframes fp-chip-fan-in {
+  from { opacity: 0; transform: translateX(-4px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+.fp-chip-group--animate .fp-chip {
+  animation: fp-chip-fan-in 120ms var(--ease-out) both;
+}
+
 /* Inspector panel (docked) */
 .inspector {
   width: 340px;
