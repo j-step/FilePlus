@@ -64,4 +64,491 @@ Ambiguities that could not be resolved without confirmation.
 
 ## TESTING CHECKLIST
 
-*(Appended after all spec sections complete)*
+Run through this in a single sitting after launching `npm start` in `frontend/`. Open DevTools console to check for JS errors as you go.
+
+---
+
+### 1. Global Chrome (A.1)
+
+**Visual checks**
+- [ ] Titlebar: FilePlus brand mark (purple rect + cross) + "FilePlus" wordmark visible; window controls (—, □, ✕) right-aligned
+- [ ] Tab bar below titlebar: one "Home" tab present, active, with folder icon and close × button
+- [ ] Sidebar: Quick Access (Home, Review Bin + count badge, pinned folder), Tree (C: with usage bar), Tags section (chip row), System (File Tree, Scan), Bottom anchor (Everything Folder, Settings)
+- [ ] Toolbar: back/forward/up, address bar, search, view toggle (List/Grid), inspector toggle
+- [ ] Inspector (right): closed by default on Browser screen; header + tabs + Preview pane visible when opened
+- [ ] Status bar: item count · selection text | center task area | Review Bin pill on right
+
+**Interaction checks**
+- [ ] Ctrl+B toggles sidebar open/closed
+- [ ] Ctrl+I toggles inspector open/closed
+- [ ] Toggle sidebar: file list area expands to fill
+- [ ] Click "Review Bin" sidebar item → navigates to Review Bin screen
+- [ ] Click "Everything Folder" sidebar item → navigates to Everything Folder screen
+- [ ] Click "Settings" sidebar item → navigates to Settings screen
+- [ ] Clicking sidebar drives/folders changes address bar path text (stub)
+- [ ] Window controls: minimize, maximize, close all fire IPC stubs (check console log)
+
+**data-action coverage**
+- [ ] `toggle-sidebar` → `IPC client-side`
+- [ ] `toggle-inspector` → `IPC client-side`
+- [ ] `navigate-screen` → `client-side`
+- [ ] `window-minimize/maximize/close` → `IPC`
+- [ ] `open-tag-canvas` → `GET /api/tags/graph`
+- [ ] `open-review-bin` → `client-side`
+
+---
+
+### 2. Home Screen (A.2)
+
+**Visual checks**
+- [ ] Three sub-tabs: Recent / Favorites / Shared — underline indicator on active
+- [ ] Recent tab: section header ("Today"), recent file rows with name + path + time + hover action buttons (Open, Reveal, Edit)
+- [ ] Favorites tab: favorited folder rows (name + path + 3 action buttons on hover)
+- [ ] Shared tab: empty state ("Coming in a future version")
+
+**Interaction checks**
+- [ ] Clicking Recent / Favorites / Shared sub-tab switches content pane (underline indicator moves)
+- [ ] Hover on recent file row reveals action buttons
+- [ ] Clicking recent file row shows toast "not yet implemented"
+
+**data-action coverage**
+- [ ] `switch-home-tab` → client-side tab switch
+- [ ] `open-recent-file` → `GET /api/recent/:id` (stub)
+- [ ] `open-file`, `reveal-file`, `unfavorite-file` → stubs
+
+---
+
+### 3. Browser Screen (A.3)
+
+**Visual checks**
+- [ ] Address bar shows path, breadcrumb trail clickable
+- [ ] File list: rows with icon (16×16), name, ext, size, modified columns; column headers sortable
+- [ ] Inspector pane (when open): 16/10 preview thumbnail, filename, path, 3 tabs (Preview/Tags/History)
+- [ ] Inspector tabs: Preview, Tags (tag chips + add button), History (operations list)
+- [ ] 4 file row states present: normal, hover (bg-raised), selected (accent-wash + 2px left bar), error/missing (bad-wash)
+- [ ] Empty folder state (commented — confirm markup matches fp-empty-state pattern)
+- [ ] Error banner for missing folder (commented — verify markup)
+
+**Interaction checks**
+- [ ] Clicking a file row selects it (accent-wash bg, left bar), updates inspector filename/path
+- [ ] Ctrl+click or Shift+click stub (console log)
+- [ ] Double-click stub (console log)
+- [ ] View toggle (List/Grid) switches view mode class (check console)
+- [ ] Sort by column header: shows toast stub
+- [ ] Right-click file row → context menu appears at cursor with 5 sections (Open, Open with, Copy, Rename, Delete, Add tag…)
+- [ ] Context menu: hover items highlight with accent-wash, destructive item "Delete" shows bad text
+- [ ] Click outside context menu → menu dismisses
+
+**data-action coverage**
+- [ ] `select-file`, `open-file`, `reveal-file` → stubs
+- [ ] `sort-by` → client-side stub
+- [ ] `navigate-crumb`, `navigate-path` → stubs
+- [ ] `set-view-mode` → client-side
+- [ ] `cm-open`, `cm-copy`, `cm-rename`, `cm-delete`, `cm-add-tag` → stubs
+- [ ] `filter-by-tag` → `GET /api/files?tag=` stub
+
+---
+
+### 4. File Tree Canvas (A.4)
+
+**Visual checks**
+- [ ] Left rail: folder list with expand/collapse, new folder button, snapshot list
+- [ ] Canvas area: SVG placeholder nodes, toolbar (zoom in/out, fit, fullscreen)
+- [ ] Toolbar: new snapshot, return to live, toggle changes, snapshot selector
+- [ ] Live mode banner: "Showing live filesystem" (green dot, good-wash)
+- [ ] Snapshot mode banner: "Viewing snapshot X" with date + Return to live button (yellow, warn-wash) — visible when switching to snapshot view
+- [ ] Proposal review mode banner: Execute proposal primary button + Reject all ghost — visible in proposal mode
+
+**Interaction checks**
+- [ ] ftree-toggle-left-rail: toast stub fired
+- [ ] ftree-zoom-in / zoom-out / fit-view / fullscreen: toast stubs
+- [ ] ftree-new-snapshot: toast stub
+- [ ] Ctrl+K opens command palette
+
+**data-action coverage**
+- [ ] `ftree-new-snapshot` → `POST /api/snapshots/create`
+- [ ] `ftree-execute-proposal` → `POST /api/proposals/execute`
+- [ ] `ftree-zoom-in/out/fit-view` → client stubs
+
+---
+
+### 5. Scan Config Screen (A.5)
+
+**Visual checks**
+- [ ] Conversational mode (default): centered chat container, AI message (bg-raised + shadow-card + border-subtle), bottom textarea (concave)
+- [ ] Tag extension chips row: some active (accent-wash), some inactive
+- [ ] "Skip the rest, use defaults" secondary button top-right area
+- [ ] "Switch to structured form" ghost button
+- [ ] Structured form mode (hidden by default): fp-card groups for drives/aggressiveness/complexity/exclusions
+
+**Interaction checks**
+- [ ] Click "Switch to structured form" → hides chat, shows form; button text changes to "Switch to chat"
+- [ ] Click chat extension chips → toast stub
+- [ ] "I'm done answering" button → toast stub
+- [ ] "Skip the rest" button → toast stub
+
+**data-action coverage**
+- [ ] `scan-config-switch-mode` → client-side
+- [ ] `scan-baseline-confirm` → `POST /api/snapshots/create`
+- [ ] `scan-form-toggle-drive`, `scan-form-set-aggressiveness` → `POST /api/scan/config`
+
+---
+
+### 6. Scan Progress Screen (A.6)
+
+**Visual checks**
+- [ ] 5-stage checklist rows (36px each): Index/Deduplicate/Classify/Propose/Review
+- [ ] Stage states: done (green circle + checkmark), active (accent-wash circle + progress bar below), pending (bg-pressed circle + number)
+- [ ] "Now working on" path card: bg-raised + border-subtle + highlight-top, mono path text
+- [ ] Stats grid: 4 cards (Rate, Classified, Remaining, ETA) with display-sized mono values
+- [ ] Throughput sparkline: bg-raised card + SVG placeholder
+- [ ] Reassurance banner: good-wash bg + good-edge border + lock icon in good color
+- [ ] Footer: Pause (secondary), Minimize to tray (secondary), Stop scan (danger)
+
+**Interaction checks**
+- [ ] Pause → toast stub
+- [ ] Minimize to tray → IPC stub
+- [ ] Stop scan → opens confirmation modal (check `#modal-scrim` becomes visible)
+- [ ] Confirm in modal → `scan-stop-confirm` toast stub; modal closes
+
+**data-action coverage**
+- [ ] `scan-pause` → `POST /api/scan/pause`
+- [ ] `scan-minimize-tray` → IPC
+- [ ] `scan-stop-confirm` → `POST /api/scan/stop`
+
+---
+
+### 7. Scan Results Screen (A.7)
+
+**Visual checks**
+- [ ] Three underline tabs: Duplicates (active) / Cleanup / Reorganization
+- [ ] Duplicates tab: one expanded group (files with "keep" radio + full path), one collapsed group; "Reclaimable: X GB" footer; "Execute deduplication" primary button
+- [ ] Cleanup tab: 4 category fp-cards (Temp, Empty folders, Old downloads, Large unused) with expand/collapse
+- [ ] Reorganization tab: single "Open File Tree" primary button centered
+
+**Interaction checks**
+- [ ] Clicking Cleanup / Reorganization tabs switches pane content
+- [ ] "Execute deduplication" → opens confirmation modal → confirm fires toast stub
+- [ ] "Execute cleanup" → opens confirmation modal → confirm fires toast stub
+- [ ] "Select all AI suggestions" toggle → toast stub
+
+**data-action coverage**
+- [ ] `switch-scan-results-tab` → client-side
+- [ ] `scan-dedup-confirm` → `POST /api/dedup/execute`
+- [ ] `scan-cleanup-confirm` → `POST /api/cleanup/execute`
+- [ ] `scan-open-reorg-canvas` → navigate to file-tree-canvas
+
+---
+
+### 8. Review Bin Screen (A.8)
+
+**Visual checks**
+- [ ] Two-pane layout: list left + 340px detail pane right
+- [ ] List: header "Review Bin · 14 files need a decision", destination groups with 32px headers (folder icon + dest path + count + confidence avg)
+- [ ] Group actions right-aligned: "Review each" ghost, "Approve all" secondary, "Reject all" danger ghost (bad text + bad-wash hover)
+- [ ] File rows (26px): filename + from→to route chips + action chip + 4px confidence bar
+- [ ] "Uncertain" group: warn-wash bg + warn-edge border + alert-triangle icon
+- [ ] Empty state (commented) uses 48×48 check-circle in good + "Nothing to review."
+- [ ] Detail pane: proposed move label, route (strikethrough from + arrow to destination), "Why" section, confidence, similar decisions list
+- [ ] Detail footer: Reject / Modify path / Snooze 7d / Approve →, keyboard hints below
+
+**Interaction checks**
+- [ ] Clicking a file row: should update detail pane (currently stub — check console)
+- [ ] "Approve all" → toast stub
+- [ ] "Reject all" → toast stub
+- [ ] "Approve →" in detail → `rb-approve` toast stub
+- [ ] "Reject" in detail → `rb-reject` toast stub
+- [ ] Ctrl+Shift+R → navigates to Review Bin
+
+**data-action coverage**
+- [ ] `rb-approve` → `POST /api/review-bin/:id/approve`
+- [ ] `rb-reject` → `POST /api/review-bin/:id/reject`
+- [ ] `rb-group-approve-all` → `POST /api/review-bin/group/:id/approve`
+- [ ] `rb-snooze` → `POST /api/review-bin/:id/snooze?days=7`
+- [ ] `rb-modify-path` → `PATCH /api/review-bin/:id`
+
+---
+
+### 9. Everything Folder Screen (A.9)
+
+**Visual checks**
+- [ ] Header: "Everything Folder" title + path in mono + Pause AI toggle chip row (All/Unprocessed/Needs Review/Moving/Errors)
+- [ ] Column headers: Name, Time landed, Status (sortable)
+- [ ] File rows (26px): 5 state examples visible — no dot (settled), grey dot (unprocessed), warn dot (needs review), accent dot (moving), bad dot (error)
+- [ ] "Currently moving" collapsible card at bottom: bg-raised + border-subtle + shadow-card + progress bar
+- [ ] Empty state (commented) uses 48×48 icon + "Everything Folder is empty."
+
+**Interaction checks**
+- [ ] Filter chip "Needs Review" → `ef-filter` toast stub
+- [ ] Pause AI toggle → `ef-toggle-pause-ai` toast stub
+- [ ] Moving card click → toggles collapsed (card hides/shows via `ef-toggle-moving-card`)
+- [ ] Sort by column → `ef-sort` toast stub
+
+**data-action coverage**
+- [ ] `ef-filter` → client-side filter
+- [ ] `ef-sort` → client-side sort
+- [ ] `ef-toggle-pause-ai` → `POST /api/ai/pause`
+- [ ] `ef-toggle-moving-card` → client-side
+
+---
+
+### 10. Settings Screen (A.12)
+
+**Visual checks**
+- [ ] Two-column layout: 200px nav rail (bg-chrome) + content area (bg-content)
+- [ ] Nav: Application section (7 items) + Account (3 items) + System (About)
+- [ ] Active item: bg-pressed + 2px accent left bar
+- [ ] Content: each pane shows fp-card groups with settings-row items (label + control)
+- [ ] Personalization pane: theme segmented (Dark/Light/System) + density + accent + font scale slider
+- [ ] All 11 panes listed in nav; 10 hidden with style="display:none"
+
+**Interaction checks**
+- [ ] Clicking nav item switches active pane (active class moves, content switches)
+- [ ] Theme toggle in Personalization pane: `data-theme` on `<html>` changes (dark ↔ light), persists in localStorage
+- [ ] Density toggle: `data-density` on `<html>` changes, persists in localStorage
+- [ ] Reload page → theme + density restored from localStorage
+- [ ] Toggle inputs in settings: checkbox CSS toggles state
+
+**data-action coverage**
+- [ ] `settings-nav` → client-side pane switch
+- [ ] `settings-set-theme` → localStorage
+- [ ] `settings-set-density` → localStorage
+- [ ] `settings-set-accent` → localStorage + CSS var
+- [ ] `settings-toggle` → `POST /api/config/:key` (stub)
+- [ ] `settings-reset-defaults` → `POST /api/config/reset` (stub)
+
+---
+
+### 11. Command Palette (A.11.1)
+
+**Visual checks**
+- [ ] Full-screen scrim (rgba black + blur) behind palette
+- [ ] Palette: 640px wide, bg-raised + border-subtle + 10px radius + shadow-modal
+- [ ] 44px input at top; 1px hairline below input
+- [ ] Split body: 300px list left + preview pane right
+- [ ] List sections: Files, Folders, Tags (#), Commands (>) with t-micro uppercase headers
+- [ ] Rows 36px, keyboard-selected row: accent-wash + 2px accent left bar
+- [ ] Footer: shortcut hints in mono
+- [ ] Search/Chat mode toggle in header
+
+**Interaction checks**
+- [ ] Ctrl+K opens palette; scrim appears
+- [ ] Escape closes palette
+- [ ] Clicking scrim outside palette closes palette
+- [ ] Clicking "Go to Home" command row → navigates to home screen
+- [ ] Search/Chat toggle: switches between search pane and chat pane
+
+**data-action coverage**
+- [ ] `palette-set-mode` → client-side toggle
+- [ ] `palette-open-file` → `GET /api/files/:id` stub
+- [ ] `palette-plan-approve-all` → `POST /api/review-bin/approve-all` stub
+
+---
+
+### 12. Tag Canvas (A.11.2)
+
+**Visual checks**
+- [ ] 820×540 centered modal, bg-raised + border-strong + shadow-modal
+- [ ] Header: "Tag Canvas" title + close button
+- [ ] Left pane 240px: tag tree with category groups and tag items
+- [ ] Right pane: SVG placeholder graph with nodes + connecting lines + file grid below
+- [ ] Strong scrim (rgba + stronger blur) behind modal
+
+**Interaction checks**
+- [ ] Open Tag Canvas via sidebar "View all →" button → scrim + modal appear
+- [ ] Escape closes tag canvas
+- [ ] Click scrim outside → closes tag canvas
+- [ ] Clicking tag in left pane → `tag-canvas-select` stub
+- [ ] No-tags empty state (commented): verify HTML is present and matches pattern
+
+**data-action coverage**
+- [ ] `open-tag-canvas` → `GET /api/tags/graph`
+- [ ] `close-tag-canvas` → client-side
+- [ ] `tag-canvas-select` → `GET /api/tags/:id/files`
+
+---
+
+### 13. Confirmation Modal (A.11.3)
+
+**Visual checks**
+- [ ] 440px modal, bg-raised + border-strong + shadow-modal
+- [ ] Header: 24×24 semantic icon + title (t-display-sm Inter 600)
+- [ ] Body: descriptive text
+- [ ] Footer: Cancel (secondary) + action button
+- [ ] Open animation: modal appears with subtle translateY + fade (check CSS transition fires)
+
+**Interaction checks**
+- [ ] Trigger via "Stop scan" in scan progress → modal opens with correct title + icon
+- [ ] Cancel → modal closes
+- [ ] Confirm → toast stub (for destructive actions)
+- [ ] Click scrim → modal closes
+- [ ] Escape → modal closes
+
+**data-action coverage**
+- [ ] `modal-cancel` → client-side close
+- [ ] `modal-confirm` → client-side close + stub
+- [ ] `modal-confirm-type` → client-side validation stub
+
+---
+
+### 14. Snackbars & Toasts (A.11.4)
+
+**Visual checks**
+- [ ] Snackbar container at bottom-center; toast container at bottom-right
+- [ ] Snackbar: bg-raised + accent-edge border + 8px radius + shadow-popover + progress bar at bottom edge
+- [ ] Toast: same chrome, border variant by type
+
+**Interaction checks**
+- [ ] Trigger a snackbar via app.js `showSnackbar()` call in console → appears, auto-dismisses after 5s
+- [ ] Error toast (variant='error'): has dismiss × button, does not auto-dismiss
+- [ ] Snackbar with "Undo": Undo button appears, fires callback on click
+
+---
+
+### 15. Context Menus (A.10)
+
+**Visual checks**
+- [ ] Menu chrome: bg-raised + 1px border-subtle + 8px radius + shadow-popover
+- [ ] Items 28px tall, optional 14×14 leading icon
+- [ ] Keyboard hints right-aligned in mono
+- [ ] Hover: accent-wash + icon+label color shifts to accent
+- [ ] Destructive items: bad text + bad-wash hover
+
+**Interaction checks**
+- [ ] Right-click file row → file context menu (5 sections with separators)
+- [ ] Right-click empty area in browser → empty area menu
+- [ ] Right-click tab → tab menu
+- [ ] Right-click sidebar item → sidebar item menu
+- [ ] Click outside → menu dismisses
+- [ ] Click menu item → toast stub fires
+
+**data-action coverage** (sample)
+- [ ] `cm-open` → IPC stub
+- [ ] `cm-rename` → `POST /api/fs/rename` stub
+- [ ] `cm-delete` → `POST /api/fs/trash` stub
+- [ ] `cm-add-tag` → `POST /api/files/:id/tags` stub
+
+---
+
+### 16. Tray Popout (A.14)
+
+Open tray window separately: `frontend/tray/index.html` in browser.
+
+**Visual checks**
+- [ ] 380px width, bg-backdrop + border-strong + 12px radius + shadow-modal
+- [ ] Header: 22×22 brand mark + "Recent downloads" title + subtitle path (mono) + 5 icon buttons right
+- [ ] Header icon buttons (28×28): Review Bin (with badge "3"), Everything Folder, Pause AI, Expand, Close
+- [ ] Sub-tab segmented 30px: Recent / Favorites
+- [ ] File rows 32px: 16×16 icon + name + size+time mono + **6px state dot** (3 dot states shown)
+- [ ] Action buttons row: 4 equal-width buttons (Drag/Open/Reveal/Copy), each 36px tall, bg-raised + border-subtle + shadow-raised, **16×16 icon** + t-small label
+- [ ] Currently Moving card (hidden): bg-raised + border-subtle + 8px radius + 4px progress bar
+- [ ] Footer: folder + search icon buttons left, "Open FilePlus" primary center, settings button right, hotkey hint "Ctrl+Shift+F to summon" below
+
+**Interaction checks**
+- [ ] Recent/Favorites tab switch: active class moves
+- [ ] Click file row: selected state (accent-wash bg)
+- [ ] Right-click file row: tray context menu appears
+- [ ] Click outside context menu: menu dismisses
+- [ ] Pause AI button: toggles `tray-icon-btn--active` class
+
+**data-action coverage**
+- [ ] `tray-switch-tab` → client-side
+- [ ] `tray-open-main`, `tray-open-review-bin`, `tray-open-everything` → IPC
+- [ ] `tray-open-file`, `tray-copy-path`, `tray-reveal-in-app` → stubs
+- [ ] `tray-toggle-pause-ai` → `POST /api/ai/pause` stub
+
+---
+
+### 17. First-run Setup (A.13)
+
+Open setup window separately: `frontend/setup/index.html` in browser.
+
+**Visual checks**
+- [ ] Full-window layout: 240px left rail + content area fill
+- [ ] Rail: 48×48 brand mark + "FilePlus" wordmark + v0.1.0-alpha version in mono
+- [ ] Rail steps: 7 steps with 24×24 circle indicators; step 1 active (accent-wash + accent-edge), rest pending (bg-pressed)
+- [ ] Rail footer: "~5 min remaining · ~2.1 GB · offline after setup" in mono
+- [ ] Content area: 80px padding, 64×64 accent hero icon per step, t-display title, t-read body
+- [ ] Step 1: "Get started" primary button (36px)
+- [ ] Step 2: Two download rows (done + in-progress with progress bar)
+- [ ] Step 3: Password input with lock icon, show/hide toggle, model radio group, cost cap segmented, offline toggle
+- [ ] Step 4: Form card with ef-path, drives checkboxes, DL mode segmented, confidence slider, scan schedule segmented, tray toggle
+- [ ] Step 5: 4 opt-in cards (Tesseract selected by default in accent-wash, others unchecked)
+- [ ] Step 6: Chat interface with AI+user message bubbles, chip selection, textarea input
+- [ ] Step 7: Two side-by-side action cards (primary/secondary), shortcut reference card
+
+**Interaction checks**
+- [ ] "Continue" footer button advances step (rail indicator + dots update)
+- [ ] "Back" button goes back (hidden on step 1)
+- [ ] On last step (7): Continue button hidden; use action cards
+- [ ] Step 5 opt-in cards: click toggles selected state (accent-wash + checkbox)
+- [ ] Step 6 extension chips: click toggles fp-chip--active class
+- [ ] Step 3 show/hide key: toggles input type password↔text
+- [ ] Step 4 confidence slider: live value display updates
+
+---
+
+### 18. Empty States (A.15)
+
+- [ ] Home → Recent sub-tab: fp-empty-state with history clock icon + "Nothing here yet."
+- [ ] Home → Favorites sub-tab: fp-empty-state with star icon + "No favorites yet."
+- [ ] Browser empty folder: commented fp-empty-state with folder icon (verify present in HTML)
+- [ ] Review Bin empty: commented fp-empty (check-circle in good + "Nothing to review.") — verify present in HTML
+- [ ] File Tree Canvas no snapshots: fp-empty-state with tree icon + "File Tree Canvas" + description
+- [ ] Search no results: commented palette-empty div with search icon + "No results" — verify present in HTML
+- [ ] Tag Canvas no tags: commented empty div — verify present in HTML
+- [ ] Everything Folder empty: commented fp-empty div — verify present in HTML
+- [ ] Tray popout empty: tray-empty div with + icon + "No recent files" + description — verify present
+- [ ] Each empty state: 48×48 outlined icon in text-tertiary, t-title-sm title, t-body text-secondary description, max 360px wide
+
+---
+
+### 19. Error States (A.16)
+
+All error banners use fp-error-banner pattern: bad-wash bg + bad-edge 1px bottom + highlight-top + 14×14 alert-circle in bad.
+
+- [ ] Browser folder missing: commented fp-error-banner in browser screen — verify present (line ~576 in index.html)
+- [ ] Scan progress interrupted: commented fp-error-banner in scan-progress screen — verify present
+- [ ] Scan results load error: commented fp-error-banner in scan-results screen — verify present
+- [ ] Review Bin load error: commented fp-error-banner in review-bin screen — verify present
+- [ ] Everything Folder watcher stopped: commented fp-error-banner in everything screen — verify present
+- [ ] Backend offline + AI offline + cost cap: three commented fp-error-banner divs above statusbar — verify present
+- [ ] Uncomment one of the banners and reload → verify correct styling (bad-wash bg, bad text, action button, dismiss ×)
+- [ ] `dismiss-error` data-action: verify clicking × calls `el.closest('.fp-error-banner').remove()`
+
+---
+
+### 20. Edge Cases (A.17)
+
+- [ ] CSS class `.fp-row--vanished` — inspect element, manually add class → row should show strikethrough + 60% opacity
+- [ ] CSS class `.fp-tab--drop-target` — manually add to a tab → accent-wash bg + dashed accent border
+- [ ] CSS class `.fp-input--invalid` — manually add to an input → bad border + bad glow ring
+- [ ] CSS class `.fp-field-error` — manually add below an input → bad-colored error text
+- [ ] CSS class `.fp-tabbar--overflow` — add many tab elements → overflow-x:auto, fade gradients on edges
+- [ ] Conflict modal HTML present (commented) — verify `#conflict-modal-scrim` in DOM
+- [ ] Crash recovery modal HTML present (commented) — verify `#crash-recovery-modal-scrim` in DOM
+
+---
+
+### 21. Keyboard Shortcuts
+
+- [ ] Ctrl+K → opens command palette
+- [ ] Escape (with palette open) → closes palette
+- [ ] Escape (with tag canvas open) → closes tag canvas
+- [ ] Escape (with modal open) → closes modal
+- [ ] Ctrl+B → toggles sidebar
+- [ ] Ctrl+I → toggles inspector
+- [ ] Ctrl+Shift+R → navigates to Review Bin screen
+
+---
+
+### 22. Settings Persistence (localStorage)
+
+- [ ] Change theme to "Light" in Personalization pane → page goes light
+- [ ] Reload page → page loads in light theme (from localStorage)
+- [ ] Change theme back to "Dark" → verify persists
+- [ ] Open DevTools → Application → Local Storage → verify `fp-theme`, `fp-density`, `fp-accent` keys present
+
+---
+
+*End of testing checklist. Last updated after A.17 pass.*
