@@ -181,6 +181,8 @@ const ACTIONS = {
   'scan-form-add-priority':     { endpoint: 'POST /api/scan/config', fn: (el) => stub('scan-form-add-priority') },
   'scan-form-add-exclusion':    { endpoint: 'POST /api/scan/config', fn: (el) => stub('scan-form-add-exclusion') },
   'scan-form-add-never-touch':  { endpoint: 'POST /api/scan/config', fn: (el) => stub('scan-form-add-never-touch') },
+  'scan-form-add-path':         { endpoint: 'IPC openDirectoryPicker', fn: (el) => stub('scan-form-add-path') },
+  'scan-form-remove-path':      { endpoint: 'POST /api/scan/config', fn: (el) => stub('scan-form-remove-path') },
   'scan-toggle-ext':            { endpoint: 'POST /api/scan/config', fn: (el) => stub('scan-toggle-ext') },
 
   // ── Scan progress ────────────────────────────────────────────────
@@ -233,6 +235,7 @@ const ACTIONS = {
   'ftree-toggle-changes':    { endpoint: 'client-side diff overlay', fn: (el) => stub('ftree-toggle-changes') },
   'ftree-jump':              { endpoint: 'GET /api/tree/node/:id', fn: (el) => stub('ftree-jump') },
   'ftree-expand-node':       { endpoint: 'GET /api/tree/node/:id/children', fn: (el) => stub('ftree-expand-node') },
+  'ftree-select-node':       { endpoint: 'client-side only', fn: () => {} },
   'ftree-zoom-in':           { endpoint: 'client-side only', fn: (el) => stub('ftree-zoom-in') },
   'ftree-zoom-out':          { endpoint: 'client-side only', fn: (el) => stub('ftree-zoom-out') },
   'ftree-fit-view':          { endpoint: 'client-side only', fn: (el) => stub('ftree-fit-view') },
