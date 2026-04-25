@@ -1,0 +1,1033 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline';" />
+  <title>FilePlus — Setup</title>
+  <link rel="stylesheet" href="../src/styles.css" />
+  <style>
+    /* ── Full-window layout (A.13) ── */
+    html, body { height: 100%; margin: 0; overflow: hidden; }
+    body { display: flex; background: var(--bg-backdrop); }
+
+    .setup-root {
+      display: flex;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+    }
+
+    /* ── Left rail (240px) ── */
+    .setup-rail {
+      width: 240px;
+      flex-shrink: 0;
+      background: var(--bg-chrome);
+      border-right: 1px solid var(--border-hairline);
+      display: flex;
+      flex-direction: column;
+      padding: 0;
+      overflow: hidden;
+    }
+    .setup-rail__header {
+      padding: 28px 24px 20px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-shrink: 0;
+    }
+    /* 48×48 brand mark */
+    .setup-rail__mark {
+      width: 48px;
+      height: 48px;
+      flex-shrink: 0;
+    }
+    .setup-rail__wordmark {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .setup-rail__name {
+      font: 600 var(--t-title-sm) var(--font-ui);
+      color: var(--text-primary);
+    }
+    .setup-rail__version {
+      font: var(--t-small) var(--font-mono);
+      color: var(--text-tertiary);
+    }
+
+    /* Step list */
+    .setup-steps {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      padding: 8px 16px;
+      overflow-y: auto;
+    }
+    .setup-step {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      height: 40px;
+      padding: 0 4px;
+      cursor: default;
+      border-radius: 6px;
+    }
+    .setup-step__circle {
+      width: 24px;
+      height: 24px;
+      border-radius: 999px;
+      border: 1.5px solid var(--border-subtle);
+      background: var(--bg-pressed);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      font: 600 11px var(--font-ui);
+      color: var(--text-tertiary);
+      transition: background var(--dur-fast) var(--ease-out),
+                  border-color var(--dur-fast) var(--ease-out),
+                  color var(--dur-fast) var(--ease-out);
+    }
+    .setup-step__label {
+      font: var(--t-body) var(--font-ui);
+      color: var(--text-secondary);
+      transition: color var(--dur-fast) var(--ease-out);
+    }
+    /* Active state */
+    .setup-step[data-state="active"] .setup-step__circle {
+      background: var(--accent-wash);
+      border-color: var(--accent-edge);
+      color: var(--accent);
+    }
+    .setup-step[data-state="active"] .setup-step__label {
+      font-weight: 500;
+      color: var(--text-primary);
+    }
+    /* Complete state */
+    .setup-step[data-state="done"] .setup-step__circle {
+      background: var(--good);
+      border-color: var(--good);
+      color: var(--text-on-good, #fff);
+      font-size: 0; /* hide number */
+    }
+    .setup-step[data-state="done"] .setup-step__circle::after {
+      content: "";
+      display: block;
+      width: 10px;
+      height: 6px;
+      border-left: 2px solid #fff;
+      border-bottom: 2px solid #fff;
+      transform: rotate(-45deg) translate(1px, -1px);
+    }
+    .setup-step[data-state="done"] .setup-step__label {
+      color: var(--text-secondary);
+    }
+
+    /* Rail footer info bar */
+    .setup-rail__footer {
+      padding: 14px 20px 18px;
+      border-top: 1px solid var(--border-hairline);
+      font: var(--t-small) var(--font-mono);
+      color: var(--text-tertiary);
+      line-height: 1.6;
+      flex-shrink: 0;
+    }
+
+    /* ── Content area ── */
+    .setup-content {
+      flex: 1;
+      background: var(--bg-content);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .setup-stage {
+      flex: 1;
+      overflow-y: auto;
+      padding: 80px;
+    }
+    .setup-page {
+      display: none;
+      flex-direction: column;
+      gap: 24px;
+      max-width: 560px;
+    }
+    .setup-page.active { display: flex; }
+
+    /* Hero icon (64×64) */
+    .setup-hero {
+      width: 64px;
+      height: 64px;
+      color: var(--accent);
+      flex-shrink: 0;
+    }
+
+    .setup-page__title {
+      font: 600 var(--t-display) var(--font-ui);
+      color: var(--text-primary);
+      margin: 0;
+      line-height: 1.2;
+    }
+    .setup-page__body {
+      font: var(--t-read) var(--font-ui);
+      color: var(--text-secondary);
+      margin: 0;
+      line-height: 1.6;
+    }
+
+    /* Download rows (step 2) */
+    .setup-dl-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      height: 48px;
+      padding: 0 var(--s-14);
+      background: var(--bg-raised);
+      border: 1px solid var(--border-subtle);
+      box-shadow: var(--highlight-top);
+      border-radius: 6px;
+    }
+    .setup-dl-row__icon { width: 16px; height: 16px; flex-shrink: 0; }
+    .setup-dl-row__name {
+      flex: 1;
+      font: 500 var(--t-body) var(--font-ui);
+      color: var(--text-primary);
+    }
+    .setup-dl-row__right {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 3px;
+      min-width: 100px;
+    }
+    .setup-dl-row__size {
+      font: var(--t-small) var(--font-mono);
+      color: var(--text-tertiary);
+    }
+    .setup-dl-row__bar {
+      width: 100px;
+      height: 4px;
+      background: var(--inset-recess);
+      border-radius: 999px;
+      overflow: hidden;
+    }
+    .setup-dl-row__bar-fill {
+      height: 100%;
+      border-radius: 999px;
+      background: var(--accent);
+      transition: width 0.4s var(--ease-out);
+    }
+    /* Completed download row */
+    .setup-dl-row--done .setup-dl-row__right { flex-direction: row; align-items: center; gap: 6px; }
+    .setup-dl-row--done .setup-dl-row__size { color: var(--good); }
+
+    /* Opt-in feature cards (step 5) */
+    .setup-opt-card {
+      display: flex;
+      align-items: flex-start;
+      gap: 14px;
+      padding: var(--s-14);
+      background: var(--bg-raised);
+      border: 1px solid var(--border-subtle);
+      box-shadow: var(--highlight-top), var(--shadow-card);
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background var(--dur-fast) var(--ease-out);
+    }
+    .setup-opt-card:hover { background: var(--bg-pressed); }
+    .setup-opt-card--selected {
+      background: var(--accent-wash);
+      border-color: var(--accent-edge);
+    }
+    .setup-opt-card__check { flex-shrink: 0; margin-top: 2px; accent-color: var(--accent); }
+    .setup-opt-card__body { flex: 1; }
+    .setup-opt-card__name {
+      font: 500 var(--t-body) var(--font-ui);
+      color: var(--text-primary);
+    }
+    .setup-opt-card__desc {
+      font: var(--t-compact) var(--font-ui);
+      color: var(--text-secondary);
+      margin-top: 2px;
+    }
+    .setup-opt-card__size {
+      font: var(--t-small) var(--font-mono);
+      color: var(--text-tertiary);
+      flex-shrink: 0;
+      margin-top: 2px;
+    }
+
+    /* Ready-to-scan cards (step 7) */
+    .setup-ready-cards {
+      display: flex;
+      gap: 16px;
+    }
+    .setup-ready-card {
+      flex: 1;
+      padding: 20px;
+      border-radius: 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .setup-ready-card--primary {
+      background: var(--accent-wash);
+      border: 1px solid var(--accent-edge);
+      box-shadow: var(--highlight-top);
+    }
+    .setup-ready-card--secondary {
+      background: var(--bg-raised);
+      border: 1px solid var(--border-subtle);
+      box-shadow: var(--highlight-top), var(--shadow-card);
+    }
+    .setup-ready-card__title {
+      font: 600 var(--t-title-sm) var(--font-ui);
+      color: var(--text-primary);
+    }
+    .setup-ready-card__desc {
+      font: var(--t-compact) var(--font-ui);
+      color: var(--text-secondary);
+      line-height: 1.5;
+    }
+
+    /* Shortcut reference card */
+    .setup-shortcuts-card {
+      background: var(--bg-raised);
+      border: 1px solid var(--border-subtle);
+      box-shadow: var(--highlight-top), var(--shadow-card);
+      border-radius: 8px;
+      padding: var(--s-12) var(--s-14);
+    }
+    .setup-shortcut-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      height: 28px;
+      font: var(--t-compact) var(--font-ui);
+      color: var(--text-secondary);
+      border-bottom: 1px solid var(--border-hairline);
+    }
+    .setup-shortcut-row:last-child { border-bottom: none; }
+    .setup-shortcut-row kbd {
+      background: var(--bg-pressed);
+      border: 1px solid var(--border-subtle);
+      border-radius: 4px;
+      padding: 1px 6px;
+      font: 500 var(--t-small) var(--font-mono);
+      color: var(--text-tertiary);
+    }
+
+    /* ── Footer nav ── */
+    .setup-footer {
+      background: var(--bg-chrome);
+      border-top: 1px solid var(--border-hairline);
+      padding: 12px 80px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-shrink: 0;
+    }
+    .setup-footer__dots {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+    }
+    .setup-footer__dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 999px;
+      background: var(--border-subtle);
+      transition: background var(--dur-fast) var(--ease-out);
+    }
+    .setup-footer__dot--active { background: var(--accent); }
+
+    /* ── Scan chat (step 6 reuses .scan-conv styles from index.html) ── */
+    .setup-chat-area {
+      flex: 1;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      padding-bottom: 12px;
+    }
+    .setup-chat-input-row {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .setup-chat-input {
+      width: 100%;
+      min-height: 48px;
+      max-height: 120px;
+      resize: none;
+      background: var(--bg-content);
+      box-shadow: var(--inset-recess);
+      border: 1px solid var(--border-subtle);
+      border-radius: 6px;
+      padding: 10px 12px;
+      font: var(--t-body) var(--font-ui);
+      color: var(--text-primary);
+      box-sizing: border-box;
+    }
+    .setup-chat-input:focus {
+      outline: none;
+      border-color: var(--accent-edge);
+      box-shadow: var(--inset-recess-strong), 0 0 0 3px var(--accent-glow);
+    }
+  </style>
+</head>
+<body>
+
+<div class="setup-root">
+
+  <!-- ═══════════════════════════════════════════════════════
+       LEFT RAIL (A.13 spec: 240px, bg-chrome, border-hairline)
+       ═══════════════════════════════════════════════════════ -->
+  <nav class="setup-rail" id="setup-rail" aria-label="Setup steps">
+
+    <!-- 48×48 brand mark + wordmark -->
+    <div class="setup-rail__header">
+      <svg class="setup-rail__mark" viewBox="0 0 48 48" fill="none" aria-hidden="true">
+        <rect x="2" y="2" width="44" height="44" rx="12" fill="var(--accent)" opacity="0.9"/>
+        <path d="M15 24h18M24 15v18" stroke="var(--text-on-accent)" stroke-width="3" stroke-linecap="round"/>
+      </svg>
+      <div class="setup-rail__wordmark">
+        <span class="setup-rail__name">FilePlus</span>
+        <span class="setup-rail__version">v0.1.0-alpha</span>
+      </div>
+    </div>
+
+    <!-- Step indicators (24×24 circles) -->
+    <div class="setup-steps" id="setup-steps">
+      <!-- Step 1: active example -->
+      <div class="setup-step" data-step="1" data-state="active">
+        <div class="setup-step__circle"><span>1</span></div>
+        <span class="setup-step__label">Welcome</span>
+      </div>
+      <!-- Step 2: pending -->
+      <div class="setup-step" data-step="2" data-state="">
+        <div class="setup-step__circle"><span>2</span></div>
+        <span class="setup-step__label">Install Engine</span>
+      </div>
+      <!-- Step 3: pending -->
+      <div class="setup-step" data-step="3" data-state="">
+        <div class="setup-step__circle"><span>3</span></div>
+        <span class="setup-step__label">Connect Claude</span>
+      </div>
+      <!-- Step 4: pending -->
+      <div class="setup-step" data-step="4" data-state="">
+        <div class="setup-step__circle"><span>4</span></div>
+        <span class="setup-step__label">Basic Settings</span>
+      </div>
+      <!-- Step 5: pending -->
+      <div class="setup-step" data-step="5" data-state="">
+        <div class="setup-step__circle"><span>5</span></div>
+        <span class="setup-step__label">Final Touches</span>
+      </div>
+      <!-- Step 6: pending -->
+      <div class="setup-step" data-step="6" data-state="">
+        <div class="setup-step__circle"><span>6</span></div>
+        <span class="setup-step__label">Scan Setup</span>
+      </div>
+      <!-- Step 7: pending -->
+      <div class="setup-step" data-step="7" data-state="">
+        <div class="setup-step__circle"><span>7</span></div>
+        <span class="setup-step__label">Ready to Scan</span>
+      </div>
+
+      <!-- Complete example (commented — uncomment to preview done state):
+      <div class="setup-step" data-step="0" data-state="done">
+        <div class="setup-step__circle"></div>
+        <span class="setup-step__label">Completed step</span>
+      </div>
+      -->
+    </div>
+
+    <!-- Footer info bar -->
+    <div class="setup-rail__footer" id="setup-rail-footer">
+      ~5 min remaining<br>
+      ~2.1 GB disk needed<br>
+      offline after setup
+    </div>
+
+  </nav><!-- /.setup-rail -->
+
+  <!-- ═══════════════════════════════════════════════════════
+       CONTENT AREA
+       ═══════════════════════════════════════════════════════ -->
+  <div class="setup-content">
+    <div class="setup-stage" id="setup-stage">
+
+      <!-- ───────────────────────────────────────────
+           STEP 1: Welcome (A.13 step 1)
+           ─────────────────────────────────────────── -->
+      <div class="setup-page active" data-page="1">
+        <!-- 64×64 hero icon in accent: folder-plus -->
+        <svg class="setup-hero" viewBox="0 0 64 64" fill="none" aria-hidden="true">
+          <rect x="4" y="18" width="56" height="38" rx="6" fill="var(--accent)" opacity="0.12"/>
+          <rect x="4" y="18" width="56" height="38" rx="6" stroke="var(--accent)" stroke-width="2"/>
+          <path d="M4 28h56" stroke="var(--accent)" stroke-width="2"/>
+          <path d="M4 24c0-3.3 2.7-6 6-6h14l4 6H4z" fill="var(--accent)" opacity="0.25"/>
+          <path d="M32 37v10M27 42h10" stroke="var(--accent)" stroke-width="2.5" stroke-linecap="round"/>
+        </svg>
+
+        <h1 class="setup-page__title">Welcome to FilePlus</h1>
+        <p class="setup-page__body">An AI-driven file manager for Windows. It watches your filesystem, classifies files with local AI, and proposes organised structures. You approve every move before it happens.</p>
+
+        <div style="display:flex;flex-direction:column;gap:10px">
+          <div class="fp-card" style="display:flex;gap:14px;align-items:flex-start">
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="none" style="flex-shrink:0;margin-top:1px"><circle cx="10" cy="10" r="9" fill="var(--good)" opacity="0.15"/><path d="M6 10l3 3 5-5" stroke="var(--good)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <span style="font: var(--t-compact) var(--font-ui); color: var(--text-secondary); line-height:1.5">Nothing runs without approval — every file operation is shown first</span>
+          </div>
+          <div class="fp-card" style="display:flex;gap:14px;align-items:flex-start">
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="none" style="flex-shrink:0;margin-top:1px"><circle cx="10" cy="10" r="9" fill="var(--good)" opacity="0.15"/><path d="M6 10l3 3 5-5" stroke="var(--good)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <span style="font: var(--t-compact) var(--font-ui); color: var(--text-secondary); line-height:1.5">Local-first — AI runs on your machine with Ollama, no data leaves unless you add an API key</span>
+          </div>
+          <div class="fp-card" style="display:flex;gap:14px;align-items:flex-start">
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="none" style="flex-shrink:0;margin-top:1px"><circle cx="10" cy="10" r="9" fill="var(--good)" opacity="0.15"/><path d="M6 10l3 3 5-5" stroke="var(--good)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <span style="font: var(--t-compact) var(--font-ui); color: var(--text-secondary); line-height:1.5">Sandbox mode active during setup — changes only inside the designated test folder</span>
+          </div>
+        </div>
+
+        <div>
+          <button class="fp-btn fp-btn--primary" id="btn-welcome-start" data-action="setup-next" style="height:36px">Get started</button>
+        </div>
+      </div>
+
+      <!-- ───────────────────────────────────────────
+           STEP 2: Install Engine (A.13 step 2)
+           ─────────────────────────────────────────── -->
+      <div class="setup-page" data-page="2">
+        <!-- 64×64 hero: download icon -->
+        <svg class="setup-hero" viewBox="0 0 64 64" fill="none" aria-hidden="true">
+          <rect x="8" y="8" width="48" height="48" rx="12" fill="var(--accent)" opacity="0.12"/>
+          <path d="M32 16v24M22 32l10 10 10-10M16 48h32" stroke="var(--accent)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+
+        <h1 class="setup-page__title">Install Engine</h1>
+        <p class="setup-page__body">FilePlus needs Ollama (local AI runtime) and the classification model. Downloads run once and stay on your machine.</p>
+
+        <!-- Download rows — INTEGRATION: live progress from backend download manager -->
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <!-- Completed row example -->
+          <div class="setup-dl-row setup-dl-row--done">
+            <svg class="setup-dl-row__icon" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="7" fill="var(--good)" opacity="0.15"/><path d="M5 8l2.5 2.5L11 5.5" stroke="var(--good)" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <span class="setup-dl-row__name">Ollama runtime</span>
+            <div class="setup-dl-row__right">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="6" fill="var(--good)" opacity="0.15"/><path d="M4 7l2.5 2.5L10 5" stroke="var(--good)" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <span class="setup-dl-row__size">Installed</span>
+            </div>
+          </div>
+          <!-- In-progress row example -->
+          <div class="setup-dl-row">
+            <svg class="setup-dl-row__icon" viewBox="0 0 16 16" fill="none"><rect x="1" y="1" width="14" height="14" rx="3" fill="var(--accent)" opacity="0.15"/><path d="M8 3v6M5 7l3 2.5L11 7" stroke="var(--accent)" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <span class="setup-dl-row__name">llama3.1:8b model</span>
+            <div class="setup-dl-row__right">
+              <span class="setup-dl-row__size">2.3 GB / 4.7 GB</span>
+              <div class="setup-dl-row__bar">
+                <div class="setup-dl-row__bar-fill" id="dl-model-progress" style="width:49%"></div>
+              </div>
+            </div>
+          </div>
+          <!-- INTEGRATION: additional component rows (Whisper, Tesseract) if opted-in in step 5 -->
+          <!-- Pending row example (commented):
+          <div class="setup-dl-row" style="opacity:0.5">
+            <svg class="setup-dl-row__icon" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6" stroke="var(--border-subtle)" stroke-width="1.2"/></svg>
+            <span class="setup-dl-row__name">Component name</span>
+            <div class="setup-dl-row__right">
+              <span class="setup-dl-row__size">— Pending</span>
+            </div>
+          </div> -->
+        </div>
+
+        <div style="display:flex;gap:8px">
+          <button class="fp-btn fp-btn--secondary fp-btn--sm" id="btn-check-ollama" data-action="setup-check-ollama">Check again</button>
+          <button class="fp-btn fp-btn--ghost fp-btn--sm" id="btn-skip-ollama" data-action="setup-skip-ollama">Skip (cloud-only mode)</button>
+        </div>
+      </div>
+
+      <!-- ───────────────────────────────────────────
+           STEP 3: Connect Claude (A.13 step 3)
+           ─────────────────────────────────────────── -->
+      <div class="setup-page" data-page="3">
+        <!-- 64×64 hero: key icon -->
+        <svg class="setup-hero" viewBox="0 0 64 64" fill="none" aria-hidden="true">
+          <rect x="8" y="8" width="48" height="48" rx="12" fill="var(--accent)" opacity="0.12"/>
+          <circle cx="26" cy="28" r="10" stroke="var(--accent)" stroke-width="2.5"/>
+          <path d="M33 35l14 14M43 43l-4 4" stroke="var(--accent)" stroke-width="2.5" stroke-linecap="round"/>
+          <circle cx="26" cy="28" r="4" fill="var(--accent)" opacity="0.3"/>
+        </svg>
+
+        <h1 class="setup-page__title">Connect Claude</h1>
+        <p class="setup-page__body">For ambiguous files, FilePlus falls back to the Claude API in batches. Optional — you can add this later.</p>
+
+        <div class="fp-card" style="display:flex;flex-direction:column;gap:16px">
+          <!-- Password input with lock icon -->
+          <div style="display:flex;flex-direction:column;gap:6px">
+            <label style="font: 500 var(--t-compact) var(--font-ui); letter-spacing: var(--track-heading); text-transform:uppercase; color:var(--text-tertiary)">Anthropic API key</label>
+            <div style="position:relative;display:flex;align-items:center">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none" style="position:absolute;left:10px;pointer-events:none;color:var(--text-tertiary)"><rect x="3" y="6" width="8" height="7" rx="1.5" stroke="currentColor" stroke-width="1.2"/><path d="M5 6V4a2 2 0 0 1 4 0v2" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+              <input class="fp-input" id="claude-api-key" type="password" placeholder="sk-ant-…" autocomplete="off" spellcheck="false"
+                     style="padding-left:30px;padding-right:36px;flex:1" />
+              <button class="fp-icon-btn" id="btn-show-key" title="Show/hide key" data-action="setup-toggle-key-vis"
+                      style="position:absolute;right:6px">
+                <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><ellipse cx="6.5" cy="6.5" rx="5.5" ry="3.5" stroke="currentColor" stroke-width="1.2"/><circle cx="6.5" cy="6.5" r="2" stroke="currentColor" stroke-width="1.2"/></svg>
+              </button>
+            </div>
+            <!-- Live validity indicator -->
+            <div id="api-key-status" style="display:none;font: var(--t-small) var(--font-ui); color:var(--text-tertiary)">
+              <!-- Valid: <span style="color:var(--good)">✓ Key looks valid</span> -->
+              <!-- Invalid: <span style="color:var(--bad)">Key format invalid</span> -->
+            </div>
+            <p style="margin:0;font: var(--t-small) var(--font-ui); color:var(--text-tertiary)">Stored in .env on this machine — never sent anywhere except Anthropic's API.</p>
+          </div>
+
+          <!-- Model selection -->
+          <div style="display:flex;flex-direction:column;gap:6px">
+            <label style="font: 500 var(--t-compact) var(--font-ui); letter-spacing: var(--track-heading); text-transform:uppercase; color:var(--text-tertiary)">Model</label>
+            <div style="display:flex;flex-direction:column;gap:4px">
+              <label class="settings-radio-row">
+                <input type="radio" name="claude-model" value="claude-haiku-4-5-20251001" checked data-action="setup-set-model" />
+                <span>Claude Haiku 4.5 — fast, cheap, good for bulk</span>
+              </label>
+              <label class="settings-radio-row">
+                <input type="radio" name="claude-model" value="claude-sonnet-4-6" data-action="setup-set-model" />
+                <span>Claude Sonnet 4.6 — higher quality, slower</span>
+              </label>
+            </div>
+          </div>
+
+          <!-- Monthly cost cap -->
+          <div style="display:flex;flex-direction:column;gap:6px">
+            <label style="font: 500 var(--t-compact) var(--font-ui); letter-spacing: var(--track-heading); text-transform:uppercase; color:var(--text-tertiary)">Monthly cost cap</label>
+            <div class="fp-segmented" id="cost-cap-switcher">
+              <button class="fp-segmented__opt active" data-cap="1" data-action="setup-set-cost-cap">$1</button>
+              <button class="fp-segmented__opt" data-cap="5" data-action="setup-set-cost-cap">$5</button>
+              <button class="fp-segmented__opt" data-cap="10" data-action="setup-set-cost-cap">$10</button>
+              <button class="fp-segmented__opt" data-cap="0" data-action="setup-set-cost-cap">No limit</button>
+            </div>
+          </div>
+
+          <!-- Offline mode toggle -->
+          <div style="display:flex;align-items:center;justify-content:space-between">
+            <div>
+              <div style="font: 500 var(--t-body) var(--font-ui); color:var(--text-primary)">Offline mode</div>
+              <div style="font: var(--t-compact) var(--font-ui); color:var(--text-secondary); margin-top:2px">Use local Ollama only, never call Claude API</div>
+            </div>
+            <label class="fp-toggle-input">
+              <input type="checkbox" id="toggle-offline-mode" data-action="setup-toggle-offline" />
+              <span class="fp-toggle"></span>
+            </label>
+          </div>
+        </div>
+
+        <button class="fp-btn fp-btn--ghost fp-btn--sm" id="btn-skip-claude" data-action="setup-skip-claude" style="align-self:flex-start">I'll add one later</button>
+      </div>
+
+      <!-- ───────────────────────────────────────────
+           STEP 4: Basic Settings (A.13 step 4)
+           ─────────────────────────────────────────── -->
+      <div class="setup-page" data-page="4">
+        <!-- 64×64 hero: sliders icon -->
+        <svg class="setup-hero" viewBox="0 0 64 64" fill="none" aria-hidden="true">
+          <rect x="8" y="8" width="48" height="48" rx="12" fill="var(--accent)" opacity="0.12"/>
+          <path d="M16 22h32M16 32h32M16 42h32" stroke="var(--accent)" stroke-width="2.5" stroke-linecap="round"/>
+          <circle cx="26" cy="22" r="5" fill="var(--bg-content)" stroke="var(--accent)" stroke-width="2"/>
+          <circle cx="38" cy="32" r="5" fill="var(--bg-content)" stroke="var(--accent)" stroke-width="2"/>
+          <circle cx="22" cy="42" r="5" fill="var(--bg-content)" stroke="var(--accent)" stroke-width="2"/>
+        </svg>
+
+        <h1 class="setup-page__title">Basic Settings</h1>
+        <p class="setup-page__body">These govern how FilePlus watches your drives. You can change everything in Settings later.</p>
+
+        <div class="fp-card" style="display:flex;flex-direction:column;gap:0">
+          <!-- Everything Folder path -->
+          <div class="settings-row" style="padding:var(--s-12) 0;border-bottom:1px solid var(--border-hairline)">
+            <div>
+              <div class="settings-row__label">Everything Folder</div>
+              <div class="settings-row__desc">New downloads and unorganised files land here first</div>
+            </div>
+            <div style="display:flex;gap:8px;align-items:center">
+              <input class="fp-input" id="everything-path" type="text" value="C:\Users\Me\Downloads" spellcheck="false" style="width:220px;font-size:12px" data-action="setup-set-everything-path" />
+              <button class="fp-btn fp-btn--secondary fp-btn--sm" data-action="setup-browse-everything">Browse</button>
+            </div>
+          </div>
+
+          <!-- Drives to watch -->
+          <div class="settings-row--col" style="padding:var(--s-12) 0;border-bottom:1px solid var(--border-hairline)">
+            <div class="settings-row__label">Drives to watch</div>
+            <div style="display:flex;gap:12px">
+              <label style="display:flex;align-items:center;gap:6px;font: var(--t-body) var(--font-ui); color:var(--text-primary);cursor:pointer">
+                <input type="checkbox" checked data-action="setup-toggle-drive" data-drive="C:" style="accent-color:var(--accent)" /> C:\
+              </label>
+              <label style="display:flex;align-items:center;gap:6px;font: var(--t-body) var(--font-ui); color:var(--text-secondary);cursor:pointer">
+                <input type="checkbox" data-action="setup-toggle-drive" data-drive="D:" style="accent-color:var(--accent)" /> D:\
+              </label>
+              <!-- INTEGRATION: enumerate actual drives from GET /api/drives -->
+            </div>
+          </div>
+
+          <!-- Replace Downloads toggle -->
+          <div class="settings-row" style="padding:var(--s-12) 0;border-bottom:1px solid var(--border-hairline)">
+            <div>
+              <div class="settings-row__label">Replace Downloads folder</div>
+              <div class="settings-row__desc">Route browser downloads through Everything Folder</div>
+            </div>
+            <div class="fp-segmented">
+              <button class="fp-segmented__opt" data-val="no" data-action="setup-set-dl-mode">No</button>
+              <button class="fp-segmented__opt active" data-val="per-browser" data-action="setup-set-dl-mode">Per browser</button>
+              <button class="fp-segmented__opt" data-val="yes" data-action="setup-set-dl-mode">Yes</button>
+            </div>
+          </div>
+
+          <!-- Confidence threshold -->
+          <div class="settings-row" style="padding:var(--s-12) 0;border-bottom:1px solid var(--border-hairline)">
+            <div>
+              <div class="settings-row__label">Auto-approve threshold</div>
+              <div class="settings-row__desc">Confidence above this level — approve without review</div>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px">
+              <input type="range" class="fp-slider" min="50" max="100" value="85" id="confidence-threshold" data-action="setup-set-confidence" style="width:120px" />
+              <span class="settings-slider-value" id="confidence-val">85%</span>
+            </div>
+          </div>
+
+          <!-- Scan schedule -->
+          <div class="settings-row" style="padding:var(--s-12) 0;border-bottom:1px solid var(--border-hairline)">
+            <div>
+              <div class="settings-row__label">Scan schedule</div>
+            </div>
+            <div class="fp-segmented">
+              <button class="fp-segmented__opt" data-val="manual" data-action="setup-set-scan-schedule">Manual</button>
+              <button class="fp-segmented__opt active" data-val="daily" data-action="setup-set-scan-schedule">Daily</button>
+              <button class="fp-segmented__opt" data-val="weekly" data-action="setup-set-scan-schedule">Weekly</button>
+            </div>
+          </div>
+
+          <!-- Taskbar widget -->
+          <div class="settings-row" style="padding:var(--s-12) 0">
+            <div>
+              <div class="settings-row__label">Taskbar tray widget</div>
+              <div class="settings-row__desc">Show FilePlus icon in the system tray</div>
+            </div>
+            <label class="fp-toggle-input">
+              <input type="checkbox" checked id="toggle-tray-widget" data-action="setup-toggle-tray" />
+              <span class="fp-toggle"></span>
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <!-- ───────────────────────────────────────────
+           STEP 5: Final Touches (A.13 step 5)
+           ─────────────────────────────────────────── -->
+      <div class="setup-page" data-page="5">
+        <!-- 64×64 hero: puzzle/extensions icon -->
+        <svg class="setup-hero" viewBox="0 0 64 64" fill="none" aria-hidden="true">
+          <rect x="8" y="8" width="48" height="48" rx="12" fill="var(--accent)" opacity="0.12"/>
+          <path d="M24 16v8a4 4 0 0 1-8 0v-8M16 24h8M40 48v-8a4 4 0 0 1 8 0v8M48 40h-8" stroke="var(--accent)" stroke-width="2" stroke-linecap="round"/>
+          <rect x="20" y="20" width="24" height="24" rx="4" stroke="var(--accent)" stroke-width="2"/>
+        </svg>
+
+        <h1 class="setup-page__title">Final Touches</h1>
+        <p class="setup-page__body">Optional components that extend FilePlus. These will be downloaded now if selected. You can add them later in Settings.</p>
+
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <!-- Opt-in card: selected state -->
+          <label class="setup-opt-card setup-opt-card--selected" data-action="setup-toggle-component" data-component="tesseract">
+            <input type="checkbox" class="setup-opt-card__check" checked />
+            <div class="setup-opt-card__body">
+              <div class="setup-opt-card__name">Tesseract OCR</div>
+              <div class="setup-opt-card__desc">Extract text from images and scanned PDFs for search and classification</div>
+            </div>
+            <span class="setup-opt-card__size">~190 MB</span>
+          </label>
+          <!-- Opt-in card: unselected -->
+          <label class="setup-opt-card" data-action="setup-toggle-component" data-component="whisper">
+            <input type="checkbox" class="setup-opt-card__check" />
+            <div class="setup-opt-card__body">
+              <div class="setup-opt-card__name">Whisper.cpp</div>
+              <div class="setup-opt-card__desc">Transcribe audio and video files for search</div>
+            </div>
+            <span class="setup-opt-card__size">~1.5 GB</span>
+          </label>
+          <label class="setup-opt-card" data-action="setup-toggle-component" data-component="onnx">
+            <input type="checkbox" class="setup-opt-card__check" />
+            <div class="setup-opt-card__body">
+              <div class="setup-opt-card__name">ONNX classifier</div>
+              <div class="setup-opt-card__desc">Faster local classification without Ollama (lower accuracy)</div>
+            </div>
+            <span class="setup-opt-card__size">~340 MB</span>
+          </label>
+          <label class="setup-opt-card" data-action="setup-toggle-component" data-component="custom-categories">
+            <input type="checkbox" class="setup-opt-card__check" />
+            <div class="setup-opt-card__body">
+              <div class="setup-opt-card__name">Custom categories pack</div>
+              <div class="setup-opt-card__desc">Pre-built category trees for software development, creative work, and research</div>
+            </div>
+            <span class="setup-opt-card__size">~4 MB</span>
+          </label>
+        </div>
+      </div>
+
+      <!-- ───────────────────────────────────────────
+           STEP 6: Conversational Scan Config (A.13 step 6)
+           Mirrors A.5 chat interface styling
+           ─────────────────────────────────────────── -->
+      <div class="setup-page" data-page="6" style="height:100%;flex:1">
+        <!-- 64×64 hero: chat/AI icon -->
+        <svg class="setup-hero" viewBox="0 0 64 64" fill="none" aria-hidden="true">
+          <rect x="8" y="10" width="48" height="36" rx="8" fill="var(--accent)" opacity="0.12"/>
+          <rect x="8" y="10" width="48" height="36" rx="8" stroke="var(--accent)" stroke-width="2"/>
+          <path d="M16 30h6M16 22h32M16 26h24" stroke="var(--accent)" stroke-width="2" stroke-linecap="round"/>
+          <path d="M20 46l4-6h16" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+
+        <h1 class="setup-page__title">How should FilePlus classify?</h1>
+        <p class="setup-page__body">Answer a few questions to tune the AI to your style. Skip any question — defaults are reasonable.</p>
+
+        <!-- Chat message thread -->
+        <div class="setup-chat-area" id="setup-chat-messages">
+          <!-- AI message (left) -->
+          <div style="display:flex;flex-direction:column;gap:4px;max-width:80%">
+            <div style="background:var(--bg-raised);border:1px solid var(--border-subtle);box-shadow:var(--highlight-top),var(--shadow-card);border-radius:0 8px 8px 8px;padding:10px 14px;font: var(--t-body) var(--font-ui);color:var(--text-primary);line-height:1.5">
+              What kinds of files do you work with most? (e.g. code, design files, documents, media, or a mix)
+            </div>
+          </div>
+          <!-- User message (right) — example state -->
+          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;max-width:80%;align-self:flex-end">
+            <div style="background:var(--accent-wash);border:1px solid var(--accent-edge);box-shadow:var(--highlight-top);border-radius:8px 0 8px 8px;padding:10px 14px;font: var(--t-body) var(--font-ui);color:var(--text-primary);line-height:1.5">
+              Mostly code projects and design files, some PDFs and screenshots
+            </div>
+          </div>
+          <!-- AI follow-up -->
+          <div style="display:flex;flex-direction:column;gap:4px;max-width:80%">
+            <div style="background:var(--bg-raised);border:1px solid var(--border-subtle);box-shadow:var(--highlight-top),var(--shadow-card);border-radius:0 8px 8px 8px;padding:10px 14px;font: var(--t-body) var(--font-ui);color:var(--text-primary);line-height:1.5">
+              Got it. How aggressively should FilePlus propose reorganisation?
+            </div>
+            <!-- Tag chip selection for aggressiveness -->
+            <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px">
+              <button class="fp-chip fp-chip--active" data-action="setup-chat-chip" data-val="conservative">Conservative — minimal moves</button>
+              <button class="fp-chip" data-action="setup-chat-chip" data-val="moderate">Moderate</button>
+              <button class="fp-chip" data-action="setup-chat-chip" data-val="aggressive">Aggressive — reorganise everything</button>
+            </div>
+          </div>
+          <!-- INTEGRATION: additional messages generated from AI config conversation -->
+        </div>
+
+        <!-- Input area -->
+        <div class="setup-chat-input-row">
+          <textarea class="setup-chat-input" id="setup-chat-input" rows="2"
+                    placeholder="Type a reply…" data-action="setup-chat-type"></textarea>
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <button class="fp-btn fp-btn--ghost fp-btn--sm" data-action="setup-chat-skip">Skip the rest, use defaults</button>
+            <div style="display:flex;gap:8px">
+              <button class="fp-btn fp-btn--secondary fp-btn--sm" data-action="setup-chat-done">I'm done answering</button>
+              <button class="fp-btn fp-btn--primary fp-btn--sm" data-action="setup-chat-send">Send</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ───────────────────────────────────────────
+           STEP 7: Ready to Scan (A.13 step 7)
+           ─────────────────────────────────────────── -->
+      <div class="setup-page" data-page="7">
+        <!-- 64×64 hero: rocket/scan icon -->
+        <svg class="setup-hero" viewBox="0 0 64 64" fill="none" aria-hidden="true">
+          <rect x="8" y="8" width="48" height="48" rx="12" fill="var(--accent)" opacity="0.12"/>
+          <circle cx="32" cy="32" r="14" stroke="var(--accent)" stroke-width="2.5"/>
+          <path d="M32 20v24M20 32h24" stroke="var(--accent)" stroke-width="2.5" stroke-linecap="round"/>
+          <circle cx="32" cy="32" r="5" fill="var(--accent)" opacity="0.4"/>
+        </svg>
+
+        <h1 class="setup-page__title">Ready to scan</h1>
+        <p class="setup-page__body">FilePlus will take a snapshot of your drives before doing anything, so you can always roll back. The first scan may take a few minutes.</p>
+
+        <!-- Baseline snapshot note -->
+        <div class="fp-card" style="display:flex;gap:10px;align-items:center;background:var(--good-wash);border-color:var(--good-edge)">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 1v6l3 3" stroke="var(--good)" stroke-width="1.4" stroke-linecap="round"/><circle cx="8" cy="8" r="7" stroke="var(--good)" stroke-width="1.2"/></svg>
+          <span style="font: var(--t-compact) var(--font-ui); color:var(--text-secondary)">A baseline snapshot will be created before any moves — this takes about 30 seconds.</span>
+        </div>
+
+        <!-- Two action cards side by side -->
+        <div class="setup-ready-cards">
+          <!-- Primary: start scan -->
+          <div class="setup-ready-card setup-ready-card--primary">
+            <div class="setup-ready-card__title">Start first scan</div>
+            <div class="setup-ready-card__desc">Scan your drives now and see what FilePlus finds. Results appear in Review Bin.</div>
+            <button class="fp-btn fp-btn--primary" data-action="setup-start-scan" style="margin-top:8px">Start scan</button>
+          </div>
+          <!-- Secondary: skip to app -->
+          <div class="setup-ready-card setup-ready-card--secondary">
+            <div class="setup-ready-card__title">Just open the app</div>
+            <div class="setup-ready-card__desc">Skip the scan for now. FilePlus will watch for new files automatically.</div>
+            <button class="fp-btn fp-btn--secondary" data-action="setup-open-app" style="margin-top:8px">Open FilePlus</button>
+          </div>
+        </div>
+
+        <!-- Keyboard shortcut reference -->
+        <div>
+          <p style="font: 500 var(--t-compact) var(--font-ui); letter-spacing:var(--track-heading); text-transform:uppercase; color:var(--text-tertiary); margin:0 0 8px">Shortcuts to know</p>
+          <div class="setup-shortcuts-card">
+            <div class="setup-shortcut-row"><span>Open FilePlus</span><kbd>Ctrl+Shift+F</kbd></div>
+            <div class="setup-shortcut-row"><span>Command palette</span><kbd>Ctrl+K</kbd></div>
+            <div class="setup-shortcut-row"><span>Toggle sidebar</span><kbd>Ctrl+B</kbd></div>
+            <div class="setup-shortcut-row"><span>Toggle inspector</span><kbd>Ctrl+I</kbd></div>
+            <div class="setup-shortcut-row"><span>Review Bin</span><kbd>Ctrl+Shift+R</kbd></div>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /.setup-stage -->
+
+    <!-- ── Footer nav ── -->
+    <footer class="setup-footer">
+      <button class="fp-btn fp-btn--ghost fp-btn--sm" id="btn-back" data-action="setup-prev" style="visibility:hidden">Back</button>
+      <div class="setup-footer__dots" id="setup-dots"></div>
+      <button class="fp-btn fp-btn--primary fp-btn--sm" id="btn-next" data-action="setup-next">Continue</button>
+    </footer>
+  </div><!-- /.setup-content -->
+
+</div><!-- /.setup-root -->
+
+<script>
+  const TOTAL = 7;
+  let current = 1;
+
+  const dotsEl  = document.getElementById('setup-dots');
+  const btnBack = document.getElementById('btn-back');
+  const btnNext = document.getElementById('btn-next');
+
+  // Build step dots
+  for (let i = 1; i <= TOTAL; i++) {
+    const d = document.createElement('div');
+    d.className = 'setup-footer__dot';
+    d.dataset.dot = i;
+    dotsEl.appendChild(d);
+  }
+
+  function updateRailFooter(step) {
+    const remaining = Math.max(0, 7 - step);
+    const minMap = [5, 4, 3, 2, 2, 1, 0];
+    const el = document.getElementById('setup-rail-footer');
+    if (!el) return;
+    const mins = minMap[step - 1] || 0;
+    el.innerHTML = mins > 0
+      ? `~${mins} min remaining<br>~2.1 GB disk needed<br>offline after setup`
+      : `Setup complete<br>~2.1 GB disk used<br>FilePlus ready`;
+  }
+
+  function go(step) {
+    current = Math.max(1, Math.min(TOTAL, step));
+
+    // Pages
+    document.querySelectorAll('.setup-page').forEach(p => {
+      p.classList.toggle('active', Number(p.dataset.page) === current);
+    });
+
+    // Rail steps
+    document.querySelectorAll('.setup-step').forEach(s => {
+      const n = Number(s.dataset.step);
+      s.dataset.state = n < current ? 'done' : n === current ? 'active' : '';
+    });
+
+    // Footer dots
+    document.querySelectorAll('[data-dot]').forEach(d => {
+      d.classList.toggle('setup-footer__dot--active', Number(d.dataset.dot) === current);
+    });
+
+    // Buttons
+    btnBack.style.visibility = current > 1 ? 'visible' : 'hidden';
+    if (current === TOTAL) {
+      btnNext.style.display = 'none'; // Final step — use the cards instead
+    } else {
+      btnNext.style.display = '';
+      btnNext.textContent = current === 6 ? 'Continue' : 'Continue';
+    }
+
+    updateRailFooter(current);
+  }
+
+  // Navigate via data-action
+  document.addEventListener('click', e => {
+    const btn = e.target.closest('[data-action]');
+    if (!btn) return;
+    switch (btn.dataset.action) {
+      case 'setup-next': go(current + 1); break;
+      case 'setup-prev': go(current - 1); break;
+      case 'setup-start-scan':
+        window.electronAPI?.startScan?.();
+        window.electronAPI?.openMain?.();
+        window.electronAPI?.closeSetup?.();
+        break;
+      case 'setup-open-app':
+        window.electronAPI?.openMain?.();
+        window.electronAPI?.closeSetup?.();
+        break;
+      case 'setup-set-cost-cap':
+        document.querySelectorAll('[data-action="setup-set-cost-cap"]').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        break;
+      case 'setup-set-dl-mode':
+        btn.closest('.fp-segmented')?.querySelectorAll('.fp-segmented__opt').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        break;
+      case 'setup-set-scan-schedule':
+        btn.closest('.fp-segmented')?.querySelectorAll('.fp-segmented__opt').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        break;
+      case 'setup-chat-chip':
+        // Toggle chip selection
+        btn.classList.toggle('fp-chip--active');
+        break;
+      case 'setup-toggle-component': {
+        const card = btn.closest('.setup-opt-card');
+        const cb = card?.querySelector('input[type="checkbox"]');
+        if (cb) cb.checked = !cb.checked;
+        card?.classList.toggle('setup-opt-card--selected', cb?.checked ?? false);
+        break;
+      }
+      case 'setup-toggle-key-vis': {
+        const input = document.getElementById('claude-api-key');
+        if (input) input.type = input.type === 'password' ? 'text' : 'password';
+        break;
+      }
+      case 'setup-toggle-offline': {
+        // INTEGRATION: disable API key field if offline mode on
+        break;
+      }
+    }
+  });
+
+  // Back button explicit handler (separate from data-action delegation above)
+  btnBack.addEventListener('click', () => go(current - 1));
+
+  // Confidence slider live display
+  const confSlider = document.getElementById('confidence-threshold');
+  const confVal    = document.getElementById('confidence-val');
+  confSlider?.addEventListener('input', () => {
+    if (confVal) confVal.textContent = confSlider.value + '%';
+  });
+
+  // Theme switcher on step 4 (if user wants to preview theme during setup)
+  document.querySelectorAll('[data-theme-val]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('[data-theme-val]').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      if (btn.dataset.themeVal !== 'system') {
+        document.documentElement.dataset.theme = btn.dataset.themeVal;
+      }
+    });
+  });
+
+  // Toggle handlers (fp-toggle-input uses the CSS checkbox pattern)
+  // Handled by native checkbox; fp-toggle CSS applies via :checked
+
+  go(1);
+</script>
+</body>
+</html>
