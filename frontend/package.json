@@ -2,11 +2,11 @@
   "name": "fileplus",
   "version": "0.1.0",
   "description": "AI-powered Windows file explorer replacement",
-  "main": "electron.js",
+  "main": "main.js",
   "scripts": {
     "start": "electron ."
   },
   "devDependencies": {
-    "electron": "^28.0.0"
+    "electron": "^41.3.0"
   }
 }

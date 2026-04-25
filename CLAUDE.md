@@ -38,7 +38,7 @@ fileplus/
     classifier.py      watcher.py          mover.py
     operations_log.py  snapshotter.py      api.py
   frontend/
-    package.json       electron.js         preload.js
+    package.json       main.js             preload.js
     index.html         tray/index.html
     src/app.js         src/actions.js      src/styles.css
   tests/

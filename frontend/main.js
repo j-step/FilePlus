@@ -4,7 +4,7 @@
  * Creates the application window, configures security settings,
  * and wires up the dev-tools shortcut.
  */
-const { app, BrowserWindow, globalShortcut } = require('electron');
+const { app, BrowserWindow, globalShortcut, ipcMain } = require('electron');
 const path = require('path');
 
 let mainWindow;
@@ -15,14 +15,14 @@ function createWindow() {
     height: 800,
     minWidth: 800,
     minHeight: 500,
-    backgroundColor: '#0d0d0d',
+    backgroundColor: '#181522',
     title: 'FilePlus',
+    frame: false,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
       preload: path.join(__dirname, 'preload.js'),
     },
-    // Remove default menu bar for a cleaner look
     autoHideMenuBar: true,
   });
 
@@ -34,6 +34,14 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  const { ipcMain } = require('electron');
+  ipcMain.on('win-minimize', () => mainWindow?.minimize());
+  ipcMain.on('win-maximize', () => {
+    if (mainWindow?.isMaximized()) mainWindow.unmaximize();
+    else mainWindow?.maximize();
+  });
+  ipcMain.on('win-close', () => mainWindow?.close());
+
   createWindow();
 
   // F12 toggles DevTools

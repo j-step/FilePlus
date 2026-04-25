@@ -110,7 +110,7 @@ Phase-by-phase implementation roadmap. Phase numbers match HANDOFF.md §8. Claud
 
 **Goal:** Electron window with frameless custom titlebar, sidebar / content / Inspector three-pane layout, top toolbar with Approvals pill, bottom status bar, theme toggle. All CSS vars from design tokens v2. All chrome compositions per HANDOFF.md §6.6.
 
-**Files:** `frontend/electron.js`, `frontend/preload.js`, `frontend/index.html`, `frontend/src/app.js`, `frontend/src/styles.css`
+**Files:** `frontend/main.js`, `frontend/preload.js`, `frontend/index.html`, `frontend/src/app.js`, `frontend/src/styles.css`
 
 **Key implementation details:**
 - Electron: `frame: false`, `BrowserWindow` 1200×800 default, window state persistence
