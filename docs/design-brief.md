@@ -598,14 +598,13 @@ All form controls (toggles, sliders, segmented controls, text inputs, radios, ch
 
 ### A.12.1 Personalization
 - Theme: Dark / Light / System (segmented control)
+- Accent palette: lavender / indigo / violet / sky / mix (segmented control)
 - Inspector default width slider (280-520, value label in JetBrains Mono on drag)
 - Density: Compact / Comfortable / Spacious (segmented control)
 - Tab style: Compact / Standard (segmented control)
 - Show file extensions toggle
 - View hidden files toggle (off default)
 - Single vs double-click open (segmented)
-
-**Note: the accent color is fixed to amber across the app for identity consistency (per design principle). No accent palette option is exposed.**
 
 ### A.12.2 Scan & Index
 - Indexed drives & folders (list with add/remove buttons)
@@ -1167,8 +1166,6 @@ All 11 panes implemented per A.12.1 through A.12.11. All controls per v2 Section
 - Radios: 16×16 with 6×6 accent dot when selected
 
 Cards group related settings per v2 Section 22.
-
-**IMPORTANT:** Do NOT include an accent palette option in Personalization. The accent is fixed to amber for identity consistency per design principle.
 
 Custom File Types pane includes "Re-run setup conversation" secondary button.
 
