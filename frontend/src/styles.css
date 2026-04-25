@@ -2785,6 +2785,76 @@ svg { flex-shrink: 0; }
   overflow-y: auto;
   outline: none;
 }
+
+/* ── 40f. BROWSER GRID VIEW (A.3.1) ──────────────────────────────────────── */
+#list-scroll[data-view="grid"] {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: var(--s-8);
+  padding: var(--s-12);
+  align-content: start;
+}
+/* Adapt existing fp-row to tile layout in grid mode */
+#list-scroll[data-view="grid"] .fp-row {
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  height: auto;
+  min-height: 96px;
+  padding: var(--s-8);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-card);
+  background: var(--bg-raised);
+  box-shadow: var(--highlight-top), var(--shadow-card);
+  cursor: default;
+}
+#list-scroll[data-view="grid"] .fp-row:hover {
+  background: var(--bg-pressed);
+}
+#list-scroll[data-view="grid"] .fp-row--selected {
+  background: var(--accent-wash);
+  border-color: var(--accent-edge);
+}
+#list-scroll[data-view="grid"] .fp-row__icon {
+  width: 40px;
+  height: 40px;
+}
+#list-scroll[data-view="grid"] .fp-row__icon svg {
+  width: 40px;
+  height: 40px;
+}
+#list-scroll[data-view="grid"] .fp-row__name {
+  font: 500 var(--t-compact) var(--font-ui);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  white-space: normal;
+}
+#list-scroll[data-view="grid"] .fp-row__size,
+#list-scroll[data-view="grid"] .fp-row__modified,
+#list-scroll[data-view="grid"] .fp-row__tags { display: none; }
+/* Hide column headers in grid mode */
+.list-head--grid-hidden { display: none !important; }
+
+/* Marquee selection rectangle (A.3.1) */
+.fp-marquee {
+  position: fixed;
+  border: 1px solid var(--accent);
+  background: color-mix(in oklch, var(--accent) 8%, transparent);
+  pointer-events: none;
+  z-index: 9999;
+  border-radius: 2px;
+}
+
+/* Sort chevron active state on any sortable column (A.3.1) */
+.fp-sortable { position: relative; }
+.fp-sortable .list-col__caret { opacity: 0; }
+.fp-sortable.active .list-col__caret { opacity: 1; }
+.fp-sortable.active.asc .list-col__caret { transform: rotate(180deg); }
+
 .list-empty-state {
   display: flex;
   flex-direction: column;

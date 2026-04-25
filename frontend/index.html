@@ -510,8 +510,12 @@
                   Name
                   <svg class="list-col__caret" width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden="true"><path d="M2 4l3 3 3-3" stroke="var(--accent)" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
                 </div>
-                <div class="list-col list-col--size fp-sortable" data-sort="size" data-action="sort-by" style="cursor:default">Size</div>
-                <div class="list-col list-col--modified fp-sortable" data-sort="modified" data-action="sort-by" style="cursor:default">Modified</div>
+                <div class="list-col list-col--size fp-sortable" data-sort="size" data-action="sort-by" style="cursor:pointer;display:flex;align-items:center;gap:4px;justify-content:flex-end">Size
+                  <svg class="list-col__caret" width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden="true"><path d="M2 4l3 3 3-3" stroke="var(--accent)" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </div>
+                <div class="list-col list-col--modified fp-sortable" data-sort="modified" data-action="sort-by" style="cursor:pointer;display:flex;align-items:center;gap:4px;justify-content:flex-end">Modified
+                  <svg class="list-col__caret" width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden="true"><path d="M2 4l3 3 3-3" stroke="var(--accent)" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </div>
                 <div class="list-col list-col--tags">Tags</div>
               </div>
 
@@ -582,6 +586,9 @@
 
               </div><!-- /#list-scroll -->
             </div><!-- /.list-pane -->
+
+            <!-- Marquee selection rectangle — positioned by JS on mousedown drag (A.3.1) -->
+            <div class="fp-marquee" id="marquee-rect" style="display:none" aria-hidden="true"></div>
 
             <!-- Resizer handle -->
             <div class="resizer" id="resizer" title="Drag to resize inspector"></div>
@@ -671,16 +678,24 @@
                   <p style="font:400 var(--t-body) var(--font-ui);color:var(--text-tertiary);padding:8px 0">No history available yet.</p>
                 </div>
 
-                <!-- Multi-select state (comment in when multiple files selected):
-                <div class="fp-inspector__pane" data-pane="multi">
-                  <div style="font:500 var(--t-title-sm) var(--font-ui);color:var(--text-primary);margin-bottom:8px">
+                <!-- INSPECTOR: multi-select state — shown by updateInspector('multi', ...) when >1 item selected -->
+                <!-- Single-file state (preview/tags/history tabs above) is the default -->
+                <div class="fp-inspector__pane" data-pane="multi" style="display:none">
+                  <div style="font:500 var(--t-title-sm) var(--font-ui);color:var(--text-primary);margin-bottom:4px">
                     <span id="inspector-multi-count">3</span> items selected
                   </div>
-                  <div style="font:400 var(--t-compact) var(--font-mono);color:var(--text-secondary)">
+                  <div style="font:400 var(--t-compact) var(--font-mono);color:var(--text-secondary);margin-bottom:12px">
                     Total: <span id="inspector-multi-size">42.1 KB</span>
+                    <!-- INTEGRATION: sum of sizes from GET /api/file/info for each selected path -->
+                  </div>
+                  <!-- Union of tags across all selected files -->
+                  <div class="fp-chip-group" id="inspector-multi-tags" style="display:flex;flex-wrap:wrap;gap:6px">
+                    <span class="fp-chip fp-chip--tinted">design</span>
+                    <span class="fp-chip">docs</span>
+                    <span class="fp-chip">markdown</span>
+                    <!-- INTEGRATION: union of tags from selected files' metadata -->
                   </div>
                 </div>
-                -->
 
               </div><!-- /.inspector__body -->
 

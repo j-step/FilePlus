@@ -52,9 +52,128 @@ function setViewMode(mode) {
   });
   const listScroll = document.getElementById('list-scroll');
   if (listScroll) listScroll.dataset.view = mode;
+  // Show/hide column header in grid mode (A.3.1)
+  const listHead = document.getElementById('list-head');
+  if (listHead) listHead.classList.toggle('list-head--grid-hidden', mode === 'grid');
+  sessionStorage.setItem('fp-view-mode', mode);
 }
 
-// ── Inspector tabs ────────────────────────────────────────────────────────��───
+// ── Column sort cycling (A.3.1) ───────────────────────────────────────────────
+function initColumnSort() {
+  document.querySelectorAll('.fp-sortable[data-sort]').forEach(col => {
+    col.style.cursor = 'pointer';
+    col.addEventListener('click', () => {
+      const currentSort = col.dataset.sort;
+      const wasActive = col.classList.contains('active');
+      const wasAsc = col.classList.contains('asc');
+      // Cycle: inactive → asc → desc → inactive
+      document.querySelectorAll('.fp-sortable').forEach(c => {
+        c.classList.remove('active', 'asc');
+      });
+      if (!wasActive) {
+        col.classList.add('active', 'asc');
+      } else if (wasAsc) {
+        col.classList.add('active'); // desc (no asc class)
+      }
+      // else was desc → now inactive (neither class)
+      // INTEGRATION: sort file list by col.dataset.sort direction
+    });
+  });
+}
+
+// ── Marquee selection (A.3.1) ─────────────────────────────────────────────────
+function initMarqueeSelection() {
+  const listScroll = document.getElementById('list-scroll');
+  const marqueeRect = document.getElementById('marquee-rect');
+  if (!listScroll || !marqueeRect) return;
+  let dragging = false, startX = 0, startY = 0;
+
+  listScroll.addEventListener('mousedown', e => {
+    if (e.target.closest('.fp-row, .fp-row__icon, .fp-row__name')) return;
+    if (e.button !== 0) return;
+    dragging = true;
+    startX = e.clientX; startY = e.clientY;
+    marqueeRect.style.display = 'block';
+    marqueeRect.style.left = startX + 'px';
+    marqueeRect.style.top  = startY + 'px';
+    marqueeRect.style.width = '0px';
+    marqueeRect.style.height = '0px';
+    e.preventDefault();
+  });
+
+  document.addEventListener('mousemove', e => {
+    if (!dragging) return;
+    const x = Math.min(e.clientX, startX);
+    const y = Math.min(e.clientY, startY);
+    const w = Math.abs(e.clientX - startX);
+    const h = Math.abs(e.clientY - startY);
+    marqueeRect.style.left   = x + 'px';
+    marqueeRect.style.top    = y + 'px';
+    marqueeRect.style.width  = w + 'px';
+    marqueeRect.style.height = h + 'px';
+    // Highlight intersecting rows
+    const mr = { left: x, right: x + w, top: y, bottom: y + h };
+    listScroll.querySelectorAll('.fp-row').forEach(row => {
+      const rr = row.getBoundingClientRect();
+      const hit = rr.left < mr.right && rr.right > mr.left &&
+                  rr.top  < mr.bottom && rr.bottom > mr.top;
+      row.classList.toggle('fp-row--selected', hit);
+    });
+  });
+
+  document.addEventListener('mouseup', () => {
+    if (!dragging) return;
+    dragging = false;
+    marqueeRect.style.display = 'none';
+    // INTEGRATION: selected set drives inspector aggregate view
+    const selected = listScroll.querySelectorAll('.fp-row--selected');
+    if (selected.length > 1) updateInspector('multi', { count: selected.length });
+  });
+}
+
+// ── Inspector update (A.3.2) ─────────────────────────────────────────────────
+function updateInspector(mode, data = {}) {
+  const inspector = document.getElementById('inspector');
+  if (!inspector) return;
+
+  const singlePanes = inspector.querySelectorAll('.fp-inspector__pane:not([data-pane="multi"])');
+  const multiPane   = inspector.querySelector('.fp-inspector__pane[data-pane="multi"]');
+  const tabBar      = inspector.querySelector('.fp-tabs.fp-inspector__tabs');
+  const preview     = document.getElementById('inspector-preview');
+  const filenameEl  = document.getElementById('inspector-filename');
+  const filepathEl  = document.getElementById('inspector-filepath');
+
+  if (mode === 'multi') {
+    // Show multi-select aggregate; hide single-file UI
+    singlePanes.forEach(p => { p.style.display = 'none'; });
+    if (tabBar)   tabBar.style.display = 'none';
+    if (preview)  preview.style.display = 'none';
+    if (filenameEl) filenameEl.textContent = `${data.count} items selected`;
+    if (filepathEl) filepathEl.textContent = '';
+    if (multiPane) {
+      multiPane.style.display = '';
+      const countEl = multiPane.querySelector('#inspector-multi-count');
+      const sizeEl  = multiPane.querySelector('#inspector-multi-size');
+      if (countEl) countEl.textContent = data.count || 0;
+      if (sizeEl)  sizeEl.textContent  = data.totalSize || '—'; // INTEGRATION: real sum
+    }
+    if (!inspector.classList.contains('inspector--open')) toggleInspector();
+  } else if (mode === 'single') {
+    // Restore single-file UI
+    singlePanes.forEach(p => { p.style.display = ''; });
+    if (multiPane) multiPane.style.display = 'none';
+    if (tabBar)    tabBar.style.display = '';
+    if (preview)   preview.style.display = '';
+    if (data.name && filenameEl) filenameEl.textContent = data.name;
+    if (data.path && filepathEl) filepathEl.textContent = data.path;
+    if (!inspector.classList.contains('inspector--open')) toggleInspector();
+  } else {
+    // Empty selection — collapse inspector
+    if (inspector.classList.contains('inspector--open')) toggleInspector();
+  }
+}
+
+// ── Inspector tabs ────────────────────────────────────────────────────────────
 function switchInspectorTab(name) {
   document.querySelectorAll('.fp-inspector__tab, .inspector__tab').forEach(tab => {
     tab.classList.toggle('active', (tab.dataset.tab || tab.dataset.pane) === name);
@@ -858,6 +977,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Init tab drag-reorder for existing tabs (A.1.2)
   document.querySelectorAll('.fp-tab[draggable]').forEach(initTabDrag);
+
+  // Init column sort cycling and marquee selection (A.3.1)
+  initColumnSort();
+  initMarqueeSelection();
+
+  // Restore saved view mode
+  const savedView = sessionStorage.getItem('fp-view-mode');
+  if (savedView) setViewMode(savedView);
 
   // Init underline tabs in any pre-existing tab containers
   document.querySelectorAll('.fp-tabs').forEach(initUnderlineTabs);
