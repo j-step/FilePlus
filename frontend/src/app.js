@@ -98,6 +98,84 @@ function handlePaletteAction(btn) {
   closePalette();
 }
 
+// Palette Search/Chat mode switch (A.11.1)
+function setPaletteMode(mode) {
+  const searchPane = document.getElementById('palette-search-pane');
+  const chatPane   = document.getElementById('palette-chat-pane');
+  const toggle     = document.getElementById('palette-mode-toggle');
+  if (searchPane) searchPane.style.display = mode === 'search' ? '' : 'none';
+  if (chatPane)   chatPane.style.display   = mode === 'chat' ? '' : 'none';
+  toggle?.querySelectorAll('.fp-segmented__opt').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.mode === mode);
+  });
+  if (paletteInput) {
+    paletteInput.placeholder = mode === 'search'
+      ? 'Type a command, path, or question…'
+      : 'Ask Claude anything about your files…';
+  }
+}
+
+// ── Tag canvas (A.11.2) ───────────────────────────────────────────────────────
+function openTagCanvas() {
+  const scrim = document.getElementById('tag-canvas-scrim');
+  if (!scrim) return;
+  scrim.style.display = 'flex';
+  scrim.removeAttribute('aria-hidden');
+}
+
+function closeTagCanvas() {
+  const scrim = document.getElementById('tag-canvas-scrim');
+  if (!scrim) return;
+  scrim.style.display = 'none';
+  scrim.setAttribute('aria-hidden', 'true');
+}
+
+// ── Confirmation modal (A.11.3) ───────────────────────────────────────────────
+function openModal(type, config = {}) {
+  const scrim   = document.getElementById('modal-scrim');
+  const icon    = document.getElementById('modal-icon');
+  const title   = document.getElementById('modal-title');
+  const body    = document.getElementById('modal-body');
+  const confirm = document.getElementById('modal-confirm');
+  const confirmRow = document.getElementById('modal-confirm-input-row');
+  const confirmWord = document.getElementById('modal-confirm-word');
+  if (!scrim) return;
+
+  // Icon: danger uses alert-octagon in bad, warn uses alert-triangle in warn
+  const isDanger = type === 'danger';
+  if (icon) {
+    icon.style.color = isDanger ? 'var(--bad)' : 'var(--warn)';
+    icon.innerHTML = isDanger
+      ? '<path d="M7.86 2h8.28L22 7.86v8.28L16.14 22H7.86L2 16.14V7.86L7.86 2z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M12 8v4M12 16h.01" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>'
+      : '<path d="M12 3L2 21h20L12 3z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M12 10v5M12 17.5v.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>';
+  }
+  if (title)   title.textContent  = config.title   || 'Confirm';
+  if (body)    body.textContent   = config.body    || '';
+  if (confirm) {
+    confirm.textContent = config.confirmLabel || (isDanger ? 'Delete' : 'Confirm');
+    confirm.className = `fp-btn fp-btn--sm ${isDanger ? 'fp-btn--danger' : 'fp-btn--primary'}`;
+    if (config.onConfirm) confirm.onclick = () => { config.onConfirm(); closeModal(); };
+    else confirm.onclick = closeModal;
+  }
+  // Typed confirmation (optional)
+  if (config.confirmWord && confirmRow && confirmWord) {
+    confirmWord.textContent = config.confirmWord;
+    confirmRow.style.display = '';
+  } else if (confirmRow) {
+    confirmRow.style.display = 'none';
+  }
+
+  scrim.style.display = 'flex';
+  scrim.removeAttribute('aria-hidden');
+}
+
+function closeModal() {
+  const scrim = document.getElementById('modal-scrim');
+  if (!scrim) return;
+  scrim.style.display = 'none';
+  scrim.setAttribute('aria-hidden', 'true');
+}
+
 // ── Theme toggle ─────────��─────────────────────────────────────────────────────
 function toggleTheme() {
   const html = document.documentElement;
@@ -371,11 +449,15 @@ function initUnderlineTabs(container) {
 const IN_SCOPE_ACTIONS = new Set([
   'navigate-screen', 'navigate-path', 'switch-tab', 'close-tab', 'new-tab',
   'toggle-sidebar', 'toggle-inspector', 'toggle-theme', 'set-view-mode',
-  'focus-search', 'filter-by-tag', 'open-tag-canvas',
+  'focus-search', 'filter-by-tag', 'open-tag-canvas', 'close-tag-canvas',
+  'tag-canvas-select',
   'nav-back', 'nav-forward', 'nav-up', 'navigate-crumb',
   'open-review-bin',
   'switch-home-tab', 'switch-inspector-tab',
-  'open-palette', 'close-palette',
+  'open-palette', 'close-palette', 'palette-set-mode',
+  'modal-cancel', 'modal-confirm', 'modal-confirm-type',
+  'ef-filter', 'ef-sort', 'ef-toggle-pause-ai', 'ef-toggle-moving-card',
+  'scan-config-switch-mode',
 ]);
 
 document.addEventListener('click', e => {
@@ -421,8 +503,54 @@ document.addEventListener('click', e => {
       // INTEGRATION: apply tag filter
       break;
     case 'open-tag-canvas':
-      // INTEGRATION: open tag canvas overlay
+      openTagCanvas();
       break;
+    case 'close-tag-canvas':
+      closeTagCanvas();
+      break;
+    case 'tag-canvas-select':
+      // INTEGRATION: highlight tag in canvas, filter file grid
+      break;
+    case 'palette-set-mode':
+      setPaletteMode(btn.dataset.mode || 'search');
+      break;
+    case 'modal-cancel':
+      closeModal();
+      break;
+    case 'modal-confirm':
+      closeModal();
+      break;
+    case 'scan-config-switch-mode': {
+      const conv = document.querySelector('.scan-conv');
+      const form = document.querySelector('.scan-form');
+      const modeBtn = document.getElementById('btn-scan-switch-mode');
+      if (!conv || !form) break;
+      const isConv = conv.style.display !== 'none';
+      conv.style.display = isConv ? 'none' : '';
+      form.style.display = isConv ? '' : 'none';
+      if (modeBtn) modeBtn.textContent = isConv ? 'Switch to chat' : 'Switch to structured form';
+      break;
+    }
+    case 'ef-filter': {
+      // Update segmented filter chips active state
+      const bar = document.getElementById('ef-filter-bar');
+      bar?.querySelectorAll('.fp-segmented__opt').forEach(opt => {
+        opt.classList.toggle('active', opt.dataset.filter === btn.dataset.filter);
+      });
+      // INTEGRATION: filter file list by state
+      break;
+    }
+    case 'ef-sort':
+      // INTEGRATION: sort file list by column
+      break;
+    case 'ef-toggle-pause-ai':
+      // INTEGRATION: toggle AI processing pause
+      break;
+    case 'ef-toggle-moving-card': {
+      const card = document.getElementById('ef-moving-card');
+      if (card) card.style.display = card.style.display === 'none' ? '' : 'none';
+      break;
+    }
     case 'open-review-bin':
       switchScreen('review-bin');
       break;
@@ -470,11 +598,12 @@ document.addEventListener('keydown', e => {
   // Ctrl+Shift+R — Review Bin
   if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'R') { e.preventDefault(); switchScreen('review-bin'); }
   // Ctrl+1..9 — numbered shortcuts (screen navigation stubs)
-  // Escape — close palette / modals
+  // Escape — close all overlays
   if (e.key === 'Escape') {
     closePalette();
     hideContextMenu();
-    document.getElementById('modal-scrim')?.style.setProperty('display', 'none');
+    closeModal();
+    closeTagCanvas();
   }
   if (e.altKey && e.key === 'ArrowLeft')  { e.preventDefault(); /* nav back stub */ }
   if (e.altKey && e.key === 'ArrowRight') { e.preventDefault(); /* nav forward stub */ }
@@ -517,6 +646,16 @@ document.addEventListener('DOMContentLoaded', () => {
   // Palette backdrop click closes
   paletteScrim?.addEventListener('click', e => {
     if (e.target === paletteScrim) closePalette();
+  });
+
+  // Tag canvas backdrop click closes
+  document.getElementById('tag-canvas-scrim')?.addEventListener('click', e => {
+    if (e.target === document.getElementById('tag-canvas-scrim')) closeTagCanvas();
+  });
+
+  // Modal backdrop click closes
+  document.getElementById('modal-scrim')?.addEventListener('click', e => {
+    if (e.target === document.getElementById('modal-scrim')) closeModal();
   });
 
   // Palette item clicks

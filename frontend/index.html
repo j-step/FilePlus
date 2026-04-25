@@ -2076,27 +2076,304 @@
 ════════════════════════════════════════════════════════════════════════════ -->
 
 <!-- A.11.1 Command Palette -->
+<!-- ══════════════════════════════════════════════════════════════════════════
+     A.11.1  COMMAND PALETTE  (Ctrl+K)
+     Container: bg-raised + border-subtle + 10px radius + highlight-top + shadow-modal
+     Backdrop scrim: rgba(0,0,0,0.4) + blur
+     Open animation: dur-fast fade + translateY(4px) ease-out
+══════════════════════════════════════════════════════════════════════════ -->
 <div class="fp-scrim" id="palette-scrim" aria-hidden="true" style="display:none">
   <div class="fp-palette" id="palette" role="dialog" aria-label="Command palette" aria-modal="true">
-    <!-- palette content filled in A.11 pass -->
-    <input class="fp-palette__input" id="palette-input" type="text"
-           placeholder="Type a command or path…" spellcheck="false" aria-label="Command" />
-    <div class="fp-palette__results" id="palette-results" role="listbox">
-      <div class="fp-palette__section">Screens</div>
-      <button class="fp-palette__item" role="option" data-action="navigate-screen" data-screen="home">Home</button>
-      <button class="fp-palette__item" role="option" data-action="navigate-screen" data-screen="browser">Browser</button>
-      <button class="fp-palette__item" role="option" data-action="navigate-screen" data-screen="ftree">File Tree</button>
-      <button class="fp-palette__item" role="option" data-action="navigate-screen" data-screen="scan-config">Scan</button>
-      <button class="fp-palette__item" role="option" data-action="navigate-screen" data-screen="review-bin">Review Bin</button>
-      <button class="fp-palette__item" role="option" data-action="navigate-screen" data-screen="everything">Everything Folder</button>
-      <button class="fp-palette__item" role="option" data-action="navigate-screen" data-screen="settings">Settings</button>
-      <div class="fp-palette__section">Actions</div>
-      <button class="fp-palette__item" role="option" data-action="toggle-theme">Toggle Theme</button>
-      <button class="fp-palette__item" role="option" data-action="toggle-sidebar">Toggle Sidebar</button>
-      <button class="fp-palette__item" role="option" data-action="toggle-inspector">Toggle Inspector</button>
+
+    <!-- Palette header: 44px input + Search/Chat toggle -->
+    <div class="fp-palette__header">
+      <input class="fp-palette__input" id="palette-input" type="text"
+             placeholder="Type a command, path, or question…" spellcheck="false"
+             aria-label="Command or search" autocomplete="off" />
+      <!-- Search/Chat mode toggle — A.11.1 -->
+      <div class="fp-segmented fp-palette__mode-toggle" id="palette-mode-toggle" style="flex-shrink:0;margin-right:var(--s-12)">
+        <button class="fp-segmented__opt active" data-action="palette-set-mode" data-mode="search">Search</button>
+        <button class="fp-segmented__opt" data-action="palette-set-mode" data-mode="chat">Chat</button>
+      </div>
+    </div>
+
+    <!-- Split body: list left (300px) + preview right (bg-content) -->
+    <div class="fp-palette__body" id="palette-body">
+
+      <!-- ── Search mode (default active) ── -->
+      <div class="fp-palette__search-pane" id="palette-search-pane">
+
+        <!-- List pane (300px) -->
+        <div class="fp-palette__list" id="palette-results" role="listbox" aria-label="Results">
+
+          <!-- Files section — INTEGRATION: live from GET /api/search?q=... -->
+          <div class="fp-palette__section" id="pal-sec-files">Files</div>
+          <button class="fp-palette__item fp-palette__item--selected" role="option" data-action="palette-open-file" data-path="C:\Dev\FilePlus\PLAN.md">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" style="flex-shrink:0;color:var(--text-secondary)"><rect x="2" y="1" width="8" height="11" rx="1" fill="var(--bg-raised)" stroke="currentColor" stroke-width="1.1"/><path d="M10 1v3h3" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round"/><path d="M4 6h6M4 8h4" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/></svg>
+            <span>PLAN.md</span>
+            <span class="fp-palette__item-meta fp-mono">C:\Dev\FilePlus</span>
+          </button>
+          <button class="fp-palette__item" role="option" data-action="palette-open-file" data-path="C:\Dev\FilePlus\docs\design-brief.md">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" style="flex-shrink:0;color:var(--text-secondary)"><rect x="2" y="1" width="8" height="11" rx="1" fill="var(--bg-raised)" stroke="currentColor" stroke-width="1.1"/><path d="M10 1v3h3" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round"/><path d="M4 6h6M4 8h4" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/></svg>
+            <span>design-brief.md</span>
+            <span class="fp-palette__item-meta fp-mono">…\FilePlus\docs</span>
+          </button>
+
+          <!-- Folders section -->
+          <div class="fp-palette__section" id="pal-sec-folders">Folders</div>
+          <button class="fp-palette__item" role="option" data-action="palette-open-folder" data-path="C:\Dev\FilePlus">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" style="flex-shrink:0;color:var(--text-secondary)"><path d="M1 3.5a1 1 0 0 1 1-1h3l1 1.5H12a1 1 0 0 1 1 1V10a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V3.5z" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round"/></svg>
+            <span>FilePlus</span>
+            <span class="fp-palette__item-meta fp-mono">C:\Dev</span>
+          </button>
+
+          <!-- Tags section -->
+          <div class="fp-palette__section" id="pal-sec-tags"># Tags</div>
+          <button class="fp-palette__item" role="option" data-action="palette-filter-tag" data-tag="photography">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" style="flex-shrink:0;color:var(--text-secondary)"><path d="M1 8l5.5-5.5 4 4L5 12 1 8z" stroke="currentColor" stroke-width="1.1"/><circle cx="4.5" cy="4.5" r="1" fill="currentColor"/></svg>
+            <span>photography</span>
+            <span class="fp-palette__item-meta fp-mono">47 files</span>
+          </button>
+          <button class="fp-palette__item" role="option" data-action="palette-filter-tag" data-tag="work-invoices">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" style="flex-shrink:0;color:var(--text-secondary)"><path d="M1 8l5.5-5.5 4 4L5 12 1 8z" stroke="currentColor" stroke-width="1.1"/><circle cx="4.5" cy="4.5" r="1" fill="currentColor"/></svg>
+            <span>work-invoices</span>
+            <span class="fp-palette__item-meta fp-mono">12 files</span>
+          </button>
+
+          <!-- Commands section -->
+          <div class="fp-palette__section" id="pal-sec-commands">&gt; Commands</div>
+          <button class="fp-palette__item" role="option" data-action="navigate-screen" data-screen="home">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" style="flex-shrink:0;color:var(--text-secondary)"><path d="M7 2L1 8h2v4h3V9h2v3h3V8h2L7 2z" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round"/></svg>
+            <span>Go to Home</span>
+            <span class="fp-palette__kbd fp-mono">⌘1</span>
+          </button>
+          <button class="fp-palette__item" role="option" data-action="navigate-screen" data-screen="browser">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" style="flex-shrink:0;color:var(--text-secondary)"><path d="M1 3.5a1 1 0 0 1 1-1h3l1 1.5H12a1 1 0 0 1 1 1V10a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V3.5z" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round"/></svg>
+            <span>Open Browser</span>
+            <span class="fp-palette__kbd fp-mono">⌘2</span>
+          </button>
+          <button class="fp-palette__item" role="option" data-action="navigate-screen" data-screen="review-bin">
+            <span>Open Review Bin</span>
+            <span class="fp-palette__kbd fp-mono">⌘⇧R</span>
+          </button>
+          <button class="fp-palette__item" role="option" data-action="toggle-theme">
+            <span>Toggle Theme</span>
+          </button>
+          <button class="fp-palette__item" role="option" data-action="toggle-sidebar">
+            <span>Toggle Sidebar</span>
+            <span class="fp-palette__kbd fp-mono">⌘B</span>
+          </button>
+          <button class="fp-palette__item" role="option" data-action="toggle-inspector">
+            <span>Toggle Inspector</span>
+            <span class="fp-palette__kbd fp-mono">⌘I</span>
+          </button>
+          <button class="fp-palette__item" role="option" data-action="navigate-screen" data-screen="scan-config">
+            <span>Start new scan</span>
+          </button>
+          <button class="fp-palette__item" role="option" data-action="navigate-screen" data-screen="settings">
+            <span>Open Settings</span>
+          </button>
+        </div><!-- /.fp-palette__list -->
+
+        <!-- Preview pane (fills remaining width, bg-content, border-hairline left) -->
+        <div class="fp-palette__preview" id="palette-preview" aria-label="Preview">
+          <!-- INTEGRATION: shows file preview or command description for selected row -->
+          <div style="padding:var(--s-16);color:var(--text-tertiary);font:400 var(--t-compact) var(--font-ui)">
+            Select a result to preview
+          </div>
+        </div><!-- /.fp-palette__preview -->
+
+      </div><!-- /#palette-search-pane -->
+
+      <!-- ── Chat mode (hidden by default) ── -->
+      <div class="fp-palette__chat-pane" id="palette-chat-pane" style="display:none">
+        <div class="fp-palette__chat-messages" id="palette-chat-messages">
+          <!-- INTEGRATION: Claude API responses streamed here -->
+          <div class="fp-palette__chat-plan" style="background:var(--bg-content);border:1px solid var(--border-subtle);border-radius:var(--r-card);padding:var(--s-16);margin:var(--s-12)">
+            <p style="font:400 var(--t-body) var(--font-ui);color:var(--text-secondary);margin:0 0 var(--s-12)">Proposed plan will appear here once you describe what you'd like to do.</p>
+            <div style="display:flex;gap:var(--s-8)">
+              <button class="fp-btn fp-btn--secondary fp-btn--sm" data-action="palette-plan-review-bin">Send to Review Bin</button>
+              <button class="fp-btn fp-btn--primary fp-btn--sm" data-action="palette-plan-approve-all">Approve all</button>
+              <button class="fp-btn fp-btn--ghost fp-btn--sm" data-action="palette-plan-preview">Show me what would change</button>
+            </div>
+          </div>
+        </div>
+      </div><!-- /#palette-chat-pane -->
+
+    </div><!-- /.fp-palette__body -->
+
+    <!-- Footer: shortcut hints -->
+    <div class="fp-palette__footer">
+      <span class="fp-palette__hint"><kbd class="fp-palette__key">↑↓</kbd> navigate</span>
+      <span class="fp-palette__hint-sep">·</span>
+      <span class="fp-palette__hint"><kbd class="fp-palette__key">⏎</kbd> open</span>
+      <span class="fp-palette__hint-sep">·</span>
+      <span class="fp-palette__hint"><kbd class="fp-palette__key">⇥</kbd> action</span>
+      <span class="fp-palette__hint-sep">·</span>
+      <span class="fp-palette__hint"><kbd class="fp-palette__key">&gt;</kbd> commands</span>
+      <span class="fp-palette__hint-sep">·</span>
+      <span class="fp-palette__hint"><kbd class="fp-palette__key">#</kbd> tags</span>
+      <span class="fp-palette__hint-sep">·</span>
+      <span class="fp-palette__hint"><kbd class="fp-palette__key">/</kbd> paths</span>
+      <span class="fp-palette__hint-sep">·</span>
+      <span class="fp-palette__hint"><kbd class="fp-palette__key">Esc</kbd> close</span>
+    </div>
+
+  </div><!-- /.fp-palette -->
+</div><!-- /#palette-scrim -->
+
+<!-- ══════════════════════════════════════════════════════════════════════════
+     A.11.2  TAG CANVAS OVERLAY
+     820×540 centered modal. bg-raised + border-strong + 10px radius + highlight-top + shadow-modal
+     Backdrop: rgba(0,0,0,0.5) + stronger blur
+     Close: Escape + click outside
+══════════════════════════════════════════════════════════════════════════ -->
+<div class="fp-scrim fp-scrim--strong" id="tag-canvas-scrim" aria-hidden="true" style="display:none">
+  <div class="fp-modal fp-modal--tag-canvas" id="tag-canvas" role="dialog" aria-modal="true" aria-label="Tag Canvas">
+
+    <!-- 48px header -->
+    <div class="fp-modal__header" style="height:48px;display:flex;align-items:center;padding:0 var(--s-20);border-bottom:1px solid var(--border-hairline)">
+      <h2 style="font:600 var(--t-title-sm) var(--font-ui);color:var(--text-primary);flex:1;margin:0">
+        Tag Canvas
+        <!-- INTEGRATION: selected tag highlighted in accent -->
+        <span id="tag-canvas-active-tag" style="color:var(--accent)"></span>
+      </h2>
+      <button class="fp-icon-btn" data-action="close-tag-canvas" aria-label="Close Tag Canvas">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M5 5l14 14M19 5L5 19" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+      </button>
+    </div>
+
+    <!-- Two-pane body -->
+    <div style="display:flex;flex:1;min-height:0;overflow:hidden">
+
+      <!-- Left: tag tree (240px, bg-content) -->
+      <div class="fp-modal__tag-tree" style="width:240px;flex-shrink:0;background:var(--bg-content);border-right:1px solid var(--border-hairline);overflow-y:auto;padding:var(--s-8)">
+        <!-- INTEGRATION: tag tree from GET /api/tags/tree -->
+        <div style="font:500 var(--t-micro) var(--font-ui);letter-spacing:.06em;text-transform:uppercase;color:var(--text-tertiary);padding:var(--s-8) var(--s-8) var(--s-4)">project:</div>
+        <button class="fp-palette__item" style="width:100%" data-action="tag-canvas-select" data-tag="project:fileplus">
+          <span style="flex:1;text-align:left">fileplus</span>
+          <span class="fp-mono" style="color:var(--text-tertiary);font-size:11px">23</span>
+        </button>
+        <button class="fp-palette__item" style="width:100%" data-action="tag-canvas-select" data-tag="project:work-invoices">
+          <span style="flex:1;text-align:left">work-invoices</span>
+          <span class="fp-mono" style="color:var(--text-tertiary);font-size:11px">12</span>
+        </button>
+
+        <div style="font:500 var(--t-micro) var(--font-ui);letter-spacing:.06em;text-transform:uppercase;color:var(--text-tertiary);padding:var(--s-8) var(--s-8) var(--s-4);margin-top:var(--s-4)">type:</div>
+        <button class="fp-palette__item fp-palette__item--selected" style="width:100%" data-action="tag-canvas-select" data-tag="type:photography">
+          <span style="flex:1;text-align:left">photography</span>
+          <span class="fp-mono" style="color:var(--text-tertiary);font-size:11px">47</span>
+        </button>
+        <button class="fp-palette__item" style="width:100%" data-action="tag-canvas-select" data-tag="type:document">
+          <span style="flex:1;text-align:left">document</span>
+          <span class="fp-mono" style="color:var(--text-tertiary);font-size:11px">34</span>
+        </button>
+
+        <div style="font:500 var(--t-micro) var(--font-ui);letter-spacing:.06em;text-transform:uppercase;color:var(--text-tertiary);padding:var(--s-8) var(--s-8) var(--s-4);margin-top:var(--s-4)">app:</div>
+        <button class="fp-palette__item" style="width:100%" data-action="tag-canvas-select" data-tag="app:figma">
+          <span style="flex:1;text-align:left">figma</span>
+          <span class="fp-mono" style="color:var(--text-tertiary);font-size:11px">8</span>
+        </button>
+      </div><!-- /.fp-modal__tag-tree -->
+
+      <!-- Right: SVG graph + file grid -->
+      <div style="flex:1;min-width:0;display:flex;flex-direction:column;overflow:hidden">
+        <!-- Tag relationship graph (SVG placeholder) -->
+        <div style="flex:1;min-height:0;overflow:hidden;border-bottom:1px solid var(--border-hairline);position:relative">
+          <!-- INTEGRATION: tag relationship graph rendered as SVG from /api/tags/graph -->
+          <svg width="100%" height="100%" style="display:block">
+            <!-- Background nodes/edges placeholder -->
+            <circle cx="50%" cy="50%" r="30" fill="var(--accent-wash)" stroke="var(--accent-edge)" stroke-width="1.5"/>
+            <text x="50%" y="50%" text-anchor="middle" dominant-baseline="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--accent)">photography</text>
+            <!-- Arrows in text-tertiary, 1px stroke; selected branch 1.5px accent stroke -->
+            <circle cx="30%" cy="35%" r="18" fill="var(--bg-pressed)" stroke="var(--border-subtle)" stroke-width="1"/>
+            <text x="30%" y="35%" text-anchor="middle" dominant-baseline="middle" font-family="Inter,sans-serif" font-size="10" fill="var(--text-tertiary)">vacation</text>
+            <line x1="50%" y1="50%" x2="30%" y2="35%" stroke="var(--accent)" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+            <circle cx="70%" cy="35%" r="18" fill="var(--bg-pressed)" stroke="var(--border-subtle)" stroke-width="1"/>
+            <text x="70%" y="35%" text-anchor="middle" dominant-baseline="middle" font-family="Inter,sans-serif" font-size="10" fill="var(--text-tertiary)">work</text>
+            <line x1="50%" y1="50%" x2="70%" y2="35%" stroke="var(--text-tertiary)" stroke-width="1"/>
+            <defs><marker id="arrowhead" markerWidth="6" markerHeight="4" refX="3" refY="2" orient="auto"><polygon points="0 0, 6 2, 0 4" fill="var(--accent)"/></marker></defs>
+          </svg>
+        </div>
+        <!-- Filtered file grid -->
+        <div style="padding:var(--s-8) var(--s-12);overflow-y:auto;max-height:120px">
+          <!-- INTEGRATION: file grid for selected tag -->
+          <div style="font:500 var(--t-micro) var(--font-ui);letter-spacing:.06em;text-transform:uppercase;color:var(--text-tertiary);margin-bottom:var(--s-6)">47 files tagged photography</div>
+          <div style="display:flex;flex-wrap:wrap;gap:6px">
+            <span class="fp-chip">beach_holiday_2024.jpg</span>
+            <span class="fp-chip">costa_rica_2024.jpg</span>
+            <span class="fp-chip">sunset_raw_001.raw</span>
+            <span class="fp-chip fp-mono" style="color:var(--text-tertiary)">+44 more</span>
+          </div>
+        </div>
+      </div><!-- /right pane -->
+
+    </div><!-- /two-pane body -->
+
+  </div><!-- /.fp-modal--tag-canvas -->
+</div><!-- /#tag-canvas-scrim -->
+
+<!-- ══════════════════════════════════════════════════════════════════════════
+     A.11.3  CONFIRMATION MODAL
+     440px wide. bg-raised + border-strong + 10px radius + highlight-top + shadow-modal + 24px padding
+     Open animation: dur-slide fade + translateY(6px) ease-out
+     Populated dynamically by openModal(type, config) in app.js
+══════════════════════════════════════════════════════════════════════════ -->
+<div class="fp-scrim" id="modal-scrim" aria-hidden="true" style="display:none">
+  <div class="fp-modal" id="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title" style="width:440px">
+
+    <!-- Modal header: 24×24 semantic icon + title -->
+    <div class="fp-modal__header" style="display:flex;align-items:flex-start;gap:var(--s-12);padding:var(--s-20) var(--s-20) 0">
+      <!-- Icon: warn variant (alert-triangle in warn) or danger (alert-octagon in bad) -->
+      <!-- INTEGRATION: icon swapped per modal type by openModal() -->
+      <svg id="modal-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" style="flex-shrink:0;color:var(--warn)">
+        <path d="M12 3L2 21h20L12 3z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+        <path d="M12 10v5M12 17.5v.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+      </svg>
+      <h2 id="modal-title" style="font:600 var(--t-display-sm) var(--font-ui);color:var(--text-primary);margin:0;line-height:1.2">Confirm Action</h2>
+    </div>
+
+    <!-- Body -->
+    <div class="fp-modal__body" id="modal-body" style="padding:var(--s-16) var(--s-20);font:400 var(--t-body) var(--font-ui);color:var(--text-secondary);line-height:1.6">
+      <!-- INTEGRATION: body text set by openModal() -->
+      This action cannot be undone. Please confirm you want to proceed.
+    </div>
+
+    <!-- Optional typed confirmation input (hidden by default) -->
+    <div class="fp-modal__confirm-input" id="modal-confirm-input-row" style="display:none;padding:0 var(--s-20) var(--s-12)">
+      <label style="font:400 var(--t-compact) var(--font-ui);color:var(--text-secondary);display:block;margin-bottom:6px">
+        Type <strong id="modal-confirm-word" style="font:600 var(--t-compact) var(--font-ui);color:var(--text-primary)">CONFIRM</strong> to proceed:
+      </label>
+      <input type="text" id="modal-confirm-text" class="fp-input" placeholder="Type here…"
+             style="width:100%;text-transform:uppercase"
+             data-action="modal-confirm-type" />
+    </div>
+
+    <!-- Footer -->
+    <div class="fp-modal__footer" style="display:flex;justify-content:flex-end;gap:var(--s-8);padding:var(--s-12) var(--s-20) var(--s-20)">
+      <button class="fp-btn fp-btn--secondary" id="modal-cancel" data-action="modal-cancel">Cancel</button>
+      <!-- INTEGRATION: action button variant (danger or primary) set by openModal() -->
+      <button class="fp-btn fp-btn--danger" id="modal-confirm" data-action="modal-confirm">Confirm</button>
+    </div>
+
+  </div><!-- /.fp-modal -->
+</div><!-- /#modal-scrim -->
+
+<!-- Example: warn modal variant (shown when spec calls for a less severe confirmation)
+<div class="fp-scrim" ...>
+  <div class="fp-modal" ...>
+    <div class="fp-modal__header">
+      <svg ... style="color:var(--warn)">alert-triangle</svg>
+      <h2>Stop scan?</h2>
+    </div>
+    <div class="fp-modal__body">Classified X files, Y remaining...</div>
+    <div class="fp-modal__footer">
+      <button class="fp-btn fp-btn--secondary">Cancel</button>
+      <button class="fp-btn fp-btn--primary">Stop scan</button>
     </div>
   </div>
 </div>
+-->
 
 <!-- Context menu — A.10 (single shared instance, content populated by app.js CONTEXT_MENUS map)
      Menu type determined by right-click target via getMenuTypeForTarget().
@@ -2110,12 +2387,7 @@
   <!-- populated dynamically by showContextMenu() in app.js -->
 </div>
 
-<!-- Confirmation modal (filled per A.11.3 pass) -->
-<div class="fp-scrim" id="modal-scrim" aria-hidden="true" style="display:none">
-  <div class="fp-modal" id="modal" role="dialog" aria-modal="true">
-    <!-- filled dynamically -->
-  </div>
-</div>
+<!-- Confirmation modal: see #modal-scrim above (A.11.3) -->
 
 <!-- Snackbar container -->
 <div id="snackbar-container" style="

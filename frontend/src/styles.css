@@ -620,6 +620,114 @@ svg { flex-shrink: 0; }
   border-radius: 999px;
 }
 
+/* Palette header (input + mode toggle in same row) */
+.fp-palette__header {
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid var(--border-hairline);
+  flex-shrink: 0;
+}
+.fp-palette__header .fp-palette__input { border-bottom: none; flex: 1; }
+.fp-palette__mode-toggle { flex-shrink: 0; }
+
+/* Split body: list (300px) + preview (fills) */
+.fp-palette__body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.fp-palette__search-pane {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.fp-palette__list {
+  width: 300px;
+  flex-shrink: 0;
+  overflow-y: auto;
+  border-right: 1px solid var(--border-hairline);
+  padding: var(--s-4);
+}
+
+.fp-palette__preview {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  background: var(--bg-content);
+}
+
+.fp-palette__chat-pane {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  background: var(--bg-content);
+}
+
+/* Item meta (path/count right-aligned) */
+.fp-palette__item-meta {
+  margin-left: auto;
+  flex-shrink: 0;
+  font: 400 var(--t-small) var(--font-mono);
+  color: var(--text-tertiary);
+}
+
+.fp-palette__kbd {
+  margin-left: auto;
+  flex-shrink: 0;
+  font: 500 var(--t-small) var(--font-mono);
+  color: var(--text-tertiary);
+}
+
+/* Palette footer */
+.fp-palette__footer {
+  flex-shrink: 0;
+  height: 32px;
+  padding: 0 var(--s-16);
+  border-top: 1px solid var(--border-hairline);
+  display: flex;
+  align-items: center;
+  gap: var(--s-6);
+  font: 400 var(--t-small) var(--font-ui);
+  color: var(--text-tertiary);
+}
+.fp-palette__hint { display: flex; align-items: center; gap: 3px; }
+.fp-palette__hint-sep { color: var(--border-subtle); }
+.fp-palette__key {
+  font: 500 var(--t-small) var(--font-mono);
+  color: var(--text-tertiary);
+  background: var(--bg-pressed);
+  border: 1px solid var(--border-subtle);
+  border-radius: 3px;
+  padding: 0 4px;
+  line-height: 1.6;
+}
+
+/* Stronger scrim for tag canvas */
+.fp-scrim--strong {
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+/* Tag canvas modal size */
+.fp-modal--tag-canvas {
+  width: 820px;
+  max-width: calc(100vw - 48px);
+  height: 540px;
+  max-height: calc(100vh - 48px);
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Remove default padding from confirmation modal (handled per-section) */
+#modal { padding: 0; overflow: hidden; }
+
 .fp-palette__backdrop {
   position: fixed; inset: 0;
   background: rgba(0, 0, 0, 0.4);
