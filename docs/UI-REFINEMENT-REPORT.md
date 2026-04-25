@@ -39,6 +39,9 @@ Bugs or out-of-scope problems encountered.
 | I4 | frontend/index.html | Tab bar | Tab content switching (Ctrl+T, Ctrl+W, Ctrl+Shift+T) is specified but requires non-trivial JS tab management beyond what existing app.js provides | In scope — stubs added | Full tab history management left for separate pass |
 | I5 | frontend/tray/index.html | Action buttons | v1 had small `fp-icon-btn--sm` (24×24) action buttons instead of the spec's 36px tall buttons with vertical icon+label stack | In scope (fixed during A.14 pass) | Replaced with `.fp-tray__action-btn` spec pattern |
 | I6 | frontend/setup/index.html | Step count | Original had 3 steps; spec requires 7 | In scope (fixed during A.13 pass) | Extended to 7 steps |
+| I7 | frontend/src/styles.css | Token audit | Raw `#fff` used for text on colored backgrounds (close button, stage done icon, conflict badge, tray badge). No `--text-on-color` token exists in design system. | Allowed exception (contrast requirement) | Accept as-is; add `--text-on-color: #fff` token if needed |
+| I8 | frontend/src/styles.css | Token audit | `.aq-btn` uses hardcoded gradient `#C9B8F0 → #8B93F5` and `#1a1040` text. Pre-existing from earlier codebase. | Out of scope (legacy component) | Replace with `--accent-wash → --accent` gradient using CSS var |
+| I9 | frontend/src/styles.css | Token audit | `border-radius: 3px` on brand mark elements. Allowed intentional exception (brand logo aesthetic). Token set starts at 4px. | Allowed exception (brand) | Accept as-is |
 
 ---
 

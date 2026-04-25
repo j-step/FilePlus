@@ -2848,7 +2848,7 @@ svg { flex-shrink: 0; }
   background: color-mix(in oklch, var(--accent) 8%, transparent);
   pointer-events: none;
   z-index: 9999;
-  border-radius: 2px;
+  border-radius: var(--r-button);
 }
 
 /* Sort chevron active state on any sortable column (A.3.1) */
@@ -2937,12 +2937,11 @@ svg { flex-shrink: 0; }
   text-align: center;
 }
 .inspector__filepath {
-  font: 400 var(--t-small) var(--font-mono);
+  font: 400 var(--t-micro) var(--font-mono);
   color: var(--text-tertiary);
   margin: 0;
   word-break: break-all;
   text-align: center;
-  font-size: 10px;
 }
 .inspector__meta { display: flex; flex-direction: column; gap: var(--s-4); }
 .inspector__meta-row { display: flex; justify-content: space-between; gap: var(--s-8); }
