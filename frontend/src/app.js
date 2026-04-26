@@ -119,8 +119,9 @@ function updateSidebarActive() {
 }
 
 // ── Sidebar collapse + drag-resize ────────────────────────────────────────────
-const SIDEBAR_COLLAPSED_THRESHOLD = 140; // px; drag below → snap collapsed
-const SIDEBAR_EXPANDED_MIN        = 180; // px; minimum width when expanded
+const SIDEBAR_COLLAPSED_THRESHOLD = 140; // px; while expanded, drag below this snaps collapsed
+const SIDEBAR_EXPAND_TRIGGER      = 60;  // px; while collapsed, drag past this snaps expanded (responsive: ~8px past 52 collapsed)
+const SIDEBAR_EXPANDED_MIN        = 180; // px; minimum allowed width once expanded
 const SIDEBAR_EXPANDED_DEFAULT    = 240;
 const SIDEBAR_COLLAPSED_WIDTH     = 52;
 
@@ -177,8 +178,8 @@ function initSidebarResize() {
       // Reset drag origin so further drag is relative to the new collapsed state
       startX = e.clientX;
       startWidth = SIDEBAR_COLLAPSED_WIDTH;
-    } else if (isCollapsed && newWidth >= SIDEBAR_EXPANDED_MIN) {
-      // Crossed above min-expanded threshold while collapsed — snap to expanded LIVE
+    } else if (isCollapsed && newWidth >= SIDEBAR_EXPAND_TRIGGER) {
+      // Crossed past expand trigger while collapsed — snap to expanded LIVE (responsive)
       setSidebarCollapsed(false);
       const savedW = parseInt(localStorage.getItem('fp-sidebar-width'), 10);
       startWidth = (savedW && savedW >= SIDEBAR_EXPANDED_MIN) ? savedW : SIDEBAR_EXPANDED_DEFAULT;
