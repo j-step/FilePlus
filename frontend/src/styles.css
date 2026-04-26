@@ -617,9 +617,23 @@ svg { flex-shrink: 0; }
 .fp-breadcrumb--scroll {
   overflow-x: auto;
   scrollbar-width: none;
+  position: relative;
 }
 .fp-breadcrumb--scroll::-webkit-scrollbar {
   display: none;
+}
+/* Left-edge fade — suggests content is hidden off-screen to the left */
+.fp-breadcrumb--scroll::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 24px;
+  background: linear-gradient(to right, var(--bg-content), transparent);
+  pointer-events: none;
+  z-index: 2;
+  flex-shrink: 0;
 }
 .fp-breadcrumb__crumb {
   background: transparent;
