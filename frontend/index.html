@@ -1068,7 +1068,7 @@
 
               <!-- Scope card -->
               <div class="fp-card">
-                <div class="fp-card__header">Which folders to scan</div>
+                <div class="fp-card__header"><span class="fp-card__title">Which folders to scan</span></div>
                 <div style="display:flex;flex-direction:column;gap:12px">
                   <!-- Specific folder paths (A.5.2 path picker rows) -->
                   <div>
@@ -1123,7 +1123,7 @@
 
               <!-- Cleanup aggressiveness -->
               <div class="fp-card">
-                <div class="fp-card__header">Cleanup aggressiveness</div>
+                <div class="fp-card__header"><span class="fp-card__title">Cleanup aggressiveness</span></div>
                 <div class="fp-segmented" style="width:100%" role="group" aria-label="Cleanup aggressiveness">
                   <button class="fp-segmented__opt" data-action="scan-form-set-aggressiveness" data-value="conservative">Conservative</button>
                   <button class="fp-segmented__opt active" data-action="scan-form-set-aggressiveness" data-value="moderate">Moderate</button>
@@ -1133,7 +1133,7 @@
 
               <!-- Tree complexity -->
               <div class="fp-card">
-                <div class="fp-card__header">Tree complexity</div>
+                <div class="fp-card__header"><span class="fp-card__title">Tree complexity</span></div>
                 <div class="fp-segmented" style="width:100%" role="group" aria-label="Tree complexity">
                   <button class="fp-segmented__opt" data-action="scan-form-set-complexity" data-value="simple">Simple</button>
                   <button class="fp-segmented__opt active" data-action="scan-form-set-complexity" data-value="balanced">Balanced</button>
@@ -1143,7 +1143,7 @@
 
               <!-- Custom file type priorities -->
               <div class="fp-card">
-                <div class="fp-card__header">Custom file type priorities</div>
+                <div class="fp-card__header"><span class="fp-card__title">Custom file type priorities</span></div>
                 <div style="display:flex;flex-wrap:wrap;gap:6px" id="scan-form-priority-types">
                   <button class="fp-chip fp-chip--tinted" data-action="scan-form-toggle-ext" data-ext=".py">.py</button>
                   <button class="fp-chip fp-chip--tinted" data-action="scan-form-toggle-ext" data-ext=".md">.md</button>
@@ -1156,7 +1156,7 @@
               <div class="fp-card">
                 <div class="fp-card__header">
                   <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><circle cx="7" cy="7" r="6" stroke="currentColor" stroke-width="1.2"/><path d="M7 4v4M7 10v.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
-                  "Never touch" folders
+                  <span class="fp-card__title">"Never touch" folders</span>
                 </div>
                 <p style="font:400 var(--t-compact) var(--font-ui);color:var(--text-secondary);margin:0 0 10px">The AI will never propose moving or modifying files in these folders.</p>
                 <div style="display:flex;flex-wrap:wrap;gap:6px" id="scan-form-never-touch">
@@ -2490,7 +2490,7 @@
 
                 <!-- Local LLM card -->
                 <div class="fp-card settings-card" style="margin-bottom:var(--s-12)">
-                  <div class="settings-card__title">Local LLM</div>
+                  <div class="fp-card__header"><span class="fp-card__title">Local LLM</span></div>
                   <div class="settings-row">
                     <!-- INTEGRATION: live Ollama status from GET /api/health/ollama -->
                     <div style="display:flex;align-items:center;gap:var(--s-8)">
@@ -2512,7 +2512,7 @@
 
                 <!-- Cloud (Claude API) card -->
                 <div class="fp-card settings-card" style="margin-bottom:var(--s-12)">
-                  <div class="settings-card__title">Cloud (Claude API)</div>
+                  <div class="fp-card__header"><span class="fp-card__title">Cloud (Claude API)</span></div>
                   <div class="settings-row">
                     <div class="settings-row__label">Cloud inference</div>
                     <label class="fp-toggle">
@@ -2574,7 +2574,7 @@
 
                 <!-- Usage stats card -->
                 <div class="fp-card settings-card">
-                  <div class="settings-card__title">Usage this month</div>
+                  <div class="fp-card__header"><span class="fp-card__title">Usage this month</span></div>
                   <!-- INTEGRATION: from GET /api/ai/usage -->
                   <div style="display:flex;gap:var(--s-24);margin-bottom:var(--s-12)">
                     <div>
@@ -2779,7 +2779,7 @@
                 </div>
 
                 <div class="fp-card settings-card" style="margin-bottom:var(--s-12)">
-                  <div class="settings-card__title">Snapshot retention rules</div>
+                  <div class="fp-card__header"><span class="fp-card__title">Snapshot retention rules</span></div>
                   <div class="settings-row">
                     <label class="settings-radio-row" style="gap:var(--s-8)">
                       <input type="checkbox" data-action="settings-toggle" data-setting="snap-daily" />
@@ -2835,7 +2835,7 @@
                 </div>
 
                 <div class="fp-card settings-card">
-                  <div class="settings-card__title">Database</div>
+                  <div class="fp-card__header"><span class="fp-card__title">Database</span></div>
                   <div class="settings-row">
                     <button class="fp-btn fp-btn--secondary fp-btn--sm" data-action="settings-export-db">Export backup (.zip)</button>
                     <button class="fp-btn fp-btn--secondary fp-btn--sm" data-action="settings-import-db">Import backup</button>

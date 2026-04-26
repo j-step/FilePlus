@@ -1541,15 +1541,19 @@ svg { flex-shrink: 0; }
   transition-duration: var(--dur-press-down);
 }
 .fp-card__header {
-  margin: calc(-1 * var(--s-16)) calc(-1 * var(--s-16)) var(--s-12);
-  padding: var(--s-12) var(--s-16);
-  border-bottom: 1px solid var(--border-hairline);
-  border-radius: var(--r-card) var(--r-card) 0 0;
-  font: 600 var(--t-body) var(--font-ui);
-  color: var(--text-primary);
   display: flex;
   align-items: center;
-  gap: var(--s-8);
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.fp-card__title {
+  font: 600 var(--t-title-sm) var(--font-ui);
+  color: var(--text-primary);
+}
+.fp-card__body {
+  font: 500 var(--t-body) var(--font-ui);
+  color: var(--text-secondary);
 }
 
 .fp-stat-card {
@@ -4202,18 +4206,7 @@ button.fp-pill:hover {
 
 /* ── Setting cards & rows ── */
 .settings-card {
-  background: var(--bg-raised);
-  border: 1px solid var(--border-subtle);
-  box-shadow: var(--highlight-top), var(--shadow-card);
-  border-radius: 8px;
   padding: var(--s-14);
-  margin-bottom: var(--s-12);
-}
-.settings-card__title {
-  font: 500 var(--t-compact) var(--font-ui);
-  letter-spacing: var(--track-heading);
-  text-transform: uppercase;
-  color: var(--text-tertiary);
   margin-bottom: var(--s-12);
 }
 .settings-row {
