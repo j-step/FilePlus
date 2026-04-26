@@ -2486,19 +2486,8 @@ svg { flex-shrink: 0; }
 .spacer { flex: 1; }
 
 /* -----------------------------------------------------------------------------
-   35. REDUCED MOTION
+   35. REDUCED MOTION — see canonical block at end of file (UI-SPEC §A.0)
    ----------------------------------------------------------------------------- */
-@media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after {
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
-  }
-  .fp-row--ai-filed { animation-duration: var(--dur-info) !important; }
-  .fp-approvals__badge--pulse { animation-duration: var(--dur-pulse) !important; }
-  .fp-progress__fill { transition-duration: var(--dur-fast) !important; }
-  .fp-progress--indeterminate .fp-progress__fill { animation-duration: 1500ms !important; }
-}
 
 /* =============================================================================
    36. APP SHELL LAYOUT
@@ -2731,32 +2720,7 @@ svg { flex-shrink: 0; }
   color: var(--text-primary);
 }
 
-/* Approvals pill */
-.aq-btn {
-  display: flex;
-  align-items: center;
-  gap: var(--s-6);
-  height: var(--h-approvals);
-  padding: 0 var(--s-10);
-  background: linear-gradient(135deg, #C9B8F0 0%, #8B93F5 100%);
-  border: 1px solid rgba(139, 147, 245, 0.40);
-  border-radius: var(--r-pill);
-  box-shadow: var(--highlight-top), var(--shadow-raised);
-  color: #1a1040;
-  font: 500 var(--t-small) var(--font-ui);
-  cursor: pointer;
-  flex-shrink: 0;
-  transition: filter var(--dur-fast) var(--ease-snap), transform var(--dur-press-down) var(--ease-snap);
-}
-.aq-btn:hover { filter: brightness(1.08); }
-.aq-btn:active { transform: translateY(1px); transition-duration: var(--dur-press-down); }
-.aq-btn__label { font-weight: 600; }
-.aq-btn__count {
-  background: rgba(26, 16, 64, 0.18);
-  border-radius: var(--r-pill);
-  padding: 1px 6px;
-  font: 600 var(--t-micro) var(--font-mono);
-}
+/* .aq-btn removed (S24): purple-blue gradient violated amber-only accent rule — use .fp-button--primary */
 
 /* Window controls */
 .fp-wc {
@@ -4565,10 +4529,22 @@ button.fp-pill:hover {
 /* A.17 #11 — Inspector preview fail (already commented inline in HTML) */
 /* .inspector__preview--fail → uses existing fp-empty-state pattern, no new class needed */
 
-/* ── Reduced motion ────────────────────────────────────────────────────────── */
+/* ── Reduced motion: see canonical block appended below (UI-SPEC §A.0) ─────── */
+
+/* === prefers-reduced-motion: strict policy per UI-SPEC §A.0 === */
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after {
+  *,
+  *::before,
+  *::after {
     animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  /* Sole exception: live-data sparkline on Scan Progress */
+  .fp-sparkline,
+  .fp-sparkline * {
+    animation-duration: revert !important;
+    transition-duration: revert !important;
   }
 }

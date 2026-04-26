@@ -577,3 +577,46 @@ The open questions Q1–Q11 in this document were adjudicated during the brainst
 | Q11 | Tray auto-dismiss via Electron window blur event. Confirmed implementation behavior. | Spec §2 (auto-resolved) |
 
 All v1 contradictions captured in this report are now closed. Future contradiction reports go in a fresh report doc.
+
+---
+
+## Phase 2 System Pass — Audit Results (2026-04-25)
+
+The Phase 2 system pass per `docs/superpowers/plans/2026-04-25-fileplus-ui-re-pass-phase2-system.md` is complete. 24 tasks executed across documentation and component layers of `frontend/src/styles.css`.
+
+### Token coverage
+- All 68 canonical tokens from DESIGN.md frontmatter and design-tokens.md §§1–8 are present in `:root`.
+- `--accent-custom` user-override hook added; `--accent` cascades through it (default amber `#E8965E`).
+- 3 historically-undefined tokens added: `--r-sm`, `--ease-ui`, `--track-heading`.
+
+### Component coverage (24 fp-* class families)
+Built or reconciled per UI-SPEC + DESIGN.md:
+- Typography: 9 utility classes (`.t-display`, `.t-headline`, `.t-title`, `.t-title-sm`, `.t-body`, `.t-label`, `.t-caption`, `.t-micro`, `.t-data`)
+- Buttons: `.fp-button` family (7 modifiers: `--primary`, `--secondary`, `--ghost`, `--icon`, `--large`, `--small`, `--danger`), aliased to legacy `.fp-btn`
+- Form controls: `.fp-chip` (4 semantic modifiers), `.fp-input` (concave + focus ring + invalid), `.fp-kbd-pill` (NEW), `.fp-segmented`, `.fp-toggle` (track + thumb + checked + focus + disabled), `.fp-slider`, `.fp-radio`, `.fp-checkbox`
+- Layout: `.fp-row` (flat states + density variants), `.fp-sidebar__item` (floating amber pill), `.fp-card` (header/body/title)
+- Overlays: `.fp-popover`, `.fp-context-menu`, `.fp-tooltip`, `.fp-dropdown`, `.fp-modal` (with scrim), `.fp-snackbar` (with progress bar), `.fp-toast` (variants)
+- Indicators: `.fp-badge` (4 variants), `.fp-state-dot` (5 colors), `.fp-breadcrumb` (middot), `.fp-tabs` (sliding underline), `.fp-tab` (explorer), `.fp-drag-handle` (NEW), `.fp-marquee`
+
+### Reduced motion
+Strict `prefers-reduced-motion: reduce` policy applied. All animation collapses to instant via `*` rule with `!important`. Sole exception: `.fp-sparkline` (live data, not decoration) reverts duration.
+
+### Removed
+- Legacy `.aq-btn` block (purple-blue gradient, anti-spec) deleted.
+- 5 duplicate component definitions reconciled (fp-input, fp-segmented, fp-modal, fp-toast, fp-chip).
+- Duplicate animation keyframes consolidated to single declarations.
+
+### Section 41 audit
+Manual visual audit deferred to Phase 3 per-screen polish sessions where each screen renders against real markup. Structural audit (token presence, class definitions, state coverage, no hardcoded hex outside :root, reduced-motion respect) confirmed via the per-task reviews logged in commit history (S1–S24).
+
+### Definition of done — confirmed
+1. ✅ All 24 tasks committed (see git log)
+2. ✅ Single canonical `:root` tokens block matching DESIGN.md and design-tokens.md
+3. ✅ `--accent-custom` cascade wired
+4. ✅ All 9 typography utility classes defined
+5. ✅ All 22+ component classes defined with required visual states
+6. ✅ `prefers-reduced-motion: reduce` collapses motion to instant except sparkline
+7. ✅ Section 41 structural audit passes (visual audit deferred to Phase 3)
+8. ⏳ App launch verification: pending user manual smoke test (Phase 3 entry point)
+
+Phase 3 (per-screen polish) can begin.
