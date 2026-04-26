@@ -598,7 +598,7 @@ All form controls (toggles, sliders, segmented controls, text inputs, radios, ch
 
 ### A.12.1 Personalization
 - Theme: Dark / Light / System (segmented control)
-- Accent palette: lavender / indigo / violet / sky / mix (segmented control)
+- Accent color: default amber + custom hex input. Row layout: a 24×24 swatch (current `--accent` value) + an Inter 500 hex input field (concave chrome, accepts `#RRGGBB` or `#RGB`) + a "Reset to default" ghost button. On valid hex input, `--accent-custom` is written to localStorage and applied immediately to `--accent`. Invalid input shows the inline error pattern (`fp-field-error`) below the field; the swatch does not update until the input is valid.
 - Inspector default width slider (280-520, value label in JetBrains Mono on drag)
 - Density: Compact / Comfortable / Spacious (segmented control)
 - Tab style: Compact / Standard (segmented control)
