@@ -1603,39 +1603,56 @@ svg { flex-shrink: 0; }
   to   { opacity: 1; transform: translateY(0); }
 }
 
-.fp-modal-backdrop {
-  position: fixed; inset: 0;
-  background: rgba(0, 0, 0, 0.5);
-  animation: fp-fade-in var(--dur-slide) var(--ease-out);
-  display: flex; align-items: center; justify-content: center;
+.fp-modal-scrim {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  animation: fp-modal-scrim-in var(--dur-fast) var(--ease-out);
+}
+@keyframes fp-modal-scrim-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
 }
 .fp-modal {
   background: var(--bg-raised);
   border: 1px solid var(--border-strong);
   border-radius: var(--r-modal);
   box-shadow: var(--highlight-top), var(--shadow-modal);
-  padding: var(--s-24);
-  width: 480px;
+  padding: 24px;
+  min-width: 320px;
+  max-width: 640px;
   animation: fp-modal-in var(--dur-slide) var(--ease-out);
 }
-.fp-modal--lg { width: 640px; }
 @keyframes fp-modal-in {
   from { opacity: 0; transform: translateY(6px); }
   to   { opacity: 1; transform: translateY(0); }
 }
 .fp-modal__header {
-  display: flex; align-items: flex-start; justify-content: space-between;
-  gap: var(--s-16);
-  margin-bottom: var(--s-16);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
 }
 .fp-modal__title {
-  font: 600 var(--t-display-sm) var(--font-ui);
-  letter-spacing: var(--track-display);
+  font: 600 var(--t-headline) var(--font-ui);
   color: var(--text-primary);
 }
+.fp-modal__body {
+  font: 500 var(--t-body) var(--font-ui);
+  color: var(--text-secondary);
+  margin-bottom: 16px;
+}
 .fp-modal__footer {
-  display: flex; justify-content: flex-end; gap: var(--s-8);
-  margin-top: var(--s-24);
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
 }
 
 .fp-inspector {
@@ -3831,27 +3848,14 @@ button.fp-pill:hover {
 .fp-scrim {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.4);
+  background: rgba(0, 0, 0, 0.45);
   backdrop-filter: blur(4px);
   -webkit-backdrop-filter: blur(4px);
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 500;
-  animation: fp-fade-in var(--dur-fast) var(--ease-out);
-}
-.fp-modal {
-  width: 440px;
-  background: var(--bg-raised);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--r-modal);
-  box-shadow: var(--highlight-top), var(--shadow-modal);
-  padding: var(--s-24);
-  animation: fp-modal-in var(--dur-slide) var(--ease-out);
-}
-@keyframes fp-modal-in {
-  from { opacity: 0; transform: translateY(6px); }
-  to   { opacity: 1; transform: translateY(0); }
+  z-index: 1000;
+  animation: fp-modal-scrim-in var(--dur-fast) var(--ease-out);
 }
 
 /* ── Context menu (extends fp-popover) ───────────────────────────────────── */
