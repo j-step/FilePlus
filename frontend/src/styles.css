@@ -4032,17 +4032,19 @@ button.fp-pill:hover {
 .fp-mode-banner__label { font: 500 var(--t-body) var(--font-ui); flex: 1; }
 .fp-mode-banner__action { margin-left: auto; flex-shrink: 0; }
 
-/* ── State dot (A.9.2) ────────────────────────────────────────────────────── */
+/* === fp-state-dot === */
 .fp-state-dot {
-  width: 6px; height: 6px;
-  border-radius: 50%;
-  flex-shrink: 0;
   display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: var(--r-pill);
+  flex-shrink: 0;
 }
-.fp-state-dot--unprocessed { background: var(--text-tertiary); }
-.fp-state-dot--review      { background: var(--warn); }
-.fp-state-dot--moving      { background: var(--accent); }
-.fp-state-dot--error       { background: var(--bad); }
+.fp-state-dot--neutral { background: var(--text-tertiary); }
+.fp-state-dot--accent  { background: var(--accent); }
+.fp-state-dot--good    { background: var(--good); }
+.fp-state-dot--warn    { background: var(--warn); }
+.fp-state-dot--bad     { background: var(--bad); }
 
 /* ── Error banner (A.16) ──────────────────────────────────────────────────── */
 .fp-error-banner {
