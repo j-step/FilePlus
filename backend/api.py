@@ -4,6 +4,7 @@ The Electron frontend communicates exclusively through this API.
 All business logic lives here; the renderer never touches the filesystem directly.
 """
 import logging
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
@@ -13,7 +14,6 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-import os
 import backend.config as _config
 from backend.config import OutOfSandboxError, path_guard
 from backend.database import init_db

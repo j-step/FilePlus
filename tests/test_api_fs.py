@@ -4,8 +4,6 @@ import pytest
 from pathlib import Path
 from fastapi.testclient import TestClient
 
-import backend.config as _config
-
 
 @pytest.fixture
 def client(sandbox):
