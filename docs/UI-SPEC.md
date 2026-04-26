@@ -19,7 +19,7 @@ This document describes every screen, surface, overlay, and component in FilePlu
 - Blur is reserved for overlays only (modals, command palette, tooltips, popovers, tray popout). Panels, the sidebar, the toolbar, and file lists do not use blur.
 - Inter for UI, JetBrains Mono for paths, timestamps, file sizes, hashes, file counts, keyboard shortcuts, and tag chip text.
 - No emoji in UI chrome (file names rendered by the OS may show emoji).
-- Single accent: amber `#E8965E`. No gradient. The same amber is used in light and dark mode for identity consistency.
+- Single accent: defaults to amber `#E8965E`. No gradient. The active accent value is read from a `--accent` CSS custom property; users may override it with a custom hex via Settings → Personalization (see §A.12.1). The same active accent value is used in both light and dark mode for identity consistency. Brand identity is the design language as a whole, not a single locked color.
 - Semantic state colors:
   - Neutral / unprocessed: `text-tertiary` grey
   - Active / in-progress / selected: `accent` (amber)
