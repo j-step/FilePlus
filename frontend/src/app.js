@@ -119,11 +119,18 @@ function updateSidebarActive() {
 }
 
 // ── Sidebar collapse + drag-resize ────────────────────────────────────────────
-const SIDEBAR_COLLAPSED_THRESHOLD = 140; // px; while expanded, drag below this snaps collapsed
-const SIDEBAR_EXPAND_TRIGGER      = 60;  // px; while collapsed, drag past this snaps expanded (responsive: ~8px past 52 collapsed)
-const SIDEBAR_EXPANDED_MIN        = 180; // px; minimum allowed width once expanded
-const SIDEBAR_EXPANDED_DEFAULT    = 240;
-const SIDEBAR_COLLAPSED_WIDTH     = 52;
+// VSCode-like hysteresis model: cursor X drives the panel width directly while
+// dragging, with a "dead zone" between collapsed (52) and the expanded floor (180).
+//   - Cursor X below TRIGGER (100) → collapsed
+//   - Cursor X in [TRIGGER, MIN] → panel locked at MIN (visual lock zone)
+//   - Cursor X above MIN → panel width = cursor X, capped at MAX
+// Snap direction switches at the same TRIGGER, so the act of snapping (which
+// moves the panel) creates the natural hysteresis preventing flicker.
+const SIDEBAR_WIDTH_MAX        = 480; // px; absolute maximum draggable width
+const SIDEBAR_WIDTH_MIN        = 180; // px; minimum expanded width (lock position)
+const SIDEBAR_COLLAPSE_TRIGGER = 100; // px; cursor X — going IN past this collapses, going OUT past this expands
+const SIDEBAR_EXPANDED_DEFAULT = 240;
+const SIDEBAR_COLLAPSED_WIDTH  = 52;
 
 function setSidebarCollapsed(collapsed) {
   if (!shell || !sidebar) return;
@@ -135,7 +142,7 @@ function setSidebarCollapsed(collapsed) {
     shell.classList.remove('sidebar-collapsed');
     sidebar.classList.remove('fp-sidebar--collapsed');
     const saved = parseInt(localStorage.getItem('fp-sidebar-width'), 10);
-    const w = (saved && saved >= 180 && saved <= 480) ? saved : SIDEBAR_EXPANDED_DEFAULT;
+    const w = (saved && saved >= SIDEBAR_WIDTH_MIN && saved <= SIDEBAR_WIDTH_MAX) ? saved : SIDEBAR_EXPANDED_DEFAULT;
     document.documentElement.style.setProperty('--sidebar-width', w + 'px');
   }
   localStorage.setItem('fp-sidebar-collapsed', collapsed ? 'on' : 'off');
@@ -151,48 +158,43 @@ function initSidebarResize() {
   if (!handle || !sidebar) return;
 
   let dragging = false;
-  let startX   = 0;
-  let startWidth = 0;
 
   handle.addEventListener('pointerdown', e => {
     dragging = true;
     handle.classList.add('fp-sidebar__resize-handle--active');
     sidebar.classList.add('fp-sidebar--dragging');
     shell.classList.add('sidebar-dragging');
-    startX = e.clientX;
-    startWidth = sidebar.getBoundingClientRect().width;
     handle.setPointerCapture(e.pointerId);
     e.preventDefault();
   });
 
   handle.addEventListener('pointermove', e => {
     if (!dragging) return;
-    const dx = e.clientX - startX;
-    const newWidth = Math.max(40, Math.min(480, startWidth + dx));
-
+    // VSCode-like model: cursor X drives the panel width directly. The dead
+    // zone between TRIGGER and MIN keeps the panel locked at MIN until the
+    // cursor pulls past MIN, then 1:1 follows. Below TRIGGER → collapsed.
+    const cursorX = e.clientX;
     const isCollapsed = sidebar.classList.contains('fp-sidebar--collapsed');
 
-    if (!isCollapsed && newWidth < SIDEBAR_COLLAPSED_THRESHOLD) {
-      // Crossed below threshold — snap to collapsed LIVE during drag
-      setSidebarCollapsed(true);
-      // Reset drag origin so further drag is relative to the new collapsed state
-      startX = e.clientX;
-      startWidth = SIDEBAR_COLLAPSED_WIDTH;
-    } else if (isCollapsed && newWidth >= SIDEBAR_EXPAND_TRIGGER) {
-      // Crossed past expand trigger while collapsed — snap to expanded LIVE (responsive)
-      setSidebarCollapsed(false);
-      const savedW = parseInt(localStorage.getItem('fp-sidebar-width'), 10);
-      startWidth = (savedW && savedW >= SIDEBAR_EXPANDED_MIN) ? savedW : SIDEBAR_EXPANDED_DEFAULT;
-      startX = e.clientX;
-      document.documentElement.style.setProperty('--sidebar-width', startWidth + 'px');
-    } else if (isCollapsed) {
-      // Still collapsed (dragging right but not past min) — no visual change needed
-      sidebar.classList.add('fp-sidebar--collapsing-preview');
+    if (isCollapsed) {
+      if (cursorX >= SIDEBAR_COLLAPSE_TRIGGER) {
+        // Cursor crossed back over the trigger — snap to expanded at MIN
+        setSidebarCollapsed(false);
+        document.documentElement.style.setProperty('--sidebar-width', SIDEBAR_WIDTH_MIN + 'px');
+      }
+      // else: stay collapsed, no visual change
     } else {
-      // Free drag in expanded mode — enforce minimum expanded width
-      sidebar.classList.remove('fp-sidebar--collapsing-preview');
-      const enforcedWidth = Math.max(SIDEBAR_EXPANDED_MIN, newWidth);
-      document.documentElement.style.setProperty('--sidebar-width', enforcedWidth + 'px');
+      if (cursorX < SIDEBAR_COLLAPSE_TRIGGER) {
+        // Crossed below trigger while expanded — snap to collapsed
+        setSidebarCollapsed(true);
+      } else if (cursorX <= SIDEBAR_WIDTH_MIN) {
+        // Dead zone — lock at MIN regardless of cursor position
+        document.documentElement.style.setProperty('--sidebar-width', SIDEBAR_WIDTH_MIN + 'px');
+      } else {
+        // Cursor past MIN — width follows cursor 1:1, capped at MAX
+        const w = Math.min(SIDEBAR_WIDTH_MAX, cursorX);
+        document.documentElement.style.setProperty('--sidebar-width', w + 'px');
+      }
     }
   });
 
@@ -200,12 +202,12 @@ function initSidebarResize() {
     if (!dragging) return;
     dragging = false;
     handle.classList.remove('fp-sidebar__resize-handle--active');
-    sidebar.classList.remove('fp-sidebar--dragging', 'fp-sidebar--collapsing-preview');
+    sidebar.classList.remove('fp-sidebar--dragging');
     shell.classList.remove('sidebar-dragging');
-    // Save final width if expanded
+    // Persist final width if expanded
     if (!sidebar.classList.contains('fp-sidebar--collapsed')) {
       const finalWidth = sidebar.getBoundingClientRect().width;
-      const w = Math.max(SIDEBAR_EXPANDED_MIN, Math.round(finalWidth));
+      const w = Math.max(SIDEBAR_WIDTH_MIN, Math.round(finalWidth));
       localStorage.setItem('fp-sidebar-width', String(w));
       document.documentElement.style.setProperty('--sidebar-width', w + 'px');
     }
