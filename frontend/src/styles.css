@@ -845,32 +845,131 @@ svg { flex-shrink: 0; }
 .fp-btn--lg { height: var(--h-button-lg); padding: 0 var(--s-16); font-size: 14px; }
 .fp-btn--sm { height: var(--h-button-sm); padding: 0 var(--s-10); }
 
-.fp-icon-btn {
-  width: 28px; height: 28px;
-  border-radius: var(--r-button);
-  display: inline-flex; align-items: center; justify-content: center;
-  color: var(--text-secondary);
-  background: transparent;
+/* -----------------------------------------------------------------------------
+   fp-button family — canonical spec (S4 UI Re-Pass Phase 2)
+   Legacy .fp-btn* remain for existing markup; new markup should use .fp-button*
+   ----------------------------------------------------------------------------- */
+.fp-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 12px;
   border: 1px solid transparent;
-  transition: background var(--dur-flash) var(--ease-snap),
-              color var(--dur-flash) var(--ease-snap),
-              box-shadow var(--dur-flash) var(--ease-snap),
-              border-color var(--dur-flash) var(--ease-snap),
-              transform var(--dur-press-up) var(--ease-snap);
-  cursor: default;
+  border-radius: var(--r-button);
+  font: var(--t-body);
+  cursor: pointer;
+  user-select: none;
+  transition: transform var(--dur-flash) var(--ease-snap),
+              background-color var(--dur-flash) var(--ease-snap),
+              box-shadow var(--dur-flash) var(--ease-snap);
 }
-.fp-icon-btn svg, .fp-icon-btn .icon { width: 16px; height: 16px; }
+.fp-button:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+.fp-button:disabled,
+.fp-button[disabled] {
+  opacity: 0.4;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+.fp-button:active {
+  transform: translateY(1px);
+}
+
+.fp-button--primary {
+  background: var(--accent);
+  color: var(--text-on-accent);
+  box-shadow: var(--highlight-top), var(--shadow-raised);
+}
+.fp-button--primary:hover {
+  background: var(--accent-hover);
+}
+.fp-button--primary:active {
+  background: var(--accent-press);
+  box-shadow: var(--inset-recess);
+}
+
+.fp-button--secondary {
+  background: var(--bg-raised);
+  color: var(--text-primary);
+  border-color: var(--border-subtle);
+  box-shadow: var(--highlight-top), var(--shadow-raised);
+}
+.fp-button--secondary:hover {
+  background: var(--bg-pressed);
+}
+.fp-button--secondary:active {
+  box-shadow: var(--inset-recess);
+}
+
+.fp-button--ghost {
+  background: transparent;
+  color: var(--text-secondary);
+  padding: 0 10px;
+}
+.fp-button--ghost:hover {
+  background: var(--bg-raised);
+  color: var(--text-primary);
+  box-shadow: var(--highlight-top);
+}
+
+.fp-button--icon,
+.fp-icon-btn {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  border: 1px solid transparent;
+  border-radius: var(--r-icon-btn);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background-color var(--dur-flash) var(--ease-snap),
+              transform var(--dur-flash) var(--ease-snap);
+}
+.fp-button--icon:hover,
 .fp-icon-btn:hover {
   background: var(--bg-raised);
   color: var(--text-primary);
   box-shadow: var(--highlight-top);
 }
+.fp-button--icon:active,
 .fp-icon-btn:active {
-  background: var(--bg-pressed);
-  box-shadow: var(--pressed-shadow);
   transform: translateY(1px);
-  transition-duration: var(--dur-press-down);
 }
+.fp-button--icon:focus-visible,
+.fp-icon-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+.fp-button--large {
+  height: 36px;
+  padding: 0 16px;
+  font-size: 14px;
+}
+.fp-button--small {
+  height: 24px;
+  padding: 0 8px;
+  font-size: 12px;
+}
+
+.fp-button--danger {
+  border-color: var(--bad-edge);
+  color: var(--bad);
+  background: transparent;
+}
+.fp-button--danger:hover {
+  background: var(--bad-wash);
+}
+
+/* Legacy .fp-icon-btn size variants and active state */
+.fp-icon-btn svg, .fp-icon-btn .icon { width: 16px; height: 16px; }
 .fp-icon-btn--sm { width: 24px; height: 24px; border-radius: var(--r-icon-btn); }
 .fp-icon-btn--sm svg, .fp-icon-btn--sm .icon { width: 14px; height: 14px; }
 .fp-icon-btn--lg { width: 32px; height: 32px; }
