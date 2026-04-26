@@ -298,6 +298,8 @@ svg { flex-shrink: 0; }
 .fp-titlebar__btn {
   width: 32px; height: 32px;
   display: inline-flex; align-items: center; justify-content: center;
+  background: transparent;
+  border: none;
   color: var(--text-secondary);
   transition: background var(--dur-flash) var(--ease-snap),
               color var(--dur-flash) var(--ease-snap),
@@ -447,7 +449,7 @@ svg { flex-shrink: 0; }
   padding: 0 var(--s-12);
   display: flex;
   align-items: center;
-  gap: var(--s-8);
+  gap: var(--s-6);
 }
 .fp-toolbar__title {
   font: 600 var(--t-title) var(--font-ui);
@@ -2741,8 +2743,20 @@ svg { flex-shrink: 0; }
 .fp-wc--close:hover { background: rgba(192, 57, 43, 0.80); color: #fff; }
 .fp-titlebar__drag-region { flex: 1; -webkit-app-region: drag; }
 
-/* Brand parts */
-.fp-brand { display: flex; align-items: center; gap: var(--s-8); -webkit-app-region: no-drag; }
+/* Titlebar brand row — renamed from .fp-brand to avoid collision with brand-mark icon class (R3) */
+.fp-titlebar__brand {
+  display: flex;
+  align-items: center;
+  gap: var(--s-6);
+  -webkit-app-region: no-drag;
+  flex-shrink: 0;
+}
+.fp-titlebar__brand-name {
+  font: 500 var(--t-compact) var(--font-ui);
+  letter-spacing: var(--track-body);
+  color: var(--text-secondary);
+}
+/* .fp-brand__mark and .fp-brand__name kept for legacy compatibility in other contexts */
 .fp-brand__mark { flex-shrink: 0; }
 .fp-brand__name { font: 600 var(--t-body) var(--font-ui); color: var(--text-primary); }
 
@@ -3814,7 +3828,7 @@ svg { flex-shrink: 0; }
   display: inline-flex;
   align-items: center;
   gap: var(--s-6);
-  font: 500 var(--t-compact) var(--font-ui);
+  font: 500 var(--t-body) var(--font-ui);
   letter-spacing: var(--track-body);
   color: var(--text-secondary);
   white-space: nowrap;
@@ -3914,6 +3928,7 @@ svg { flex-shrink: 0; }
 }
 .fp-statusbar__right { margin-left: auto; display: flex; align-items: center; gap: var(--s-8); }
 .fp-statusbar__sep { color: var(--text-tertiary); }
+.fp-statusbar__kbd-hints { display: flex; align-items: center; gap: var(--s-6); }
 #status-backend[data-state="ok"]      .fp-statusbar__backend-dot { background: var(--good); }
 #status-backend[data-state="offline"] .fp-statusbar__backend-dot { background: var(--bad); }
 #status-backend[data-state="error"]   .fp-statusbar__backend-dot { background: var(--warn); }

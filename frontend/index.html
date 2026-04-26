@@ -16,26 +16,26 @@
        A.1.1  TITLEBAR  (32px)
   ════════════════════════════════════════════════════════════════════════ -->
   <header class="fp-titlebar" id="titlebar">
-    <div class="fp-brand" style="display:flex;align-items:center;gap:6px;-webkit-app-region:no-drag">
-      <!-- 14×14 brand mark -->
-      <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+    <div class="fp-titlebar__brand">
+      <!-- 14×14 brand mark (amber gradient) -->
+      <svg class="fp-brand fp-brand--14" width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
         <rect x="1" y="1" width="12" height="12" rx="3" fill="var(--accent)" opacity="0.9"/>
         <path d="M4 7h6M7 4v6" stroke="var(--text-on-accent)" stroke-width="1.5" stroke-linecap="round"/>
       </svg>
-      <span style="font:500 var(--t-compact) var(--font-ui);color:var(--text-secondary);letter-spacing:var(--track-body)">FilePlus</span>
+      <span class="fp-titlebar__brand-name">FilePlus</span>
     </div>
     <!-- drag region fills center -->
     <div style="flex:1;height:100%;-webkit-app-region:drag"></div>
     <!-- window controls -->
     <div class="fp-titlebar__controls" style="-webkit-app-region:no-drag">
       <button class="fp-titlebar__btn" id="btn-minimize" data-action="window-minimize" aria-label="Minimize">
-        <svg width="10" height="1" viewBox="0 0 10 1"><rect width="10" height="1" fill="currentColor"/></svg>
+        <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><rect x="1" y="5.5" width="10" height="1" fill="currentColor"/></svg>
       </button>
       <button class="fp-titlebar__btn" id="btn-maximize" data-action="window-maximize" aria-label="Maximize">
-        <svg width="10" height="10" viewBox="0 0 10 10"><rect x="1" y="1" width="8" height="8" rx="1" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>
+        <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><rect x="1" y="1" width="10" height="10" rx="1" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>
       </button>
       <button class="fp-titlebar__btn fp-titlebar__btn--close" id="btn-close" data-action="window-close" aria-label="Close">
-        <svg width="10" height="10" viewBox="0 0 10 10"><path d="M1 1l8 8M9 1l-8 8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+        <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M2 2l8 8M10 2l-8 8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
       </button>
     </div>
   </header>
@@ -125,6 +125,18 @@
             <path d="M1.5 7.5L8 1l6.5 6.5V15h-4v-4.5H9.5v-.5h-3V15H2.5V7.5z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
           </svg>
           <span class="fp-sidebar__item__label">Home</span>
+        </button>
+
+        <!-- Downloads — opens Browser at configured Downloads path -->
+        <button class="fp-sidebar__item" id="nav-downloads"
+                data-screen="browser" data-action="navigate-path"
+                data-path="C:\Users\justi\Downloads"
+                title="Downloads (configured Downloads Folder)">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M8 2v8M5 7l3 3 3-3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M2 12h12" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+          </svg>
+          <span class="fp-sidebar__item__label">Downloads</span>
         </button>
 
         <!-- Review Bin with accent badge when non-zero -->
@@ -2955,6 +2967,12 @@
         <span style="color:var(--accent)">12 to review</span>
       </button>
       -->
+      <!-- Keyboard hints (t-small Inter 400 text-tertiary per A.1.5) -->
+      <span class="fp-statusbar__kbd-hints" aria-hidden="true">
+        <span style="font:400 var(--t-small) var(--font-ui);color:var(--text-tertiary)">Ctrl+K Search</span>
+        <span class="fp-statusbar__sep">·</span>
+        <span style="font:400 var(--t-small) var(--font-ui);color:var(--text-tertiary)">Ctrl+, Settings</span>
+      </span>
       <!-- Backend connection indicator -->
       <span class="fp-statusbar__backend" id="status-backend" data-state="unknown"
             title="Backend connection" style="display:flex;align-items:center;gap:4px">
@@ -3378,5 +3396,8 @@
 
 <script src="src/actions.js"></script>
 <script src="src/app.js"></script>
+<!-- impeccable-live-start -->
+<script src="http://localhost:8400/live.js"></script>
+<!-- impeccable-live-end -->
 </body>
 </html>
