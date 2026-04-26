@@ -234,14 +234,16 @@ function initToolbarResponsive() {
   const mo = new MutationObserver(recalc);
   mo.observe(breadcrumb, { childList: true, characterData: true, subtree: true });
 
-  // Click on collapsed icon → expand and focus
+  // Click on collapsed icon → expand and focus (capture phase so it beats focus-search → openPalette)
   searchWrap.addEventListener('click', e => {
     if (searchWrap.classList.contains('fp-toolbar__search--icon')) {
+      e.preventDefault();
+      e.stopPropagation();
       searchWrap.classList.remove('fp-toolbar__search--icon');
       const input = document.getElementById('search-input');
       if (input) setTimeout(() => input.focus(), 50);
     }
-  });
+  }, true /* capture */);
 
   recalc();
 }
