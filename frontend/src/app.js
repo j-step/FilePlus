@@ -63,10 +63,11 @@ function updateSidebarActive() {
   const screen = sessionStorage.getItem('fp-active-screen') || 'home';
 
   if (screen !== 'browser') {
-    // Screen-based: clear all then highlight the item matching the current screen.
+    // Screen-based: clear all (including manual-active flag) then highlight the current screen item.
     items.forEach(it => {
       it.classList.remove('fp-sidebar__item--active');
       it.classList.remove('active');
+      it.removeAttribute('data-manual-active');
     });
     items.forEach(it => {
       if (it.dataset.screen === screen && !it.dataset.path) {
@@ -76,16 +77,23 @@ function updateSidebarActive() {
     return;
   }
 
+  // Browser screen: check if a manual-active item exists (set immediately on click).
+  // The manual active stays until loadDirectory completes with a real path.
+  const manualActive = document.querySelector('.fp-sidebar__item[data-manual-active]');
+
   // Browser screen: highlight the path-bound item that is the longest prefix of currentPath.
   const currentPath = (navHistory.stack[navHistory.idx] || '').toLowerCase();
-  // If we have no current path yet (e.g. immediately after navigate-path click, before
-  // loadDirectory completes), don't clear — the manual click-active state remains.
-  if (!currentPath) return;
+  // If we have no real path yet, keep the manual click-active state (if any).
+  if (!currentPath) {
+    // Nothing loaded yet — manual active (if set) remains; nothing else to do.
+    return;
+  }
 
-  // We have a real path — now clear and re-match.
+  // We have a real path — clear manual flag and re-match by path prefix.
   items.forEach(it => {
     it.classList.remove('fp-sidebar__item--active');
     it.classList.remove('active');
+    it.removeAttribute('data-manual-active');
   });
 
   let bestMatch = null;
@@ -160,19 +168,32 @@ function initSidebarResize() {
 
   handle.addEventListener('pointermove', e => {
     if (!dragging) return;
-    // If starting from collapsed state, remove collapsed class so we can drag freely
-    if (sidebar.classList.contains('fp-sidebar--collapsed')) {
-      sidebar.classList.remove('fp-sidebar--collapsed');
-      shell.classList.remove('sidebar-collapsed');
-    }
     const dx = e.clientX - startX;
     const newWidth = Math.max(40, Math.min(480, startWidth + dx));
-    document.documentElement.style.setProperty('--sidebar-width', newWidth + 'px');
-    // Live snap visual hint
-    if (newWidth < SIDEBAR_COLLAPSED_THRESHOLD) {
+
+    const isCollapsed = sidebar.classList.contains('fp-sidebar--collapsed');
+
+    if (!isCollapsed && newWidth < SIDEBAR_COLLAPSED_THRESHOLD) {
+      // Crossed below threshold — snap to collapsed LIVE during drag
+      setSidebarCollapsed(true);
+      // Reset drag origin so further drag is relative to the new collapsed state
+      startX = e.clientX;
+      startWidth = SIDEBAR_COLLAPSED_WIDTH;
+    } else if (isCollapsed && newWidth >= SIDEBAR_EXPANDED_MIN) {
+      // Crossed above min-expanded threshold while collapsed — snap to expanded LIVE
+      setSidebarCollapsed(false);
+      const savedW = parseInt(localStorage.getItem('fp-sidebar-width'), 10);
+      startWidth = (savedW && savedW >= SIDEBAR_EXPANDED_MIN) ? savedW : SIDEBAR_EXPANDED_DEFAULT;
+      startX = e.clientX;
+      document.documentElement.style.setProperty('--sidebar-width', startWidth + 'px');
+    } else if (isCollapsed) {
+      // Still collapsed (dragging right but not past min) — no visual change needed
       sidebar.classList.add('fp-sidebar--collapsing-preview');
     } else {
+      // Free drag in expanded mode — enforce minimum expanded width
       sidebar.classList.remove('fp-sidebar--collapsing-preview');
+      const enforcedWidth = Math.max(SIDEBAR_EXPANDED_MIN, newWidth);
+      document.documentElement.style.setProperty('--sidebar-width', enforcedWidth + 'px');
     }
   });
 
@@ -182,15 +203,12 @@ function initSidebarResize() {
     handle.classList.remove('fp-sidebar__resize-handle--active');
     sidebar.classList.remove('fp-sidebar--dragging', 'fp-sidebar--collapsing-preview');
     shell.classList.remove('sidebar-dragging');
-    const finalWidth = sidebar.getBoundingClientRect().width;
-    if (finalWidth < SIDEBAR_COLLAPSED_THRESHOLD) {
-      setSidebarCollapsed(true);
-    } else {
-      // Enforce minimum expanded width
+    // Save final width if expanded
+    if (!sidebar.classList.contains('fp-sidebar--collapsed')) {
+      const finalWidth = sidebar.getBoundingClientRect().width;
       const w = Math.max(SIDEBAR_EXPANDED_MIN, Math.round(finalWidth));
       localStorage.setItem('fp-sidebar-width', String(w));
       document.documentElement.style.setProperty('--sidebar-width', w + 'px');
-      setSidebarCollapsed(false);
     }
     handle.releasePointerCapture(e.pointerId);
   });
@@ -639,30 +657,52 @@ function restoreSettings() {
       localStorage.removeItem('fp-accent');
     }
   }
-  const savedZoom = localStorage.getItem('fp-zoom');
-  if (savedZoom) document.documentElement.style.zoom = savedZoom;
+  // Zoom is now handled by Electron webContents.setZoomFactor (no CSS zoom persistence needed).
+  // Legacy fp-zoom in localStorage is intentionally ignored — Electron persists zoom separately.
   const savedGlow = localStorage.getItem('fp-accent-glow');
   if (savedGlow === 'on') applyAccentGlow(true);
 }
 
-// ── Zoom (Chromium zoom property — applies to entire document) ─────────────────
+// ── Zoom — uses Electron webContents.setZoomFactor when in Electron (no layout cut-off),
+//           falls back to CSS zoom for non-Electron contexts (tests/browser).
 const ZOOM_STEPS   = [0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.33, 1.5, 1.75, 2.0];
 const ZOOM_DEFAULT = 1.0;
 function getCurrentZoom() {
+  if (window.electronAPI?.getZoom) return window.electronAPI.getZoom();
   const z = parseFloat(document.documentElement.style.zoom);
   return isNaN(z) ? ZOOM_DEFAULT : z;
 }
 function zoomIn() {
+  if (window.electronAPI?.zoomIn) {
+    window.electronAPI.zoomIn();
+    return;
+  }
+  // Fallback for non-Electron
   const cur = getCurrentZoom();
   const next = ZOOM_STEPS.find(s => s > cur + 0.001) ?? ZOOM_STEPS[ZOOM_STEPS.length - 1];
   document.documentElement.style.zoom = String(next);
   localStorage.setItem('fp-zoom', String(next));
 }
 function zoomOut() {
+  if (window.electronAPI?.zoomOut) {
+    window.electronAPI.zoomOut();
+    return;
+  }
+  // Fallback for non-Electron
   const cur = getCurrentZoom();
   const prev = [...ZOOM_STEPS].reverse().find(s => s < cur - 0.001) ?? ZOOM_STEPS[0];
   document.documentElement.style.zoom = String(prev);
   localStorage.setItem('fp-zoom', String(prev));
+}
+function zoomReset() {
+  if (window.electronAPI?.zoomReset) {
+    window.electronAPI.zoomReset();
+    document.documentElement.style.zoom = '';
+    localStorage.removeItem('fp-zoom');
+    return;
+  }
+  document.documentElement.style.zoom = '';
+  localStorage.removeItem('fp-zoom');
 }
 
 // ── Context menu ──────────────────────────────────────────────────────────────
@@ -1200,11 +1240,14 @@ document.addEventListener('click', e => {
       break;
     case 'navigate-path': {
       const navPath = btn.dataset.path;
-      // Mark the clicked item as visually active immediately (don't wait for fetch)
+      // Mark the clicked item as visually active immediately (don't wait for fetch).
+      // Set data-manual-active so updateSidebarActive() won't override it until a real path loads.
       document.querySelectorAll('.fp-sidebar__item').forEach(it => {
         it.classList.remove('fp-sidebar__item--active');
+        it.removeAttribute('data-manual-active');
       });
       btn.classList.add('fp-sidebar__item--active');
+      btn.setAttribute('data-manual-active', 'true');
       // Pre-seed history stack to prevent switchScreen's auto-load from racing with our explicit load.
       if (navPath && navHistory.stack.length === 0) navHistory.stack.push(null);
       switchScreen('browser');
@@ -1339,7 +1382,7 @@ document.addEventListener('click', e => {
       break;
     case 'settings-set-font-scale': {
       const scale = btn.dataset.scale;
-      // scale is a zoom factor (e.g. '0.9', '1.0', '1.1') — use zoom property
+      // Font scale applied as CSS zoom; for Ctrl+/- Electron native zoom is used instead.
       document.documentElement.style.zoom = scale;
       localStorage.setItem('fp-zoom', scale);
       break;
@@ -1517,7 +1560,7 @@ document.addEventListener('keydown', e => {
   // Ctrl+- or Ctrl+_ — zoom out
   if ((e.metaKey || e.ctrlKey) && (e.key === '-' || e.key === '_')) { e.preventDefault(); zoomOut(); }
   // Ctrl+0 — reset zoom
-  if ((e.metaKey || e.ctrlKey) && e.key === '0') { e.preventDefault(); document.documentElement.style.zoom = ''; localStorage.removeItem('fp-zoom'); }
+  if ((e.metaKey || e.ctrlKey) && e.key === '0') { e.preventDefault(); zoomReset(); }
   // Ctrl+Shift+R — Review Bin
   if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'R') { e.preventDefault(); switchScreen('review-bin'); }
   // Ctrl+T — new tab
