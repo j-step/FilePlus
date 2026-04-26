@@ -516,30 +516,38 @@ svg { flex-shrink: 0; }
 /* -----------------------------------------------------------------------------
    9. BREADCRUMB (Section 14)
    ----------------------------------------------------------------------------- */
+/* === fp-breadcrumb === */
 .fp-breadcrumb {
-  height: 30px;
-  padding: 0 var(--s-12);
-  flex: 1;
   display: flex;
   align-items: center;
-  gap: var(--s-6);
-  font: 400 var(--t-body) var(--font-ui);
-  letter-spacing: var(--track-body);
+  gap: 6px;
+  font: 500 var(--t-body) var(--font-ui);
   color: var(--text-secondary);
-  overflow: hidden;
 }
 .fp-breadcrumb__crumb {
+  background: transparent;
   color: var(--text-secondary);
-  transition: color var(--dur-flash) var(--ease-snap);
-  cursor: default;
+  border: none;
+  padding: 4px 6px;
+  border-radius: var(--r-icon-btn);
+  cursor: pointer;
+  font: 500 var(--t-body) var(--font-ui);
+  user-select: none;
 }
-.fp-breadcrumb__crumb:hover { color: var(--text-primary); }
-.fp-breadcrumb__crumb--current { color: var(--text-primary); font-weight: 500; }
-.fp-breadcrumb__sep {
+.fp-breadcrumb__crumb:hover {
+  background: var(--bg-raised);
+  color: var(--text-primary);
+}
+.fp-breadcrumb__crumb--current {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+.fp-breadcrumb__sep,
+.fp-breadcrumb-sep {
   color: var(--text-tertiary);
-  font: 400 var(--t-small) var(--font-ui);
+  font-size: 11px;
+  user-select: none;
 }
-.fp-breadcrumb__sep svg { width: 10px; height: 10px; }
 
 /* -----------------------------------------------------------------------------
    10. SEARCH FIELD (Section 15)
