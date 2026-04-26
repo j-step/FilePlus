@@ -3310,13 +3310,14 @@ svg { flex-shrink: 0; }
 .list-head--grid-hidden { display: none !important; }
 
 /* Marquee selection rectangle (A.3.1) */
-.fp-marquee {
-  position: fixed;
-  border: 1px solid var(--accent);
-  background: color-mix(in oklch, var(--accent) 8%, transparent);
+.fp-marquee,
+#marquee-rect {
+  position: absolute;
+  background: var(--accent-wash-strong);
+  border: 1px solid var(--accent-edge);
+  border-radius: var(--r-chip);
   pointer-events: none;
-  z-index: 9999;
-  border-radius: var(--r-button);
+  z-index: 50;
 }
 
 /* Sort chevron active state on any sortable column (A.3.1) */
