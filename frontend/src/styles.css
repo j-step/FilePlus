@@ -950,28 +950,39 @@ svg { flex-shrink: 0; }
 /* -----------------------------------------------------------------------------
    13. PILLS & BADGES (Section 18)
    ----------------------------------------------------------------------------- */
+/* === fp-badge === */
 .fp-badge {
-  min-width: var(--h-badge);
-  height: var(--h-badge);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 18px;
+  min-width: 18px;
   padding: 0 6px;
-  background: var(--bg-raised);
-  border: 1px solid var(--border-subtle);
-  color: var(--text-secondary);
-  font: 500 var(--t-small) var(--font-mono);
-  letter-spacing: var(--track-mono);
-  border-radius: var(--r-chip);
-  box-shadow: var(--highlight-top);
-  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--accent);
+  color: var(--text-on-accent);
+  border-radius: var(--r-pill);
+  font: 500 11px/16px var(--font-mono);
+  letter-spacing: 0;
+  user-select: none;
 }
 .fp-badge--accent {
-  background: var(--accent-wash);
-  border-color: var(--accent-edge);
-  color: var(--accent);
+  background: var(--accent);
+  color: var(--text-on-accent);
 }
-.fp-badge--neutral {
-  background: var(--bg-pressed);
-  border: none;
-  box-shadow: none;
+.fp-badge--good {
+  background: var(--good-wash);
+  color: var(--good);
+  border: 1px solid var(--good-edge);
+}
+.fp-badge--warn {
+  background: var(--warn-wash);
+  color: var(--warn);
+  border: 1px solid var(--warn-edge);
+}
+.fp-badge--bad {
+  background: var(--bad-wash);
+  color: var(--bad);
+  border: 1px solid var(--bad-edge);
 }
 
 .fp-pill {
