@@ -17,10 +17,9 @@
   ════════════════════════════════════════════════════════════════════════ -->
   <header class="fp-titlebar" id="titlebar">
     <div class="fp-titlebar__brand">
-      <!-- 14×14 brand mark (amber gradient) -->
+      <!-- 14×14 brand mark (amber gradient square with white + cross) -->
       <svg class="fp-brand fp-brand--14" width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
-        <rect x="1" y="1" width="12" height="12" rx="3" fill="var(--accent)" opacity="0.9"/>
-        <path d="M4 7h6M7 4v6" stroke="var(--text-on-accent)" stroke-width="1.5" stroke-linecap="round"/>
+        <path d="M4 7h6M7 4v6" stroke="var(--text-on-accent)" stroke-width="1.8" stroke-linecap="round"/>
       </svg>
       <span class="fp-titlebar__brand-name">FilePlus</span>
     </div>
@@ -268,9 +267,9 @@
 
         <button class="fp-sidebar__item" id="nav-settings"
                 data-screen="settings" data-action="navigate-screen" title="Settings (Ctrl+,)">
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-            <circle cx="8" cy="8" r="2.5" stroke="currentColor" stroke-width="1.2"/>
-            <path d="M8 2v1.5M8 12.5V14M2 8h1.5M12.5 8H14M3.5 3.5l1 1M11.5 11.5l1 1M3.5 12.5l1-1M11.5 4.5l1-1" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/>
+            <circle cx="12" cy="12" r="3"/>
           </svg>
           <span class="fp-sidebar__item__label">Settings</span>
         </button>
@@ -2998,7 +2997,7 @@
       <!-- Backend connection indicator -->
       <span class="fp-statusbar__backend" id="status-backend" data-state="unknown"
             title="Backend connection" style="display:flex;align-items:center;gap:4px">
-        <span class="fp-statusbar__backend-dot" style="width:6px;height:6px;border-radius:50%;background:var(--text-tertiary)"></span>
+        <span class="fp-statusbar__backend-dot" style="width:6px;height:6px;border-radius:50%;flex-shrink:0"></span>
         <span class="fp-statusbar__backend-label" style="font:400 var(--t-small) var(--font-ui);color:var(--text-tertiary)">Backend</span>
       </span>
     </div>

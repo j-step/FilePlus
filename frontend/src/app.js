@@ -625,32 +625,30 @@ function restoreSettings() {
       localStorage.removeItem('fp-accent');
     }
   }
-  const fontScale = localStorage.getItem('fp-font-scale');
-  if (fontScale) document.documentElement.style.fontSize = fontScale + 'px';
+  const savedZoom = localStorage.getItem('fp-zoom');
+  if (savedZoom) document.documentElement.style.zoom = savedZoom;
   const savedGlow = localStorage.getItem('fp-accent-glow');
   if (savedGlow === 'on') applyAccentGlow(true);
 }
 
-// ── Zoom (font-scale based) ───────────────────────────────────────────────────
-const ZOOM_STEPS  = [10, 11, 12, 13, 14, 15, 16, 18, 20];
-const ZOOM_DEFAULT = 13;
+// ── Zoom (Chromium zoom property — applies to entire document) ─────────────────
+const ZOOM_STEPS   = [0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.33, 1.5, 1.75, 2.0];
+const ZOOM_DEFAULT = 1.0;
 function getCurrentZoom() {
-  const raw = parseFloat(document.documentElement.style.fontSize) ||
-              parseFloat(getComputedStyle(document.documentElement).fontSize) ||
-              ZOOM_DEFAULT;
-  return raw;
+  const z = parseFloat(document.documentElement.style.zoom);
+  return isNaN(z) ? ZOOM_DEFAULT : z;
 }
 function zoomIn() {
   const cur = getCurrentZoom();
-  const next = ZOOM_STEPS.find(s => s > cur) || ZOOM_STEPS[ZOOM_STEPS.length - 1];
-  document.documentElement.style.fontSize = next + 'px';
-  localStorage.setItem('fp-font-scale', next);
+  const next = ZOOM_STEPS.find(s => s > cur + 0.001) ?? ZOOM_STEPS[ZOOM_STEPS.length - 1];
+  document.documentElement.style.zoom = String(next);
+  localStorage.setItem('fp-zoom', String(next));
 }
 function zoomOut() {
   const cur = getCurrentZoom();
-  const prev = [...ZOOM_STEPS].reverse().find(s => s < cur) || ZOOM_STEPS[0];
-  document.documentElement.style.fontSize = prev + 'px';
-  localStorage.setItem('fp-font-scale', prev);
+  const prev = [...ZOOM_STEPS].reverse().find(s => s < cur - 0.001) ?? ZOOM_STEPS[0];
+  document.documentElement.style.zoom = String(prev);
+  localStorage.setItem('fp-zoom', String(prev));
 }
 
 // ── Context menu ──────────────────────────────────────────────────────────────
@@ -1316,8 +1314,9 @@ document.addEventListener('click', e => {
       break;
     case 'settings-set-font-scale': {
       const scale = btn.dataset.scale;
-      document.documentElement.style.fontSize = scale + 'px';
-      localStorage.setItem('fp-font-scale', scale);
+      // scale is a zoom factor (e.g. '0.9', '1.0', '1.1') — use zoom property
+      document.documentElement.style.zoom = scale;
+      localStorage.setItem('fp-zoom', scale);
       break;
     }
     case 'settings-reset-shortcuts':
@@ -1493,7 +1492,7 @@ document.addEventListener('keydown', e => {
   // Ctrl+- or Ctrl+_ — zoom out
   if ((e.metaKey || e.ctrlKey) && (e.key === '-' || e.key === '_')) { e.preventDefault(); zoomOut(); }
   // Ctrl+0 — reset zoom
-  if ((e.metaKey || e.ctrlKey) && e.key === '0') { e.preventDefault(); document.documentElement.style.fontSize = ZOOM_DEFAULT + 'px'; localStorage.setItem('fp-font-scale', ZOOM_DEFAULT); }
+  if ((e.metaKey || e.ctrlKey) && e.key === '0') { e.preventDefault(); document.documentElement.style.zoom = ''; localStorage.removeItem('fp-zoom'); }
   // Ctrl+Shift+R — Review Bin
   if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'R') { e.preventDefault(); switchScreen('review-bin'); }
   // Ctrl+T — new tab

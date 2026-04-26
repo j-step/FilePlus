@@ -4029,9 +4029,11 @@ svg { flex-shrink: 0; }
 .fp-statusbar__right { margin-left: auto; display: flex; align-items: center; gap: var(--s-8); }
 .fp-statusbar__sep { color: var(--text-tertiary); }
 .fp-statusbar__kbd-hints { display: flex; align-items: center; gap: var(--s-6); }
+.fp-statusbar__backend-dot { background: var(--text-tertiary); transition: background var(--dur-slide) var(--ease-out); }
 #status-backend[data-state="ok"]      .fp-statusbar__backend-dot { background: var(--good); }
 #status-backend[data-state="offline"] .fp-statusbar__backend-dot { background: var(--bad); }
 #status-backend[data-state="error"]   .fp-statusbar__backend-dot { background: var(--warn); }
+#status-backend[data-state="ok"]      .fp-statusbar__backend-label { color: var(--good); }
 
 /* A.1.5 — Live task indicator pulse */
 @keyframes fp-statusbar-pulse {
