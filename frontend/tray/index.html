@@ -78,6 +78,8 @@
       transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
     }
     .tray-icon-btn:hover { background: var(--bg-raised); color: var(--text-primary); }
+    .tray-icon-btn:active { transform: translateY(1px); }
+    .tray-icon-btn:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--accent-glow); }
     .tray-icon-btn--active { color: var(--accent); }
     /* Badge on Review Bin button */
     .tray-badge {
@@ -221,6 +223,8 @@
       padding: 0;
     }
     .tray-action-btn:hover { background: var(--bg-pressed); color: var(--text-primary); }
+    .tray-action-btn:active { transform: translateY(1px); }
+    .tray-action-btn:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--accent-glow); }
     /* Icon must be exactly 16×16 (CRITICAL per spec A.14.7) */
     .tray-action-btn svg {
       width: 16px;
@@ -369,25 +373,25 @@
   <!-- Right icons: Review Bin (badge), Everything Folder, Pause AI, Expand -->
   <div class="tray-header__actions">
     <!-- Review Bin with approval count badge -->
-    <button class="tray-icon-btn" id="btn-tray-review-bin" title="Review Bin" data-action="tray-open-review-bin">
+    <button class="tray-icon-btn fp-icon-btn" id="btn-tray-review-bin" title="Review Bin" data-action="tray-open-review-bin">
       <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M2 4h10M2 7h7M2 10h5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
       <!-- INTEGRATION: badge count from GET /api/review-bin/count -->
       <span class="tray-badge" id="tray-rb-badge">3</span>
     </button>
     <!-- Everything Folder -->
-    <button class="tray-icon-btn" id="btn-tray-everything" title="Everything Folder" data-action="tray-open-everything">
+    <button class="tray-icon-btn fp-icon-btn" id="btn-tray-everything" title="Everything Folder" data-action="tray-open-everything">
       <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="1" y="3" width="12" height="10" rx="1.5" stroke="currentColor" stroke-width="1.2"/><path d="M1 6h12M4 3V1.5h6V3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
     </button>
     <!-- Pause AI toggle -->
-    <button class="tray-icon-btn" id="btn-tray-pause-ai" title="Pause AI processing" data-action="tray-toggle-pause-ai">
+    <button class="tray-icon-btn fp-icon-btn" id="btn-tray-pause-ai" title="Pause AI processing" data-action="tray-toggle-pause-ai">
       <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="3" y="2" width="3" height="10" rx="1" fill="currentColor"/><rect x="8" y="2" width="3" height="10" rx="1" fill="currentColor"/></svg>
     </button>
     <!-- Expand to full window -->
-    <button class="tray-icon-btn" id="btn-tray-expand" title="Expand" data-action="tray-expand">
+    <button class="tray-icon-btn fp-icon-btn" id="btn-tray-expand" title="Expand" data-action="tray-expand">
       <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M9 2h3v3M5 12H2V9M14 0" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/><path d="M8.5 5.5l4-4M5.5 8.5l-4 4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
     </button>
     <!-- Close -->
-    <button class="tray-icon-btn" id="btn-tray-close" title="Close" data-action="tray-close">
+    <button class="tray-icon-btn fp-icon-btn" id="btn-tray-close" title="Close" data-action="tray-close">
       <svg width="11" height="11" viewBox="0 0 11 11" fill="none"><path d="M1 1l9 9M10 1l-9 9" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
     </button>
   </div>
@@ -404,7 +408,7 @@
       <div class="tray-download__name" id="dl-filename">report_Q1_2026.pdf</div>
       <div class="tray-download__size" id="dl-size">14.2 MB / 38 MB · 23 sec</div>
     </div>
-    <button class="tray-icon-btn" id="btn-dl-cancel" title="Cancel" data-action="tray-cancel-download">
+    <button class="tray-icon-btn fp-icon-btn" id="btn-dl-cancel" title="Cancel" data-action="tray-cancel-download">
       <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><path d="M1 1l8 8M9 1l-8 8" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
     </button>
   </div>
@@ -512,7 +516,7 @@
   <div class="tray-moving__header">
     <span class="tray-moving__title">Currently moving</span>
     <span class="tray-moving__count" id="tray-moving-count">3 of 12 files</span>
-    <button class="tray-icon-btn" data-action="tray-toggle-moving" title="Collapse" style="width:20px;height:20px">
+    <button class="tray-icon-btn fp-icon-btn" data-action="tray-toggle-moving" title="Collapse" style="width:20px;height:20px">
       <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><path d="M1 3l4 4 4-4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
     </button>
   </div>
@@ -531,10 +535,10 @@
   <div class="tray-footer__row">
     <!-- Left: folder + search icon buttons -->
     <div class="tray-footer__left">
-      <button class="tray-icon-btn" title="Open Everything Folder" data-action="tray-open-everything">
+      <button class="tray-icon-btn fp-icon-btn" title="Open Everything Folder" data-action="tray-open-everything">
         <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="1" y="3" width="12" height="9" rx="1.5" stroke="currentColor" stroke-width="1.2"/><path d="M1 6h12M4 3V1.5h6V3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
       </button>
-      <button class="tray-icon-btn" title="Search" data-action="tray-search">
+      <button class="tray-icon-btn fp-icon-btn" title="Search" data-action="tray-search">
         <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="6" cy="6" r="4.5" stroke="currentColor" stroke-width="1.2"/><path d="M9.5 9.5l3 3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
       </button>
     </div>
@@ -544,7 +548,7 @@
     </div>
     <!-- Right: settings -->
     <div class="tray-footer__right">
-      <button class="tray-icon-btn" id="btn-tray-settings" title="Settings" data-action="tray-open-settings">
+      <button class="tray-icon-btn fp-icon-btn" id="btn-tray-settings" title="Settings" data-action="tray-open-settings">
         <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="2" stroke="currentColor" stroke-width="1.2"/><path d="M7 1.5V3M7 11v1.5M1.5 7H3M11 7h1.5M3.1 3.1l1 1M9.9 9.9l1 1M3.1 10.9l1-1M9.9 4.1l1-1" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
       </button>
     </div>

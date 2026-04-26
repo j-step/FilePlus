@@ -2948,6 +2948,11 @@ svg { flex-shrink: 0; }
   background: var(--bad-wash);
   border-color: var(--bad-edge);
 }
+.rb-btn-danger-ghost:active { transform: translateY(1px); }
+.rb-btn-danger-ghost:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
 
 .rb-row {
   height: 26px;
@@ -3081,6 +3086,11 @@ svg { flex-shrink: 0; }
 
 .ef-col--sortable { cursor: pointer; }
 .ef-col--sortable:hover { color: var(--text-secondary); }
+.ef-col--sortable:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--accent-glow);
+  border-radius: var(--r-sm);
+}
 .ef-col--sorted-asc,
 .ef-col--sorted-desc { color: var(--text-primary); }
 
@@ -4260,6 +4270,11 @@ button.fp-pill:hover {
   transition: background var(--dur-fast) var(--ease-out);
 }
 .settings-nav__item:hover { background: var(--bg-pressed); }
+.settings-nav__item:active { transform: translateY(1px); }
+.settings-nav__item:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
 .settings-nav__item--active {
   background: var(--bg-pressed);
   color: var(--text-primary);

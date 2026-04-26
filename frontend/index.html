@@ -580,7 +580,7 @@
                 <div class="fp-error-banner">
                   <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="6" stroke="currentColor" stroke-width="1.2"/><path d="M7 4v4M7 10v.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
                   This folder no longer exists.
-                  <button class="fp-error-banner__action" data-action="nav-back">Go back</button>
+                  <button class="fp-error-banner__action fp-btn fp-btn--ghost" data-action="nav-back">Go back</button>
                 </div>
                 -->
 
@@ -1196,8 +1196,8 @@
             <div class="fp-error-banner">
               <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="6" stroke="currentColor" stroke-width="1.2"/><path d="M7 4v4M7 10v.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
               Scan interrupted — backend process stopped unexpectedly.
-              <button class="fp-error-banner__action" data-action="restart-scan">Retry</button>
-              <button class="fp-error-banner__dismiss" data-action="dismiss-error">✕</button>
+              <button class="fp-error-banner__action fp-btn fp-btn--ghost" data-action="restart-scan">Retry</button>
+              <button class="fp-error-banner__dismiss fp-icon-btn fp-icon-btn--sm" data-action="dismiss-error">✕</button>
             </div>
             -->
 
@@ -1349,8 +1349,8 @@
           <div class="fp-error-banner">
             <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="6" stroke="currentColor" stroke-width="1.2"/><path d="M7 4v4M7 10v.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
             Scan results could not be loaded. The backend may have stopped.
-            <button class="fp-error-banner__action" data-action="navigate-screen" data-screen="scan-config">New scan</button>
-            <button class="fp-error-banner__dismiss" data-action="dismiss-error">✕</button>
+            <button class="fp-error-banner__action fp-btn fp-btn--ghost" data-action="navigate-screen" data-screen="scan-config">New scan</button>
+            <button class="fp-error-banner__dismiss fp-icon-btn fp-icon-btn--sm" data-action="dismiss-error">✕</button>
           </div>
           -->
 
@@ -1604,8 +1604,8 @@
           <div class="fp-error-banner">
             <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="6" stroke="currentColor" stroke-width="1.2"/><path d="M7 4v4M7 10v.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
             Could not load review queue. Backend may be unavailable.
-            <button class="fp-error-banner__action" data-action="retry-review-bin">Retry</button>
-            <button class="fp-error-banner__dismiss" data-action="dismiss-error">✕</button>
+            <button class="fp-error-banner__action fp-btn fp-btn--ghost" data-action="retry-review-bin">Retry</button>
+            <button class="fp-error-banner__dismiss fp-icon-btn fp-icon-btn--sm" data-action="dismiss-error">✕</button>
           </div>
           -->
 
@@ -1915,8 +1915,8 @@
           <div class="fp-error-banner">
             <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="6" stroke="currentColor" stroke-width="1.2"/><path d="M7 4v4M7 10v.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
             Filesystem watcher stopped — new files won't appear automatically.
-            <button class="fp-error-banner__action" data-action="restart-watcher">Restart watcher</button>
-            <button class="fp-error-banner__dismiss" data-action="dismiss-error">✕</button>
+            <button class="fp-error-banner__action fp-btn fp-btn--ghost" data-action="restart-watcher">Restart watcher</button>
+            <button class="fp-error-banner__dismiss fp-icon-btn fp-icon-btn--sm" data-action="dismiss-error">✕</button>
           </div>
           -->
 
@@ -2912,20 +2912,20 @@
   <div class="fp-error-banner" id="banner-backend-offline" style="border-bottom:1px solid var(--bad-edge);border-top:none">
     <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="6" stroke="currentColor" stroke-width="1.2"/><path d="M7 4v4M7 10v.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
     Backend is not running — classifications and moves are paused.
-    <button class="fp-error-banner__action" data-action="retry-backend-connect">Reconnect</button>
-    <button class="fp-error-banner__dismiss" data-action="dismiss-error">✕</button>
+    <button class="fp-error-banner__action fp-btn fp-btn--ghost" data-action="retry-backend-connect">Reconnect</button>
+    <button class="fp-error-banner__dismiss fp-icon-btn fp-icon-btn--sm" data-action="dismiss-error">✕</button>
   </div>
   <div class="fp-error-banner" id="banner-ai-offline" style="border-bottom:1px solid var(--bad-edge);border-top:none">
     <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="6" stroke="currentColor" stroke-width="1.2"/><path d="M7 4v4M7 10v.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
     Ollama is not running — local AI classification is unavailable.
-    <button class="fp-error-banner__action" data-action="open-install-guide">How to fix</button>
-    <button class="fp-error-banner__dismiss" data-action="dismiss-error">✕</button>
+    <button class="fp-error-banner__action fp-btn fp-btn--ghost" data-action="open-install-guide">How to fix</button>
+    <button class="fp-error-banner__dismiss fp-icon-btn fp-icon-btn--sm" data-action="dismiss-error">✕</button>
   </div>
   <div class="fp-error-banner" id="banner-cost-cap" style="border-bottom:1px solid var(--bad-edge);border-top:none">
     <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="6" stroke="currentColor" stroke-width="1.2"/><path d="M7 4v4M7 10v.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
     Monthly API cost cap reached — cloud classification paused until next month.
-    <button class="fp-error-banner__action" data-action="navigate-screen" data-screen="settings">Raise cap</button>
-    <button class="fp-error-banner__dismiss" data-action="dismiss-error">✕</button>
+    <button class="fp-error-banner__action fp-btn fp-btn--ghost" data-action="navigate-screen" data-screen="settings">Raise cap</button>
+    <button class="fp-error-banner__dismiss fp-icon-btn fp-icon-btn--sm" data-action="dismiss-error">✕</button>
   </div>
   -->
 
