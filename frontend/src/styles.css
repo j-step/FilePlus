@@ -1332,24 +1332,53 @@ svg { flex-shrink: 0; }
   -webkit-appearance: none;
   appearance: none;
   width: 100%;
+  height: 14px;
+  background: transparent;
+  cursor: pointer;
+}
+.fp-slider::-webkit-slider-runnable-track {
   height: 4px;
   background: var(--bg-pressed);
   border-radius: var(--r-pill);
   box-shadow: var(--inset-recess);
-  outline: none;
+}
+.fp-slider::-moz-range-track {
+  height: 4px;
+  background: var(--bg-pressed);
+  border-radius: var(--r-pill);
+  box-shadow: var(--inset-recess);
 }
 .fp-slider::-webkit-slider-thumb {
   -webkit-appearance: none;
-  width: 14px; height: 14px;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  margin-top: -5px;
   background: var(--bg-raised);
   border: 1px solid var(--border-subtle);
   border-radius: var(--r-pill);
   box-shadow: var(--shadow-raised);
-  cursor: default;
-  transition: transform var(--dur-flash) var(--ease-snap);
+  cursor: pointer;
 }
-.fp-slider::-webkit-slider-thumb:hover { transform: scale(1.1); }
-.fp-slider::-webkit-slider-thumb:active { transform: scale(1.15); }
+.fp-slider::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-pill);
+  box-shadow: var(--shadow-raised);
+  cursor: pointer;
+}
+.fp-slider:focus-visible::-webkit-slider-thumb {
+  box-shadow: var(--shadow-raised), 0 0 0 3px var(--accent-glow);
+}
+.fp-slider:focus-visible::-moz-range-thumb {
+  box-shadow: var(--shadow-raised), 0 0 0 3px var(--accent-glow);
+}
+.fp-slider:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
 
 /* -----------------------------------------------------------------------------
    18. SURFACES — cards, popovers, modals, inspector (Section 22)
