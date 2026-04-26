@@ -77,11 +77,9 @@ function updateSidebarActive() {
     return;
   }
 
-  // Browser screen: check if a manual-active item exists (set immediately on click).
-  // The manual active stays until loadDirectory completes with a real path.
-  const manualActive = document.querySelector('.fp-sidebar__item[data-manual-active]');
-
   // Browser screen: highlight the path-bound item that is the longest prefix of currentPath.
+  // If data-manual-active is set (from a recent navigate-path click), it stays
+  // until a real path is loaded and prefix-matching runs below.
   const currentPath = (navHistory.stack[navHistory.idx] || '').toLowerCase();
   // If we have no real path yet, keep the manual click-active state (if any).
   if (!currentPath) {
