@@ -14,15 +14,6 @@ function switchScreen(id) {
   const target = document.getElementById(`screen-${id}`);
   if (target) target.classList.add('active');
 
-  // Update sidebar nav items — supports both old .sb-item and new .fp-sidebar__item
-  document.querySelectorAll('[data-screen]').forEach(item => {
-    const isActive = item.dataset.screen === id;
-    // v2 sidebar items
-    item.classList.toggle('fp-sidebar__item--active', isActive);
-    // legacy sidebar items
-    item.classList.toggle('sb-item--active', isActive);
-  });
-
   // Update tab bar active state
   document.querySelectorAll('.fp-tab[data-tab-screen]').forEach(tab => {
     tab.classList.toggle('fp-tab--active', tab.dataset.tabScreen === id);
@@ -36,6 +27,68 @@ function switchScreen(id) {
 
   // Store in session for persistence
   sessionStorage.setItem('fp-active-screen', id);
+
+  // Coherent sidebar active state (screen-based for non-browser; path-based for browser)
+  updateSidebarActive();
+}
+
+// ── Sidebar active-state machinery ────────────────────────────────────────────
+// Exactly ONE sidebar item carries --active at any time.
+//
+// Two modes:
+//   Screen-only items  — active when data-screen matches the current screen
+//                        AND they have no data-path (they are not path-bound).
+//   Path-bound items   — active when the current screen is "browser" AND their
+//                        data-path is the longest prefix of the current nav path.
+//
+// All --active classes are cleared first so only one item can be set.
+function updateSidebarActive() {
+  const items = document.querySelectorAll('.fp-sidebar__item');
+
+  // 1. Clear every item (both class names, for safety).
+  items.forEach(it => {
+    it.classList.remove('fp-sidebar__item--active');
+    it.classList.remove('active');
+  });
+
+  const screen = sessionStorage.getItem('fp-active-screen') || 'home';
+
+  if (screen !== 'browser') {
+    // Screen-based: highlight the item whose data-screen matches AND has no data-path.
+    items.forEach(it => {
+      if (it.dataset.screen === screen && !it.dataset.path) {
+        it.classList.add('fp-sidebar__item--active');
+      }
+    });
+    return;
+  }
+
+  // Browser screen: highlight the path-bound item that is the longest prefix of currentPath.
+  const currentPath = (navHistory.stack[navHistory.idx] || '').toLowerCase();
+  if (!currentPath) return;
+
+  let bestMatch = null;
+  let bestMatchLen = 0;
+
+  items.forEach(it => {
+    const itemPath = (it.dataset.path || '').toLowerCase();
+    if (!itemPath) return;
+
+    // Normalize trailing separator for comparison.
+    const normalised = itemPath.replace(/[\\\/]+$/, '');
+    const matchesSelf  = currentPath === normalised;
+    const matchesChild = currentPath.startsWith(normalised + '\\') ||
+                         currentPath.startsWith(normalised + '/');
+
+    if ((matchesSelf || matchesChild) && itemPath.length > bestMatchLen) {
+      bestMatch = it;
+      bestMatchLen = itemPath.length;
+    }
+  });
+
+  if (bestMatch) {
+    bestMatch.classList.add('fp-sidebar__item--active');
+  }
 }
 
 // ── Sidebar collapse ──────────────────────────────���──────────────────────────
@@ -666,6 +719,7 @@ async function loadDirectory(absPath) {
   pushHistory(data.path);
   updateBreadcrumb(data.path);
   updateAddressBar(data.path);
+  updateSidebarActive();
 }
 
 function pushHistory(path) {
@@ -715,6 +769,7 @@ async function fetchAndRender(path) {
     renderDirectory(data);
     updateBreadcrumb(data.path);
     updateAddressBar(data.path);
+    updateSidebarActive();
   } catch (err) {
     showErrorBanner(`Couldn't reach backend: ${err.message}`);
   }
