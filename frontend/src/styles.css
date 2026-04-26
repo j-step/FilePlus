@@ -527,8 +527,9 @@ svg { flex-shrink: 0; }
 .fp-toolbar__search {
   flex-shrink: 0;
   width: 220px;
-  transition: width var(--dur-slide) var(--ease-out);
   position: relative;
+  /* Note: no width transition — width is updated continuously by JS each frame
+     during resize; a CSS transition would restart every frame and stutter. */
 }
 .fp-toolbar__search--narrow {
   width: 140px;

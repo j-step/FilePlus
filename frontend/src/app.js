@@ -237,7 +237,7 @@ const SEARCH_MAX_WIDTH                  = 220; // px; expanded full width
 const SEARCH_MIN_FULL_PLACEHOLDER       = 170; // px; below this, swap to short placeholder "Search…"
 const SEARCH_MIN_SHORT_PLACEHOLDER      = 110; // px; below this, collapse to icon
 const SEARCH_ICON_WIDTH                 = 28;  // px; collapsed icon width
-const SEARCH_RESIZE_DEAD_ZONE           = 4;   // px; ignore changes smaller than this
+const SEARCH_RESIZE_DEAD_ZONE           = 1;   // px; ignore changes smaller than this
 
 const PLACEHOLDER_FULL  = 'Search files…';
 const PLACEHOLDER_SHORT = 'Search…';
@@ -272,13 +272,28 @@ function initToolbarResponsive() {
   function actualRecalc() {
     // Compute the toolbar's available width MINUS every fixed-width child
     // (back/forward/up nav, view toggle, inspector toggle, theme toggle) MINUS
-    // breadcrumb's natural unwrapped width. The remainder is what search can
-    // claim. breadcrumb.scrollWidth is its NATURAL content width regardless of
-    // overflow:hidden — a stable measurement that doesn't depend on search size.
-    const breadcrumbNatural = breadcrumb.scrollWidth;
-    const toolbarStyle      = getComputedStyle(toolbar);
-    const toolbarPadding    = parseFloat(toolbarStyle.paddingLeft || 0) + parseFloat(toolbarStyle.paddingRight || 0);
-    const toolbarGap        = parseFloat(toolbarStyle.gap || 0);
+    // breadcrumb's NATURAL desired width. The remainder is what search can claim.
+    //
+    // CRITICAL: breadcrumb.scrollWidth is NOT a reliable "natural width" — when
+    // content fits inside the breadcrumb container, scrollWidth == clientWidth
+    // (the full allocated flex space). To get the true natural desired width,
+    // sum the breadcrumb's children's actual rendered widths plus the gaps.
+    const breadcrumbStyle = getComputedStyle(breadcrumb);
+    const bcGap           = parseFloat(breadcrumbStyle.gap || 0);
+    let breadcrumbNatural = 0;
+    let bcVisibleChildren = 0;
+    for (const child of breadcrumb.children) {
+      const w = child.getBoundingClientRect().width;
+      if (w > 0) {
+        breadcrumbNatural += w;
+        bcVisibleChildren++;
+      }
+    }
+    if (bcVisibleChildren > 1) breadcrumbNatural += bcGap * (bcVisibleChildren - 1);
+
+    const toolbarStyle   = getComputedStyle(toolbar);
+    const toolbarPadding = parseFloat(toolbarStyle.paddingLeft || 0) + parseFloat(toolbarStyle.paddingRight || 0);
+    const toolbarGap     = parseFloat(toolbarStyle.gap || 0);
 
     let otherWidths = 0;
     let visibleChildren = 0;
@@ -290,7 +305,7 @@ function initToolbarResponsive() {
         visibleChildren++;
       }
     }
-    // Gaps: between every visible child including search and breadcrumb
+    // Total gaps in toolbar = (visibleChildren + 2 [search + breadcrumb]) - 1
     const totalGaps = toolbarGap * Math.max(0, (visibleChildren + 2) - 1);
 
     const availableForSearch = toolbar.clientWidth - toolbarPadding - otherWidths - totalGaps - breadcrumbNatural;
