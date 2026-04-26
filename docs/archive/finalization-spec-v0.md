@@ -1,4 +1,6 @@
-# FilePlus — Screen-by-Screen Finalization Spec
+# FilePlus — Screen-by-Screen Finalization Spec (ARCHIVED)
+
+> **Superseded by `docs/UI-SPEC.md` on 2026-04-25.** Kept for history. Do not consult for design decisions; consult `docs/UI-SPEC.md`. The aesthetic described below (violet/lavender/blue liquid-glass, Geist fonts) was abandoned in favor of the Burnt Amber Workshop direction documented in DESIGN.md and UI-SPEC.md.
 
 This is the design brief for the final UI pass. Each section is a Claude Design session in itself. Treat it as the source of truth for what every screen and overlay contains, what it does, and how its pieces connect. Implementation detail (how the buttons actually work) is out of scope; this is purely UI scope.
 
