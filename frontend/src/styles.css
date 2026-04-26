@@ -1587,14 +1587,15 @@ svg { flex-shrink: 0; }
   color: var(--text-secondary);
 }
 
+/* === fp-popover (base chrome) === */
 .fp-popover {
   background: var(--bg-raised);
   border: 1px solid var(--border-subtle);
   border-radius: var(--r-card);
   box-shadow: var(--highlight-top), var(--shadow-popover);
-  padding: var(--s-6);
+  padding: var(--s-4);
   min-width: 180px;
-  max-width: 320px;
+  z-index: 200;
   animation: fp-popover-in var(--dur-fast) var(--ease-out);
 }
 @keyframes fp-popover-in {
@@ -1896,15 +1897,19 @@ svg { flex-shrink: 0; }
 /* -----------------------------------------------------------------------------
    22. TOOLTIP (Section 26)
    ----------------------------------------------------------------------------- */
+/* === fp-tooltip === */
 .fp-tooltip {
-  background: var(--bg-raised);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--r-button);
+  display: inline-block;
   padding: var(--s-6) var(--s-10);
-  box-shadow: var(--highlight-top), var(--shadow-popover);
+  background: var(--bg-raised);
   color: var(--text-primary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-icon-btn);
+  box-shadow: var(--highlight-top), var(--shadow-popover);
   font: 400 var(--t-small) var(--font-ui);
-  max-width: 240px;
+  pointer-events: none;
+  white-space: nowrap;
+  z-index: 200;
   animation: fp-tooltip-in 80ms var(--ease-snap);
 }
 .fp-tooltip svg, .fp-tooltip .icon { width: 12px; height: 12px; }
@@ -3849,7 +3854,7 @@ button.fp-pill:hover {
   to   { opacity: 1; transform: translateY(0); }
 }
 
-/* ── Context menu ─────────────────────────────────────────────────────────── */
+/* ── Context menu (extends fp-popover) ───────────────────────────────────── */
 .fp-context-menu {
   position: fixed;
   min-width: 180px;
@@ -3862,35 +3867,61 @@ button.fp-pill:hover {
   animation: fp-fade-in 80ms var(--ease-out);
 }
 .fp-context-menu__item {
-  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--s-10);
   height: 28px;
   padding: 0 var(--s-10);
   border-radius: var(--r-icon-btn);
-  display: flex;
-  align-items: center;
-  gap: var(--s-8);
   font: 500 var(--t-body) var(--font-ui);
   color: var(--text-primary);
-  cursor: default;
+  cursor: pointer;
+  user-select: none;
   transition: background var(--dur-flash) var(--ease-snap),
               color var(--dur-flash) var(--ease-snap);
 }
-.fp-context-menu__item svg { width: 14px; height: 14px; color: var(--text-secondary); flex-shrink: 0; }
-.fp-context-menu__item:hover { background: var(--accent-wash); color: var(--accent); }
-.fp-context-menu__item:hover svg { color: var(--accent); }
-.fp-context-menu__item--danger { color: var(--bad); }
-.fp-context-menu__item--danger svg { color: var(--bad); }
-.fp-context-menu__item--danger:hover { background: var(--bad-wash); color: var(--bad); }
+/* icon child — named class and svg fallback */
+.fp-context-menu__item__icon,
+.fp-context-menu__item svg {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  color: var(--text-secondary);
+}
+/* kbd child — named class and legacy flat class */
+.fp-context-menu__item__kbd,
 .fp-context-menu__kbd {
   margin-left: auto;
-  font: 500 var(--t-small) var(--font-mono);
+  font: 500 11px/16px var(--font-mono);
   color: var(--text-tertiary);
   flex-shrink: 0;
 }
-.fp-context-menu__sep {
+.fp-context-menu__item:hover { background: var(--accent-wash); color: var(--accent); }
+.fp-context-menu__item:hover .fp-context-menu__item__icon,
+.fp-context-menu__item:hover svg { color: var(--accent); }
+.fp-context-menu__item--danger { color: var(--bad); }
+.fp-context-menu__item--danger .fp-context-menu__item__icon,
+.fp-context-menu__item--danger svg { color: var(--bad); }
+.fp-context-menu__item--danger:hover { background: var(--bad-wash); color: var(--bad); }
+/* separator — canonical name + legacy alias */
+.fp-context-menu__sep,
+.fp-context-menu__separator {
   height: 1px;
-  background: var(--border-subtle);
   margin: var(--s-4) 0;
+  background: var(--border-subtle);
+}
+
+/* === fp-dropdown (extends fp-popover; uses fp-context-menu__item for entries) === */
+.fp-dropdown {
+  position: absolute;
+  min-width: 180px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-card);
+  box-shadow: var(--highlight-top), var(--shadow-popover);
+  padding: var(--s-4);
+  z-index: 200;
+  animation: fp-popover-in var(--dur-fast) var(--ease-out);
 }
 
 /* ── Snackbar / Toast ─────────────────────────────────────────────────────── */
