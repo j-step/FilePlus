@@ -2,7 +2,7 @@
 
 **Status:** Canonical source of truth.
 **Date last updated:** 2026-04-25.
-**Supersedes:** `docs/design-brief.md` (kept in place; see history). `docs/finalization-spec.md` (archived to `docs/archive/finalization-spec-v0.md`).
+**Supersedes:** `docs/design-brief.md` (kept in place; see history). `docs/finalization-spec.md` (to be archived under `docs/archive/finalization-spec-v0.md` per Task A17 of the foundation plan).
 **Decision register:** [docs/superpowers/specs/2026-04-25-fileplus-ui-re-pass-design.md](superpowers/specs/2026-04-25-fileplus-ui-re-pass-design.md) §2.
 **Tokens:** [docs/design-tokens.md](design-tokens.md).
 
