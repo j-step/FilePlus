@@ -1241,28 +1241,53 @@ svg { flex-shrink: 0; }
 }
 
 .fp-toggle {
-  width: 32px; height: 18px;
+  position: relative;
+  display: inline-block;
+  width: 32px;
+  height: 18px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.fp-toggle input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+.fp-toggle__track {
+  position: absolute;
+  inset: 0;
   background: var(--bg-pressed);
   border-radius: var(--r-pill);
   box-shadow: var(--inset-recess);
-  position: relative;
-  transition: background var(--dur-fast) var(--ease-snap);
-  display: inline-block;
-  vertical-align: middle;
-  cursor: default;
+  transition: background-color var(--dur-fast) var(--ease-out);
 }
 .fp-toggle__thumb {
   position: absolute;
-  top: 2px; left: 2px;
-  width: 14px; height: 14px;
-  background: var(--bg-raised);
-  border: 1px solid var(--border-subtle);
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  background: var(--text-primary);
   border-radius: var(--r-pill);
   box-shadow: var(--shadow-raised);
-  transition: left var(--dur-fast) var(--ease-snap);
+  transition: transform var(--dur-slide) var(--ease-out),
+              background-color var(--dur-fast) var(--ease-out);
 }
-.fp-toggle--on { background: var(--accent); box-shadow: none; }
-.fp-toggle--on .fp-toggle__thumb { left: 16px; }
+.fp-toggle input:checked ~ .fp-toggle__track {
+  background: var(--accent);
+}
+.fp-toggle input:checked ~ .fp-toggle__thumb {
+  transform: translateX(14px);
+  background: var(--text-on-accent);
+}
+.fp-toggle input:focus-visible ~ .fp-toggle__track {
+  box-shadow: var(--inset-recess), 0 0 0 3px var(--accent-glow);
+}
+.fp-toggle input:disabled ~ .fp-toggle__track,
+.fp-toggle input:disabled ~ .fp-toggle__thumb {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
 
 .fp-checkbox {
   width: 16px; height: 16px;

@@ -1373,17 +1373,21 @@
               <div style="display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid var(--border-hairline)">
                 <label style="display:flex;align-items:center;gap:8px;cursor:default">
                   <!-- INTEGRATION: AI duplicate selections from GET /api/scan/duplicates -->
-                  <span class="fp-toggle fp-toggle--on" data-action="scan-dupes-select-all" id="toggle-dupes-ai">
+                  <label class="fp-toggle" id="toggle-dupes-ai">
+                    <input type="checkbox" checked data-action="scan-dupes-select-all" />
+                    <span class="fp-toggle__track"></span>
                     <span class="fp-toggle__thumb"></span>
-                  </span>
+                  </label>
                   <span style="font:500 var(--t-body) var(--font-ui);color:var(--text-secondary)">Select all AI suggestions</span>
                 </label>
                 <div style="margin-left:auto">
                   <label style="display:flex;align-items:center;gap:8px;cursor:default">
                     <span style="font:400 var(--t-compact) var(--font-ui);color:var(--text-tertiary)">Hardlink instead of delete</span>
-                    <span class="fp-toggle" data-action="scan-dupes-hardlink" id="toggle-dupes-hardlink">
+                    <label class="fp-toggle" id="toggle-dupes-hardlink">
+                      <input type="checkbox" data-action="scan-dupes-hardlink" />
+                      <span class="fp-toggle__track"></span>
                       <span class="fp-toggle__thumb"></span>
-                    </span>
+                    </label>
                   </label>
                 </div>
               </div>
@@ -1926,10 +1930,11 @@
             <div class="ef-header__right">
               <!-- Pause AI toggle: 32×18 track, inset-recess off, accent on, 14×14 thumb -->
               <label class="ef-pause-toggle" title="Pause AI processing">
-                <input type="checkbox" id="ef-pause-ai" data-action="ef-toggle-pause-ai" style="position:absolute;opacity:0;width:0;height:0">
-                <div class="fp-toggle" id="ef-pause-toggle-track">
-                  <div class="fp-toggle__thumb"></div>
-                </div>
+                <label class="fp-toggle" id="ef-pause-toggle-track">
+                  <input type="checkbox" id="ef-pause-ai" data-action="ef-toggle-pause-ai" />
+                  <span class="fp-toggle__track"></span>
+                  <span class="fp-toggle__thumb"></span>
+                </label>
                 <span style="font:400 var(--t-body) var(--font-ui);color:var(--text-secondary)">Pause AI</span>
               </label>
               <!-- Filter chips: segmented control A / U / R / M / E -->
@@ -2182,17 +2187,19 @@
                   <div class="settings-sep"></div>
                   <div class="settings-row">
                     <div class="settings-row__label">Show file extensions</div>
-                    <label class="fp-toggle-label">
-                      <input type="checkbox" class="fp-toggle-input" checked data-action="settings-toggle" data-setting="show-extensions" />
-                      <span class="fp-toggle"><span class="fp-toggle__thumb"></span></span>
+                    <label class="fp-toggle">
+                      <input type="checkbox" checked data-action="settings-toggle" data-setting="show-extensions" />
+                      <span class="fp-toggle__track"></span>
+                      <span class="fp-toggle__thumb"></span>
                     </label>
                   </div>
                   <div class="settings-sep"></div>
                   <div class="settings-row">
                     <div class="settings-row__label">View hidden files</div>
-                    <label class="fp-toggle-label">
-                      <input type="checkbox" class="fp-toggle-input" data-action="settings-toggle" data-setting="show-hidden" />
-                      <span class="fp-toggle"><span class="fp-toggle__thumb"></span></span>
+                    <label class="fp-toggle">
+                      <input type="checkbox" data-action="settings-toggle" data-setting="show-hidden" />
+                      <span class="fp-toggle__track"></span>
+                      <span class="fp-toggle__thumb"></span>
                     </label>
                   </div>
                   <div class="settings-sep"></div>
@@ -2241,9 +2248,10 @@
                   <div class="settings-sep"></div>
                   <div class="settings-row">
                     <div class="settings-row__label">File content analysis</div>
-                    <label class="fp-toggle-label">
-                      <input type="checkbox" class="fp-toggle-input" checked data-action="settings-toggle" data-setting="content-analysis" />
-                      <span class="fp-toggle"><span class="fp-toggle__thumb"></span></span>
+                    <label class="fp-toggle">
+                      <input type="checkbox" checked data-action="settings-toggle" data-setting="content-analysis" />
+                      <span class="fp-toggle__track"></span>
+                      <span class="fp-toggle__thumb"></span>
                     </label>
                   </div>
                   <div class="settings-sep"></div>
@@ -2316,23 +2324,26 @@
                           <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style="flex-shrink:0"><circle cx="8" cy="8" r="6.5" stroke="var(--text-tertiary)" stroke-width="1"/><path d="M8 1.5C6 4 5.5 6 5.5 8s.5 4 2.5 6.5M8 1.5C10 4 10.5 6 10.5 8S10 12 8 14.5M1.5 8h13" stroke="var(--text-tertiary)" stroke-width="1" stroke-linecap="round"/></svg>
                           Chrome
                         </span>
-                        <label class="fp-toggle-label">
-                          <input type="checkbox" class="fp-toggle-input" checked data-action="settings-toggle" data-setting="redirect-chrome" />
-                          <span class="fp-toggle"><span class="fp-toggle__thumb"></span></span>
+                        <label class="fp-toggle">
+                          <input type="checkbox" checked data-action="settings-toggle" data-setting="redirect-chrome" />
+                          <span class="fp-toggle__track"></span>
+                          <span class="fp-toggle__thumb"></span>
                         </label>
                       </div>
                       <div class="settings-row" style="padding:0">
                         <span style="font:400 var(--t-body) var(--font-ui);color:var(--text-primary)">Firefox</span>
-                        <label class="fp-toggle-label">
-                          <input type="checkbox" class="fp-toggle-input" data-action="settings-toggle" data-setting="redirect-firefox" />
-                          <span class="fp-toggle"><span class="fp-toggle__thumb"></span></span>
+                        <label class="fp-toggle">
+                          <input type="checkbox" data-action="settings-toggle" data-setting="redirect-firefox" />
+                          <span class="fp-toggle__track"></span>
+                          <span class="fp-toggle__thumb"></span>
                         </label>
                       </div>
                       <div class="settings-row" style="padding:0">
                         <span style="font:400 var(--t-body) var(--font-ui);color:var(--text-primary)">Edge</span>
-                        <label class="fp-toggle-label">
-                          <input type="checkbox" class="fp-toggle-input" checked data-action="settings-toggle" data-setting="redirect-edge" />
-                          <span class="fp-toggle"><span class="fp-toggle__thumb"></span></span>
+                        <label class="fp-toggle">
+                          <input type="checkbox" checked data-action="settings-toggle" data-setting="redirect-edge" />
+                          <span class="fp-toggle__track"></span>
+                          <span class="fp-toggle__thumb"></span>
                         </label>
                       </div>
                     </div>
@@ -2448,17 +2459,19 @@
                   <div class="settings-sep"></div>
                   <div class="settings-row">
                     <div class="settings-row__label">Propose rename of files</div>
-                    <label class="fp-toggle-label">
-                      <input type="checkbox" class="fp-toggle-input" checked data-action="settings-toggle" data-setting="propose-rename" />
-                      <span class="fp-toggle"><span class="fp-toggle__thumb"></span></span>
+                    <label class="fp-toggle">
+                      <input type="checkbox" checked data-action="settings-toggle" data-setting="propose-rename" />
+                      <span class="fp-toggle__track"></span>
+                      <span class="fp-toggle__thumb"></span>
                     </label>
                   </div>
                   <div class="settings-sep"></div>
                   <div class="settings-row">
                     <div class="settings-row__label">Propose deletion of duplicates</div>
-                    <label class="fp-toggle-label">
-                      <input type="checkbox" class="fp-toggle-input" data-action="settings-toggle" data-setting="propose-delete-dupes" />
-                      <span class="fp-toggle"><span class="fp-toggle__thumb"></span></span>
+                    <label class="fp-toggle">
+                      <input type="checkbox" data-action="settings-toggle" data-setting="propose-delete-dupes" />
+                      <span class="fp-toggle__track"></span>
+                      <span class="fp-toggle__thumb"></span>
                     </label>
                   </div>
                   <div class="settings-sep"></div>
@@ -2502,9 +2515,10 @@
                   <div class="settings-card__title">Cloud (Claude API)</div>
                   <div class="settings-row">
                     <div class="settings-row__label">Cloud inference</div>
-                    <label class="fp-toggle-label">
-                      <input type="checkbox" class="fp-toggle-input" checked data-action="settings-toggle" data-setting="cloud-inference" />
-                      <span class="fp-toggle"><span class="fp-toggle__thumb"></span></span>
+                    <label class="fp-toggle">
+                      <input type="checkbox" checked data-action="settings-toggle" data-setting="cloud-inference" />
+                      <span class="fp-toggle__track"></span>
+                      <span class="fp-toggle__thumb"></span>
                     </label>
                   </div>
                   <div class="settings-sep"></div>
@@ -2640,25 +2654,28 @@
                 <div class="fp-card settings-card">
                   <div class="settings-row">
                     <div class="settings-row__label">Cloud inference (mirrors AI Config)</div>
-                    <label class="fp-toggle-label">
-                      <input type="checkbox" class="fp-toggle-input" checked data-action="settings-toggle" data-setting="cloud-inference" />
-                      <span class="fp-toggle"><span class="fp-toggle__thumb"></span></span>
+                    <label class="fp-toggle">
+                      <input type="checkbox" checked data-action="settings-toggle" data-setting="cloud-inference" />
+                      <span class="fp-toggle__track"></span>
+                      <span class="fp-toggle__thumb"></span>
                     </label>
                   </div>
                   <div class="settings-sep"></div>
                   <div class="settings-row">
                     <div class="settings-row__label">Analytics</div>
-                    <label class="fp-toggle-label">
-                      <input type="checkbox" class="fp-toggle-input" data-action="settings-toggle" data-setting="analytics" />
-                      <span class="fp-toggle"><span class="fp-toggle__thumb"></span></span>
+                    <label class="fp-toggle">
+                      <input type="checkbox" data-action="settings-toggle" data-setting="analytics" />
+                      <span class="fp-toggle__track"></span>
+                      <span class="fp-toggle__thumb"></span>
                     </label>
                   </div>
                   <div class="settings-sep"></div>
                   <div class="settings-row">
                     <div class="settings-row__label">Redact file contents from logs</div>
-                    <label class="fp-toggle-label">
-                      <input type="checkbox" class="fp-toggle-input" checked data-action="settings-toggle" data-setting="redact-logs" />
-                      <span class="fp-toggle"><span class="fp-toggle__thumb"></span></span>
+                    <label class="fp-toggle">
+                      <input type="checkbox" checked data-action="settings-toggle" data-setting="redact-logs" />
+                      <span class="fp-toggle__track"></span>
+                      <span class="fp-toggle__thumb"></span>
                     </label>
                   </div>
                   <div class="settings-sep"></div>
@@ -2765,7 +2782,7 @@
                   <div class="settings-card__title">Snapshot retention rules</div>
                   <div class="settings-row">
                     <label class="settings-radio-row" style="gap:var(--s-8)">
-                      <input type="checkbox" class="fp-toggle-input" data-action="settings-toggle" data-setting="snap-daily" />
+                      <input type="checkbox" data-action="settings-toggle" data-setting="snap-daily" />
                       Daily
                     </label>
                     <div style="display:flex;align-items:center;gap:6px;font:400 var(--t-body) var(--font-ui);color:var(--text-secondary)">
@@ -2775,7 +2792,7 @@
                   <div class="settings-sep"></div>
                   <div class="settings-row">
                     <label class="settings-radio-row" style="gap:var(--s-8)">
-                      <input type="checkbox" class="fp-toggle-input" checked data-action="settings-toggle" data-setting="snap-weekly" />
+                      <input type="checkbox" checked data-action="settings-toggle" data-setting="snap-weekly" />
                       Weekly
                     </label>
                     <div style="display:flex;align-items:center;gap:6px;font:400 var(--t-body) var(--font-ui);color:var(--text-secondary)">
@@ -2785,7 +2802,7 @@
                   <div class="settings-sep"></div>
                   <div class="settings-row">
                     <label class="settings-radio-row" style="gap:var(--s-8)">
-                      <input type="checkbox" class="fp-toggle-input" checked data-action="settings-toggle" data-setting="snap-monthly" />
+                      <input type="checkbox" checked data-action="settings-toggle" data-setting="snap-monthly" />
                       Monthly
                     </label>
                     <div style="display:flex;align-items:center;gap:6px;font:400 var(--t-body) var(--font-ui);color:var(--text-secondary)">
