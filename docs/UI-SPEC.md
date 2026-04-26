@@ -674,8 +674,7 @@ Default bindings:
 - Open command palette: Ctrl+K
 - Open Review Bin: Ctrl+Shift+R
 - Focus search: /
-- Switch to Home: Ctrl+1
-- Switch to Browser: Ctrl+2
+- Ctrl+0 through Ctrl+9: governed by the **Quick Slots** subsection below (programmable when in Pages mode; fixed when in Default mode; tab-jump when in Tabs mode).
 - Open File Tree: Ctrl+Shift+F
 - Toggle inspector: Ctrl+I
 - New folder: Ctrl+Shift+N
@@ -686,9 +685,31 @@ Default bindings:
 - Close tab: Ctrl+W
 - Reopen closed tab: Ctrl+Shift+T
 - Toggle hidden files: Ctrl+.
-- View mode cycle: Ctrl+1/2
+- View mode → List: Ctrl+Shift+L
+- View mode → Grid: Ctrl+Shift+G
 - Summon FilePlus from anywhere: ⊞+Shift+F
 - Open last download: ⊞+Shift+D
+
+#### Quick Slots — Ctrl+Num Navigation
+
+The number-row keys (`Ctrl+0` through `Ctrl+9`) operate in one of three user-selectable modes. The mode is exposed as a segmented control at the top of the Quick Slots subsection in Settings → Account → Shortcuts.
+
+- **Tabs.** `Ctrl+1`–`Ctrl+9` jumps to that tab position in the current explorer (Chrome behavior). `Ctrl+0` is unbound.
+- **Pages** *(default mode)*. Programmable slots: 10 slots (`Ctrl+0` through `Ctrl+9`). Each slot can hold one target — a screen-id OR an absolute folder path. While focused on a screen or in a folder, pressing an *unbound* `Ctrl+N` binds that slot to "open here." Pressing a *bound* `Ctrl+N` jumps to the target. Slots are managed in this subsection.
+- **Default.** Fixed screen mapping, non-programmable. `Ctrl+1` = Home, `Ctrl+2` = Browser, `Ctrl+3` = File Tree, `Ctrl+4` = Review Bin, `Ctrl+5` = Everything Folder. `Ctrl+6`–`Ctrl+9` and `Ctrl+0` are unassigned.
+
+**Subsection layout (when mode = Pages):**
+- Mode segmented control at top: Tabs | **Pages** | Default
+- Helper line in `t-small` Inter 400 `text-tertiary`: "Press an unbound `Ctrl+N` while focused on any screen or folder to bind that slot to it."
+- 10 slot rows, one per number key (0 through 9). Each row:
+  - 28×28 kbd pill on the left showing `Ctrl+N` (per Settings shortcuts kbd pill spec)
+  - Current binding display in the middle: either the screen name (in `t-body` Inter 500), the folder path (in `t-data` JetBrains Mono 400, ellipsized middle), or `[unbound]` in `t-body text-tertiary` italic
+  - Right side: 24×24 ghost icon button for unbind (14×14 Lucide `x`) — disabled if slot is unbound
+- After unbind, the slot row shows `[unbound] — press Ctrl+N anywhere to assign`.
+
+**Subsection layout (when mode = Tabs or Default):** Mode segmented control at top + a single `t-body text-secondary` paragraph describing the binding behavior in that mode. No editable slot rows.
+
+**Out-of-the-box defaults:** Mode = `Pages`. `Ctrl+1` pre-bound to Home, `Ctrl+2` pre-bound to Browser. All other slots unbound. The user may unbind the pre-bound slots; rebinding requires unbind first (so a key cannot be silently overwritten by being on a new screen).
 
 ### A.12.10 Data
 - Index size display (`t-display-sm` JetBrains Mono)
