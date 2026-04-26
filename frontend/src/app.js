@@ -1602,11 +1602,10 @@ document.addEventListener('DOMContentLoaded', () => {
   checkBackend();
   setInterval(checkBackend, 30_000);
 
-  // Sidebar collapse button
-  btnSidebarCollapse?.addEventListener('click', toggleSidebar);
-
-  // Theme button
-  document.getElementById('btn-theme')?.addEventListener('click', toggleTheme);
+  // NOTE: sidebar-collapse and theme-toggle are wired via data-action delegation
+  // (see the click switch above). Direct addEventListener calls were removed
+  // because they fired in addition to the delegated handler, causing each click
+  // to toggle twice (visible no-op).
 
   // View mode via segmented control (new)
   document.querySelectorAll('.fp-segmented__opt[data-view]').forEach(btn => {
