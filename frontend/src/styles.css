@@ -1144,37 +1144,54 @@ svg { flex-shrink: 0; }
    16. UNDERLINE TABS (Section 20)
    ----------------------------------------------------------------------------- */
 .fp-tabs {
-  height: 44px;
-  background: transparent;
-  border-bottom: 1px solid var(--border-hairline);
-  display: flex;
   position: relative;
-  padding: 0;
+  display: flex;
+  align-items: stretch;
+  border-bottom: 1px solid var(--border-hairline);
 }
 .fp-tabs__item {
-  height: 100%;
-  padding: 0 var(--s-16);
-  font: 500 var(--t-body) var(--font-ui);
-  letter-spacing: var(--track-body);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 16px;
+  height: 44px;
+  background: transparent;
   color: var(--text-secondary);
-  display: inline-flex; align-items: center;
-  gap: var(--s-6);
-  transition: color var(--dur-flash) var(--ease-snap);
-  cursor: default;
-  position: relative;
+  border: none;
+  font: 500 var(--t-body) var(--font-ui);
+  cursor: pointer;
+  user-select: none;
+  transition: color var(--dur-fast) var(--ease-out);
 }
 .fp-tabs__item svg, .fp-tabs__item .icon { width: 14px; height: 14px; }
 .fp-tabs__item:hover { color: var(--text-primary); }
-.fp-tabs__item--active {
+.fp-tabs__item--active,
+.fp-tabs__item.active {
   color: var(--text-primary);
   font-weight: 600;
+}
+.fp-tabs__item:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 3px var(--accent-glow);
 }
 .fp-tabs__indicator {
   position: absolute;
   bottom: -1px;
+  left: 0;
+  height: 2px;
+  width: 0;
+  background: var(--accent);
+  border-radius: 2px;
+  transition: left var(--dur-slide) var(--ease-out),
+              width var(--dur-slide) var(--ease-out);
+  pointer-events: none;
+}
+
+/* === fp-tab-underline (legacy alias) === */
+.fp-tab-underline {
   height: 2px;
   background: var(--accent);
-  border-radius: 999px;
+  border-radius: 2px;
   transition: left var(--dur-slide) var(--ease-out),
               width var(--dur-slide) var(--ease-out);
 }
@@ -3811,12 +3828,14 @@ svg { flex-shrink: 0; }
               color var(--dur-flash) var(--ease-snap);
 }
 .fp-tab:hover { background: var(--bg-raised); color: var(--text-primary); }
-.fp-tab--active {
+.fp-tab--active,
+.fp-tab.fp-tab--active {
   background: var(--bg-content);
   color: var(--text-primary);
   border-color: var(--border-hairline);
 }
-.fp-tab--active::after {
+.fp-tab--active::after,
+.fp-tab.fp-tab--active::after {
   content: "";
   position: absolute;
   bottom: 0; left: 4px; right: 4px;
