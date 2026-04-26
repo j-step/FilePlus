@@ -33,6 +33,8 @@ function createWindow() {
   });
 }
 
+const ZOOM_STEPS   = [0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.33, 1.5, 1.75, 2.0];
+
 app.whenReady().then(() => {
   const { ipcMain } = require('electron');
   ipcMain.on('win-minimize', () => mainWindow?.minimize());
@@ -41,6 +43,26 @@ app.whenReady().then(() => {
     else mainWindow?.maximize();
   });
   ipcMain.on('win-close', () => mainWindow?.close());
+
+  // Zoom via Electron native webContents — avoids the layout-cut-off problem of CSS zoom
+  ipcMain.on('win-zoom-in', () => {
+    if (!mainWindow) return;
+    const cur = mainWindow.webContents.getZoomFactor();
+    const next = ZOOM_STEPS.find(s => s > cur + 0.001) ?? ZOOM_STEPS[ZOOM_STEPS.length - 1];
+    mainWindow.webContents.setZoomFactor(next);
+  });
+  ipcMain.on('win-zoom-out', () => {
+    if (!mainWindow) return;
+    const cur = mainWindow.webContents.getZoomFactor();
+    const prev = [...ZOOM_STEPS].reverse().find(s => s < cur - 0.001) ?? ZOOM_STEPS[0];
+    mainWindow.webContents.setZoomFactor(prev);
+  });
+  ipcMain.on('win-zoom-reset', () => {
+    mainWindow?.webContents.setZoomFactor(1.0);
+  });
+  ipcMain.on('win-zoom-get', (event) => {
+    event.returnValue = mainWindow ? mainWindow.webContents.getZoomFactor() : 1.0;
+  });
 
   createWindow();
 

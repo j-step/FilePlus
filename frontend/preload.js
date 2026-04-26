@@ -14,4 +14,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openMain:    () => ipcRenderer.send('open-main'),
   hideTray:    () => ipcRenderer.send('hide-tray'),
   closeSetup:  () => ipcRenderer.send('close-setup'),
+  // Zoom — uses webContents.setZoomFactor so the entire viewport scales correctly
+  zoomIn:      () => ipcRenderer.send('win-zoom-in'),
+  zoomOut:     () => ipcRenderer.send('win-zoom-out'),
+  zoomReset:   () => ipcRenderer.send('win-zoom-reset'),
+  getZoom:     () => ipcRenderer.sendSync('win-zoom-get'),
 });
