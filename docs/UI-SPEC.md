@@ -622,7 +622,7 @@ All form controls (toggles, sliders, segmented controls, text inputs, radios, ch
 - Auto-sort confidence threshold slider (default 80%, value in JetBrains Mono)
 - Excluded file types (chip list)
 - Max time before forcing review prompt slider (default 7d)
-- Browser download redirect: per-browser toggles (Chrome, Firefox, Edge, Brave, Arc) — each toggle row with 16×16 browser icon
+- Browser download redirect: per-browser toggles (Chrome, Firefox, Edge — Brave and Arc deferred to a later version) — each toggle row with 16×16 browser icon
 - Notification preferences: Off / Only uncertain / Every sort (segmented)
 - Stuck-detection threshold (hours before sidebar badge, default 24, slider)
 
