@@ -337,8 +337,8 @@ svg { flex-shrink: 0; }
 }
 .fp-sidebar--dragging { transition: none; }
 .fp-sidebar--collapsed {
-  --sidebar-width: var(--w-sidebar-collapsed);
-  width: var(--sidebar-width);
+  /* DO NOT set --sidebar-width here — setSidebarCollapsed() JS manages it via
+     inline style on documentElement so dragging from collapsed state can override it. */
 }
 .fp-sidebar__resize-handle {
   position: absolute;
@@ -467,16 +467,25 @@ svg { flex-shrink: 0; }
 }
 .fp-sidebar--collapsed .fp-sidebar__item > svg,
 .fp-sidebar--collapsed .fp-sidebar__item > .icon { width: 18px; height: 18px; }
-.fp-sidebar--collapsed .fp-sidebar__item__label,
-.fp-sidebar--collapsed .fp-sidebar__section-label,
-.fp-sidebar--collapsed .fp-sidebar__brand-name,
-.fp-sidebar--collapsed .fp-sidebar__brand-sub { display: none; }
 .fp-sidebar--collapsed .fp-sidebar__brand-mark { width: 18px; height: 18px; }
+/* Collapsed header: center brand + expand button vertically */
+.fp-sidebar--collapsed .fp-sidebar__header {
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s-6);
+  height: auto;
+  min-height: 56px;
+  padding: var(--s-8) 0;
+}
 .fp-sidebar--collapsed .fp-sidebar__item--active::before {
   left: -2px;
   top: 6px;
   bottom: 6px;
 }
+/* In collapsed mode, items must not overflow the narrow sidebar */
+.fp-sidebar--collapsed .fp-sidebar__item > svg,
+.fp-sidebar--collapsed .fp-sidebar__item > .icon { width: 18px; height: 18px; }
 
 /* -----------------------------------------------------------------------------
    7. TOOLBAR (Section 11)
@@ -4010,13 +4019,52 @@ svg { flex-shrink: 0; }
   background: var(--accent);
   border-radius: var(--r-pill);
 }
+/* ── Drive letter (collapsed mode) ─────────────────────────────────────── */
+.fp-sidebar__drive-letter {
+  display: none;
+  font: 600 var(--t-small) var(--font-mono);
+  letter-spacing: 0;
+  color: currentColor;
+  flex-shrink: 0;
+}
+/* Expand button — hidden in expanded mode, shown in collapsed */
+.fp-sidebar__expand-btn { display: none; }
+
+/* ── Collapsed state overrides ─────────────────────────────────────────── */
 .fp-sidebar--collapsed .fp-sidebar__brand-name,
 .fp-sidebar--collapsed .fp-sidebar__brand-sub,
 .fp-sidebar--collapsed .fp-sidebar__section-label,
 .fp-sidebar--collapsed .fp-sidebar__item__label,
 .fp-sidebar--collapsed .fp-sidebar__item__badge,
 .fp-sidebar--collapsed .fp-sidebar__drive-bar,
-.fp-sidebar--collapsed #sb-tags { display: none; }
+.fp-sidebar--collapsed .fp-sidebar__drive-ai-dot { display: none; }
+
+/* Show drive letter, hide drive icon in collapsed mode */
+.fp-sidebar--collapsed .fp-sidebar__drive-icon { display: none; }
+.fp-sidebar--collapsed .fp-sidebar__drive-letter { display: inline-block; }
+
+/* Show expand button, hide collapse button in collapsed mode */
+.fp-sidebar--collapsed .fp-sidebar__expand-btn { display: inline-flex; }
+.fp-sidebar--collapsed #btn-sidebar-collapse { display: none; }
+
+/* Tags: poker-chip dots in collapsed mode */
+.fp-sidebar--collapsed #sb-tags {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 0;
+}
+.fp-sidebar--collapsed .fp-chip {
+  width: 12px;
+  height: 12px;
+  min-width: 0;
+  padding: 0;
+  border-radius: 999px;
+  font-size: 0;
+  color: transparent;
+  /* Background/border color from existing chip styles shows as dot */
+}
 
 /* ── Statusbar subcomponents ─────────────────────────────────────────────── */
 .fp-statusbar__left  { display: flex; align-items: center; gap: var(--s-6); }

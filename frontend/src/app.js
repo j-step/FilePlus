@@ -60,17 +60,14 @@ function switchScreen(id) {
 // All --active classes are cleared first so only one item can be set.
 function updateSidebarActive() {
   const items = document.querySelectorAll('.fp-sidebar__item');
-
-  // 1. Clear every item (both class names, for safety).
-  items.forEach(it => {
-    it.classList.remove('fp-sidebar__item--active');
-    it.classList.remove('active');
-  });
-
   const screen = sessionStorage.getItem('fp-active-screen') || 'home';
 
   if (screen !== 'browser') {
-    // Screen-based: highlight the item whose data-screen matches AND has no data-path.
+    // Screen-based: clear all then highlight the item matching the current screen.
+    items.forEach(it => {
+      it.classList.remove('fp-sidebar__item--active');
+      it.classList.remove('active');
+    });
     items.forEach(it => {
       if (it.dataset.screen === screen && !it.dataset.path) {
         it.classList.add('fp-sidebar__item--active');
@@ -81,7 +78,15 @@ function updateSidebarActive() {
 
   // Browser screen: highlight the path-bound item that is the longest prefix of currentPath.
   const currentPath = (navHistory.stack[navHistory.idx] || '').toLowerCase();
+  // If we have no current path yet (e.g. immediately after navigate-path click, before
+  // loadDirectory completes), don't clear — the manual click-active state remains.
   if (!currentPath) return;
+
+  // We have a real path — now clear and re-match.
+  items.forEach(it => {
+    it.classList.remove('fp-sidebar__item--active');
+    it.classList.remove('active');
+  });
 
   let bestMatch = null;
   let bestMatchLen = 0;
@@ -108,7 +113,8 @@ function updateSidebarActive() {
 }
 
 // ── Sidebar collapse + drag-resize ────────────────────────────────────────────
-const SIDEBAR_COLLAPSED_THRESHOLD = 110; // px below this → snap to collapsed
+const SIDEBAR_COLLAPSED_THRESHOLD = 140; // px; drag below → snap collapsed
+const SIDEBAR_EXPANDED_MIN        = 180; // px; minimum width when expanded
 const SIDEBAR_EXPANDED_DEFAULT    = 240;
 const SIDEBAR_COLLAPSED_WIDTH     = 52;
 
@@ -154,6 +160,11 @@ function initSidebarResize() {
 
   handle.addEventListener('pointermove', e => {
     if (!dragging) return;
+    // If starting from collapsed state, remove collapsed class so we can drag freely
+    if (sidebar.classList.contains('fp-sidebar--collapsed')) {
+      sidebar.classList.remove('fp-sidebar--collapsed');
+      shell.classList.remove('sidebar-collapsed');
+    }
     const dx = e.clientX - startX;
     const newWidth = Math.max(40, Math.min(480, startWidth + dx));
     document.documentElement.style.setProperty('--sidebar-width', newWidth + 'px');
@@ -175,8 +186,11 @@ function initSidebarResize() {
     if (finalWidth < SIDEBAR_COLLAPSED_THRESHOLD) {
       setSidebarCollapsed(true);
     } else {
-      localStorage.setItem('fp-sidebar-width', String(Math.round(finalWidth)));
-      setSidebarCollapsed(false); // picks up the saved width
+      // Enforce minimum expanded width
+      const w = Math.max(SIDEBAR_EXPANDED_MIN, Math.round(finalWidth));
+      localStorage.setItem('fp-sidebar-width', String(w));
+      document.documentElement.style.setProperty('--sidebar-width', w + 'px');
+      setSidebarCollapsed(false);
     }
     handle.releasePointerCapture(e.pointerId);
   });
