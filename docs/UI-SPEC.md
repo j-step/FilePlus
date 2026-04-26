@@ -1370,7 +1370,7 @@ Verify specifically:
 - Every Lucide SVG has explicit width and height
 - Tray action buttons render icons at 16×16, never larger
 - Panel and tab content swaps are instant jump-cut, no fade
-- prefers-reduced-motion: reduce collapses animations to 0.01ms except AI-filed border, badge pulse, live data
+**Reduced motion (`prefers-reduced-motion: reduce`):** Strictly applied. All animation collapses to instant EXCEPT the live-data sparkline on the Scan Progress screen (sparkline = data, not decoration). Specifically disabled under reduced-motion: tab-underline slide, sidebar active-pill slide, snackbar progress bar, drop-target scale, AI-just-filed border pulse, badge pulses, segmented-control active-pill slide, modal/popover open transitions.
 
 Generate frontend/src/actions.js mapping every data-action to a function stub that logs the call, fetches the backend endpoint from PLAN.md, and shows a "not implemented" toast if endpoint missing.
 
