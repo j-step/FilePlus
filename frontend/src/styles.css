@@ -353,20 +353,24 @@ svg { flex-shrink: 0; }
 }
 
 .fp-sidebar__item {
-  position: relative;
-  height: var(--sidebar-item-h);
-  padding: 0 var(--s-10);
-  border-radius: var(--r-button);
   display: flex;
   align-items: center;
-  gap: var(--s-10);
-  color: var(--text-primary);
+  gap: 8px;
+  width: 100%;
+  height: var(--sidebar-item-h);
+  padding: 0 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  border: 1px solid transparent;
+  border-radius: var(--r-button);
   font: 500 var(--t-body) var(--font-ui);
   letter-spacing: var(--track-body);
-  transition: background var(--dur-flash) var(--ease-snap),
-              box-shadow var(--dur-flash) var(--ease-snap),
+  cursor: pointer;
+  position: relative;
+  text-align: left;
+  user-select: none;
+  transition: background-color var(--dur-flash) var(--ease-snap),
               color var(--dur-flash) var(--ease-snap);
-  cursor: default;
 }
 .fp-sidebar__item > svg,
 .fp-sidebar__item > .icon {
@@ -376,27 +380,38 @@ svg { flex-shrink: 0; }
 }
 .fp-sidebar__item:hover {
   background: var(--bg-raised);
+  color: var(--text-primary);
   box-shadow: var(--highlight-top);
 }
 .fp-sidebar__item:hover > svg,
 .fp-sidebar__item:hover > .icon { color: var(--text-primary); }
 
-.fp-sidebar__item--active {
+.fp-sidebar__item--active,
+.fp-sidebar__item.active {
   background: var(--bg-pressed);
-  box-shadow: var(--highlight-top);
+  color: var(--text-primary);
   font-weight: 600;
+  box-shadow: var(--highlight-top);
 }
-.fp-sidebar__item--active::before {
+.fp-sidebar__item--active::before,
+.fp-sidebar__item.active::before {
   content: '';
   position: absolute;
   left: -4px;
   top: 4px; bottom: 4px;
   width: 2px;
   background: var(--accent);
-  border-radius: 999px;
+  border-radius: 2px;
 }
 .fp-sidebar__item--active > svg,
-.fp-sidebar__item--active > .icon { color: var(--accent); }
+.fp-sidebar__item--active > .icon,
+.fp-sidebar__item.active > svg,
+.fp-sidebar__item.active > .icon { color: var(--accent); }
+
+.fp-sidebar__item:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
 
 .fp-sidebar__item__label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fp-sidebar__item__badge { margin-left: auto; }
