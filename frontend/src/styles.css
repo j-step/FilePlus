@@ -758,98 +758,11 @@ svg { flex-shrink: 0; }
 /* -----------------------------------------------------------------------------
    12. BUTTONS (Section 17)
    ----------------------------------------------------------------------------- */
-.fp-btn {
-  height: var(--h-button);
-  padding: 0 var(--s-12);
-  border-radius: var(--r-button);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--s-6);
-  font: 500 var(--t-compact) var(--font-ui);
-  letter-spacing: var(--track-button);
-  color: var(--text-primary);
-  background: transparent;
-  border: 1px solid transparent;
-  transition: background var(--dur-flash) var(--ease-snap),
-              border-color var(--dur-flash) var(--ease-snap),
-              color var(--dur-flash) var(--ease-snap),
-              box-shadow var(--dur-flash) var(--ease-snap),
-              transform var(--dur-press-up) var(--ease-snap);
-  cursor: default;
-}
-.fp-btn:active {
-  transform: translateY(1px);
-  transition-duration: var(--dur-press-down);
-}
-.fp-btn:disabled { opacity: 0.4; pointer-events: none; }
-.fp-btn svg, .fp-btn .icon { width: 14px; height: 14px; }
-
-.fp-btn--primary {
-  background: var(--accent);
-  color: var(--text-on-accent);
-  font-weight: 600;
-  padding: 0 var(--s-14);
-  border-color: rgba(0, 0, 0, 0.20);
-  box-shadow: var(--highlight-top-strong), var(--shadow-raised);
-}
-.fp-btn--primary:hover {
-  background: var(--accent-hover);
-  box-shadow: var(--highlight-top-strong), var(--shadow-card);
-}
-.fp-btn--primary:active {
-  background: var(--accent-press);
-  box-shadow: var(--pressed-shadow);
-}
-
-.fp-btn--secondary {
-  background: var(--bg-raised);
-  color: var(--text-primary);
-  border-color: var(--border-subtle);
-  box-shadow: var(--highlight-top), var(--shadow-raised);
-}
-.fp-btn--secondary:hover {
-  background: var(--bg-pressed);
-  border-color: var(--border-mid);
-  box-shadow: var(--highlight-top), var(--shadow-card);
-}
-.fp-btn--secondary:active { box-shadow: var(--pressed-shadow); }
-
-.fp-btn--ghost {
-  color: var(--text-secondary);
-  border-radius: var(--r-icon-btn);
-  padding: 0 var(--s-10);
-}
-.fp-btn--ghost:hover {
-  background: var(--bg-raised);
-  color: var(--text-primary);
-  box-shadow: var(--highlight-top);
-}
-.fp-btn--ghost:active {
-  background: var(--bg-pressed);
-  box-shadow: var(--pressed-shadow);
-}
-
-.fp-btn--danger {
-  background: var(--bg-raised);
-  color: var(--bad);
-  border-color: var(--bad-edge);
-  box-shadow: var(--highlight-top), var(--shadow-raised);
-}
-.fp-btn--danger:hover {
-  background: var(--bad-wash);
-  border-color: var(--bad);
-}
-.fp-btn--danger:active { box-shadow: var(--pressed-shadow); }
-
-.fp-btn--lg { height: var(--h-button-lg); padding: 0 var(--s-16); font-size: 14px; }
-.fp-btn--sm { height: var(--h-button-sm); padding: 0 var(--s-10); }
-
 /* -----------------------------------------------------------------------------
    fp-button family — canonical spec (S4 UI Re-Pass Phase 2)
-   Legacy .fp-btn* remain for existing markup; new markup should use .fp-button*
+   .fp-button and .fp-btn are aliases; use either class in markup.
    ----------------------------------------------------------------------------- */
-.fp-button {
+.fp-button, .fp-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -865,58 +778,61 @@ svg { flex-shrink: 0; }
               background-color var(--dur-flash) var(--ease-snap),
               box-shadow var(--dur-flash) var(--ease-snap);
 }
-.fp-button:focus-visible {
+.fp-button:focus-visible, .fp-btn:focus-visible {
   outline: none;
   box-shadow: 0 0 0 3px var(--accent-glow);
 }
 .fp-button:disabled,
-.fp-button[disabled] {
+.fp-button[disabled],
+.fp-btn:disabled,
+.fp-btn[disabled] {
   opacity: 0.4;
   cursor: not-allowed;
   pointer-events: none;
 }
-.fp-button:active {
+.fp-button:active, .fp-btn:active {
   transform: translateY(1px);
 }
 
-.fp-button--primary {
+.fp-button--primary, .fp-btn--primary {
   background: var(--accent);
   color: var(--text-on-accent);
   box-shadow: var(--highlight-top), var(--shadow-raised);
 }
-.fp-button--primary:hover {
+.fp-button--primary:hover, .fp-btn--primary:hover {
   background: var(--accent-hover);
 }
-.fp-button--primary:active {
+.fp-button--primary:active, .fp-btn--primary:active {
   background: var(--accent-press);
   box-shadow: var(--inset-recess);
 }
 
-.fp-button--secondary {
+.fp-button--secondary, .fp-btn--secondary {
   background: var(--bg-raised);
   color: var(--text-primary);
   border-color: var(--border-subtle);
   box-shadow: var(--highlight-top), var(--shadow-raised);
 }
-.fp-button--secondary:hover {
+.fp-button--secondary:hover, .fp-btn--secondary:hover {
   background: var(--bg-pressed);
 }
-.fp-button--secondary:active {
+.fp-button--secondary:active, .fp-btn--secondary:active {
   box-shadow: var(--inset-recess);
 }
 
-.fp-button--ghost {
+.fp-button--ghost, .fp-btn--ghost {
   background: transparent;
   color: var(--text-secondary);
   padding: 0 10px;
 }
-.fp-button--ghost:hover {
+.fp-button--ghost:hover, .fp-btn--ghost:hover {
   background: var(--bg-raised);
   color: var(--text-primary);
   box-shadow: var(--highlight-top);
 }
 
 .fp-button--icon,
+.fp-btn--icon,
 .fp-icon-btn {
   width: 28px;
   height: 28px;
@@ -933,38 +849,41 @@ svg { flex-shrink: 0; }
               transform var(--dur-flash) var(--ease-snap);
 }
 .fp-button--icon:hover,
+.fp-btn--icon:hover,
 .fp-icon-btn:hover {
   background: var(--bg-raised);
   color: var(--text-primary);
   box-shadow: var(--highlight-top);
 }
 .fp-button--icon:active,
+.fp-btn--icon:active,
 .fp-icon-btn:active {
   transform: translateY(1px);
 }
 .fp-button--icon:focus-visible,
+.fp-btn--icon:focus-visible,
 .fp-icon-btn:focus-visible {
   outline: none;
   box-shadow: 0 0 0 3px var(--accent-glow);
 }
 
-.fp-button--large {
+.fp-button--large, .fp-btn--lg {
   height: 36px;
   padding: 0 16px;
   font-size: 14px;
 }
-.fp-button--small {
+.fp-button--small, .fp-btn--sm {
   height: 24px;
   padding: 0 8px;
   font-size: 12px;
 }
 
-.fp-button--danger {
+.fp-button--danger, .fp-btn--danger {
   border-color: var(--bad-edge);
   color: var(--bad);
   background: transparent;
 }
-.fp-button--danger:hover {
+.fp-button--danger:hover, .fp-btn--danger:hover {
   background: var(--bad-wash);
 }
 
