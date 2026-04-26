@@ -676,7 +676,7 @@ Default bindings:
 - Focus search: /
 - Switch to Home: Ctrl+1
 - Switch to Browser: Ctrl+2
-- Open File Tree: Ctrl+T
+- Open File Tree: Ctrl+Shift+F
 - Toggle inspector: Ctrl+I
 - New folder: Ctrl+Shift+N
 - Rename: F2
