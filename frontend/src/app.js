@@ -548,6 +548,7 @@ window.__appShowToast    = showToast;
 const ICON_FILE = `<svg class="fp-row__icon" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="2" y="1" width="9" height="13" rx="1.5" fill="var(--bg-raised)" stroke="var(--border-subtle)" stroke-width="0.8"/><path d="M11 1v4h3" stroke="var(--border-subtle)" stroke-width="0.8" stroke-linejoin="round"/></svg>`;
 const ICON_IMG  = `<svg class="fp-row__icon" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="1" y="2" width="14" height="12" rx="1.5" fill="var(--bg-raised)" stroke="var(--border-subtle)" stroke-width="0.8"/><circle cx="5.5" cy="7" r="1.5" stroke="var(--text-tertiary)" stroke-width="0.8"/><path d="M1 12l4-4 4 4 2-2 4 2" stroke="var(--text-tertiary)" stroke-width="0.8" stroke-linejoin="round"/></svg>`;
 const ICON_TXT  = `<svg class="fp-row__icon" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="2" y="1" width="9" height="13" rx="1.5" fill="var(--bg-raised)" stroke="var(--border-subtle)" stroke-width="0.8"/><path d="M11 1v4h3" stroke="var(--border-subtle)" stroke-width="0.8" stroke-linejoin="round"/><path d="M5 6h6M5 8.5h6M5 11h4" stroke="var(--text-tertiary)" stroke-width="0.8" stroke-linecap="round"/></svg>`;
+const ICON_FOLDER = `<svg class="fp-row__icon" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M1 4a1 1 0 0 1 1-1h4l1.5 1.5H14a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V4z" fill="var(--accent)" opacity=".75" stroke="var(--accent-edge)" stroke-width="0.8"/></svg>`;
 
 const EXT_IMG   = new Set(['.jpg','.jpeg','.png','.gif','.bmp','.webp','.heic','.svg','.tiff']);
 const EXT_TXT   = new Set(['.txt','.md','.csv','.log','.json','.xml','.yaml','.yml','.toml','.ini','.cfg','.html','.css','.js','.ts','.py','.rs','.go','.java','.c','.cpp','.h']);
@@ -584,22 +585,6 @@ function escapeHtml(str) {
     .replace(/&/g, '&amp;').replace(/</g, '&lt;')
     .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
-
-function fileToRowHtml(file) {
-  return `<div class="fp-row" role="option" data-path="${escapeHtml(file.path)}" data-id="${file.id}">
-    ${iconForExt((file.extension || '').toLowerCase())}
-    <span class="fp-row__name">${escapeHtml(file.filename)}</span>
-    <span class="fp-row__size mono">${formatSize(file.size)}</span>
-    <span class="fp-row__modified mono">${formatModified(file.modified)}</span>
-    <div class="fp-row__tags"></div>
-  </div>`;
-}
-
-const EMPTY_STATE_HTML = `<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:12px;color:var(--text-tertiary);">
-  <svg width="48" height="48" viewBox="0 0 48 48" fill="none"><rect x="6" y="4" width="28" height="37" rx="4" stroke="currentColor" stroke-width="1.5"/><path d="M34 4v10h8" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M14 18h20M14 25h20M14 32h12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
-  <span style="font:500 var(--t-title-sm) var(--font-ui)">No files indexed</span>
-  <span style="font:400 var(--t-body) var(--font-ui);text-align:center;max-width:220px">Trigger a scan to index this directory</span>
-</div>`;
 
 // ── Folder navigation via /fs/list (read-only) ────────────────────────────────
 // Maintains a client-side history stack for back/forward.
@@ -673,12 +658,20 @@ function navUp() {
 }
 
 async function fetchAndRender(path) {
-  const r = await fetch(`${API_BASE}/fs/list?path=${encodeURIComponent(path)}`);
-  if (!r.ok) { refreshNavButtons(); return; }
-  const data = await r.json();
-  renderDirectory(data);
-  updateBreadcrumb(data.path);
-  updateAddressBar(data.path);
+  try {
+    const r = await fetch(`${API_BASE}/fs/list?path=${encodeURIComponent(path)}`);
+    if (!r.ok) {
+      showErrorBanner(`Failed to load folder (HTTP ${r.status}).`);
+      refreshNavButtons();
+      return;
+    }
+    const data = await r.json();
+    renderDirectory(data);
+    updateBreadcrumb(data.path);
+    updateAddressBar(data.path);
+  } catch (err) {
+    showErrorBanner(`Couldn't reach backend: ${err.message}`);
+  }
   refreshNavButtons();
 }
 
@@ -705,7 +698,7 @@ function renderFsRow(entry, parentPath) {
   const childPath = parentPath.replace(/[\\\/]+$/, '') + '\\' + entry.name;
   const icon = entry.is_dir ? ICON_FOLDER : iconForExt(entry.ext);
   const sizeText = entry.is_dir ? '—' : formatSize(entry.size);
-  const modifiedText = formatModified(entry.modified);
+  const modifiedText = formatModified(entry.modified * 1000);
   return `<div class="fp-row${entry.is_dir ? ' fp-row--folder' : ''}" role="option"
             data-path="${escapeHtml(childPath)}"
             data-type="${entry.is_dir ? 'folder' : 'file'}">
@@ -757,8 +750,6 @@ function showErrorBanner(message) {
     <span class="fp-body" style="color: var(--text-primary)">${escapeHtml(message)}</span>
   </div>`;
 }
-
-const ICON_FOLDER = `<svg class="fp-row__icon" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M1 4a1 1 0 0 1 1-1h4l1.5 1.5H14a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V4z" fill="var(--accent)" opacity=".75" stroke="var(--accent-edge)" stroke-width="0.8"/></svg>`;
 
 async function triggerScan(path) {
   const body = path ? JSON.stringify({ path }) : '{}';
@@ -890,6 +881,8 @@ document.addEventListener('click', e => {
       break;
     case 'navigate-path': {
       const navPath = btn.dataset.path;
+      // Pre-seed history stack to prevent switchScreen's auto-load from racing with our explicit load.
+      if (navPath && navHistory.stack.length === 0) navHistory.stack.push(null);
       switchScreen('browser');
       if (navPath) loadDirectory(navPath);
       break;
