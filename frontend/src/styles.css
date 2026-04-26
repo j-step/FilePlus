@@ -4574,6 +4574,53 @@ button.fp-pill:hover {
 
 /* ── Reduced motion: see canonical block appended below (UI-SPEC §A.0) ─────── */
 
+/* === Accent glow (lightsaber) — toggled via Settings → Personalization === */
+[data-accent-glow="on"] .fp-sidebar__item--active::before {
+  box-shadow: 0 0 4px var(--accent), 0 0 8px var(--accent-glow);
+}
+[data-accent-glow="on"] .fp-tab--active::after,
+[data-accent-glow="on"] .fp-tabs__indicator {
+  box-shadow: 0 0 6px var(--accent), 0 0 12px var(--accent-glow);
+}
+[data-accent-glow="on"] .fp-state-dot--accent {
+  box-shadow: 0 0 4px var(--accent), 0 0 8px var(--accent-glow);
+}
+[data-accent-glow="on"] .fp-badge--accent {
+  box-shadow: var(--shadow-raised), 0 0 6px var(--accent-glow), 0 0 12px var(--accent-glow);
+}
+[data-accent-glow="on"] .fp-row--selected {
+  box-shadow: inset 0 0 0 1px var(--accent), 0 0 8px var(--accent-glow);
+}
+[data-accent-glow="on"] .fp-row--selected::before {
+  box-shadow: 0 0 4px var(--accent), 0 0 8px var(--accent-glow);
+}
+[data-accent-glow="on"] .fp-sidebar__item--active svg {
+  filter: drop-shadow(0 0 2px var(--accent)) drop-shadow(0 0 4px var(--accent-glow));
+}
+[data-accent-glow="on"] .fp-button--primary,
+[data-accent-glow="on"] .fp-btn--primary {
+  box-shadow: var(--highlight-top), var(--shadow-raised), 0 0 6px var(--accent-glow);
+}
+[data-accent-glow="on"] [stroke="var(--accent)"],
+[data-accent-glow="on"] [fill="var(--accent)"] {
+  filter: drop-shadow(0 0 2px var(--accent)) drop-shadow(0 0 4px var(--accent-glow));
+}
+[data-accent-glow="on"] .fp-input:focus,
+[data-accent-glow="on"] .fp-input:focus-visible {
+  box-shadow: var(--inset-recess-strong),
+              0 0 0 3px var(--accent-glow),
+              0 0 12px var(--accent-glow);
+}
+[data-accent-glow="on"] .fp-button:focus-visible,
+[data-accent-glow="on"] .fp-btn:focus-visible {
+  box-shadow: 0 0 0 3px var(--accent-glow), 0 0 12px var(--accent-glow);
+}
+/* Accent-wash backgrounds get a subtle glow halo */
+[data-accent-glow="on"] [style*="background:var(--accent-wash"],
+[data-accent-glow="on"] [style*="background: var(--accent-wash"] {
+  box-shadow: 0 0 6px var(--accent-glow);
+}
+
 /* === prefers-reduced-motion: strict policy per UI-SPEC §A.0 === */
 @media (prefers-reduced-motion: reduce) {
   *,
@@ -4589,5 +4636,10 @@ button.fp-pill:hover {
   .fp-sparkline * {
     animation-duration: revert !important;
     transition-duration: revert !important;
+  }
+  /* Disable accent glow entirely under reduced-motion (glows can be distracting/triggering) */
+  [data-accent-glow="on"] * {
+    box-shadow: revert !important;
+    filter: revert !important;
   }
 }

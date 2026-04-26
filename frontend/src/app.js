@@ -459,6 +459,18 @@ function applyAccent(value) {
   if (isValidHex(value)) applyAccentHex(value);
 }
 
+function applyAccentGlow(enabled) {
+  if (enabled) {
+    document.documentElement.setAttribute('data-accent-glow', 'on');
+    localStorage.setItem('fp-accent-glow', 'on');
+  } else {
+    document.documentElement.removeAttribute('data-accent-glow');
+    localStorage.setItem('fp-accent-glow', 'off');
+  }
+  const checkbox = document.getElementById('settings-accent-glow');
+  if (checkbox) checkbox.checked = !!enabled;
+}
+
 function restoreSettings() {
   const theme = localStorage.getItem('fp-theme');
   if (theme) applyTheme(theme);
@@ -481,6 +493,8 @@ function restoreSettings() {
   }
   const fontScale = localStorage.getItem('fp-font-scale');
   if (fontScale) document.documentElement.style.fontSize = fontScale + 'px';
+  const savedGlow = localStorage.getItem('fp-accent-glow');
+  if (savedGlow === 'on') applyAccentGlow(true);
 }
 
 // ── Zoom (font-scale based) ───────────────────────────────────────────────────
@@ -1014,7 +1028,7 @@ const IN_SCOPE_ACTIONS = new Set([
   'ef-filter', 'ef-sort', 'ef-toggle-pause-ai', 'ef-toggle-moving-card',
   'scan-config-switch-mode', 'scan-baseline-confirm',
   'settings-nav', 'settings-set-theme', 'settings-set-density', 'settings-set-accent',
-  'settings-set-accent-hex', 'settings-reset-accent',
+  'settings-set-accent-hex', 'settings-reset-accent', 'settings-set-accent-glow',
   'settings-set-font-scale', 'settings-reset-shortcuts',
 ]);
 
@@ -1208,6 +1222,14 @@ document.addEventListener('input', e => {
   const t = e.target;
   if (t && t.dataset && t.dataset.action === 'settings-set-accent-hex') {
     applyAccentHex(t.value);
+  }
+});
+
+// Accent glow toggle (change event, not click)
+document.addEventListener('change', e => {
+  const t = e.target;
+  if (t && t.dataset && t.dataset.action === 'settings-set-accent-glow') {
+    applyAccentGlow(t.checked);
   }
 });
 
