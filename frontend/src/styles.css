@@ -21,7 +21,9 @@
   --bg-pressed:  #3B3344;  /* active hover, pressed, active sidebar item */
 
   /* ---------- Accent (single warm amber) ---------- */
-  --accent:             #E8965E;
+  /* Accent: default amber, runtime-overridable via --accent-custom (Settings → Personalization) */
+  --accent-custom: ;  /* Empty default; setting any value re-resolves --accent */
+  --accent:             var(--accent-custom, #E8965E);
   --accent-hover:       #F0A574;
   --accent-press:       #D88248;
   --accent-wash:        rgba(232, 150, 94, 0.10);
@@ -143,6 +145,11 @@
 
   --w-sidebar:           240px;
   --w-sidebar-collapsed: 52px;
+
+  /* === Compatibility: tokens referenced elsewhere but historically undefined === */
+  --r-sm: 4px;                                  /* small radius; used in compact buttons/badges */
+  --ease-ui: cubic-bezier(0.4, 0, 0.2, 1);      /* generic UI easing (Material standard); used in transitions */
+  --track-heading: -0.020em;                    /* heading letter-spacing; matches --track-hero display scale */
 }
 
 [data-theme="light"] {
