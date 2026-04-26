@@ -1059,41 +1059,51 @@ svg { flex-shrink: 0; }
    15. SEGMENTED CONTROL (Section 20)
    ----------------------------------------------------------------------------- */
 .fp-segmented {
+  display: inline-flex;
+  position: relative;
   height: 30px;
   padding: 2px;
   background: var(--bg-content);
-  border-radius: var(--r-button);
   border: 1px solid var(--border-subtle);
+  border-radius: var(--r-button);
   box-shadow: var(--inset-recess);
-  display: inline-flex;
-  position: relative;
 }
-.fp-segmented__item {
-  height: 26px;
-  padding: 0 var(--s-12);
-  border-radius: var(--r-icon-btn);
+.fp-segmented__option,
+.fp-segmented__opt {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: var(--s-6);
-  font: 500 var(--t-compact) var(--font-ui);
-  letter-spacing: var(--track-body);
-  color: var(--text-tertiary);
-  border: 1px solid transparent;
+  height: 100%;
+  padding: 0 12px;
   background: transparent;
-  transition: color var(--dur-flash) var(--ease-snap);
-  cursor: default;
+  color: var(--text-secondary);
+  border: none;
+  border-radius: var(--r-button);
+  font: var(--t-body);
+  cursor: pointer;
   position: relative;
   z-index: 1;
+  transition: color var(--dur-fast) var(--ease-out);
+  user-select: none;
 }
-.fp-segmented__item:hover { color: var(--text-secondary); }
-.fp-segmented__item svg,
-.fp-segmented__item .icon { width: 14px; height: 14px; }
-.fp-segmented__item--active {
-  color: var(--accent);
-  background: var(--accent-wash);
-  border-color: var(--accent-edge);
+.fp-segmented__option:hover,
+.fp-segmented__opt:hover {
+  color: var(--text-primary);
+}
+.fp-segmented__option--active,
+.fp-segmented__option.active,
+.fp-segmented__opt--active,
+.fp-segmented__opt.active {
+  background: var(--bg-raised);
+  color: var(--text-primary);
   box-shadow: var(--highlight-top), var(--shadow-raised);
+  transition: background-color var(--dur-slide) var(--ease-out),
+              color var(--dur-fast) var(--ease-out);
+}
+.fp-segmented__option:focus-visible,
+.fp-segmented__opt:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--accent-glow);
 }
 
 /* -----------------------------------------------------------------------------
@@ -3166,31 +3176,6 @@ svg { flex-shrink: 0; }
 }
 .palette__item:hover { background: var(--accent-wash); color: var(--text-primary); }
 .palette__item svg { color: var(--text-tertiary); flex-shrink: 0; }
-
-/* =============================================================================
-   46. SEGMENTED CONTROL (opt alias + active state)
-   ============================================================================= */
-.fp-segmented__opt {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  height: 22px;
-  padding: 0 var(--s-10);
-  background: transparent;
-  border: none;
-  border-radius: calc(var(--r-button) - 2px);
-  color: var(--text-tertiary);
-  font: 400 var(--t-small) var(--font-ui);
-  cursor: pointer;
-  transition: background var(--dur-fast) var(--ease-snap), color var(--dur-fast) var(--ease-snap);
-}
-.fp-segmented__opt:hover { color: var(--text-secondary); }
-.fp-segmented__opt.active {
-  background: var(--bg-raised);
-  color: var(--text-primary);
-  font-weight: 500;
-  box-shadow: var(--highlight-top), var(--shadow-raised);
-}
 
 /* =============================================================================
    47. TRAY EXTENDED CLASSES
