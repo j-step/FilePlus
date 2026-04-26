@@ -555,3 +555,25 @@ All error banners use fp-error-banner pattern: bad-wash bg + bad-edge 1px bottom
 ---
 
 *End of testing checklist. Last updated after A.17 pass.*
+
+---
+
+## Resolutions (2026-04-25)
+
+The open questions Q1–Q11 in this document were adjudicated during the brainstorming session that produced [docs/superpowers/specs/2026-04-25-fileplus-ui-re-pass-design.md](superpowers/specs/2026-04-25-fileplus-ui-re-pass-design.md). Each is resolved as follows:
+
+| # | Resolution | Source |
+|---|---|---|
+| Q1 | Tabs for non-folder screens (Home, Review Bin, etc.) show the screen name. Confirmed implementation behavior. | Spec §2 (auto-resolved by Q1=A canonical pick) |
+| Q2 | Pinned folder overflow not addressed in v1; max 5 visible, no "show more" link. Defer to v1.1. | Out of scope for this work |
+| Q3 | Top tags shown: 5–8. Confirmed implementation behavior. | Spec §2 (auto-resolved) |
+| Q4 | Inspector starts closed; first file-click in session opens it; persists across selections; does not auto-reopen on app restart. | Spec §2, decision E |
+| Q5 | Default canvas expansion: 3 levels per drive branch. Confirmed implementation behavior. | Spec §2 (auto-resolved) |
+| Q6 | Conversational scan-config opening prompt is hardcoded as specified. Confirmed implementation behavior. | Spec §2 (auto-resolved) |
+| Q7 | Reorganization tab CTA navigates to File Tree canvas + enters proposal-review mode simultaneously. Confirmed. | Spec §2 (auto-resolved) |
+| Q8 | Review Bin is a logically distinct screen with its own layout, backed by Everything Folder data via filter. Confirmed. | Spec §2 (auto-resolved) |
+| Q9 | "Currently moving" card defaults to expanded with stub "Moving 2 of 2 files." Confirmed. | Spec §2 (auto-resolved) |
+| Q10 | Accent customization: default amber + custom hex override (not a fixed palette). Personalization pane shows hex input + swatch + reset. | Spec §2, decision A (option A3) |
+| Q11 | Tray auto-dismiss via Electron window blur event. Confirmed implementation behavior. | Spec §2 (auto-resolved) |
+
+All v1 contradictions captured in this report are now closed. Future contradiction reports go in a fresh report doc.
