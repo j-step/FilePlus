@@ -3940,8 +3940,6 @@ button.fp-pill:hover {
   border-radius: 50%;
   flex-shrink: 0;
 }
-.fp-pill__dot--accent { background: var(--accent); }
-
 /* ── Scrim ────────────────────────────────────────────────────────────────── */
 .fp-scrim {
   position: fixed;
