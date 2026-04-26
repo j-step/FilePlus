@@ -36,6 +36,7 @@ This document describes every screen, surface, overlay, and component in FilePlu
   - 999px: Approvals pill, status pills, toggle thumbs, avatars
 - Spacing base: 2px, working scale 2, 4, 6, 8, 10, 12, 14, 16, 20, 24, 32, 40, 48, 64.
 - Window: frameless custom titlebar, dark by default, light mode fully supported (warm cream, not pure white). Native Windows chrome is disabled.
+- **Reduced motion (`prefers-reduced-motion: reduce`):** Strictly applied. All animation collapses to instant EXCEPT the live-data sparkline on the Scan Progress screen (sparkline = data, not decoration). Specifically disabled under reduced-motion: tab-underline slide, sidebar active-pill slide, snackbar progress bar, drop-target scale, AI-just-filed border pulse, badge pulses, segmented-control active-pill slide, modal/popover open transitions.
 
 For the complete token set (color hex values, chrome composition formulas, typography scale, motion durations, icon sizing, audit checklist), reference the **FilePlus Design Tokens v2 spec** which accompanies this document. Any specific styling question not covered here is answered there.
 
