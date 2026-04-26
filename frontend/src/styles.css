@@ -2030,36 +2030,111 @@ svg { flex-shrink: 0; }
 }
 
 /* -----------------------------------------------------------------------------
-   26. TOAST (Section 30)
+   26. SNACKBAR + TOAST (Section 30 / UI-SPEC §A.11.4)
    ----------------------------------------------------------------------------- */
-.fp-toast-region {
+
+/* === fp-snackbar (bottom-center, 5s progress bar, undo) === */
+.fp-snackbar {
+  position: fixed;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-16);
+  padding: var(--s-10) var(--s-14);
+  min-width: 320px;
+  max-width: 480px;
+  background: var(--bg-raised);
+  border: 1px solid var(--accent-edge);
+  border-radius: var(--r-card);
+  box-shadow: var(--highlight-top), var(--shadow-popover);
+  font: 500 var(--t-body) var(--font-ui);
+  color: var(--text-primary);
+  z-index: 1100;
+  overflow: hidden;
+  pointer-events: all;
+  animation: fp-snackbar-in var(--dur-fast) var(--ease-out);
+}
+@keyframes fp-snackbar-in {
+  from { opacity: 0; transform: translateX(-50%) translateY(8px); }
+  to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+.fp-snackbar__undo {
+  margin-left: auto;
+  flex-shrink: 0;
+  background: transparent;
+  color: var(--accent);
+  border: none;
+  font: 500 var(--t-body) var(--font-ui);
+  cursor: pointer;
+  padding: 0 var(--s-8);
+}
+.fp-snackbar__progress {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  height: 4px;
+  background: var(--accent);
+  animation: fp-snackbar-progress 5s linear forwards;
+}
+@keyframes fp-snackbar-progress {
+  from { width: 100%; }
+  to   { width: 0%; }
+}
+
+/* === fp-toast (bottom-right stack, variants) === */
+.fp-toast-stack {
   position: fixed;
   bottom: var(--s-16);
   right: var(--s-16);
-  display: flex; flex-direction: column-reverse;
+  display: flex;
+  flex-direction: column-reverse;
   gap: var(--s-8);
-  z-index: 50;
+  z-index: 1100;
 }
+/* legacy alias */
+.fp-toast-region { bottom: var(--s-16); right: var(--s-16); display: flex; flex-direction: column-reverse; gap: var(--s-8); z-index: 1100; position: fixed; }
 .fp-toast {
-  width: 360px;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-10);
+  padding: var(--s-10) var(--s-14);
+  min-width: 320px;
+  max-width: 360px;
   background: var(--bg-raised);
   border: 1px solid var(--border-subtle);
   border-radius: var(--r-card);
   box-shadow: var(--highlight-top), var(--shadow-popover);
-  padding: var(--s-12) var(--s-14);
-  display: flex;
-  gap: var(--s-10);
-  align-items: flex-start;
+  font: 500 var(--t-body) var(--font-ui);
+  color: var(--text-primary);
+  pointer-events: all;
   animation: fp-toast-in var(--dur-slide) var(--ease-out);
 }
+.fp-toast--accent { border-color: var(--accent-edge); }
 .fp-toast--action { border-color: var(--accent-edge); }
+.fp-toast--good   { border-color: var(--good-edge); }
+.fp-toast--warn   { border-color: var(--warn-edge); }
+.fp-toast--bad    { border-color: var(--bad-edge); }
 .fp-toast--error  { border-color: var(--bad-edge); }
 .fp-toast__icon { width: 16px; height: 16px; flex-shrink: 0; color: var(--text-secondary); margin-top: 2px; }
-.fp-toast--action .fp-toast__icon { color: var(--accent); }
-.fp-toast--error  .fp-toast__icon { color: var(--bad); }
-.fp-toast__body { flex: 1; min-width: 0; }
+.fp-toast--action .fp-toast__icon,
+.fp-toast--accent .fp-toast__icon { color: var(--accent); }
+.fp-toast--error .fp-toast__icon,
+.fp-toast--bad   .fp-toast__icon  { color: var(--bad); }
+.fp-toast--good  .fp-toast__icon  { color: var(--good); }
+.fp-toast--warn  .fp-toast__icon  { color: var(--warn); }
+.fp-toast__body  { flex: 1; min-width: 0; }
 .fp-toast__title { font: 600 var(--t-body) var(--font-ui); color: var(--text-primary); }
 .fp-toast__desc  { font: 400 var(--t-compact) var(--font-ui); color: var(--text-secondary); }
+.fp-toast__dismiss {
+  margin-left: auto;
+  background: transparent;
+  color: var(--text-tertiary);
+  border: none;
+  cursor: pointer;
+  font: 500 var(--t-body) var(--font-ui);
+}
 @keyframes fp-toast-in {
   from { opacity: 0; transform: translateX(12px); }
   to   { opacity: 1; transform: translateX(0); }
@@ -3928,53 +4003,7 @@ button.fp-pill:hover {
   animation: fp-popover-in var(--dur-fast) var(--ease-out);
 }
 
-/* ── Snackbar / Toast ─────────────────────────────────────────────────────── */
-.fp-snackbar {
-  width: 360px;
-  min-height: 40px;
-  padding: var(--s-10) var(--s-16);
-  background: var(--bg-raised);
-  border: 1px solid var(--accent-edge);
-  border-radius: var(--r-card);
-  box-shadow: var(--highlight-top), var(--shadow-popover);
-  display: flex;
-  align-items: center;
-  gap: var(--s-8);
-  font: 500 var(--t-body) var(--font-ui);
-  color: var(--text-primary);
-  position: relative;
-  overflow: hidden;
-  pointer-events: all;
-  animation: fp-snackbar-in var(--dur-fast) var(--ease-out);
-}
-@keyframes fp-snackbar-in {
-  from { opacity: 0; transform: translateY(8px); }
-  to   { opacity: 1; transform: translateY(0); }
-}
-.fp-snackbar__undo { margin-left: auto; flex-shrink: 0; color: var(--accent); font: 500 var(--t-compact) var(--font-ui); }
-.fp-snackbar__progress {
-  position: absolute;
-  bottom: 0; left: 0;
-  height: 3px;
-  background: var(--accent);
-  animation: fp-snackbar-progress 5s linear forwards;
-}
-@keyframes fp-snackbar-progress { from { width: 100%; } to { width: 0%; } }
-.fp-toast {
-  width: 360px;
-  min-height: 40px;
-  padding: var(--s-10) var(--s-16);
-  background: var(--bg-raised);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--r-card);
-  box-shadow: var(--highlight-top), var(--shadow-popover);
-  font: 400 var(--t-body) var(--font-ui);
-  color: var(--text-primary);
-  pointer-events: all;
-  animation: fp-snackbar-in var(--dur-fast) var(--ease-out);
-}
-.fp-toast--action { border-color: var(--accent-edge); }
-.fp-toast--error  { border-color: var(--bad-edge); }
+/* ── Snackbar / Toast — canonical definitions moved to Section 26 ─────────── */
 
 /* ── Mode banner (File Tree canvas, A.4) ──────────────────────────────────── */
 .fp-mode-banner {
