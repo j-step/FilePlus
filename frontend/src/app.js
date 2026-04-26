@@ -29,6 +29,11 @@ function switchScreen(id) {
     tab.setAttribute('aria-selected', tab.dataset.tabScreen === id ? 'true' : 'false');
   });
 
+  // When entering the Browser screen, load the sandbox root if we haven't already.
+  if (id === 'browser' && navHistory.stack.length === 0) {
+    loadDirectory(null); // null → calls /fs/list/root
+  }
+
   // Store in session for persistence
   sessionStorage.setItem('fp-active-screen', id);
 }
@@ -596,38 +601,164 @@ const EMPTY_STATE_HTML = `<div style="display:flex;flex-direction:column;align-i
   <span style="font:400 var(--t-body) var(--font-ui);text-align:center;max-width:220px">Trigger a scan to index this directory</span>
 </div>`;
 
-async function loadDirectory(path) {
+// ── Folder navigation via /fs/list (read-only) ────────────────────────────────
+// Maintains a client-side history stack for back/forward.
+const navHistory = { stack: [], idx: -1 };
+
+async function loadDirectory(absPath) {
+  const url = absPath
+    ? `${API_BASE}/fs/list?path=${encodeURIComponent(absPath)}`
+    : `${API_BASE}/fs/list/root`;
+
+  let data;
+  try {
+    const r = await fetch(url);
+    if (r.status === 403) {
+      showErrorBanner(`Path is outside the sandbox: ${absPath}`);
+      return;
+    }
+    if (r.status === 404) {
+      showErrorBanner(`Folder not found: ${absPath}`);
+      return;
+    }
+    if (!r.ok) {
+      showErrorBanner(`Failed to load folder (HTTP ${r.status}).`);
+      return;
+    }
+    data = await r.json();
+  } catch (err) {
+    showErrorBanner(`Couldn't reach backend: ${err.message}`);
+    return;
+  }
+
+  renderDirectory(data);
+  pushHistory(data.path);
+  updateBreadcrumb(data.path);
+  updateAddressBar(data.path);
+}
+
+function pushHistory(path) {
+  // If we navigated forward from a non-tail position, drop the forward stack.
+  if (navHistory.idx < navHistory.stack.length - 1) {
+    navHistory.stack = navHistory.stack.slice(0, navHistory.idx + 1);
+  }
+  if (navHistory.stack[navHistory.idx] !== path) {
+    navHistory.stack.push(path);
+    navHistory.idx = navHistory.stack.length - 1;
+  }
+  refreshNavButtons();
+}
+
+function navBack() {
+  if (navHistory.idx <= 0) return;
+  navHistory.idx -= 1;
+  const path = navHistory.stack[navHistory.idx];
+  fetchAndRender(path);
+}
+
+function navForward() {
+  if (navHistory.idx >= navHistory.stack.length - 1) return;
+  navHistory.idx += 1;
+  const path = navHistory.stack[navHistory.idx];
+  fetchAndRender(path);
+}
+
+function navUp() {
+  const cur = navHistory.stack[navHistory.idx];
+  if (!cur) return;
+  // Compute parent: strip last path segment. Keep the drive-letter root intact.
+  const parent = cur.replace(/[\\\/]+[^\\\/]+[\\\/]?$/, '') || cur;
+  if (parent === cur) return; // Already at root.
+  loadDirectory(parent);
+}
+
+async function fetchAndRender(path) {
+  const r = await fetch(`${API_BASE}/fs/list?path=${encodeURIComponent(path)}`);
+  if (!r.ok) { refreshNavButtons(); return; }
+  const data = await r.json();
+  renderDirectory(data);
+  updateBreadcrumb(data.path);
+  updateAddressBar(data.path);
+  refreshNavButtons();
+}
+
+function refreshNavButtons() {
+  const back = document.querySelector('[data-action="nav-back"]');
+  const fwd  = document.querySelector('[data-action="nav-forward"]');
+  if (back) back.disabled = navHistory.idx <= 0;
+  if (fwd)  fwd.disabled  = navHistory.idx >= navHistory.stack.length - 1;
+}
+
+function renderDirectory(data) {
   const listScroll = document.getElementById('list-scroll');
   if (!listScroll) return;
 
-  listScroll.innerHTML = `<div style="padding:24px;color:var(--text-tertiary);font:400 var(--t-body) var(--font-mono)">Loading…</div>`;
-  try {
-    const url = path
-      ? `${API_BASE}/files?path=${encodeURIComponent(path)}`
-      : `${API_BASE}/files`;
-    const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const files = await res.json();
-    listScroll.innerHTML = files.length === 0
-      ? EMPTY_STATE_HTML
-      : files.map(fileToRowHtml).join('');
-    updateBreadcrumb(path);
-    const countEl = document.getElementById('status-file-count');
-    if (countEl) countEl.textContent = `${files.length} item${files.length !== 1 ? 's' : ''}`;
-  } catch (err) {
-    listScroll.innerHTML = `<div style="padding:24px;color:var(--bad)">Failed to load: ${escapeHtml(err.message)}</div>`;
+  if (!data.entries || data.entries.length === 0) {
+    listScroll.innerHTML = renderEmptyFolder();
+    return;
   }
+
+  listScroll.innerHTML = data.entries.map(entry => renderFsRow(entry, data.path)).join('');
+}
+
+function renderFsRow(entry, parentPath) {
+  const childPath = parentPath.replace(/[\\\/]+$/, '') + '\\' + entry.name;
+  const icon = entry.is_dir ? ICON_FOLDER : iconForExt(entry.ext);
+  const sizeText = entry.is_dir ? '—' : formatSize(entry.size);
+  const modifiedText = formatModified(entry.modified);
+  return `<div class="fp-row${entry.is_dir ? ' fp-row--folder' : ''}" role="option"
+            data-path="${escapeHtml(childPath)}"
+            data-type="${entry.is_dir ? 'folder' : 'file'}">
+    ${icon}
+    <span class="fp-row__name">${escapeHtml(entry.name)}</span>
+    <span class="fp-row__size mono">${sizeText}</span>
+    <span class="fp-row__modified mono">${modifiedText}</span>
+    <div class="fp-row__tags"></div>
+  </div>`;
+}
+
+function renderEmptyFolder() {
+  return `<div class="fp-empty-state" role="status" aria-live="polite">
+    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/>
+    </svg>
+    <h3 class="t-title-sm">This folder is empty</h3>
+    <p class="t-body" style="color: var(--text-secondary)">Drop files here or right-click to create new ones.</p>
+  </div>`;
+}
+
+function updateAddressBar(path) {
+  const addressEl = document.getElementById('address-bar-text') || document.querySelector('.fp-address-bar__text');
+  if (addressEl) addressEl.textContent = path;
 }
 
 function updateBreadcrumb(path) {
   const crumb = document.getElementById('breadcrumb');
-  if (!crumb || !path) return;
-  const parts = path.replace(/\\/g, '/').split('/').filter(Boolean);
-  crumb.innerHTML = parts.map((part, i) => {
-    const partial = parts.slice(0, i + 1).join('\\');
-    return `<button class="fp-breadcrumb__item" data-action="navigate-path" data-path="${escapeHtml(partial + '\\')}">${escapeHtml(part)}</button>`;
+  if (!crumb) return;
+  // Split on \ or /, drop empties. First part is drive letter (e.g. "C:") — keep with backslash for nav.
+  const parts = path.split(/[\\\/]+/).filter(Boolean);
+  let cumulative = '';
+  const html = parts.map((part, i) => {
+    cumulative = i === 0 ? part + '\\' : cumulative + part + '\\';
+    const isLast = i === parts.length - 1;
+    const cls = isLast ? 'fp-breadcrumb__crumb fp-breadcrumb__crumb--current' : 'fp-breadcrumb__crumb';
+    return `<button class="${cls}" data-action="navigate-crumb" data-path="${escapeHtml(cumulative)}">${escapeHtml(part)}</button>`;
   }).join('<span class="fp-breadcrumb__sep">·</span>');
+  crumb.innerHTML = html;
 }
+
+function showErrorBanner(message) {
+  const listScroll = document.getElementById('list-scroll');
+  if (!listScroll) return;
+  listScroll.innerHTML = `<div class="fp-error-banner" role="alert">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+      <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+    </svg>
+    <span class="fp-body" style="color: var(--text-primary)">${escapeHtml(message)}</span>
+  </div>`;
+}
+
+const ICON_FOLDER = `<svg class="fp-row__icon" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M1 4a1 1 0 0 1 1-1h4l1.5 1.5H14a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V4z" fill="var(--accent)" opacity=".75" stroke="var(--accent-edge)" stroke-width="0.8"/></svg>`;
 
 async function triggerScan(path) {
   const body = path ? JSON.stringify({ path }) : '{}';
@@ -763,6 +894,18 @@ document.addEventListener('click', e => {
       if (navPath) loadDirectory(navPath);
       break;
     }
+    case 'nav-back':
+      navBack();
+      break;
+    case 'nav-forward':
+      navForward();
+      break;
+    case 'nav-up':
+      navUp();
+      break;
+    case 'navigate-crumb':
+      if (btn.dataset.path) loadDirectory(btn.dataset.path);
+      break;
     case 'switch-tab':
       switchScreen(btn.dataset.tabScreen);
       break;
@@ -1144,6 +1287,11 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('list-scroll')?.addEventListener('click', e => {
     const row = e.target.closest('.fp-row');
     if (!row) return;
+    // Folder click → navigate into it (read-only).
+    if (row.dataset.type === 'folder' && row.dataset.path) {
+      loadDirectory(row.dataset.path);
+      return;
+    }
     const listScroll = document.getElementById('list-scroll');
     listScroll?.querySelectorAll('.fp-row').forEach(r => {
       r.classList.remove('fp-row--selected');
