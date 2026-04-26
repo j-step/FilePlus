@@ -190,6 +190,8 @@ Behavior:
 
 ## A.4 Screen 3 — File Tree (canvas)
 
+**Scope note (v1):** This screen has exactly three modes — Live, Snapshot view, Proposal review. Snapshot-to-snapshot side-by-side comparison ("Comparison mode") is explicitly out of scope for v1; it is approximated by switching between snapshots in the right rail.
+
 Three modes with banners. Banners are 36px tall, flush to top of content area, with 1px `border-hairline` bottom:
 - **Live mode** (default, no banner)
 - **Snapshot view mode**: `warn-wash` background, `warn-edge` border-bottom, 14×14 Lucide `history` icon in `warn`, `t-body` Inter 500 `warn` text: "Viewing snapshot from [date] · read-only" with "Return to live" secondary button right-aligned
