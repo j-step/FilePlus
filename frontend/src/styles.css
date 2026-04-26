@@ -1654,7 +1654,7 @@ svg { flex-shrink: 0; }
   display: flex;
   align-items: center;
   gap: 8px;
-  height: 26px;
+  height: var(--row-height, 26px);
   padding: 0 12px;
   background: transparent;
   border: 1px solid transparent;
@@ -1663,14 +1663,14 @@ svg { flex-shrink: 0; }
   user-select: none;
   position: relative;
   color: var(--text-primary);
-  transition: background-color var(--dur-flash) var(--ease-snap);
+  transition: background-color var(--dur-flash) var(--ease-snap),
+              border-color var(--dur-flash) var(--ease-snap);
 }
 .fp-row:hover {
   background: var(--bg-raised);
   box-shadow: var(--highlight-top);
 }
-.fp-row--selected,
-.fp-row.fp-row--selected {
+.fp-row--selected {
   background: var(--accent-wash);
   border-color: var(--accent-edge);
 }
@@ -1720,7 +1720,7 @@ svg { flex-shrink: 0; }
 }
 .fp-row__name {
   flex: 1;
-  font: var(--t-body);
+  font: 500 var(--t-body) var(--font-ui);
   color: var(--text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1732,16 +1732,16 @@ svg { flex-shrink: 0; }
   font: 400 var(--t-compact) var(--font-mono);
   color: var(--text-secondary);
   letter-spacing: var(--track-mono);
+  text-align: right;
 }
-.fp-row__size { min-width: 72px; text-align: right; }
-.fp-row__modified { min-width: 88px; text-align: right; }
+.fp-row__size { width: 96px; min-width: 96px; }
+.fp-row__modified, .fp-row__mod { width: 120px; min-width: 120px; }
 /* Legacy alias — keeps existing markup using __mod working */
 .fp-row__mod {
   flex-shrink: 0;
   font: 400 var(--t-compact) var(--font-mono);
   color: var(--text-secondary);
   letter-spacing: var(--track-mono);
-  text-align: right;
 }
 .fp-row__tags {
   flex-shrink: 0;
