@@ -1371,7 +1371,7 @@
 
               <!-- "Select all AI suggestions" toggle bar -->
               <div style="display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid var(--border-hairline)">
-                <label style="display:flex;align-items:center;gap:8px;cursor:default">
+                <div style="display:flex;align-items:center;gap:8px;cursor:default">
                   <!-- INTEGRATION: AI duplicate selections from GET /api/scan/duplicates -->
                   <label class="fp-toggle" id="toggle-dupes-ai">
                     <input type="checkbox" checked data-action="scan-dupes-select-all" />
@@ -1379,16 +1379,16 @@
                     <span class="fp-toggle__thumb"></span>
                   </label>
                   <span style="font:500 var(--t-body) var(--font-ui);color:var(--text-secondary)">Select all AI suggestions</span>
-                </label>
+                </div>
                 <div style="margin-left:auto">
-                  <label style="display:flex;align-items:center;gap:8px;cursor:default">
+                  <div style="display:flex;align-items:center;gap:8px;cursor:default">
                     <span style="font:400 var(--t-compact) var(--font-ui);color:var(--text-tertiary)">Hardlink instead of delete</span>
                     <label class="fp-toggle" id="toggle-dupes-hardlink">
                       <input type="checkbox" data-action="scan-dupes-hardlink" />
                       <span class="fp-toggle__track"></span>
                       <span class="fp-toggle__thumb"></span>
                     </label>
-                  </label>
+                  </div>
                 </div>
               </div>
 
@@ -1929,14 +1929,14 @@
             </div>
             <div class="ef-header__right">
               <!-- Pause AI toggle: 32×18 track, inset-recess off, accent on, 14×14 thumb -->
-              <label class="ef-pause-toggle" title="Pause AI processing">
+              <div class="ef-pause-toggle" title="Pause AI processing">
                 <label class="fp-toggle" id="ef-pause-toggle-track">
                   <input type="checkbox" id="ef-pause-ai" data-action="ef-toggle-pause-ai" />
                   <span class="fp-toggle__track"></span>
                   <span class="fp-toggle__thumb"></span>
                 </label>
                 <span style="font:400 var(--t-body) var(--font-ui);color:var(--text-secondary)">Pause AI</span>
-              </label>
+              </div>
               <!-- Filter chips: segmented control A / U / R / M / E -->
               <div class="fp-segmented" id="ef-filter-bar" role="group" aria-label="Filter by state">
                 <button class="fp-segmented__opt active" data-action="ef-filter" data-filter="all">All</button>

@@ -1267,7 +1267,8 @@ svg { flex-shrink: 0; }
   left: 2px;
   width: 14px;
   height: 14px;
-  background: var(--text-primary);
+  background: var(--bg-raised);
+  border: 1px solid var(--border-subtle);
   border-radius: var(--r-pill);
   box-shadow: var(--shadow-raised);
   transition: transform var(--dur-slide) var(--ease-out),
@@ -1275,6 +1276,7 @@ svg { flex-shrink: 0; }
 }
 .fp-toggle input:checked ~ .fp-toggle__track {
   background: var(--accent);
+  box-shadow: none;
 }
 .fp-toggle input:checked ~ .fp-toggle__thumb {
   transform: translateX(14px);
@@ -1285,7 +1287,7 @@ svg { flex-shrink: 0; }
 }
 .fp-toggle input:disabled ~ .fp-toggle__track,
 .fp-toggle input:disabled ~ .fp-toggle__thumb {
-  opacity: 0.4;
+  opacity: 0.5;
   cursor: not-allowed;
 }
 
