@@ -228,80 +228,109 @@ function restoreSidebarState() {
 }
 
 // ── Responsive toolbar search ─────────────────────────────────────────────────
-// Stable state machine with hysteresis. The previous "remove classes, measure,
-// re-add" approach oscillated because the CSS width transition itself fired
-// ResizeObserver mid-animation and recalc would flip the state back. Now we
-// measure CURRENT state and only change state when overflow/slack crosses a
-// threshold with a 24px buffer to prevent immediate re-shrink/re-grow.
-const SEARCH_STATES = ['default', 'narrow', 'icon'];
-const SEARCH_UPGRADE_BUFFER = 24; // px slack required before stepping up
+// Continuous-resize model: search bar is as wide as possible up to MAX. As the
+// breadcrumb (which has flex:1) grows, search shrinks to make room. Below the
+// short-placeholder threshold we swap the placeholder to "Search…". Below the
+// icon threshold we collapse to the magnifier icon. When room reappears, we
+// re-expand smoothly. The cave fade tracks actual breadcrumb overflow only.
+const SEARCH_MAX_WIDTH                  = 220; // px; expanded full width
+const SEARCH_MIN_FULL_PLACEHOLDER       = 170; // px; below this, swap to short placeholder "Search…"
+const SEARCH_MIN_SHORT_PLACEHOLDER      = 110; // px; below this, collapse to icon
+const SEARCH_ICON_WIDTH                 = 28;  // px; collapsed icon width
+const SEARCH_RESIZE_DEAD_ZONE           = 4;   // px; ignore changes smaller than this
+
+const PLACEHOLDER_FULL  = 'Search files…';
+const PLACEHOLDER_SHORT = 'Search…';
 
 function initToolbarResponsive() {
-  const toolbar     = document.querySelector('.fp-toolbar');
-  const breadcrumb  = document.getElementById('breadcrumb');
-  const searchWrap  = document.getElementById('search-wrap');
+  const toolbar    = document.querySelector('.fp-toolbar');
+  const breadcrumb = document.getElementById('breadcrumb');
+  const searchWrap = document.getElementById('search-wrap');
+  const input      = document.getElementById('search-input');
   if (!toolbar || !breadcrumb || !searchWrap) return;
 
   let rafId = null;
+  let lastAppliedWidth = SEARCH_MAX_WIDTH;
+  let lastAppliedState = 'full'; // 'full' | 'short' | 'icon'
 
-  function currentState() {
-    if (searchWrap.classList.contains('fp-toolbar__search--icon')) return 'icon';
-    if (searchWrap.classList.contains('fp-toolbar__search--narrow')) return 'narrow';
-    return 'default';
-  }
-  function applyState(state) {
-    searchWrap.classList.toggle('fp-toolbar__search--narrow', state === 'narrow');
-    searchWrap.classList.toggle('fp-toolbar__search--icon',   state === 'icon');
+  function applyContinuous(width, state) {
+    if (state === 'icon') {
+      searchWrap.classList.add('fp-toolbar__search--icon');
+      searchWrap.style.width = '';
+    } else {
+      searchWrap.classList.remove('fp-toolbar__search--icon');
+      searchWrap.style.width = width + 'px';
+      if (input) {
+        const desired = state === 'full' ? PLACEHOLDER_FULL : PLACEHOLDER_SHORT;
+        if (input.placeholder !== desired) input.placeholder = desired;
+      }
+    }
+    lastAppliedWidth = width;
+    lastAppliedState = state;
   }
 
   function actualRecalc() {
-    const state = currentState();
-    const idx   = SEARCH_STATES.indexOf(state);
-    const overflow = breadcrumb.scrollWidth - breadcrumb.clientWidth;
-    let target = state;
+    // Compute the toolbar's available width MINUS every fixed-width child
+    // (back/forward/up nav, view toggle, inspector toggle, theme toggle) MINUS
+    // breadcrumb's natural unwrapped width. The remainder is what search can
+    // claim. breadcrumb.scrollWidth is its NATURAL content width regardless of
+    // overflow:hidden — a stable measurement that doesn't depend on search size.
+    const breadcrumbNatural = breadcrumb.scrollWidth;
+    const toolbarStyle      = getComputedStyle(toolbar);
+    const toolbarPadding    = parseFloat(toolbarStyle.paddingLeft || 0) + parseFloat(toolbarStyle.paddingRight || 0);
+    const toolbarGap        = parseFloat(toolbarStyle.gap || 0);
 
-    if (overflow > 1) {
-      // Need to free space — step DOWN
-      if (idx < SEARCH_STATES.length - 1) {
-        target = SEARCH_STATES[idx + 1];
+    let otherWidths = 0;
+    let visibleChildren = 0;
+    for (const child of toolbar.children) {
+      if (child === searchWrap || child === breadcrumb) continue;
+      const r = child.getBoundingClientRect();
+      if (r.width > 0) {
+        otherWidths += r.width;
+        visibleChildren++;
       }
-      // Already at icon — enable breadcrumb scroll
-      if (state === 'icon') breadcrumb.classList.add('fp-breadcrumb--scroll');
+    }
+    // Gaps: between every visible child including search and breadcrumb
+    const totalGaps = toolbarGap * Math.max(0, (visibleChildren + 2) - 1);
+
+    const availableForSearch = toolbar.clientWidth - toolbarPadding - otherWidths - totalGaps - breadcrumbNatural;
+
+    let targetWidth, targetState;
+    if (availableForSearch >= SEARCH_MIN_SHORT_PLACEHOLDER) {
+      targetWidth = Math.min(SEARCH_MAX_WIDTH, Math.max(SEARCH_MIN_SHORT_PLACEHOLDER, availableForSearch));
+      targetState = targetWidth >= SEARCH_MIN_FULL_PLACEHOLDER ? 'full' : 'short';
     } else {
-      // We have room — could we step UP? Only if slack exceeds buffer.
-      if (idx > 0) {
-        const slack = -overflow; // positive = available room
-        if (slack > SEARCH_UPGRADE_BUFFER) {
-          target = SEARCH_STATES[idx - 1];
-        }
-      }
-      // No overflow → no need to scroll breadcrumb
-      if (state !== 'icon') breadcrumb.classList.remove('fp-breadcrumb--scroll');
+      targetWidth = SEARCH_ICON_WIDTH;
+      targetState = 'icon';
     }
 
-    if (target !== state) {
-      applyState(target);
+    // Dead zone: skip tiny changes that don't cross a state boundary
+    const widthChanged = Math.abs(targetWidth - lastAppliedWidth) >= SEARCH_RESIZE_DEAD_ZONE;
+    const stateChanged = targetState !== lastAppliedState;
+    if (widthChanged || stateChanged) {
+      applyContinuous(targetWidth, targetState);
     }
-    if (breadcrumb.classList.contains('fp-breadcrumb--scroll')) {
-      // Keep current (rightmost) segment in view
+
+    // Cave fade visibility — driven by ACTUAL breadcrumb overflow, not by state
+    const bcOverflow = breadcrumb.scrollWidth - breadcrumb.clientWidth;
+    breadcrumb.classList.toggle('fp-breadcrumb--scroll', bcOverflow > 1);
+    if (bcOverflow > 1) {
       breadcrumb.scrollLeft = breadcrumb.scrollWidth;
     }
   }
 
   function recalc() {
-    if (rafId !== null) return; // already scheduled
+    if (rafId !== null) return;
     rafId = requestAnimationFrame(() => { rafId = null; actualRecalc(); });
   }
 
   const ro = new ResizeObserver(recalc);
   ro.observe(toolbar);
 
-  // Only re-run on real DOM/text changes (NOT class attribute changes — would loop)
   const mo = new MutationObserver(recalc);
   mo.observe(breadcrumb, { childList: true, characterData: true, subtree: true });
 
   // Click on collapsed icon → open command palette (do NOT expand inline).
-  // Capture phase so it beats the focus-search → openPalette via input focus.
   searchWrap.addEventListener('click', e => {
     if (searchWrap.classList.contains('fp-toolbar__search--icon')) {
       e.preventDefault();
