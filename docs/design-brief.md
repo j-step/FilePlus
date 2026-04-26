@@ -1,6 +1,8 @@
 # FilePlus — Final UI Design Brief & Claude Code Implementation Plan
 
-This document is the source of truth for the FilePlus v1 UI. It supersedes earlier specs.
+> **No longer canonical (as of 2026-04-25).** This document has been superseded by [`docs/UI-SPEC.md`](UI-SPEC.md). It is retained in place as the historical seed of UI-SPEC.md and as a record of pre-consolidation language. For all current design decisions, see UI-SPEC.md.
+
+This document was the source of truth for the FilePlus v1 UI before the 2026-04-25 consolidation pass. It superseded earlier specs (such as `docs/finalization-spec.md`).
 
 This revision aligns all visual styling (colors, typography, shapes, motion, chrome) to the FilePlus Design Tokens v2 spec. Features, screens, and interactions are unchanged. Style references throughout have been updated to match the final design system.
 
