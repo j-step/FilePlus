@@ -4082,8 +4082,8 @@ svg { flex-shrink: 0; }
 /* ── Drive letter (collapsed mode) ─────────────────────────────────────── */
 .fp-sidebar__drive-letter {
   display: none;
-  font: 600 var(--t-small) var(--font-mono);
-  letter-spacing: 0;
+  font: 700 15px/20px var(--font-mono);
+  letter-spacing: -0.02em;
   color: currentColor;
   flex-shrink: 0;
 }
@@ -4141,24 +4141,45 @@ svg { flex-shrink: 0; }
   width: 100%;
 }
 
-/* Tags: poker-chip dots in collapsed mode */
+/* Tags: in collapsed mode, hide all chips + View all and show single Tags icon */
 .fp-sidebar--collapsed #sb-tags {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 5px;
   padding: 4px 0;
   width: 100%;
+  gap: 0;
 }
-.fp-sidebar--collapsed .fp-chip {
-  width: 12px;
-  height: 12px;
-  min-width: 0;
+.fp-sidebar--collapsed #sb-tags > .fp-chip,
+.fp-sidebar--collapsed #sb-tags > .fp-btn {
+  display: none;
+}
+/* Tags-collapsed entry: tag icon + small chevron-down underneath */
+.fp-sidebar__tags-collapsed { display: none; }
+.fp-sidebar--collapsed .fp-sidebar__tags-collapsed {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  width: 36px;
+  height: 36px;
   padding: 0;
-  border-radius: 999px;
-  font-size: 0;
-  color: transparent;
-  /* Background/border color from existing chip styles shows as dot */
+  background: transparent;
+  border: none;
+  border-radius: var(--r-icon-btn);
+  color: var(--text-secondary);
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+  transition: background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+}
+.fp-sidebar--collapsed .fp-sidebar__tags-collapsed:hover {
+  background: var(--bg-raised);
+  color: var(--text-primary);
+}
+.fp-sidebar--collapsed .fp-sidebar__tags-collapsed:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--accent-glow);
 }
 
 /* ── Statusbar subcomponents ─────────────────────────────────────────────── */
