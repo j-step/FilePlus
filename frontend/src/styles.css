@@ -1291,41 +1291,161 @@ svg { flex-shrink: 0; }
   cursor: not-allowed;
 }
 
+/* === fp-checkbox === */
+/* Modifier-class variant: <span class="fp-checkbox [fp-checkbox--checked]"> (existing HTML) */
 .fp-checkbox {
-  width: 16px; height: 16px;
-  border: 1px solid var(--border-strong);
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
   background: var(--bg-content);
-  border-radius: var(--r-chip);
+  border: 1px solid var(--border-mid);
+  border-radius: 3px;
   box-shadow: var(--inset-recess);
-  display: inline-flex; align-items: center; justify-content: center;
   color: var(--text-on-accent);
-  transition: background var(--dur-flash) var(--ease-snap),
-              border-color var(--dur-flash) var(--ease-snap);
-  cursor: default;
+  transition: background-color var(--dur-fast) var(--ease-out),
+              border-color var(--dur-fast) var(--ease-out);
+  cursor: pointer;
   flex-shrink: 0;
 }
-.fp-checkbox--checked, .fp-checkbox--indeterminate {
+.fp-checkbox--checked,
+.fp-checkbox--indeterminate {
   background: var(--accent);
   border-color: var(--accent);
   box-shadow: none;
 }
-.fp-checkbox svg { width: 12px; height: 12px; stroke: var(--text-on-accent); stroke-width: 2.5; fill: none; }
+.fp-checkbox svg {
+  width: 12px;
+  height: 12px;
+  stroke: var(--text-on-accent);
+  stroke-width: 2.5;
+  fill: none;
+  transform: scale(0);
+  transition: transform var(--dur-fast) var(--ease-snap);
+}
+.fp-checkbox--checked svg,
+.fp-checkbox--indeterminate svg {
+  transform: scale(1);
+}
+.fp-checkbox:focus-visible {
+  box-shadow: var(--inset-recess), 0 0 0 3px var(--accent-glow);
+}
 
-.fp-radio {
-  width: 16px; height: 16px;
-  border: 1px solid var(--border-strong);
+/* Canonical sibling-combinator variant:
+   <label class="fp-checkbox"><input type="checkbox"><span class="fp-checkbox__mark"></span></label> */
+.fp-checkbox input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+.fp-checkbox__mark {
+  position: absolute;
+  inset: 0;
   background: var(--bg-content);
+  border: 1px solid var(--border-mid);
+  border-radius: 3px;
+  box-shadow: var(--inset-recess);
+  transition: background-color var(--dur-fast) var(--ease-out),
+              border-color var(--dur-fast) var(--ease-out);
+}
+.fp-checkbox__mark::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 5px;
+  width: 4px;
+  height: 8px;
+  border: solid var(--text-on-accent);
+  border-width: 0 2px 2px 0;
+  transform: scale(0) rotate(45deg);
+  transition: transform var(--dur-fast) var(--ease-snap);
+}
+.fp-checkbox input:checked ~ .fp-checkbox__mark {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.fp-checkbox input:checked ~ .fp-checkbox__mark::after {
+  transform: scale(1) rotate(45deg);
+}
+.fp-checkbox input:focus-visible ~ .fp-checkbox__mark {
+  box-shadow: var(--inset-recess), 0 0 0 3px var(--accent-glow);
+}
+
+/* === fp-radio === */
+/* Modifier-class variant: <span class="fp-radio [fp-radio--checked]"> (existing HTML) */
+.fp-radio {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  background: var(--bg-content);
+  border: 1px solid var(--border-mid);
   border-radius: var(--r-pill);
   box-shadow: var(--inset-recess);
-  display: inline-flex; align-items: center; justify-content: center;
+  transition: border-color var(--dur-fast) var(--ease-out);
+  cursor: pointer;
   flex-shrink: 0;
-  cursor: default;
 }
-.fp-radio--checked::after {
+.fp-radio::after {
   content: '';
-  width: 6px; height: 6px;
+  width: 6px;
+  height: 6px;
   background: var(--accent);
   border-radius: var(--r-pill);
+  transform: scale(0);
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+.fp-radio--checked {
+  border-color: var(--accent-edge);
+}
+.fp-radio--checked::after {
+  transform: scale(1);
+}
+.fp-radio:focus-visible {
+  box-shadow: var(--inset-recess), 0 0 0 3px var(--accent-glow);
+}
+
+/* Canonical sibling-combinator variant:
+   <label class="fp-radio"><input type="radio"><span class="fp-radio__mark"></span></label> */
+.fp-radio input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+.fp-radio__mark {
+  position: absolute;
+  inset: 0;
+  background: var(--bg-content);
+  border: 1px solid var(--border-mid);
+  border-radius: var(--r-pill);
+  box-shadow: var(--inset-recess);
+  transition: border-color var(--dur-fast) var(--ease-out);
+}
+.fp-radio__mark::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 6px;
+  height: 6px;
+  margin: -3px 0 0 -3px;
+  background: var(--accent);
+  border-radius: var(--r-pill);
+  transform: scale(0);
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+.fp-radio input:checked ~ .fp-radio__mark {
+  border-color: var(--accent-edge);
+}
+.fp-radio input:checked ~ .fp-radio__mark::after {
+  transform: scale(1);
+}
+.fp-radio input:focus-visible ~ .fp-radio__mark {
+  box-shadow: var(--inset-recess), 0 0 0 3px var(--accent-glow);
 }
 
 .fp-slider {
