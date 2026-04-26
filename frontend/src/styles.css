@@ -1197,6 +1197,26 @@ svg { flex-shrink: 0; }
 }
 
 /* -----------------------------------------------------------------------------
+   16b. DRAG HANDLE (inspector resize — A.3.2)
+   ----------------------------------------------------------------------------- */
+.fp-drag-handle {
+  width: 4px;
+  cursor: ew-resize;
+  background: transparent;
+  flex-shrink: 0;
+  transition: background-color var(--dur-fast) var(--ease-out);
+}
+.fp-drag-handle:hover,
+.fp-drag-handle--active {
+  background: var(--accent);
+}
+.fp-drag-handle--horizontal {
+  width: 100%;
+  height: 4px;
+  cursor: ns-resize;
+}
+
+/* -----------------------------------------------------------------------------
    17. INPUTS (Section 21)
    ----------------------------------------------------------------------------- */
 .fp-select, .fp-textarea {
