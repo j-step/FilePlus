@@ -339,14 +339,47 @@ function applyDensity(density) {
   });
 }
 
-function applyAccent(accent) {
-  if (!accent) return;
-  document.documentElement.style.setProperty('--accent', accent);
-  localStorage.setItem('fp-accent', accent);
-  document.querySelectorAll('[data-action="settings-set-accent"]').forEach(s => {
-    const v = s.dataset.accent || s.dataset.val;
-    s.classList.toggle('active', v === accent);
-  });
+const HEX_RE = /^#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$/;
+const DEFAULT_ACCENT = '#E8965E';
+
+function isValidHex(s) {
+  return typeof s === 'string' && HEX_RE.test(s.trim());
+}
+
+function applyAccentHex(rawHex) {
+  const hex = (rawHex || '').trim();
+  const errorEl = document.getElementById('settings-accent-error');
+  if (!isValidHex(hex)) {
+    if (errorEl) {
+      errorEl.textContent = 'Enter a valid hex color (e.g. #E8965E or #abc).';
+      errorEl.hidden = false;
+    }
+    return false;
+  }
+  if (errorEl) { errorEl.hidden = true; errorEl.textContent = ''; }
+  // Write to --accent-custom so the canonical cascade picks it up
+  document.documentElement.style.setProperty('--accent-custom', hex);
+  // Update swatch
+  const swatch = document.getElementById('settings-accent-swatch');
+  if (swatch) swatch.style.background = hex;
+  localStorage.setItem('fp-accent', hex);
+  return true;
+}
+
+function resetAccentToDefault() {
+  document.documentElement.style.removeProperty('--accent-custom');
+  const swatch = document.getElementById('settings-accent-swatch');
+  if (swatch) swatch.style.background = `var(--accent)`;
+  const input = document.getElementById('settings-accent-hex');
+  if (input) input.value = '';
+  const errorEl = document.getElementById('settings-accent-error');
+  if (errorEl) { errorEl.hidden = true; errorEl.textContent = ''; }
+  localStorage.removeItem('fp-accent');
+}
+
+// Legacy compatibility — accept hex through old name too
+function applyAccent(value) {
+  if (isValidHex(value)) applyAccentHex(value);
 }
 
 function restoreSettings() {
@@ -354,8 +387,21 @@ function restoreSettings() {
   if (theme) applyTheme(theme);
   const density = localStorage.getItem('fp-density');
   if (density) applyDensity(density);
-  const accent = localStorage.getItem('fp-accent');
-  if (accent) applyAccent(accent);
+  const savedAccent = localStorage.getItem('fp-accent');
+  if (savedAccent) {
+    if (isValidHex(savedAccent)) {
+      // Valid hex — apply via --accent-custom hook
+      document.documentElement.style.setProperty('--accent-custom', savedAccent);
+      const input = document.getElementById('settings-accent-hex');
+      if (input) input.value = savedAccent;
+      const swatch = document.getElementById('settings-accent-swatch');
+      if (swatch) swatch.style.background = savedAccent;
+    } else {
+      // Invalid (e.g., 'lavender' from pre-A4 sessions) — purge so default amber wins
+      console.warn(`[fp-accent] Discarding invalid persisted value: ${savedAccent}`);
+      localStorage.removeItem('fp-accent');
+    }
+  }
   const fontScale = localStorage.getItem('fp-font-scale');
   if (fontScale) document.documentElement.style.fontSize = fontScale + 'px';
 }
@@ -867,6 +913,7 @@ const IN_SCOPE_ACTIONS = new Set([
   'ef-filter', 'ef-sort', 'ef-toggle-pause-ai', 'ef-toggle-moving-card',
   'scan-config-switch-mode', 'scan-baseline-confirm',
   'settings-nav', 'settings-set-theme', 'settings-set-density', 'settings-set-accent',
+  'settings-set-accent-hex', 'settings-reset-accent',
   'settings-set-font-scale', 'settings-reset-shortcuts',
 ]);
 
@@ -1004,7 +1051,14 @@ document.addEventListener('click', e => {
       applyDensity(btn.dataset.density || btn.dataset.val);
       break;
     case 'settings-set-accent':
+      // Legacy: only applies if dataset.accent or dataset.val is a valid hex
       applyAccent(btn.dataset.accent || btn.dataset.val);
+      break;
+    case 'settings-set-accent-hex':
+      applyAccentHex(btn.value);
+      break;
+    case 'settings-reset-accent':
+      resetAccentToDefault();
       break;
     case 'settings-set-font-scale': {
       const scale = btn.dataset.scale;
@@ -1045,6 +1099,14 @@ document.addEventListener('click', e => {
         console.log(`[FilePlus] data-action stub: ${action}`, btn.dataset);
         showToast(`Action "${action}" — not yet implemented`, 'action');
       }
+  }
+});
+
+// Hex accent input — listen on input event, not click
+document.addEventListener('input', e => {
+  const t = e.target;
+  if (t && t.dataset && t.dataset.action === 'settings-set-accent-hex') {
+    applyAccentHex(t.value);
   }
 });
 

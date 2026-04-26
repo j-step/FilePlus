@@ -2147,14 +2147,17 @@
                   </div>
                   <div class="settings-sep"></div>
                   <div class="settings-row">
-                    <div class="settings-row__label">Accent palette</div>
-                    <div class="fp-segmented" data-action="settings-accent">
-                      <button class="fp-segmented__opt" data-action="settings-set-accent" data-val="lavender">Lavender</button>
-                      <button class="fp-segmented__opt" data-action="settings-set-accent" data-val="indigo">Indigo</button>
-                      <button class="fp-segmented__opt active" data-action="settings-set-accent" data-val="violet">Violet</button>
-                      <button class="fp-segmented__opt" data-action="settings-set-accent" data-val="sky">Sky</button>
-                      <button class="fp-segmented__opt" data-action="settings-set-accent" data-val="mix">Mix</button>
+                    <div class="settings-row__label">Accent color</div>
+                    <div class="settings-accent-control" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+                      <span class="settings-accent-swatch" id="settings-accent-swatch" aria-hidden="true"
+                            style="width:24px;height:24px;border-radius:var(--r-button);background:var(--accent);border:1px solid var(--border-subtle);box-shadow:var(--highlight-top), var(--shadow-raised);flex-shrink:0"></span>
+                      <input type="text" class="fp-input" id="settings-accent-hex"
+                             placeholder="#E8965E" maxlength="7" autocomplete="off" spellcheck="false"
+                             data-action="settings-set-accent-hex"
+                             style="width:120px;text-align:center;font:500 13px/20px var(--font-mono);letter-spacing:0;text-transform:uppercase"/>
+                      <button class="fp-btn fp-btn--ghost" data-action="settings-reset-accent" type="button">Reset to default</button>
                     </div>
+                    <div class="fp-field-error" id="settings-accent-error" role="alert" aria-live="polite" hidden style="margin-top:6px"></div>
                   </div>
                   <div class="settings-sep"></div>
                   <div class="settings-row">
