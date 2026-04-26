@@ -296,6 +296,23 @@ svg { flex-shrink: 0; }
 }
 /* Controls extend to right edge — compensate for titlebar's 12px right padding */
 .fp-titlebar__controls { display: flex; -webkit-app-region: no-drag; margin-right: calc(-1 * var(--s-12)); }
+
+/* Defensive: ALL interactive elements inside titlebar/tabbar/sidebar must not be drag region */
+.fp-titlebar button,
+.fp-titlebar a,
+.fp-titlebar input,
+.fp-titlebar [role="button"],
+.fp-titlebar [data-action],
+.fp-tabbar button,
+.fp-tabbar a,
+.fp-tabbar [data-action],
+.fp-sidebar button,
+.fp-sidebar a,
+.fp-sidebar input,
+.fp-sidebar [role="button"],
+.fp-sidebar [data-action] {
+  -webkit-app-region: no-drag;
+}
 .fp-titlebar__btn {
   width: 40px; height: 32px;
   display: inline-flex; align-items: center; justify-content: center;
@@ -517,23 +534,34 @@ svg { flex-shrink: 0; }
   width: 140px;
 }
 .fp-toolbar__search--icon {
-  width: 30px;
+  width: 28px !important;
+  height: 28px;
+  min-width: 28px;
   padding: 0;
   cursor: pointer;
   overflow: visible;
+  display: inline-flex;
   justify-content: center;
   align-items: center;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-icon-btn);
+  background: transparent;
 }
 .fp-toolbar__search--icon .fp-search__input,
 .fp-toolbar__search--icon .fp-search__kbd,
 .fp-toolbar__search--icon .fp-search__icon {
-  display: none;
+  display: none !important;
+}
+.fp-toolbar__search--icon:hover {
+  background: var(--bg-raised);
 }
 /* Collapsed-mode inline SVG icon — always hidden in expanded mode */
 .fp-toolbar__search-collapse-icon {
   display: none;
   color: var(--text-secondary);
   flex-shrink: 0;
+  width: 14px;
+  height: 14px;
 }
 .fp-toolbar__search--icon .fp-toolbar__search-collapse-icon {
   display: block;
@@ -613,6 +641,7 @@ svg { flex-shrink: 0; }
   overflow: hidden;
   flex-wrap: nowrap;
   white-space: nowrap;
+  position: relative; /* required for ::before cave-fade anchor */
 }
 .fp-breadcrumb--scroll {
   overflow-x: auto;
@@ -4078,6 +4107,40 @@ svg { flex-shrink: 0; }
 .fp-sidebar--collapsed .fp-sidebar__expand-btn { display: inline-flex; }
 .fp-sidebar--collapsed #btn-sidebar-collapse { display: none; }
 
+/* Collapsed sidebar: center everything in the narrow 52px rail */
+.fp-sidebar--collapsed {
+  align-items: center;
+  padding: var(--s-4) 0; /* remove horizontal padding so items can centre themselves */
+}
+.fp-sidebar--collapsed .fp-sidebar__scroll {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  padding-left: 0;
+  padding-right: 0;
+}
+.fp-sidebar--collapsed .fp-sidebar__bottom {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  padding-left: 0;
+  padding-right: 0;
+}
+.fp-sidebar--collapsed .fp-sidebar__drive-item {
+  display: flex;
+  justify-content: center;
+  padding: 0;
+  width: 100%;
+}
+.fp-sidebar--collapsed .fp-sidebar__section {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+}
+
 /* Tags: poker-chip dots in collapsed mode */
 .fp-sidebar--collapsed #sb-tags {
   display: flex;
@@ -4085,6 +4148,7 @@ svg { flex-shrink: 0; }
   align-items: center;
   gap: 5px;
   padding: 4px 0;
+  width: 100%;
 }
 .fp-sidebar--collapsed .fp-chip {
   width: 12px;
@@ -4745,35 +4809,39 @@ button.fp-pill:hover {
 
 /* === Accent glow (lightsaber) — toggled via Settings → Personalization === */
 
-/* Sidebar active pill: brighter core gradient, box-shadow for rectangular halo */
+/* Sidebar active pill: bright core gradient + soft rectangular halo */
 [data-accent-glow="on"] .fp-sidebar__item--active::before {
   background: linear-gradient(
     to right,
-    color-mix(in oklab, var(--accent) 70%, white 30%),
-    var(--accent)
+    color-mix(in oklab, var(--accent) 40%, white 60%) 0%,
+    var(--accent) 100%
   );
-  box-shadow: 0 0 4px var(--accent), 0 0 10px var(--accent-glow);
+  box-shadow: 0 0 4px var(--accent), 0 0 10px var(--accent-glow), 0 0 20px var(--accent-glow);
   overflow: visible;
 }
 
 [data-accent-glow="on"] .fp-tab--active::after,
 [data-accent-glow="on"] .fp-tabs__indicator {
-  box-shadow: 0 0 6px var(--accent), 0 0 12px var(--accent-glow);
+  box-shadow: 0 0 6px var(--accent), 0 0 12px var(--accent-glow), 0 0 20px var(--accent-glow);
 }
 
 /* Dots/badges: brighter radial core + drop-shadow (respects shape bounds) */
 [data-accent-glow="on"] .fp-state-dot--accent {
   background: radial-gradient(
-    circle,
-    color-mix(in oklab, var(--accent) 60%, white 40%) 0%,
-    var(--accent) 100%
+    circle at 30% 30%,
+    color-mix(in oklab, var(--accent) 30%, white 70%) 0%,
+    var(--accent) 70%
   );
   filter: drop-shadow(0 0 3px var(--accent)) drop-shadow(0 0 6px var(--accent-glow));
   box-shadow: none;
 }
 
 [data-accent-glow="on"] .fp-badge--accent {
-  background: color-mix(in oklab, var(--accent) 85%, white 15%);
+  background: linear-gradient(
+    to bottom,
+    color-mix(in oklab, var(--accent) 50%, white 50%),
+    var(--accent)
+  );
   filter: drop-shadow(0 0 3px var(--accent)) drop-shadow(0 0 6px var(--accent-glow));
   box-shadow: none;
 }
@@ -4792,13 +4860,16 @@ button.fp-pill:hover {
 
 [data-accent-glow="on"] .fp-button--primary,
 [data-accent-glow="on"] .fp-btn--primary {
-  box-shadow: var(--highlight-top), var(--shadow-raised), 0 0 6px var(--accent-glow);
+  box-shadow: var(--highlight-top), var(--shadow-raised),
+              0 0 6px var(--accent), 0 0 14px var(--accent-glow);
 }
 
-/* Generic SVG elements with accent stroke/fill: drop-shadow for crisp shape glow */
+/* Generic SVG elements with accent stroke/fill: multi-pass drop-shadow for smooth halo */
 [data-accent-glow="on"] [stroke="var(--accent)"],
 [data-accent-glow="on"] [fill="var(--accent)"] {
-  filter: drop-shadow(0 0 3px var(--accent)) drop-shadow(0 0 5px var(--accent-glow));
+  filter: drop-shadow(0 0 2px var(--accent))
+          drop-shadow(0 0 6px var(--accent-glow))
+          drop-shadow(0 0 12px var(--accent-glow));
 }
 
 [data-accent-glow="on"] .fp-input:focus,
@@ -4808,13 +4879,55 @@ button.fp-pill:hover {
               0 0 12px var(--accent-glow);
 }
 [data-accent-glow="on"] .fp-button:focus-visible,
-[data-accent-glow="on"] .fp-btn:focus-visible {
+[data-accent-glow="on"] .fp-btn:focus-visible,
+[data-accent-glow="on"] .fp-icon-btn:focus-visible {
   box-shadow: 0 0 0 3px var(--accent-glow), 0 0 12px var(--accent-glow);
 }
+
+/* Brand mark / logo: soft multi-layered halo via drop-shadow (respects SVG shape) */
+[data-accent-glow="on"] .fp-titlebar__brand {
+  overflow: visible;
+}
+[data-accent-glow="on"] .fp-brand,
+[data-accent-glow="on"] .fp-sidebar__brand-mark {
+  box-shadow: 0 0 6px var(--accent), 0 0 14px var(--accent-glow), 0 0 28px var(--accent-glow);
+  border-radius: 3px;
+  filter: drop-shadow(0 0 3px var(--accent)) drop-shadow(0 0 8px var(--accent-glow));
+  overflow: visible;
+}
+
 /* Accent-wash backgrounds get a subtle glow halo */
 [data-accent-glow="on"] [style*="background:var(--accent-wash"],
 [data-accent-glow="on"] [style*="background: var(--accent-wash"] {
   box-shadow: 0 0 6px var(--accent-glow);
+}
+
+/* Toggle tracks, segmented controls, chips */
+[data-accent-glow="on"] .fp-toggle input:checked ~ .fp-toggle__track {
+  box-shadow: 0 0 6px var(--accent), 0 0 12px var(--accent-glow);
+}
+[data-accent-glow="on"] .fp-segmented__opt--active,
+[data-accent-glow="on"] .fp-segmented__opt.active {
+  box-shadow: 0 0 4px var(--accent-glow);
+}
+[data-accent-glow="on"] .fp-chip--active,
+[data-accent-glow="on"] .fp-chip.active {
+  box-shadow: 0 0 4px var(--accent), 0 0 8px var(--accent-glow);
+}
+
+/* Progress bars */
+[data-accent-glow="on"] .fp-progress-bar__fill {
+  box-shadow: 0 0 6px var(--accent), 0 0 12px var(--accent-glow);
+}
+
+/* Drive bar fill in sidebar */
+[data-accent-glow="on"] .fp-sidebar__drive-bar__fill {
+  box-shadow: 0 0 4px var(--accent), 0 0 8px var(--accent-glow);
+}
+
+/* Active sidebar drive letter */
+[data-accent-glow="on"] .fp-sidebar__item--active .fp-sidebar__drive-letter {
+  text-shadow: 0 0 6px var(--accent), 0 0 12px var(--accent-glow);
 }
 
 /* === prefers-reduced-motion: strict policy per UI-SPEC §A.0 === */
