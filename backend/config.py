@@ -10,7 +10,7 @@ class OutOfSandboxError(Exception):
     """Raised when SAFETY_MODE is True and a path escapes the sandbox."""
 
 
-FILEPLUS_SANDBOX_PATH = Path(os.getenv("FILEPLUS_SANDBOX_PATH", r"C:\FilePlusTestSandbox"))
+FILEPLUS_SANDBOX_PATH = Path(os.getenv("FILEPLUS_SANDBOX_PATH", r"c:\Dev\FilePlus\FilePlusTestSandbox"))
 FILEPLUS_DB_PATH = Path(os.getenv("FILEPLUS_DB_PATH", r"C:\Dev\FilePlus\fileplus.db"))
 FILEPLUS_EVERYTHING_PATH = Path(os.getenv("FILEPLUS_EVERYTHING_PATH", r"C:\Everything"))
 
