@@ -9,11 +9,13 @@ from pathlib import Path
 from typing import Optional
 
 import aiosqlite
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+import os
 import backend.config as _config
+from backend.config import OutOfSandboxError, path_guard
 from backend.database import init_db
 from backend.indexer import scan_directory, remove_stale_entries
 
@@ -79,9 +81,71 @@ async def get_file(file_id: int):
         cur = await conn.execute("SELECT * FROM files WHERE id = ?", (file_id,))
         row = await cur.fetchone()
     if row is None:
-        from fastapi import HTTPException
         raise HTTPException(status_code=404, detail="File not found")
     return dict(row)
+
+
+# ---------------------------------------------------------------------------
+# Filesystem listing (read-only) — /fs/list
+# ---------------------------------------------------------------------------
+
+def _scandir_entries(directory: Path) -> list[dict]:
+    """Return a list of entry dicts for the given directory.
+
+    Each entry includes name, is_dir, size, modified (epoch float),
+    ext (lowercased, with leading dot, empty for directories),
+    and is_hidden (Windows hidden attribute or leading dot).
+    """
+    entries: list[dict] = []
+    for de in os.scandir(directory):
+        try:
+            stat = de.stat(follow_symlinks=False)
+        except (PermissionError, FileNotFoundError):
+            continue
+        is_dir = de.is_dir(follow_symlinks=False)
+        ext = "" if is_dir else os.path.splitext(de.name)[1].lower()
+        is_hidden = de.name.startswith(".")
+        if os.name == "nt":
+            try:
+                attrs = stat.st_file_attributes  # type: ignore[attr-defined]
+                is_hidden = is_hidden or bool(attrs & 0x2)  # FILE_ATTRIBUTE_HIDDEN
+            except (AttributeError, OSError):
+                pass
+        entries.append({
+            "name": de.name,
+            "is_dir": is_dir,
+            "size": stat.st_size,
+            "modified": stat.st_mtime,
+            "ext": ext,
+            "is_hidden": is_hidden,
+        })
+    entries.sort(key=lambda e: (not e["is_dir"], e["name"].lower()))
+    return entries
+
+
+@app.get("/fs/list")
+async def fs_list(path: str = Query(..., description="Absolute path of directory to list")):
+    """Return a directory listing for the given absolute path.
+
+    Returns 404 if the path doesn't exist or isn't a directory.
+    Returns 403 if path_guard rejects the path (outside sandbox).
+    """
+    try:
+        resolved = path_guard(Path(path))
+    except OutOfSandboxError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    if not resolved.exists() or not resolved.is_dir():
+        raise HTTPException(status_code=404, detail=f"Not a directory: {path}")
+    return {"path": str(resolved), "entries": _scandir_entries(resolved)}
+
+
+@app.get("/fs/list/root")
+async def fs_list_root():
+    """Return the sandbox root listing without requiring a path argument."""
+    root = _config.FILEPLUS_SANDBOX_PATH.resolve()
+    if not root.exists() or not root.is_dir():
+        raise HTTPException(status_code=404, detail=f"Sandbox root missing: {root}")
+    return {"path": str(root), "entries": _scandir_entries(root)}
 
 
 # ---------------------------------------------------------------------------
