@@ -14,11 +14,11 @@
    ----------------------------------------------------------------------------- */
 :root {
   /* ---------- Surfaces (narrow tonal ramp) ---------- */
-  --bg-backdrop: #181522;  /* window edge, status bar, behind everything */
-  --bg-chrome:   #1F1B27;  /* sidebar, persistent structural shell */
-  --bg-content:  #25202D;  /* main work area */
-  --bg-raised:   #312A38;  /* cards, popovers, hover, button defaults */
-  --bg-pressed:  #3B3344;  /* active hover, pressed, active sidebar item */
+  --bg-backdrop: #131319;  /* window edge, status bar, behind everything */
+  --bg-chrome:   #191924;  /* sidebar, persistent structural shell */
+  --bg-content:  #1F1F2A;  /* main work area */
+  --bg-raised:   #2A2A36;  /* cards, popovers, hover, button defaults */
+  --bg-pressed:  #353542;  /* active hover, pressed, active sidebar item */
 
   /* ---------- Accent (single warm amber) ---------- */
   /* Accent: default amber, runtime-overridable via --accent-custom (Settings → Personalization) */
@@ -294,9 +294,10 @@ svg { flex-shrink: 0; }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.fp-titlebar__controls { display: flex; -webkit-app-region: no-drag; }
+/* Controls extend to right edge — compensate for titlebar's 12px right padding */
+.fp-titlebar__controls { display: flex; -webkit-app-region: no-drag; margin-right: calc(-1 * var(--s-12)); }
 .fp-titlebar__btn {
-  width: 32px; height: 32px;
+  width: 40px; height: 32px;
   display: inline-flex; align-items: center; justify-content: center;
   background: transparent;
   border: none;
@@ -310,6 +311,13 @@ svg { flex-shrink: 0; }
 .fp-titlebar__btn:hover { background: var(--bg-raised); color: var(--text-primary); }
 .fp-titlebar__btn:active { transform: translateY(1px); transition-duration: var(--dur-press-down); }
 .fp-titlebar__btn--close:hover { background: rgba(192, 57, 43, 0.80); color: #fff; }
+/* Close button flush with right corner — no border-radius on right side */
+.fp-titlebar__btn[data-action="window-close"],
+.fp-titlebar__btn:last-child {
+  margin-right: 0;
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
 
 /* -----------------------------------------------------------------------------
    6. SIDEBAR (Section 10)
@@ -3821,10 +3829,14 @@ svg { flex-shrink: 0; }
   position: relative;
   height: 28px;
   padding: 0 var(--s-8) 0 var(--s-10);
-  border-radius: var(--r-button) var(--r-button) 0 0;
+  border-top-left-radius: 6px;
+  border-top-right-radius: 6px;
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
   background: var(--bg-chrome);
-  border: 1px solid transparent;
+  border: 1px solid var(--border-hairline);
   border-bottom: none;
+  margin-right: 2px;
   display: inline-flex;
   align-items: center;
   gap: var(--s-6);

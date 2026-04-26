@@ -8,11 +8,27 @@ const paletteScrim       = document.getElementById('palette-scrim');
 const paletteInput       = document.getElementById('palette-input');
 const searchInput        = document.getElementById('search-input');
 
-// ── Screen switching ────────────────────���─────────────────────────────────��─
+// ── Screen switching ────────────────────────────────────────────────────────
+// Screens whose backend wiring is not yet complete — fire a stub toast on entry.
+const STUB_SCREENS = {
+  'review-bin':     'Review Bin: showing placeholder data — backend not wired yet.',
+  'ftree':          'File Tree canvas: showing placeholder — snapshots backend not wired yet.',
+  'scan-config':    'Scan: showing placeholder — scan pipeline not wired yet.',
+  'scan-progress':  'Scan progress: showing placeholder.',
+  'scan-results':   'Scan results: showing placeholder.',
+  'everything':     'Everything Folder: showing placeholder — watcher not wired yet.',
+  'settings':       'Settings: most settings persist locally only — backend wiring TODO.',
+};
+
 function switchScreen(id) {
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
   const target = document.getElementById(`screen-${id}`);
   if (target) target.classList.add('active');
+
+  // Stub-toast for screens whose backend wiring isn't complete
+  if (STUB_SCREENS[id] && typeof showToast === 'function') {
+    showToast(STUB_SCREENS[id], 'accent');
+  }
 
   // Update tab bar active state
   document.querySelectorAll('.fp-tab[data-tab-screen]').forEach(tab => {
@@ -109,10 +125,18 @@ function setViewMode(mode) {
     btn.classList.toggle('active', btn.dataset.view === mode);
   });
   const listScroll = document.getElementById('list-scroll');
-  if (listScroll) listScroll.dataset.view = mode;
-  // Show/hide column header in grid mode (A.3.1)
-  const listHead = document.getElementById('list-head');
-  if (listHead) listHead.classList.toggle('list-head--grid-hidden', mode === 'grid');
+  const listHead   = document.getElementById('list-head');
+  if (listScroll) {
+    // Suppress layout flicker by hiding briefly during the layout swap
+    listScroll.style.opacity = '0';
+    listScroll.dataset.view = mode;
+    // Show/hide column header in grid mode (A.3.1)
+    if (listHead) listHead.classList.toggle('list-head--grid-hidden', mode === 'grid');
+    // Restore opacity on next paint — batches DOM updates before repaint
+    requestAnimationFrame(() => {
+      listScroll.style.opacity = '';
+    });
+  }
   sessionStorage.setItem('fp-view-mode', mode);
 }
 
@@ -457,6 +481,28 @@ function restoreSettings() {
   }
   const fontScale = localStorage.getItem('fp-font-scale');
   if (fontScale) document.documentElement.style.fontSize = fontScale + 'px';
+}
+
+// ── Zoom (font-scale based) ───────────────────────────────────────────────────
+const ZOOM_STEPS  = [10, 11, 12, 13, 14, 15, 16, 18, 20];
+const ZOOM_DEFAULT = 13;
+function getCurrentZoom() {
+  const raw = parseFloat(document.documentElement.style.fontSize) ||
+              parseFloat(getComputedStyle(document.documentElement).fontSize) ||
+              ZOOM_DEFAULT;
+  return raw;
+}
+function zoomIn() {
+  const cur = getCurrentZoom();
+  const next = ZOOM_STEPS.find(s => s > cur) || ZOOM_STEPS[ZOOM_STEPS.length - 1];
+  document.documentElement.style.fontSize = next + 'px';
+  localStorage.setItem('fp-font-scale', next);
+}
+function zoomOut() {
+  const cur = getCurrentZoom();
+  const prev = [...ZOOM_STEPS].reverse().find(s => s < cur) || ZOOM_STEPS[0];
+  document.documentElement.style.fontSize = prev + 'px';
+  localStorage.setItem('fp-font-scale', prev);
 }
 
 // ── Context menu ──────────────────────────────────────────────────────────────
@@ -1281,6 +1327,12 @@ document.addEventListener('keydown', e => {
   if ((e.metaKey || e.ctrlKey) && e.key === 'b') { e.preventDefault(); toggleSidebar(); }
   // ⌘I / Ctrl+I — inspector
   if ((e.metaKey || e.ctrlKey) && e.key === 'i') { e.preventDefault(); toggleInspector(); }
+  // Ctrl+= or Ctrl++ — zoom in (with or without Shift; standard browser convention)
+  if ((e.metaKey || e.ctrlKey) && (e.key === '=' || e.key === '+')) { e.preventDefault(); zoomIn(); }
+  // Ctrl+- or Ctrl+_ — zoom out
+  if ((e.metaKey || e.ctrlKey) && (e.key === '-' || e.key === '_')) { e.preventDefault(); zoomOut(); }
+  // Ctrl+0 — reset zoom
+  if ((e.metaKey || e.ctrlKey) && e.key === '0') { e.preventDefault(); document.documentElement.style.fontSize = ZOOM_DEFAULT + 'px'; localStorage.setItem('fp-font-scale', ZOOM_DEFAULT); }
   // Ctrl+Shift+R — Review Bin
   if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'R') { e.preventDefault(); switchScreen('review-bin'); }
   // Ctrl+T — new tab
