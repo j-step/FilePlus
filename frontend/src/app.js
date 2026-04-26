@@ -107,11 +107,143 @@ function updateSidebarActive() {
   }
 }
 
-// ── Sidebar collapse ──────────────────────────────���──────────────────────────
+// ── Sidebar collapse + drag-resize ────────────────────────────────────────────
+const SIDEBAR_COLLAPSED_THRESHOLD = 110; // px below this → snap to collapsed
+const SIDEBAR_EXPANDED_DEFAULT    = 240;
+const SIDEBAR_COLLAPSED_WIDTH     = 52;
+
+function setSidebarCollapsed(collapsed) {
+  if (!shell || !sidebar) return;
+  if (collapsed) {
+    shell.classList.add('sidebar-collapsed');
+    sidebar.classList.add('fp-sidebar--collapsed');
+    document.documentElement.style.setProperty('--sidebar-width', SIDEBAR_COLLAPSED_WIDTH + 'px');
+  } else {
+    shell.classList.remove('sidebar-collapsed');
+    sidebar.classList.remove('fp-sidebar--collapsed');
+    const saved = parseInt(localStorage.getItem('fp-sidebar-width'), 10);
+    const w = (saved && saved >= 180 && saved <= 480) ? saved : SIDEBAR_EXPANDED_DEFAULT;
+    document.documentElement.style.setProperty('--sidebar-width', w + 'px');
+  }
+  localStorage.setItem('fp-sidebar-collapsed', collapsed ? 'on' : 'off');
+}
+
 function toggleSidebar() {
-  const isCollapsed = shell.classList.toggle('sidebar-collapsed');
-  shell.classList.toggle('fp-sidebar--collapsed', isCollapsed);
-  sidebar.classList.toggle('fp-sidebar--collapsed', isCollapsed);
+  const isCollapsed = sidebar && sidebar.classList.contains('fp-sidebar--collapsed');
+  setSidebarCollapsed(!isCollapsed);
+}
+
+function initSidebarResize() {
+  const handle = document.getElementById('sidebar-resize-handle');
+  if (!handle || !sidebar) return;
+
+  let dragging = false;
+  let startX   = 0;
+  let startWidth = 0;
+
+  handle.addEventListener('pointerdown', e => {
+    dragging = true;
+    handle.classList.add('fp-sidebar__resize-handle--active');
+    sidebar.classList.add('fp-sidebar--dragging');
+    shell.classList.add('sidebar-dragging');
+    startX = e.clientX;
+    startWidth = sidebar.getBoundingClientRect().width;
+    handle.setPointerCapture(e.pointerId);
+    e.preventDefault();
+  });
+
+  handle.addEventListener('pointermove', e => {
+    if (!dragging) return;
+    const dx = e.clientX - startX;
+    const newWidth = Math.max(40, Math.min(480, startWidth + dx));
+    document.documentElement.style.setProperty('--sidebar-width', newWidth + 'px');
+    // Live snap visual hint
+    if (newWidth < SIDEBAR_COLLAPSED_THRESHOLD) {
+      sidebar.classList.add('fp-sidebar--collapsing-preview');
+    } else {
+      sidebar.classList.remove('fp-sidebar--collapsing-preview');
+    }
+  });
+
+  handle.addEventListener('pointerup', e => {
+    if (!dragging) return;
+    dragging = false;
+    handle.classList.remove('fp-sidebar__resize-handle--active');
+    sidebar.classList.remove('fp-sidebar--dragging', 'fp-sidebar--collapsing-preview');
+    shell.classList.remove('sidebar-dragging');
+    const finalWidth = sidebar.getBoundingClientRect().width;
+    if (finalWidth < SIDEBAR_COLLAPSED_THRESHOLD) {
+      setSidebarCollapsed(true);
+    } else {
+      localStorage.setItem('fp-sidebar-width', String(Math.round(finalWidth)));
+      setSidebarCollapsed(false); // picks up the saved width
+    }
+    handle.releasePointerCapture(e.pointerId);
+  });
+}
+
+function restoreSidebarState() {
+  const collapsed = localStorage.getItem('fp-sidebar-collapsed') === 'on';
+  const saved = parseInt(localStorage.getItem('fp-sidebar-width'), 10);
+  if (collapsed) {
+    setSidebarCollapsed(true);
+  } else if (saved && saved >= 180 && saved <= 480) {
+    document.documentElement.style.setProperty('--sidebar-width', saved + 'px');
+  } else {
+    document.documentElement.style.setProperty('--sidebar-width', SIDEBAR_EXPANDED_DEFAULT + 'px');
+  }
+}
+
+// ── Responsive toolbar search ─────────────────────────────────────────────────
+function initToolbarResponsive() {
+  const toolbar     = document.querySelector('.fp-toolbar');
+  const breadcrumb  = document.getElementById('breadcrumb');
+  const searchWrap  = document.getElementById('search-wrap');
+  if (!toolbar || !breadcrumb || !searchWrap) return;
+
+  function recalc() {
+    // Reset to natural state to measure
+    searchWrap.classList.remove('fp-toolbar__search--narrow', 'fp-toolbar__search--icon');
+    breadcrumb.classList.remove('fp-breadcrumb--scroll');
+    // Force layout flush
+    void breadcrumb.offsetWidth;
+    const breadcrumbScroll = breadcrumb.scrollWidth;
+    const breadcrumbClient = breadcrumb.clientWidth;
+    if (breadcrumbScroll > breadcrumbClient) {
+      // Step 1: shrink search to narrow
+      searchWrap.classList.add('fp-toolbar__search--narrow');
+      void breadcrumb.offsetWidth;
+      if (breadcrumb.scrollWidth > breadcrumb.clientWidth) {
+        // Step 2: collapse search to icon
+        searchWrap.classList.remove('fp-toolbar__search--narrow');
+        searchWrap.classList.add('fp-toolbar__search--icon');
+        void breadcrumb.offsetWidth;
+        if (breadcrumb.scrollWidth > breadcrumb.clientWidth) {
+          // Step 3: scroll breadcrumb (left side falls off)
+          breadcrumb.classList.add('fp-breadcrumb--scroll');
+          // Scroll to the end so the rightmost (current) segment stays visible
+          breadcrumb.scrollLeft = breadcrumb.scrollWidth;
+        }
+      }
+    }
+  }
+
+  const ro = new ResizeObserver(recalc);
+  ro.observe(toolbar);
+
+  const mo = new MutationObserver(recalc);
+  mo.observe(breadcrumb, { childList: true, characterData: true, subtree: true });
+
+  // Click on collapsed icon → expand and focus
+  searchWrap.addEventListener('click', e => {
+    if (searchWrap.classList.contains('fp-toolbar__search--icon')) {
+      searchWrap.classList.remove('fp-toolbar__search--icon');
+      const input = document.getElementById('search-input');
+      if (input) setTimeout(() => input.focus(), 50);
+    }
+  });
+
+  recalc();
 }
 
 // ── View modes ────────────────────────────────────────────────────────────────
@@ -1043,6 +1175,11 @@ document.addEventListener('click', e => {
       break;
     case 'navigate-path': {
       const navPath = btn.dataset.path;
+      // Mark the clicked item as visually active immediately (don't wait for fetch)
+      document.querySelectorAll('.fp-sidebar__item').forEach(it => {
+        it.classList.remove('fp-sidebar__item--active');
+      });
+      btn.classList.add('fp-sidebar__item--active');
       // Pre-seed history stack to prevent switchScreen's auto-load from racing with our explicit load.
       if (navPath && navHistory.stack.length === 0) navHistory.stack.push(null);
       switchScreen('browser');
@@ -1392,6 +1529,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
   initWindowControls();
   initResizer();
+  initSidebarResize();
+  restoreSidebarState();
+  initToolbarResponsive();
   checkBackend();
   setInterval(checkBackend, 30_000);
 

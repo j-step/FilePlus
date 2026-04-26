@@ -323,15 +323,38 @@ svg { flex-shrink: 0; }
    6. SIDEBAR (Section 10)
    ----------------------------------------------------------------------------- */
 .fp-sidebar {
-  width: var(--w-sidebar);
+  width: var(--sidebar-width, var(--w-sidebar));
   background: var(--bg-chrome);
   border-right: 1px solid var(--border-hairline);
   padding: var(--s-4) var(--s-8);
   overflow-y: auto;
   display: flex;
   flex-direction: column;
+  position: relative;
+  transition: width var(--dur-slide) var(--ease-out);
+  /* Prevent text selection during drag */
+  min-width: 0;
 }
-.fp-sidebar--collapsed { width: var(--w-sidebar-collapsed); }
+.fp-sidebar--dragging { transition: none; }
+.fp-sidebar--collapsed {
+  --sidebar-width: var(--w-sidebar-collapsed);
+  width: var(--sidebar-width);
+}
+.fp-sidebar__resize-handle {
+  position: absolute;
+  top: 0;
+  right: -3px;
+  bottom: 0;
+  width: 6px;
+  cursor: ew-resize;
+  z-index: 10;
+  background: transparent;
+  transition: background-color var(--dur-fast) var(--ease-out);
+}
+.fp-sidebar__resize-handle:hover,
+.fp-sidebar__resize-handle--active {
+  background: var(--accent);
+}
 
 .fp-sidebar__header {
   height: 56px;
@@ -439,6 +462,8 @@ svg { flex-shrink: 0; }
 .fp-sidebar--collapsed .fp-sidebar__item {
   width: 36px; height: 36px; padding: 0;
   justify-content: center;
+  margin: 4px auto;
+  border-radius: var(--r-icon-btn);
 }
 .fp-sidebar--collapsed .fp-sidebar__item > svg,
 .fp-sidebar--collapsed .fp-sidebar__item > .icon { width: 18px; height: 18px; }
@@ -447,6 +472,11 @@ svg { flex-shrink: 0; }
 .fp-sidebar--collapsed .fp-sidebar__brand-name,
 .fp-sidebar--collapsed .fp-sidebar__brand-sub { display: none; }
 .fp-sidebar--collapsed .fp-sidebar__brand-mark { width: 18px; height: 18px; }
+.fp-sidebar--collapsed .fp-sidebar__item--active::before {
+  left: -2px;
+  top: 6px;
+  bottom: 6px;
+}
 
 /* -----------------------------------------------------------------------------
    7. TOOLBAR (Section 11)
@@ -458,6 +488,7 @@ svg { flex-shrink: 0; }
   display: flex;
   align-items: center;
   gap: var(--s-6);
+  position: relative;
 }
 .fp-toolbar__title {
   font: 600 var(--t-title) var(--font-ui);
@@ -465,6 +496,47 @@ svg { flex-shrink: 0; }
   color: var(--text-primary);
   flex: 1;
   min-width: 0;
+}
+/* Responsive search collapse */
+.fp-toolbar__search {
+  flex-shrink: 0;
+  width: 220px;
+  transition: width var(--dur-slide) var(--ease-out);
+  position: relative;
+}
+.fp-toolbar__search--narrow {
+  width: 140px;
+}
+.fp-toolbar__search--icon {
+  width: 28px;
+  padding: 0;
+  cursor: pointer;
+  overflow: hidden;
+}
+.fp-toolbar__search--icon .fp-search__input,
+.fp-toolbar__search--icon .fp-search__kbd,
+.fp-toolbar__search--icon .fp-search__icon {
+  display: none;
+}
+.fp-toolbar__search--icon::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 14px;
+  height: 14px;
+  transform: translate(-50%, -50%);
+  background: var(--text-secondary);
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='11' cy='11' r='8'/%3E%3Cpath d='m21 21-4.35-4.35'/%3E%3C/svg%3E");
+          mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='11' cy='11' r='8'/%3E%3Cpath d='m21 21-4.35-4.35'/%3E%3C/svg%3E");
+  -webkit-mask-size: contain;
+          mask-size: contain;
+  -webkit-mask-repeat: no-repeat;
+          mask-repeat: no-repeat;
+  pointer-events: none;
+}
+.fp-toolbar__search--icon:hover::after {
+  background: var(--text-primary);
 }
 
 /* -----------------------------------------------------------------------------
@@ -533,6 +605,18 @@ svg { flex-shrink: 0; }
   gap: 6px;
   font: 500 var(--t-body) var(--font-ui);
   color: var(--text-secondary);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+}
+.fp-breadcrumb--scroll {
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.fp-breadcrumb--scroll::-webkit-scrollbar {
+  display: none;
 }
 .fp-breadcrumb__crumb {
   background: transparent;
@@ -564,7 +648,7 @@ svg { flex-shrink: 0; }
    ----------------------------------------------------------------------------- */
 .fp-search {
   height: var(--h-input);
-  width: 280px;
+  width: 220px;
   padding: 0 var(--s-12);
   background: var(--bg-content);
   border: 1px solid var(--border-subtle);
@@ -574,7 +658,13 @@ svg { flex-shrink: 0; }
   align-items: center;
   gap: var(--s-8);
   transition: border-color var(--dur-flash) var(--ease-snap),
-              box-shadow var(--dur-flash) var(--ease-snap);
+              box-shadow var(--dur-flash) var(--ease-snap),
+              width var(--dur-slide) var(--ease-out);
+}
+/* When search is inside the responsive wrapper, let the wrapper control width */
+.fp-toolbar__search .fp-search {
+  width: 100%;
+  transition: none;
 }
 .fp-search:hover { border-color: var(--border-mid); }
 .fp-search:focus-within {
@@ -2515,13 +2605,17 @@ svg { flex-shrink: 0; }
 /* Shell: sidebar | main */
 .shell {
   display: grid;
-  grid-template-columns: var(--w-sidebar) 1fr;
+  grid-template-columns: var(--sidebar-width, var(--w-sidebar)) 1fr;
   min-height: 0;
   overflow: hidden;
   transition: grid-template-columns var(--dur-slide) var(--ease-snap);
 }
 .shell.sidebar-collapsed {
   grid-template-columns: var(--w-sidebar-collapsed) 1fr;
+}
+/* When dragging, suppress shell column transition */
+.shell.sidebar-dragging {
+  transition: none;
 }
 
 /* =============================================================================
