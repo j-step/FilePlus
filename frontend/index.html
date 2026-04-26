@@ -2969,9 +2969,11 @@
       -->
       <!-- Keyboard hints (t-small Inter 400 text-tertiary per A.1.5) -->
       <span class="fp-statusbar__kbd-hints" aria-hidden="true">
-        <span style="font:400 var(--t-small) var(--font-ui);color:var(--text-tertiary)">Ctrl+K Search</span>
+        <kbd class="fp-kbd-pill">Ctrl+K</kbd>
+        <span style="font:400 var(--t-small) var(--font-ui);color:var(--text-tertiary)">Search</span>
         <span class="fp-statusbar__sep">·</span>
-        <span style="font:400 var(--t-small) var(--font-ui);color:var(--text-tertiary)">Ctrl+, Settings</span>
+        <kbd class="fp-kbd-pill">Ctrl+,</kbd>
+        <span style="font:400 var(--t-small) var(--font-ui);color:var(--text-tertiary)">Settings</span>
       </span>
       <!-- Backend connection indicator -->
       <span class="fp-statusbar__backend" id="status-backend" data-state="unknown"
@@ -3396,8 +3398,5 @@
 
 <script src="src/actions.js"></script>
 <script src="src/app.js"></script>
-<!-- impeccable-live-start -->
-<script src="http://localhost:8400/live.js"></script>
-<!-- impeccable-live-end -->
 </body>
 </html>
