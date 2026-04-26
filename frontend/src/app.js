@@ -985,8 +985,19 @@ async function fetchAndRender(path) {
 function refreshNavButtons() {
   const back = document.querySelector('[data-action="nav-back"]');
   const fwd  = document.querySelector('[data-action="nav-forward"]');
+  const up   = document.querySelector('[data-action="nav-up"]');
   if (back) back.disabled = navHistory.idx <= 0;
   if (fwd)  fwd.disabled  = navHistory.idx >= navHistory.stack.length - 1;
+  if (up) {
+    const cur = navHistory.stack[navHistory.idx];
+    if (!cur) {
+      up.disabled = true;
+    } else {
+      // At sandbox root if stripping the last path segment returns the same string or empty
+      const parent = cur.replace(/[\\\/]+[^\\\/]+[\\\/]?$/, '');
+      up.disabled = !parent || parent === cur;
+    }
+  }
 }
 
 function renderDirectory(data) {

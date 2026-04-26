@@ -1007,6 +1007,23 @@ svg { flex-shrink: 0; }
   box-shadow: 0 0 0 3px var(--accent-glow);
 }
 
+.fp-icon-btn:disabled,
+.fp-icon-btn[disabled],
+.fp-button--icon:disabled,
+.fp-button--icon[disabled] {
+  opacity: 0.35;
+  cursor: not-allowed;
+  pointer-events: none;
+  color: var(--text-tertiary);
+}
+.fp-icon-btn:disabled:hover,
+.fp-icon-btn[disabled]:hover,
+.fp-button--icon:disabled:hover,
+.fp-button--icon[disabled]:hover {
+  background: transparent;
+  box-shadow: none;
+}
+
 .fp-button--large, .fp-btn--lg {
   height: 36px;
   padding: 0 16px;
