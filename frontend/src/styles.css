@@ -4713,36 +4713,63 @@ button.fp-pill:hover {
 /* ── Reduced motion: see canonical block appended below (UI-SPEC §A.0) ─────── */
 
 /* === Accent glow (lightsaber) — toggled via Settings → Personalization === */
+
+/* Sidebar active pill: brighter core gradient, box-shadow for rectangular halo */
 [data-accent-glow="on"] .fp-sidebar__item--active::before {
-  box-shadow: 0 0 4px var(--accent), 0 0 8px var(--accent-glow);
+  background: linear-gradient(
+    to right,
+    color-mix(in oklab, var(--accent) 70%, white 30%),
+    var(--accent)
+  );
+  box-shadow: 0 0 4px var(--accent), 0 0 10px var(--accent-glow);
+  overflow: visible;
 }
+
 [data-accent-glow="on"] .fp-tab--active::after,
 [data-accent-glow="on"] .fp-tabs__indicator {
   box-shadow: 0 0 6px var(--accent), 0 0 12px var(--accent-glow);
 }
+
+/* Dots/badges: brighter radial core + drop-shadow (respects shape bounds) */
 [data-accent-glow="on"] .fp-state-dot--accent {
-  box-shadow: 0 0 4px var(--accent), 0 0 8px var(--accent-glow);
+  background: radial-gradient(
+    circle,
+    color-mix(in oklab, var(--accent) 60%, white 40%) 0%,
+    var(--accent) 100%
+  );
+  filter: drop-shadow(0 0 3px var(--accent)) drop-shadow(0 0 6px var(--accent-glow));
+  box-shadow: none;
 }
+
 [data-accent-glow="on"] .fp-badge--accent {
-  box-shadow: var(--shadow-raised), 0 0 6px var(--accent-glow), 0 0 12px var(--accent-glow);
+  background: color-mix(in oklab, var(--accent) 85%, white 15%);
+  filter: drop-shadow(0 0 3px var(--accent)) drop-shadow(0 0 6px var(--accent-glow));
+  box-shadow: none;
 }
+
 [data-accent-glow="on"] .fp-row--selected {
   box-shadow: inset 0 0 0 1px var(--accent), 0 0 8px var(--accent-glow);
 }
 [data-accent-glow="on"] .fp-row--selected::before {
   box-shadow: 0 0 4px var(--accent), 0 0 8px var(--accent-glow);
 }
+
+/* SVG icons in active sidebar item: drop-shadow (no hard bounding-box cut) */
 [data-accent-glow="on"] .fp-sidebar__item--active svg {
-  filter: drop-shadow(0 0 2px var(--accent)) drop-shadow(0 0 4px var(--accent-glow));
+  filter: drop-shadow(0 0 3px var(--accent)) drop-shadow(0 0 5px var(--accent-glow));
 }
+
 [data-accent-glow="on"] .fp-button--primary,
 [data-accent-glow="on"] .fp-btn--primary {
   box-shadow: var(--highlight-top), var(--shadow-raised), 0 0 6px var(--accent-glow);
 }
+
+/* Generic SVG elements with accent stroke/fill: drop-shadow for crisp shape glow */
 [data-accent-glow="on"] [stroke="var(--accent)"],
 [data-accent-glow="on"] [fill="var(--accent)"] {
-  filter: drop-shadow(0 0 2px var(--accent)) drop-shadow(0 0 4px var(--accent-glow));
+  filter: drop-shadow(0 0 3px var(--accent)) drop-shadow(0 0 5px var(--accent-glow));
 }
+
 [data-accent-glow="on"] .fp-input:focus,
 [data-accent-glow="on"] .fp-input:focus-visible {
   box-shadow: var(--inset-recess-strong),
