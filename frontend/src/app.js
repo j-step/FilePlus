@@ -228,53 +228,85 @@ function restoreSidebarState() {
 }
 
 // ── Responsive toolbar search ─────────────────────────────────────────────────
+// Stable state machine with hysteresis. The previous "remove classes, measure,
+// re-add" approach oscillated because the CSS width transition itself fired
+// ResizeObserver mid-animation and recalc would flip the state back. Now we
+// measure CURRENT state and only change state when overflow/slack crosses a
+// threshold with a 24px buffer to prevent immediate re-shrink/re-grow.
+const SEARCH_STATES = ['default', 'narrow', 'icon'];
+const SEARCH_UPGRADE_BUFFER = 24; // px slack required before stepping up
+
 function initToolbarResponsive() {
   const toolbar     = document.querySelector('.fp-toolbar');
   const breadcrumb  = document.getElementById('breadcrumb');
   const searchWrap  = document.getElementById('search-wrap');
   if (!toolbar || !breadcrumb || !searchWrap) return;
 
-  function recalc() {
-    // Reset to natural state to measure
-    searchWrap.classList.remove('fp-toolbar__search--narrow', 'fp-toolbar__search--icon');
-    breadcrumb.classList.remove('fp-breadcrumb--scroll');
-    // Force layout flush
-    void breadcrumb.offsetWidth;
-    const breadcrumbScroll = breadcrumb.scrollWidth;
-    const breadcrumbClient = breadcrumb.clientWidth;
-    if (breadcrumbScroll > breadcrumbClient) {
-      // Step 1: shrink search to narrow
-      searchWrap.classList.add('fp-toolbar__search--narrow');
-      void breadcrumb.offsetWidth;
-      if (breadcrumb.scrollWidth > breadcrumb.clientWidth) {
-        // Step 2: collapse search to icon
-        searchWrap.classList.remove('fp-toolbar__search--narrow');
-        searchWrap.classList.add('fp-toolbar__search--icon');
-        void breadcrumb.offsetWidth;
-        if (breadcrumb.scrollWidth > breadcrumb.clientWidth) {
-          // Step 3: scroll breadcrumb (left side falls off)
-          breadcrumb.classList.add('fp-breadcrumb--scroll');
-          // Scroll to the end so the rightmost (current) segment stays visible
-          breadcrumb.scrollLeft = breadcrumb.scrollWidth;
+  let rafId = null;
+
+  function currentState() {
+    if (searchWrap.classList.contains('fp-toolbar__search--icon')) return 'icon';
+    if (searchWrap.classList.contains('fp-toolbar__search--narrow')) return 'narrow';
+    return 'default';
+  }
+  function applyState(state) {
+    searchWrap.classList.toggle('fp-toolbar__search--narrow', state === 'narrow');
+    searchWrap.classList.toggle('fp-toolbar__search--icon',   state === 'icon');
+  }
+
+  function actualRecalc() {
+    const state = currentState();
+    const idx   = SEARCH_STATES.indexOf(state);
+    const overflow = breadcrumb.scrollWidth - breadcrumb.clientWidth;
+    let target = state;
+
+    if (overflow > 1) {
+      // Need to free space — step DOWN
+      if (idx < SEARCH_STATES.length - 1) {
+        target = SEARCH_STATES[idx + 1];
+      }
+      // Already at icon — enable breadcrumb scroll
+      if (state === 'icon') breadcrumb.classList.add('fp-breadcrumb--scroll');
+    } else {
+      // We have room — could we step UP? Only if slack exceeds buffer.
+      if (idx > 0) {
+        const slack = -overflow; // positive = available room
+        if (slack > SEARCH_UPGRADE_BUFFER) {
+          target = SEARCH_STATES[idx - 1];
         }
       }
+      // No overflow → no need to scroll breadcrumb
+      if (state !== 'icon') breadcrumb.classList.remove('fp-breadcrumb--scroll');
     }
+
+    if (target !== state) {
+      applyState(target);
+    }
+    if (breadcrumb.classList.contains('fp-breadcrumb--scroll')) {
+      // Keep current (rightmost) segment in view
+      breadcrumb.scrollLeft = breadcrumb.scrollWidth;
+    }
+  }
+
+  function recalc() {
+    if (rafId !== null) return; // already scheduled
+    rafId = requestAnimationFrame(() => { rafId = null; actualRecalc(); });
   }
 
   const ro = new ResizeObserver(recalc);
   ro.observe(toolbar);
 
+  // Only re-run on real DOM/text changes (NOT class attribute changes — would loop)
   const mo = new MutationObserver(recalc);
   mo.observe(breadcrumb, { childList: true, characterData: true, subtree: true });
 
-  // Click on collapsed icon → expand and focus (capture phase so it beats focus-search → openPalette)
+  // Click on collapsed icon → open command palette (do NOT expand inline).
+  // Capture phase so it beats the focus-search → openPalette via input focus.
   searchWrap.addEventListener('click', e => {
     if (searchWrap.classList.contains('fp-toolbar__search--icon')) {
       e.preventDefault();
       e.stopPropagation();
-      searchWrap.classList.remove('fp-toolbar__search--icon');
-      const input = document.getElementById('search-input');
-      if (input) setTimeout(() => input.focus(), 50);
+      if (typeof openPalette === 'function') openPalette();
     }
   }, true /* capture */);
 
