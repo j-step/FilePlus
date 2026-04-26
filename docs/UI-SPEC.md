@@ -92,7 +92,7 @@ Sidebar items per v2 token spec Section 10: 28px tall, 6px radius, 16×16 Lucide
 ### A.1.4 Toolbar (48px tall, below tab bar)
 - Back / Forward / Up nav buttons (left): 28×28 icon buttons with 16×16 Lucide icons
 - Breadcrumb / address bar (flex grow): segments in `t-body` Inter 400 `text-secondary` with current crumb in Inter 500 `text-primary`. Separator is middot `·` in `t-small text-tertiary` (never `>` or `/`). Segments clickable, draggable, right-click for sibling dropdown. Click empty area → editable address bar with autocomplete (path portion in JetBrains Mono when editing).
-- Search box right (280px default): concave chrome (`bg-content` + `inset-recess` + 1px `border-subtle`). 14×14 Lucide `search` leading. `⌘K` kbd hint trailing in 16×16 `bg-raised` pill with 4px radius, `t-small` JetBrains Mono 500 `text-tertiary`. Focus: `accent-edge` border + `inset-recess-strong` + `0 0 0 3px accent-glow` ring.
+- Search box right (280px default): concave chrome (`bg-content` + `inset-recess` + 1px `border-subtle`). 14×14 Lucide `search` leading. `Ctrl+K` kbd hint trailing in 16×16 `bg-raised` pill with 4px radius, `t-small` JetBrains Mono 500 `text-tertiary`. Focus: `accent-edge` border + `inset-recess-strong` + `0 0 0 3px accent-glow` ring.
 - View toggle: List / Grid segmented control (30px tall, concave container, convex active pill, active pill slides between segments at `dur-slide`)
 - Inspector toggle button (rightmost): 28×28 icon button
 
@@ -502,7 +502,7 @@ Separator: 1px `border-subtle`, margin 4px 0.
 
 ## A.11 Overlays
 
-### A.11.1 Command Palette (⌘K)
+### A.11.1 Command Palette (Ctrl+K)
 
 Per v2 token spec Section 16. Centered modal, 640px width.
 
@@ -669,22 +669,22 @@ All form controls (toggles, sliders, segmented controls, text inputs, radios, ch
 Editable list of keybinding rows. Each row: action label in `t-body` Inter 500, keybinding in 24×24+ kbd pill (`bg-raised`, 1px `border-subtle`, 4px radius, `t-small` JetBrains Mono 500 `text-secondary`). Click row to re-bind (shows "Press new keys..." state with `accent-edge` border).
 
 Default bindings:
-- Open command palette: ⌘K
-- Open Review Bin: ⌘⇧R
+- Open command palette: Ctrl+K
+- Open Review Bin: Ctrl+Shift+R
 - Focus search: /
-- Switch to Home: ⌘1
-- Switch to Browser: ⌘2
-- Open File Tree: ⌘T
-- Toggle inspector: ⌘I
-- New folder: ⌘⇧N
+- Switch to Home: Ctrl+1
+- Switch to Browser: Ctrl+2
+- Open File Tree: Ctrl+T
+- Toggle inspector: Ctrl+I
+- New folder: Ctrl+Shift+N
 - Rename: F2
 - Delete: Del
-- Undo: ⌘Z
-- New tab: ⌘T
-- Close tab: ⌘W
-- Reopen closed tab: ⌘⇧T
-- Toggle hidden files: ⌘.
-- View mode cycle: ⌘1/2
+- Undo: Ctrl+Z
+- New tab: Ctrl+T
+- Close tab: Ctrl+W
+- Reopen closed tab: Ctrl+Shift+T
+- Toggle hidden files: Ctrl+.
+- View mode cycle: Ctrl+1/2
 - Summon FilePlus from anywhere: ⊞+Shift+F
 - Open last download: ⊞+Shift+D
 
@@ -1181,7 +1181,7 @@ Read finalization spec section A.11 and v2 Sections 16 (command palette), 22 (mo
 
 Implement four overlay types:
 
-1. Command Palette (⌘K) per v2 Section 16: 640px, bg-raised + border-subtle + 10px radius + highlight-top + shadow-modal. 44px input top, 1px border-hairline below, split body (300px list + preview). Keyboard-selected result: accent-wash + 2px accent left bar. Search/Chat segmented control toggle. Open animation dur-fast fade + translateY(4px) ease-out. Backdrop scrim rgba(0,0,0,0.4) with subtle blur.
+1. Command Palette (Ctrl+K) per v2 Section 16: 640px, bg-raised + border-subtle + 10px radius + highlight-top + shadow-modal. 44px input top, 1px border-hairline below, split body (300px list + preview). Keyboard-selected result: accent-wash + 2px accent left bar. Search/Chat segmented control toggle. Open animation dur-fast fade + translateY(4px) ease-out. Backdrop scrim rgba(0,0,0,0.4) with subtle blur.
 
 2. Tag Canvas (820×540): bg-raised + border-strong + 10px radius + highlight-top + shadow-modal. 48px header, two-pane body. Left (240px, bg-content) tag tree. Right graph + file grid. SVG arrows with 1px text-tertiary default stroke, 1.5px accent for selected. Backdrop scrim at rgba(0,0,0,0.5) with stronger blur.
 
