@@ -71,6 +71,7 @@ For the complete token set (color hex values, chrome composition formulas, typog
 - **Quick Access section:**
   - Home
   - Review Bin (count badge with `accent-wash` background and `accent-edge` border if non-zero)
+  - Downloads (opens the Browser screen pointed at the configured Downloads Folder path; see §A.12.4. No bespoke "Downloads screen" exists.)
   - User-pinned folders (drag to reorder)
 - **Tree section:**
   - Detected drives (C:\, D:\, etc.) with used/total bars (use `bg-pressed` track, `accent` fill)
