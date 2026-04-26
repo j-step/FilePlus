@@ -196,7 +196,7 @@ Behavior:
 Three modes with banners. Banners are 36px tall, flush to top of content area, with 1px `border-hairline` bottom:
 - **Live mode** (default, no banner)
 - **Snapshot view mode**: `warn-wash` background, `warn-edge` border-bottom, 14×14 Lucide `history` icon in `warn`, `t-body` Inter 500 `warn` text: "Viewing snapshot from [date] · read-only" with "Return to live" secondary button right-aligned
-- **Proposal review mode**: `accent-wash` background, `accent-edge` border-bottom, 14×14 Lucide `sparkles` icon in `accent`, `t-body` Inter 500 `accent` text: "Reviewing AI proposal · changes you make update it" with "Execute" primary button right-aligned
+- **Proposal review mode**: `accent-wash` background, `accent-edge` border-bottom, 14×14 Lucide `wand-2` icon in `accent`, `t-body` Inter 500 `accent` text: "Reviewing proposed changes · changes you make update the proposal" with "Execute" primary button right-aligned. (No sparkles iconography or AI-personality language anywhere on the banner.)
 
 ### A.4.1 Layout
 
