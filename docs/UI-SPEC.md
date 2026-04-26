@@ -168,9 +168,11 @@ Per v2 token spec Section 22:
 - Detached: `bg-raised` background, 1px `border-subtle`, 10px radius, `highlight-top` + `shadow-popover`
 
 Behavior:
-- Opens on first file click (jump-cut, no slide animation)
-- Stays open across selections until manually closed
-- Push-style: file list shrinks to accommodate
+- **Closed by default** when the Browser screen first mounts. The Inspector toggle button in the toolbar is in its default (off) state.
+- **Opens on first file-click in the session** (jump-cut, no slide animation).
+- Stays open across selections until manually closed via the toolbar toggle or the inspector header `x` button.
+- Does **not** auto-reopen on app restart — the open/closed state is per-session, not persisted.
+- Push-style: file list shrinks to accommodate.
 - Width default 340px, resizable via drag handle on left edge (min 280, max 520). Drag handle: 4px wide hit area, `accent` color on hover.
 
 **Header:**
