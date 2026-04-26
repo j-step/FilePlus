@@ -1138,7 +1138,7 @@ svg { flex-shrink: 0; }
 /* -----------------------------------------------------------------------------
    17. INPUTS (Section 21)
    ----------------------------------------------------------------------------- */
-.fp-input, .fp-select, .fp-textarea {
+.fp-select, .fp-textarea {
   height: var(--h-input);
   padding: 0 var(--s-12);
   background: var(--bg-content);
@@ -1153,15 +1153,55 @@ svg { flex-shrink: 0; }
               box-shadow var(--dur-flash) var(--ease-snap);
   width: 100%;
 }
-.fp-input::placeholder, .fp-textarea::placeholder { color: var(--text-tertiary); }
-.fp-input:hover, .fp-select:hover, .fp-textarea:hover { border-color: var(--border-mid); }
-.fp-input:focus, .fp-select:focus, .fp-textarea:focus {
+.fp-textarea::placeholder { color: var(--text-tertiary); }
+.fp-select:hover, .fp-textarea:hover { border-color: var(--border-mid); }
+.fp-select:focus, .fp-textarea:focus {
   border-color: var(--accent-edge);
   box-shadow: var(--inset-recess-strong), 0 0 0 3px var(--accent-glow);
 }
-.fp-input:disabled, .fp-select:disabled, .fp-textarea:disabled { opacity: 0.5; }
-.fp-input--error { border-color: var(--bad); }
-.fp-input__error-text { font: 400 var(--t-small) var(--font-ui); color: var(--bad); margin-top: var(--s-6); }
+.fp-select:disabled, .fp-textarea:disabled { opacity: 0.5; }
+
+/* canonical fp-input — concave chrome + focus ring */
+.fp-input {
+  display: block;
+  width: 100%;
+  height: 30px;
+  padding: 0 12px;
+  background: var(--bg-content);
+  color: var(--text-primary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-button);
+  box-shadow: var(--inset-recess);
+  font: var(--t-body);
+  transition: border-color var(--dur-fast) var(--ease-out),
+              box-shadow var(--dur-fast) var(--ease-out);
+}
+.fp-input::placeholder {
+  color: var(--text-tertiary);
+}
+.fp-input:focus,
+.fp-input:focus-visible {
+  outline: none;
+  border-color: var(--accent-edge);
+  box-shadow: var(--inset-recess-strong),
+              0 0 0 3px var(--accent-glow);
+}
+.fp-input:disabled,
+.fp-input[disabled] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.fp-input--invalid,
+.fp-input[aria-invalid="true"] {
+  border-color: var(--bad);
+  box-shadow: var(--inset-recess), 0 0 0 3px var(--bad-wash);
+}
+.fp-field-error {
+  display: block;
+  margin-top: 4px;
+  color: var(--bad);
+  font: var(--t-caption);
+}
 
 .fp-textarea { height: auto; min-height: 72px; padding: var(--s-8) var(--s-12); resize: vertical; }
 
@@ -3198,27 +3238,6 @@ svg { flex-shrink: 0; }
 /* fp-mono utility */
 .fp-mono { font-family: var(--font-mono); letter-spacing: var(--track-mono); }
 
-/* fp-input */
-.fp-input {
-  height: var(--h-input);
-  padding: 0 var(--s-10);
-  background: var(--bg-content);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--r-button);
-  color: var(--text-primary);
-  font: 400 var(--t-body) var(--font-ui);
-  box-shadow: var(--inset-recess);
-  outline: none;
-  transition: border-color var(--dur-fast) var(--ease-snap), box-shadow var(--dur-fast) var(--ease-snap);
-  width: 100%;
-  box-sizing: border-box;
-}
-.fp-input:focus {
-  border-color: var(--accent-edge);
-  box-shadow: var(--inset-recess), 0 0 0 2px var(--accent-glow);
-}
-.fp-input::placeholder { color: var(--text-tertiary); }
-
 /* =============================================================================
    48. TIME MACHINE SCREEN
    ============================================================================= */
@@ -4202,17 +4221,6 @@ button.fp-pill:hover {
 }
 .fp-tray-icon--scanning {
   animation: fp-tray-scan-pulse 2s ease-in-out infinite;
-}
-
-/* A.17 #10 — Invalid filename input */
-.fp-input--invalid {
-  border-color: var(--bad) !important;
-  box-shadow: var(--inset-recess), 0 0 0 3px color-mix(in oklch, var(--bad) 20%, transparent) !important;
-}
-.fp-field-error {
-  font: var(--t-small) var(--font-ui);
-  color: var(--bad);
-  margin-top: 4px;
 }
 
 /* A.17 #14 — Tab bar overflow (many tabs) */
