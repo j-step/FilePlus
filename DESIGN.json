@@ -1,0 +1,293 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-04-24T00:00:00Z",
+  "title": "Design System: FilePlus",
+  "extensions": {
+    "colorMeta": {
+      "accent": {
+        "role": "primary",
+        "displayName": "Burnt Amber",
+        "canonical": "oklch(68% 0.12 50)",
+        "tonalRamp": ["#1C0B03", "#3B1B09", "#632E13", "#8F4E28", "#BA7040", "#E8965E", "#F0B484", "#F8D3B4"]
+      },
+      "backdrop": {
+        "role": "neutral",
+        "displayName": "Deep Plum",
+        "canonical": "oklch(13% 0.01 300)",
+        "tonalRamp": ["#0C0B12", "#181522", "#1F1B27", "#25202D", "#312A38", "#3B3344", "#5D5466", "#9A93A4"]
+      },
+      "chrome": {
+        "role": "neutral",
+        "displayName": "Shell Plum",
+        "canonical": "oklch(16% 0.01 300)",
+        "tonalRamp": ["#0C0B12", "#181522", "#1F1B27", "#25202D", "#312A38", "#3B3344", "#5D5466", "#9A93A4"]
+      },
+      "content": {
+        "role": "neutral",
+        "displayName": "Work Surface",
+        "canonical": "oklch(18% 0.01 300)",
+        "tonalRamp": ["#0C0B12", "#181522", "#1F1B27", "#25202D", "#312A38", "#3B3344", "#5D5466", "#9A93A4"]
+      },
+      "raised": {
+        "role": "neutral",
+        "displayName": "Chrome Lift",
+        "canonical": "oklch(22% 0.02 300)",
+        "tonalRamp": ["#0C0B12", "#181522", "#1F1B27", "#25202D", "#312A38", "#3B3344", "#5D5466", "#9A93A4"]
+      },
+      "good": {
+        "role": "semantic",
+        "displayName": "Oxidized Copper",
+        "canonical": "oklch(75% 0.09 155)",
+        "tonalRamp": ["#062A15", "#0E3F22", "#185935", "#267549", "#3D9162", "#7DC494", "#A8D9BB", "#CEECD7"]
+      },
+      "bad": {
+        "role": "semantic",
+        "displayName": "Muted Coral Red",
+        "canonical": "oklch(67% 0.10 15)",
+        "tonalRamp": ["#250706", "#431413", "#6B2927", "#8F4441", "#B86360", "#E08A86", "#EDAAA7", "#F5CBC9"]
+      },
+      "warn": {
+        "role": "semantic",
+        "displayName": "Warn Gold",
+        "canonical": "oklch(82% 0.12 85)",
+        "tonalRamp": ["#1E1403", "#382607", "#5C400D", "#805C1E", "#A37C35", "#E8C56B", "#F0D58F", "#F7E5B6"]
+      },
+      "text-primary": {
+        "role": "neutral",
+        "displayName": "Warm Near-White",
+        "canonical": "oklch(95% 0.005 50)",
+        "tonalRamp": ["#3B3333", "#5C5252", "#7D7070", "#A39BAE", "#C8C2CE", "#E0DAE5", "#F2EDE8", "#FAF8F6"]
+      },
+      "text-secondary": {
+        "role": "neutral",
+        "displayName": "Muted Mauve",
+        "canonical": "oklch(66% 0.02 300)",
+        "tonalRamp": ["#1F1B27", "#312A38", "#4A4255", "#6B6478", "#8A8396", "#A39BAE", "#C0BAC8", "#DDD9E2"]
+      }
+    },
+    "shadows": [
+      {
+        "name": "raised",
+        "value": "0 1px 2px rgba(0,0,0,0.30), 0 0 0 1px rgba(0,0,0,0.15)",
+        "purpose": "Buttons at rest, badge pills, chips. Barely perceptible lift with thin outline."
+      },
+      {
+        "name": "card",
+        "value": "0 2px 6px rgba(0,0,0,0.25), 0 1px 2px rgba(0,0,0,0.20)",
+        "purpose": "Hover-elevated elements, card containers. First clearly visible separation."
+      },
+      {
+        "name": "popover",
+        "value": "0 8px 24px rgba(0,0,0,0.40), 0 2px 6px rgba(0,0,0,0.25)",
+        "purpose": "Context menus, tooltips, dropdown panels. Clearly above the surface."
+      },
+      {
+        "name": "modal",
+        "value": "0 16px 48px rgba(0,0,0,0.55), 0 4px 12px rgba(0,0,0,0.35)",
+        "purpose": "Dialogs, command palette, confirmation overlays. Maximum app elevation."
+      },
+      {
+        "name": "window",
+        "value": "0 24px 64px rgba(0,0,0,0.60), 0 8px 24px rgba(0,0,0,0.40)",
+        "purpose": "The app window itself. Only used on the outer window element."
+      },
+      {
+        "name": "highlight-top",
+        "value": "inset 0 1px 0 rgba(255,255,255,0.06)",
+        "purpose": "Top-edge highlight on convex elements (buttons, cards, pills). Light-from-above illusion."
+      },
+      {
+        "name": "highlight-top-strong",
+        "value": "inset 0 1px 0 rgba(255,255,255,0.10)",
+        "purpose": "Stronger top highlight for the approvals pill and similar high-prominence convex elements."
+      },
+      {
+        "name": "recess",
+        "value": "inset 0 1px 2px rgba(0,0,0,0.30)",
+        "purpose": "Search and text inputs at rest. Concave feel — the opposite of buttons."
+      },
+      {
+        "name": "recess-strong",
+        "value": "inset 0 2px 4px rgba(0,0,0,0.40)",
+        "purpose": "Input on focus, combined with the 3px amber glow ring."
+      },
+      {
+        "name": "pressed",
+        "value": "inset 0 1px 2px rgba(0,0,0,0.30), inset 0 0 0 1px rgba(255,255,255,0.09)",
+        "purpose": "Buttons and pills in their active/pressed state after click."
+      }
+    ],
+    "motion": [
+      {
+        "name": "dur-press-down",
+        "value": "50ms",
+        "purpose": "Button press-down transition. Fast enough to feel immediate."
+      },
+      {
+        "name": "dur-press-up",
+        "value": "80ms",
+        "purpose": "Button release transition. Slightly slower than press for tactile feel."
+      },
+      {
+        "name": "dur-flash",
+        "value": "60ms",
+        "purpose": "Background color change on hover. Near-instant state feedback."
+      },
+      {
+        "name": "dur-fast",
+        "value": "120ms",
+        "purpose": "Icon color changes, badge appearance."
+      },
+      {
+        "name": "dur-slide",
+        "value": "180ms",
+        "purpose": "Active sidebar indicator slide between items. Tab underline slide. The signature motion."
+      },
+      {
+        "name": "ease-out",
+        "value": "cubic-bezier(0.16, 1, 0.3, 1)",
+        "purpose": "Exponential ease-out for elements entering or sliding. Fast start, graceful settle."
+      },
+      {
+        "name": "ease-snap",
+        "value": "cubic-bezier(0.4, 0.0, 0.2, 1)",
+        "purpose": "Material standard ease for background/color transitions. Snappy, not bouncy."
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Main CTA. Burnt Amber fill, convex chrome, press-depresses on click.",
+      "html": "<button class=\"ds-btn-primary\">Start Scan</button>",
+      "css": ".ds-btn-primary { display: inline-flex; align-items: center; justify-content: center; height: 28px; padding: 0 12px; background: #E8965E; color: #1A1015; border: none; border-radius: 6px; font: 500 12px/18px 'Inter', -apple-system, system-ui, sans-serif; letter-spacing: -0.005em; box-shadow: inset 0 1px 0 rgba(255,255,255,0.15), 0 1px 2px rgba(0,0,0,0.30), 0 0 0 1px rgba(0,0,0,0.15); cursor: default; white-space: nowrap; transition: background 60ms cubic-bezier(0.4,0,0.2,1), transform 80ms cubic-bezier(0.4,0,0.2,1), box-shadow 60ms cubic-bezier(0.4,0,0.2,1); } .ds-btn-primary:hover { background: #F0A574; } .ds-btn-primary:active { background: #D88248; transform: translateY(1px); box-shadow: inset 0 1px 2px rgba(0,0,0,0.30), inset 0 0 0 1px rgba(255,255,255,0.09); transition-duration: 50ms; } .ds-btn-primary:focus-visible { outline: none; box-shadow: inset 0 1px 0 rgba(255,255,255,0.15), 0 0 0 2px #25202D, 0 0 0 4px rgba(232,150,94,0.20); }"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Supporting action. Raised surface, neutral text, convex chrome.",
+      "html": "<button class=\"ds-btn-secondary\">Browse</button>",
+      "css": ".ds-btn-secondary { display: inline-flex; align-items: center; justify-content: center; height: 28px; padding: 0 12px; background: #312A38; color: #F2EDE8; border: 1px solid rgba(255,255,255,0.09); border-radius: 6px; font: 500 12px/18px 'Inter', -apple-system, system-ui, sans-serif; letter-spacing: -0.005em; box-shadow: inset 0 1px 0 rgba(255,255,255,0.06), 0 1px 2px rgba(0,0,0,0.30), 0 0 0 1px rgba(0,0,0,0.15); cursor: default; white-space: nowrap; transition: background 60ms cubic-bezier(0.4,0,0.2,1), transform 80ms cubic-bezier(0.4,0,0.2,1); } .ds-btn-secondary:hover { background: #3B3344; } .ds-btn-secondary:active { transform: translateY(1px); box-shadow: inset 0 1px 2px rgba(0,0,0,0.30), inset 0 0 0 1px rgba(255,255,255,0.09); transition-duration: 50ms; } .ds-btn-secondary:focus-visible { outline: none; box-shadow: 0 0 0 2px #25202D, 0 0 0 4px rgba(232,150,94,0.20); }"
+    },
+    {
+      "name": "Ghost Button",
+      "kind": "button",
+      "refersTo": "button-ghost",
+      "description": "Tertiary action. No background at rest, raised on hover. Used for Reveal, Cancel.",
+      "html": "<button class=\"ds-btn-ghost\">Reveal</button>",
+      "css": ".ds-btn-ghost { display: inline-flex; align-items: center; justify-content: center; height: 28px; padding: 0 10px; background: transparent; color: #A39BAE; border: none; border-radius: 6px; font: 500 12px/18px 'Inter', -apple-system, system-ui, sans-serif; letter-spacing: -0.005em; cursor: default; white-space: nowrap; transition: background 60ms cubic-bezier(0.4,0,0.2,1), color 60ms cubic-bezier(0.4,0,0.2,1), box-shadow 60ms cubic-bezier(0.4,0,0.2,1); } .ds-btn-ghost:hover { background: #312A38; color: #F2EDE8; box-shadow: inset 0 1px 0 rgba(255,255,255,0.06); } .ds-btn-ghost:active { transform: translateY(1px); transition-duration: 50ms; }"
+    },
+    {
+      "name": "Chip / Tag",
+      "kind": "chip",
+      "refersTo": "chip",
+      "description": "File classification label. Default neutral, active uses amber wash. JetBrains Mono text.",
+      "html": "<span class=\"ds-chip\">design</span> <span class=\"ds-chip ds-chip--active\">work</span> <span class=\"ds-chip ds-chip--good\">classified</span> <span class=\"ds-chip ds-chip--warn\">review</span> <span class=\"ds-chip ds-chip--bad\">error</span>",
+      "css": ".ds-chip { display: inline-flex; align-items: center; height: 20px; padding: 0 6px; background: #312A38; color: #A39BAE; border: 1px solid rgba(255,255,255,0.09); border-radius: 4px; font: 500 11px/14px 'JetBrains Mono', ui-monospace, monospace; letter-spacing: 0; cursor: default; white-space: nowrap; user-select: none; } .ds-chip--active { background: rgba(232,150,94,0.10); color: #F2EDE8; border-color: rgba(232,150,94,0.40); } .ds-chip--good { background: rgba(125,196,148,0.10); color: #7DC494; border-color: rgba(125,196,148,0.40); } .ds-chip--warn { background: rgba(232,197,107,0.10); color: #E8C56B; border-color: rgba(232,197,107,0.40); } .ds-chip--bad { background: rgba(224,138,134,0.10); color: #E08A86; border-color: rgba(224,138,134,0.40); }"
+    },
+    {
+      "name": "Search Input",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Toolbar search. Concave chrome — the only concave element in the main toolbar.",
+      "html": "<div class=\"ds-search\"><svg class=\"ds-search__icon\" width=\"13\" height=\"13\" viewBox=\"0 0 13 13\" fill=\"none\"><circle cx=\"5.5\" cy=\"5.5\" r=\"4\" stroke=\"currentColor\" stroke-width=\"1.3\"/><path d=\"M9 9l2.5 2.5\" stroke=\"currentColor\" stroke-width=\"1.3\" stroke-linecap=\"round\"/></svg><input class=\"ds-search__input\" type=\"search\" placeholder=\"Search files…\" /><kbd class=\"ds-search__kbd\">Ctrl K</kbd></div>",
+      "css": ".ds-search { display: flex; align-items: center; gap: 8px; height: 30px; width: 280px; padding: 0 12px; background: #25202D; border: 1px solid rgba(255,255,255,0.09); border-radius: 6px; box-shadow: inset 0 1px 2px rgba(0,0,0,0.30); transition: border-color 60ms cubic-bezier(0.4,0,0.2,1), box-shadow 60ms cubic-bezier(0.4,0,0.2,1); } .ds-search:hover { border-color: rgba(255,255,255,0.13); } .ds-search:focus-within { border-color: rgba(232,150,94,0.40); box-shadow: inset 0 2px 4px rgba(0,0,0,0.40), 0 0 0 3px rgba(232,150,94,0.20); } .ds-search__icon { width: 14px; height: 14px; color: #6B6478; flex-shrink: 0; } .ds-search__input { flex: 1; background: transparent; border: none; outline: none; font: 400 13px/20px 'Inter', -apple-system, system-ui, sans-serif; letter-spacing: -0.005em; color: #F2EDE8; min-width: 0; } .ds-search__input::placeholder { color: #6B6478; } .ds-search__kbd { display: inline-flex; align-items: center; height: 16px; padding: 0 4px; background: #312A38; border-radius: 4px; font: 500 10px/14px 'JetBrains Mono', ui-monospace, monospace; color: #6B6478; flex-shrink: 0; white-space: nowrap; }"
+    },
+    {
+      "name": "Sidebar Navigation Item",
+      "kind": "nav",
+      "refersTo": "button-ghost",
+      "description": "Sidebar nav row. Active state shows floating 2px amber pill at left edge.",
+      "html": "<button class=\"ds-nav-item ds-nav-item--active\" data-action=\"navigate-home\"><svg class=\"ds-nav-item__icon\" width=\"16\" height=\"16\" viewBox=\"0 0 16 16\" fill=\"none\"><path d=\"M2 8.5L8 2l6 6.5V14h-3v-4H5v4H2V8.5z\" stroke=\"currentColor\" stroke-width=\"1.2\" stroke-linejoin=\"round\"/></svg><span class=\"ds-nav-item__label\">Home</span><span class=\"ds-nav-item__badge\">3</span></button>",
+      "css": ".ds-nav-item { position: relative; display: flex; align-items: center; gap: 10px; height: 28px; padding: 0 10px; border-radius: 6px; background: transparent; border: none; color: #F2EDE8; font: 500 13px/20px 'Inter', -apple-system, system-ui, sans-serif; letter-spacing: -0.005em; cursor: default; white-space: nowrap; width: 100%; text-align: left; transition: background 60ms cubic-bezier(0.4,0,0.2,1), box-shadow 60ms cubic-bezier(0.4,0,0.2,1); } .ds-nav-item:hover { background: #312A38; box-shadow: inset 0 1px 0 rgba(255,255,255,0.06); } .ds-nav-item--active { background: #3B3344; box-shadow: inset 0 1px 0 rgba(255,255,255,0.06); font-weight: 600; } .ds-nav-item--active::before { content: ''; position: absolute; left: -4px; top: 4px; bottom: 4px; width: 2px; background: #E8965E; border-radius: 9999px; } .ds-nav-item__icon { width: 16px; height: 16px; color: #A39BAE; flex-shrink: 0; } .ds-nav-item--active .ds-nav-item__icon { color: #E8965E; } .ds-nav-item:hover .ds-nav-item__icon { color: #F2EDE8; } .ds-nav-item__label { flex: 1; overflow: hidden; text-overflow: ellipsis; } .ds-nav-item__badge { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 5px; background: #312A38; border: 1px solid rgba(255,255,255,0.09); border-radius: 9999px; font: 500 10px/14px 'JetBrains Mono', ui-monospace, monospace; color: #A39BAE; margin-left: auto; }"
+    },
+    {
+      "name": "Approvals Pill",
+      "kind": "custom",
+      "refersTo": "approvals-pill",
+      "description": "Toolbar pill showing pending approval count. The only Burnt Amber fill in the idle toolbar.",
+      "html": "<button class=\"ds-approvals-pill ds-approvals-pill--active\" data-action=\"open-review-bin\"><svg class=\"ds-approvals-pill__icon\" width=\"12\" height=\"12\" viewBox=\"0 0 12 12\" fill=\"none\"><path d=\"M1 3h10M1 6h7M1 9h5\" stroke=\"currentColor\" stroke-width=\"1.3\" stroke-linecap=\"round\"/></svg><span>Approvals</span><span class=\"ds-approvals-pill__count\">12</span></button>",
+      "css": ".ds-approvals-pill { display: inline-flex; align-items: center; gap: 8px; height: 30px; padding: 0 14px 0 12px; border-radius: 9999px; background: #312A38; border: 1px solid rgba(255,255,255,0.09); box-shadow: inset 0 1px 0 rgba(255,255,255,0.10), 0 1px 2px rgba(0,0,0,0.30), 0 0 0 1px rgba(0,0,0,0.15); color: #F2EDE8; font: 500 12px/18px 'Inter', -apple-system, system-ui, sans-serif; letter-spacing: -0.005em; cursor: default; white-space: nowrap; transition: background 60ms cubic-bezier(0.4,0,0.2,1), transform 80ms cubic-bezier(0.4,0,0.2,1), box-shadow 60ms cubic-bezier(0.4,0,0.2,1); } .ds-approvals-pill:hover { background: #3B3344; border-color: rgba(255,255,255,0.13); box-shadow: inset 0 1px 0 rgba(255,255,255,0.10), 0 2px 6px rgba(0,0,0,0.25), 0 1px 2px rgba(0,0,0,0.20); transform: translateY(-0.5px); } .ds-approvals-pill:active { transform: translateY(1px); box-shadow: inset 0 1px 2px rgba(0,0,0,0.30), inset 0 0 0 1px rgba(255,255,255,0.09); transition-duration: 50ms; } .ds-approvals-pill--active { background: rgba(232,150,94,0.10); border-color: rgba(232,150,94,0.40); } .ds-approvals-pill__icon { width: 14px; height: 14px; color: #A39BAE; flex-shrink: 0; } .ds-approvals-pill__count { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 6px; border-radius: 9999px; background: #E8965E; color: #1A1015; font: 500 10px/14px 'JetBrains Mono', ui-monospace, monospace; }"
+    },
+    {
+      "name": "File Row",
+      "kind": "custom",
+      "refersTo": "button-ghost",
+      "description": "Content list row. Flat at rest; state expressed through fill only, never shadow or side-stripe.",
+      "html": "<div class=\"ds-file-row ds-file-row--selected\" role=\"option\" data-action=\"select-file\"><svg class=\"ds-file-row__icon\" width=\"16\" height=\"16\" viewBox=\"0 0 16 16\" fill=\"none\"><rect x=\"2\" y=\"1\" width=\"9\" height=\"13\" rx=\"1.5\" fill=\"#312A38\" stroke=\"rgba(255,255,255,0.09)\" stroke-width=\"0.8\"/><path d=\"M11 1v4h3\" stroke=\"rgba(255,255,255,0.09)\" stroke-width=\"0.8\" stroke-linejoin=\"round\"/><path d=\"M5 6h6M5 8.5h6M5 11h4\" stroke=\"#6B6478\" stroke-width=\"0.8\" stroke-linecap=\"round\"/></svg><span class=\"ds-file-row__name\">design-brief.md</span><span class=\"ds-file-row__size\">18.7 KB</span><span class=\"ds-file-row__modified\">1 hr ago</span><div class=\"ds-file-row__tags\"><span class=\"ds-chip\">design</span></div></div>",
+      "css": ".ds-file-row { display: grid; grid-template-columns: 24px 1fr 72px 88px 120px; align-items: center; gap: 0 8px; height: 26px; padding: 0 8px; background: transparent; border: 1px solid transparent; cursor: default; user-select: none; transition: background 60ms cubic-bezier(0.4,0,0.2,1); } .ds-file-row:hover { background: #312A38; } .ds-file-row--selected { background: rgba(232,150,94,0.10); border-color: rgba(232,150,94,0.40); } .ds-file-row--active { background: #3B3344; } .ds-file-row__icon { width: 16px; height: 16px; flex-shrink: 0; } .ds-file-row__name { font: 500 13px/20px 'Inter', -apple-system, system-ui, sans-serif; letter-spacing: -0.005em; color: #F2EDE8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .ds-file-row__size, .ds-file-row__modified { font: 500 11px/16px 'JetBrains Mono', ui-monospace, monospace; letter-spacing: 0; color: #6B6478; white-space: nowrap; } .ds-file-row__tags { display: flex; gap: 4px; overflow: hidden; } .ds-chip { display: inline-flex; align-items: center; height: 20px; padding: 0 6px; background: #312A38; color: #A39BAE; border: 1px solid rgba(255,255,255,0.09); border-radius: 4px; font: 500 11px/14px 'JetBrains Mono', ui-monospace, monospace; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Dark Workshop",
+    "overview": "FilePlus feels like a workspace that has been used and trusted for years: dark surfaces with the warmth of quality materials, not darkness as aesthetic posture. The physical scene that forced the dark theme: a developer at a desk in the evening, two monitors, files scattered across drives that need organizing, wanting to get in and get out without the tool demanding attention.\n\nThe hotel lobby note: ambient wayfinding. Everything the user might need is present and legible without requiring them to search for it. No element demands a second glance. Navigation signs are visible but not loud. The space does its job while staying in the background.\n\nThe material quality: machined precision. Tight tolerances, nothing soft, but the tightness is smooth rather than sharp. Buttons depress cleanly and release quickly. Transitions are fast enough to feel immediate but present enough to confirm causality.",
+    "keyCharacteristics": [
+      "Deep warm-purple base with a single Burnt Amber accent used sparingly",
+      "Tactile chrome (convex buttons, convex cards, concave inputs) on intentionally flat content lists",
+      "Two typefaces, used without exception: Inter for all UI, JetBrains Mono for all data-class text",
+      "Motion limited to state confirmation: 50-180ms, ease-out exponential, never decorative",
+      "Restrained color strategy: accent on 10% or less of any surface",
+      "Full light mode support: warm cream palette mirroring the dark surface hierarchy"
+    ],
+    "rules": [
+      {
+        "name": "The One Amber Rule",
+        "body": "Burnt Amber appears on 10% or less of any given surface. If every sidebar item glows amber, nothing is selected. Rarity is the signal.",
+        "section": "colors"
+      },
+      {
+        "name": "The Flat-Content Rule",
+        "body": "File rows, list items, scan results, and data tables have no background, no border, and no shadow at rest. Depth comes from the tonal placement of the parent surface. Elevation is reserved for chrome.",
+        "section": "colors"
+      },
+      {
+        "name": "The Wash-Not-Solid Rule",
+        "body": "Semantic colors and the accent appear in content areas only as wash variants (10-18% alpha tints) with matching edge variants for borders. Never a solid accent or semantic background in a content list.",
+        "section": "colors"
+      },
+      {
+        "name": "The Two-Font Rule",
+        "body": "Inter for everything the user reads as UI copy. JetBrains Mono for everything the user reads as a data value. These roles never swap. A file name is UI (Inter). A file path is data (Mono). A button label is UI. A file size is data.",
+        "section": "typography"
+      },
+      {
+        "name": "The No-Weight-Wall Rule",
+        "body": "No two adjacent text elements share the same size and weight. Hierarchy requires contrast on at least one axis: scale must differ by at least one step, or weight must shift by at least 100.",
+        "section": "typography"
+      },
+      {
+        "name": "The Convex-Concave Rule",
+        "body": "Buttons, pills, cards, and badges are convex (top highlight + drop shadow). Inputs are concave (inset recess, no highlight). These two directions never appear on the same element.",
+        "section": "elevation"
+      },
+      {
+        "name": "The Blur Boundary Rule",
+        "body": "Backdrop-filter blur is permitted only on temporary overlays: modals, command palette, tray popout. Explicitly prohibited on sidebar, toolbar, content panes, and file lists.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "Do use JetBrains Mono for every data-class string: file paths, sizes, hashes, timestamps, counts, keyboard shortcuts.",
+      "Do give every interactive element a data-action attribute in kebab-case describing its intended function.",
+      "Do represent all state variants inline in HTML: one active example, commented-out alternates for every other state.",
+      "Do put inset 0 1px 0 rgba(255,255,255,0.06) on every convex chrome element so it reads as physically lifted.",
+      "Do express selected and active states in content areas using wash+edge tints (rgba 10-18% fill, rgba 40% border).",
+      "Do keep file rows and list items completely flat at rest. No card treatment in file lists.",
+      "Do limit blur to temporary overlays: modals, command palette, tray popout, context menus."
+    ],
+    "donts": [
+      "Don't look like Windows Explorer: no sparse whitespace, no flat header-bar-only chrome.",
+      "Don't look like Total Commander or Directory Opus: no competing toolbar rows, no crowded multi-column headers.",
+      "Don't foreground the AI: no pulsing indicators, no gradient glow around AI results, no badge that says 'AI filed this.'",
+      "Don't look like a SaaS dashboard: no hero-metric cards, no purple-to-blue gradient sidebar, no gradient text.",
+      "Don't use border-left or border-right greater than 1px as a colored accent stripe on any row, card, callout, or alert.",
+      "Don't use background-clip:text with a gradient. All text is a single solid color.",
+      "Don't apply backdrop-filter blur to the sidebar, toolbar, content panes, or file lists.",
+      "Don't use the same padding value everywhere. Vary rhythm to communicate structure.",
+      "Don't use cards inside file lists or anywhere data density is the priority."
+    ]
+  }
+}
