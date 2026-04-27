@@ -30,7 +30,52 @@
   --accent-wash-strong: rgba(232, 150, 94, 0.18);
   --accent-edge:        rgba(232, 150, 94, 0.40);
   --accent-edge-strong: rgba(232, 150, 94, 0.55);
-  --accent-glow:        rgba(232, 150, 94, 0.20);
+  /* Glow halo colors — both auto-track --accent so any custom accent color
+     glows in its OWN hue, not amber. Two strengths: -strong for the tight
+     mid-halo right against the white core, regular for the soft outer wash. */
+  --accent-glow:        color-mix(in srgb, var(--accent) 50%, transparent);
+  --accent-glow-strong: color-mix(in srgb, var(--accent) 80%, transparent);
+  /* True lightsaber core: pure white. The "blade" of every glowing element. */
+  --accent-core:        #ffffff;
+
+  /* Glow design tokens — three sizes. Every chain is structured the same way:
+       inner: tight white halo (the blade core)
+       mid:   saturated accent (the colored heat near the blade)
+       outer: soft accent wash (the broad ambient bloom)
+     Sizes are intentionally large/saturated — the user wants intense glow.
+       sm — small dots, focus rings, list icons
+       md — pills, badges, dots, drive bars, progress bars
+       lg — sidebar active bar, tab underline, brand mark, primary buttons */
+  --glow-sm: 0 0 2px #fff,
+             0 0 6px var(--accent-glow-strong),
+             0 0 14px var(--accent-glow);
+  --glow-md: 0 0 3px #fff,
+             0 0 9px var(--accent-glow-strong),
+             0 0 20px var(--accent-glow),
+             0 0 36px var(--accent-glow);
+  --glow-lg: 0 0 4px #fff,
+             0 0 14px var(--accent-glow-strong),
+             0 0 28px var(--accent-glow),
+             0 0 52px var(--accent-glow);
+
+  /* SVG drop-shadow halo chains. Mirror the box-shadow tokens. Used either
+     standalone (for the brand mark, which keeps its inner colors) or in
+     combination with `brightness(0) invert(1)` to whiten the path first. */
+  --glow-filter-sm: drop-shadow(0 0 1px #fff)
+                    drop-shadow(0 0 4px var(--accent-glow-strong))
+                    drop-shadow(0 0 10px var(--accent-glow));
+  --glow-filter-md: drop-shadow(0 0 2px #fff)
+                    drop-shadow(0 0 6px var(--accent-glow-strong))
+                    drop-shadow(0 0 14px var(--accent-glow));
+  --glow-filter-lg: drop-shadow(0 0 3px #fff)
+                    drop-shadow(0 0 9px var(--accent-glow-strong))
+                    drop-shadow(0 0 22px var(--accent-glow));
+  /* "Whiten + halo" — turns an accent-stroked/filled SVG path pure white
+     (brightness(0) makes pixels black with alpha preserved; invert(1) flips
+     them to white), then stacks the colored halo behind. This is the actual
+     lightsaber treatment for SVG icons. */
+  --glow-blade-sm: brightness(0) invert(1) var(--glow-filter-sm);
+  --glow-blade-md: brightness(0) invert(1) var(--glow-filter-md);
 
   /* ---------- Text ---------- */
   --text-primary:   #F2EDE8;
@@ -374,18 +419,34 @@ svg { flex-shrink: 0; }
 }
 
 .fp-sidebar__header {
-  height: 56px;
-  padding: var(--s-14) var(--s-14) var(--s-10);
+  /* 88px = original 56px + 32px reclaimed from the moved tab-bar row.
+     This puts the brand mark + device name vertically centered alongside
+     where the tab bar now lives in the right column. */
+  height: 88px;
+  padding: var(--s-12) var(--s-14);
   display: flex;
   align-items: center;
   gap: var(--s-10);
 }
-.fp-sidebar__brand-mark { width: 24px; height: 24px; flex-shrink: 0; }
+.fp-sidebar__brand-mark { width: 36px; height: 36px; flex-shrink: 0; }
 .fp-sidebar__brand-name {
-  font: 600 var(--t-body) var(--font-ui);
+  font: 600 17px var(--font-ui);
   letter-spacing: var(--track-body);
   color: var(--text-primary);
-  line-height: 16px;
+  line-height: 22px;
+  /* Single line; truncate long device names with an ellipsis */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  outline: none;
+  border-radius: var(--r-chip);
+  padding: 2px 4px;
+  margin: -2px -4px;
+}
+.fp-sidebar__brand-name:focus,
+.fp-sidebar__brand-name[contenteditable="true"] {
+  background: var(--bg-raised);
+  cursor: text;
 }
 .fp-sidebar__brand-sub {
   font: 400 var(--t-small) var(--font-ui);
@@ -696,14 +757,11 @@ svg { flex-shrink: 0; }
   display: flex;
   align-items: center;
   gap: var(--s-8);
+  /* No width transition — width is JS-driven and any easing here would
+     interpolate every JS update, producing a perceived "acceleration" smoothing
+     during continuous resize. */
   transition: border-color var(--dur-flash) var(--ease-snap),
-              box-shadow var(--dur-flash) var(--ease-snap),
-              width var(--dur-slide) var(--ease-out);
-}
-/* When search is inside the responsive wrapper, let the wrapper control width */
-.fp-toolbar__search .fp-search {
-  width: 100%;
-  transition: none;
+              box-shadow var(--dur-flash) var(--ease-snap);
 }
 .fp-search:hover { border-color: var(--border-mid); }
 .fp-search:focus-within {
@@ -1321,6 +1379,14 @@ svg { flex-shrink: 0; }
 }
 .fp-tabs__item svg, .fp-tabs__item .icon { width: 14px; height: 14px; }
 .fp-tabs__item:hover { color: var(--text-primary); }
+.fp-tabs__item:disabled,
+.fp-tabs__item[disabled] {
+  color: var(--text-tertiary);
+  opacity: 0.4;
+  pointer-events: none;
+  cursor: default;
+}
+.fp-tabs__item[disabled]:hover { color: var(--text-tertiary); }
 .fp-tabs__item--active,
 .fp-tabs__item.active {
   color: var(--text-primary);
@@ -3953,9 +4019,11 @@ svg { flex-shrink: 0; }
    A.1 REFINEMENT PASS — new and updated layout classes
    ============================================================================= */
 
-/* App grid: add tabbar row between titlebar and shell */
+/* App grid: titlebar | shell | statusbar.
+   Tab bar moved INSIDE .main (sibling of toolbar) so it starts at the
+   sidebar's right edge instead of spanning the full width above the sidebar. */
 .app {
-  grid-template-rows: var(--h-titlebar) 32px 1fr var(--h-statusbar) !important;
+  grid-template-rows: var(--h-titlebar) 1fr var(--h-statusbar) !important;
 }
 
 /* ── Tab bar (A.1.2) ──────────────────────────────────────────────────────── */
@@ -3964,11 +4032,12 @@ svg { flex-shrink: 0; }
   background: var(--bg-chrome);
   display: flex;
   align-items: flex-end;
-  padding: 0 var(--s-6);
-  gap: 2px;
+  padding: 0;                  /* flush left — first tab snaps to sidebar edge */
+  gap: 0;                      /* tabs sit edge-to-edge; no gap before first tab */
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: none;
+  flex-shrink: 0;              /* don't compress when toolbar/screens grow */
   -webkit-app-region: drag;
   user-select: none;
 }
@@ -3988,16 +4057,21 @@ svg { flex-shrink: 0; }
   border-bottom: none;
   margin-right: 2px;
   display: inline-flex;
-  align-items: center;
+  align-items: center;          /* icon + label sit on a horizontal baseline */
+  justify-content: flex-start;  /* icon → label hug the LEFT edge of the tab */
   gap: var(--s-6);
   font: 500 var(--t-body) var(--font-ui);
   letter-spacing: var(--track-body);
   color: var(--text-secondary);
   white-space: nowrap;
+  /* Uniform-shrink model: each tab targets 240px, but every tab shares the
+     shrink uniformly when the row gets crowded, down to a 80px minimum. The
+     spacer at the end of the tabbar absorbs leftover width when tabs are at
+     their natural max, so a single tab does NOT stretch the full row. */
+  flex: 0 1 240px;
   min-width: 80px;
-  max-width: 200px;
+  max-width: 240px;
   cursor: default;
-  flex-shrink: 0;
   transition: background var(--dur-flash) var(--ease-snap),
               color var(--dur-flash) var(--ease-snap);
 }
@@ -4018,8 +4092,9 @@ svg { flex-shrink: 0; }
   border-radius: 999px;
 }
 .fp-tab__label {
-  flex: 1;
-  min-width: 0;
+  flex: 1 1 0;            /* fills space between icon and the close (X) button */
+  min-width: 0;           /* allow ellipsis truncation when text > available */
+  text-align: left;       /* short labels hug the icon, not the centerline */
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -4029,8 +4104,11 @@ svg { flex-shrink: 0; }
   border-radius: var(--r-chip);
   display: inline-flex; align-items: center; justify-content: center;
   color: var(--text-tertiary);
+  background: transparent;     /* ensures span doesn't inherit tab background */
   opacity: 0;
   flex-shrink: 0;
+  cursor: pointer;             /* span needs explicit cursor to feel clickable */
+  -webkit-app-region: no-drag; /* defensive: ensure click reaches us in tab row */
   transition: opacity var(--dur-flash) var(--ease-snap),
               background var(--dur-flash) var(--ease-snap),
               color var(--dur-flash) var(--ease-snap);
@@ -4224,6 +4302,30 @@ svg { flex-shrink: 0; }
 
 /* ── Statusbar subcomponents ─────────────────────────────────────────────── */
 .fp-statusbar__left  { display: flex; align-items: center; gap: var(--s-6); }
+
+/* Zoom percentage pill in the status bar (left section) — only visible when
+   zoom is not 100%. Click resets to 100%. */
+.fp-statusbar__zoom-pill {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  font: 500 var(--t-small) var(--font-mono);
+  letter-spacing: 0;
+  cursor: pointer;
+  transition: background var(--dur-flash) var(--ease-snap),
+              color      var(--dur-flash) var(--ease-snap),
+              border-color var(--dur-flash) var(--ease-snap);
+}
+.fp-statusbar__zoom-pill:hover {
+  background: var(--accent-wash);
+  border-color: var(--accent-edge);
+  color: var(--accent);
+}
 .fp-statusbar__center {
   flex: 1;
   display: flex;
@@ -4524,6 +4626,14 @@ button.fp-pill:hover {
   letter-spacing: var(--track-button);
   color: var(--text-primary);
 }
+/* Home pane wrappers (Recent / Favorites / Shared) */
+.home-pane {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+}
+/* Sub-tab bar at top of Home content area */
+#home-tabs { flex-shrink: 0; }
 /* Recent file rows have inline path + time + hover actions */
 .fp-row--recent {
   display: grid;
@@ -4540,10 +4650,42 @@ button.fp-pill:hover {
 .fp-row--recent.fp-row--selected::before {
   content: "";
   position: absolute;
-  left: 0; top: 4px; bottom: 4px;
+  left: 4px; top: 4px; bottom: 4px;
   width: 2px;
   background: var(--accent);
   border-radius: 999px;
+}
+/* Recent row inline meta */
+.fp-row--recent .fp-row__recent-path {
+  color: var(--text-tertiary);
+  font: 400 var(--t-compact) var(--font-mono);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fp-row--recent .fp-row__recent-time {
+  color: var(--text-secondary);
+  font: 400 var(--t-compact) var(--font-mono);
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.fp-row--recent .fp-row__tags {
+  display: flex;
+  gap: var(--s-4);
+  flex-shrink: 0;
+}
+.fp-row--recent .fp-row__hover-actions {
+  display: flex;
+  gap: var(--s-2);
+  flex-shrink: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+/* Favorites star (right-most icon button on a Favorites row) */
+.fp-row__fav-star {
+  flex-shrink: 0;
+  color: var(--accent);
 }
 
 /* ══════════════════════════════════════════════════════════════════════════════
@@ -4868,127 +5010,219 @@ button.fp-pill:hover {
 
 /* ── Reduced motion: see canonical block appended below (UI-SPEC §A.0) ─────── */
 
-/* === Accent glow (lightsaber) — toggled via Settings → Personalization === */
+/* =============================================================================
+   Accent glow — TRUE LIGHTSABER MODE — toggled via Settings → Personalization
+   =============================================================================
+   Design model: every accent-colored element in glow mode is treated as a
+   lightsaber blade — pure WHITE in the core, accent-colored halo around it.
 
-/* Sidebar active pill: bright core gradient + soft rectangular halo */
+   Three transformations are applied in coordination:
+
+     1. Solid accent FILLS  → background swapped to white (or white→accent
+        gradient for the slight gradient look on bars). Box-shadow halo added.
+
+     2. Accent SVG STROKES/FILLS → `brightness(0) invert(1)` flips the path's
+        rendered color to pure white (alpha is preserved, so transparent SVG
+        areas stay transparent). Drop-shadow chain adds the colored halo.
+
+     3. Accent TEXT → color swapped to white. Text-shadow halo added.
+
+   All three feed off the same --accent-glow / --accent-glow-strong tokens,
+   which auto-track --accent (so a custom hex glows in its own hue).
+
+   The :where() selectors keep specificity at zero so element-specific tweaks
+   below can override the broad rules without !important.
+============================================================================= */
+
+/* ── BROAD CATCH-ALL: every accent SVG path becomes white + glows ─────────── */
+
+/* Targets icons whose stroke or fill is set DIRECTLY to the accent variable.
+   `:where()` keeps specificity at 0,1 so individual element overrides win. */
+[data-accent-glow="on"] :where([stroke="var(--accent)"], [fill="var(--accent)"]) {
+  filter: var(--glow-blade-md);
+}
+
+/* SVGs that take their color from a parent's CSS `color: var(--accent)` rule
+   (stroke/fill="currentColor"). We can't detect this generically in CSS, so
+   we enumerate the parent classes that set color to accent. Each rule below
+   is the actual lightsaber treatment for that icon family. */
+[data-accent-glow="on"] :where(
+  .fp-row--selected .fp-row__icon,
+  .fp-list-header__col--active svg,
+  .fp-list-header__col--active .icon,
+  .fp-sortable.active .list-col__caret,
+  .fp-node__icon,
+  .fp-tray__active-icon,
+  .fp-onboarding__hero,
+  .fp-toast--accent .fp-toast__icon,
+  .fp-menu__item:hover svg,
+  .fp-menu__item:hover .icon,
+  .fp-context-menu__item:hover svg,
+  .fp-context-menu__item:hover .icon,
+  .ftree-node__expand-badge[aria-expanded="true"] svg,
+  .inspector__tab.active svg
+) {
+  filter: var(--glow-blade-md);
+}
+
+/* ── BROAD CATCH-ALL: every accent text instance becomes white + glows ────── */
+
+[data-accent-glow="on"] :where(
+  .txt-accent,
+  .fp-stage--current .fp-stage__meta,
+  .inspector__tab.active,
+  .fp-sidebar__item--active .fp-sidebar__drive-letter,
+  .fp-toast--accent,
+  .fp-menu__item:hover,
+  .fp-context-menu__item:hover,
+  .fp-mode-banner--accent
+) {
+  color: #fff;
+  text-shadow: 0 0 6px var(--accent-glow-strong),
+               0 0 14px var(--accent-glow);
+}
+
+/* ── HEADLINE ELEMENTS — sidebar bar, tabs, brand, primary buttons ────────── */
+
+/* Sidebar active-item bar — pure white blade, large halo. */
 [data-accent-glow="on"] .fp-sidebar__item--active::before {
-  background: linear-gradient(
-    to right,
-    color-mix(in oklab, var(--accent) 40%, white 60%) 0%,
-    var(--accent) 100%
-  );
-  box-shadow: 0 0 4px var(--accent), 0 0 10px var(--accent-glow), 0 0 20px var(--accent-glow);
+  background: #fff;
+  box-shadow: var(--glow-lg);
   overflow: visible;
 }
 
+/* Tab underline + legacy underline-tabs indicator */
 [data-accent-glow="on"] .fp-tab--active::after,
-[data-accent-glow="on"] .fp-tabs__indicator {
-  box-shadow: 0 0 6px var(--accent), 0 0 12px var(--accent-glow), 0 0 20px var(--accent-glow);
+[data-accent-glow="on"] .fp-tabs__indicator,
+[data-accent-glow="on"] .fp-tab-underline {
+  background: #fff;
+  box-shadow: var(--glow-lg);
 }
 
-/* Dots/badges: brighter radial core + drop-shadow (respects shape bounds) */
-[data-accent-glow="on"] .fp-state-dot--accent {
-  background: radial-gradient(
-    circle at 30% 30%,
-    color-mix(in oklab, var(--accent) 30%, white 70%) 0%,
-    var(--accent) 70%
-  );
-  filter: drop-shadow(0 0 3px var(--accent)) drop-shadow(0 0 6px var(--accent-glow));
-  box-shadow: none;
-}
-
-[data-accent-glow="on"] .fp-badge--accent {
-  background: linear-gradient(
-    to bottom,
-    color-mix(in oklab, var(--accent) 50%, white 50%),
-    var(--accent)
-  );
-  filter: drop-shadow(0 0 3px var(--accent)) drop-shadow(0 0 6px var(--accent-glow));
-  box-shadow: none;
-}
-
-[data-accent-glow="on"] .fp-row--selected {
-  box-shadow: inset 0 0 0 1px var(--accent), 0 0 8px var(--accent-glow);
-}
-[data-accent-glow="on"] .fp-row--selected::before {
-  box-shadow: 0 0 4px var(--accent), 0 0 8px var(--accent-glow);
-}
-
-/* SVG icons in active sidebar item: drop-shadow (no hard bounding-box cut) */
-[data-accent-glow="on"] .fp-sidebar__item--active svg {
-  filter: drop-shadow(0 0 3px var(--accent)) drop-shadow(0 0 5px var(--accent-glow));
-}
-
-[data-accent-glow="on"] .fp-button--primary,
-[data-accent-glow="on"] .fp-btn--primary {
-  box-shadow: var(--highlight-top), var(--shadow-raised),
-              0 0 6px var(--accent), 0 0 14px var(--accent-glow);
-}
-
-/* Generic SVG elements with accent stroke/fill: multi-pass drop-shadow for smooth halo */
-[data-accent-glow="on"] [stroke="var(--accent)"],
-[data-accent-glow="on"] [fill="var(--accent)"] {
-  filter: drop-shadow(0 0 2px var(--accent))
-          drop-shadow(0 0 6px var(--accent-glow))
-          drop-shadow(0 0 12px var(--accent-glow));
-}
-
-[data-accent-glow="on"] .fp-input:focus,
-[data-accent-glow="on"] .fp-input:focus-visible {
-  box-shadow: var(--inset-recess-strong),
-              0 0 0 3px var(--accent-glow),
-              0 0 12px var(--accent-glow);
-}
-[data-accent-glow="on"] .fp-button:focus-visible,
-[data-accent-glow="on"] .fp-btn:focus-visible,
-[data-accent-glow="on"] .fp-icon-btn:focus-visible {
-  box-shadow: 0 0 0 3px var(--accent-glow), 0 0 12px var(--accent-glow);
-}
-
-/* Brand mark / logo: soft multi-layered halo via drop-shadow (respects SVG shape) */
-[data-accent-glow="on"] .fp-titlebar__brand {
+/* Brand mark — keep the brand's INNER colors (the dark cross is text-on-accent
+   and must stay readable against the now-white rect background that the
+   broad SVG rule above gives the rect). Add a halo around the whole mark
+   via drop-shadow on the SVG container. */
+[data-accent-glow="on"] .fp-titlebar__brand,
+[data-accent-glow="on"] .fp-titlebar__brand-name {
   overflow: visible;
 }
 [data-accent-glow="on"] .fp-brand,
 [data-accent-glow="on"] .fp-sidebar__brand-mark {
-  box-shadow: 0 0 6px var(--accent), 0 0 14px var(--accent-glow), 0 0 28px var(--accent-glow);
-  border-radius: 3px;
-  filter: drop-shadow(0 0 3px var(--accent)) drop-shadow(0 0 8px var(--accent-glow));
+  filter: var(--glow-filter-lg);
   overflow: visible;
 }
 
-/* Accent-wash backgrounds get a subtle glow halo */
-[data-accent-glow="on"] [style*="background:var(--accent-wash"],
-[data-accent-glow="on"] [style*="background: var(--accent-wash"] {
-  box-shadow: 0 0 6px var(--accent-glow);
+/* Primary buttons keep their accent fill (a "white button" reads wrong) but
+   get the strongest halo. */
+[data-accent-glow="on"] .fp-button--primary,
+[data-accent-glow="on"] .fp-btn--primary {
+  box-shadow: var(--highlight-top), var(--shadow-raised), var(--glow-lg);
 }
 
-/* Toggle tracks, segmented controls, chips */
+/* ── DOTS, BADGES, PILLS — anything with a solid accent fill ─────────────── */
+
+/* Round dots become white at the center, accent at the edge (radial gradient),
+   plus a halo. This is the cleanest lightsaber look on small circles. */
+[data-accent-glow="on"] :where(
+  .fp-state-dot--accent,
+  .fp-pill__dot--accent,
+  .fp-onboarding__step-dot--active
+) {
+  background: radial-gradient(circle at 35% 35%, #fff 0%, #fff 30%, var(--accent) 90%);
+  box-shadow: var(--glow-md);
+  filter: none;
+}
+
+/* Generic pill dots inside live pills */
+[data-accent-glow="on"] .fp-pill__dot {
+  background: radial-gradient(circle at 35% 35%, #fff 0%, var(--accent) 90%);
+  box-shadow: var(--glow-sm);
+}
+
+/* Accent badges — white-to-accent gradient, halo around the shape */
+[data-accent-glow="on"] .fp-badge--accent {
+  background: linear-gradient(to bottom, #fff 0%, var(--accent) 100%);
+  color: var(--text-on-accent);
+  box-shadow: var(--glow-md);
+}
+
+/* Live pill chassis (e.g. "Indexing 12%" status pill) */
+[data-accent-glow="on"] .fp-pill--live {
+  box-shadow: var(--glow-md);
+}
+
+/* ── BARS & FILLS — anything with a solid accent background ──────────────── */
+
+[data-accent-glow="on"] :where(
+  .fp-progress-bar__fill,
+  .fp-sidebar__drive-bar__fill,
+  .fp-snackbar__progress
+) {
+  background: linear-gradient(to right, #fff 0%, var(--accent) 80%);
+  box-shadow: var(--glow-md);
+}
+
+/* ── ROW SELECTION ──────────────────────────────────────────────────────── */
+
+[data-accent-glow="on"] .fp-row--selected {
+  box-shadow: inset 0 0 0 1px var(--accent), var(--glow-md);
+}
+[data-accent-glow="on"] .fp-row--selected::before {
+  background: #fff;
+  box-shadow: var(--glow-md);
+}
+[data-accent-glow="on"] .rb-row--selected {
+  border-left-color: #fff;
+  box-shadow: var(--glow-sm);
+}
+
+/* ── FORM CONTROLS ───────────────────────────────────────────────────────── */
+
 [data-accent-glow="on"] .fp-toggle input:checked ~ .fp-toggle__track {
-  box-shadow: 0 0 6px var(--accent), 0 0 12px var(--accent-glow);
+  background: linear-gradient(to right, #fff 0%, var(--accent) 80%);
+  box-shadow: var(--glow-md);
 }
 [data-accent-glow="on"] .fp-segmented__opt--active,
 [data-accent-glow="on"] .fp-segmented__opt.active {
-  box-shadow: 0 0 4px var(--accent-glow);
+  box-shadow: var(--glow-sm);
 }
 [data-accent-glow="on"] .fp-chip--active,
 [data-accent-glow="on"] .fp-chip.active {
-  box-shadow: 0 0 4px var(--accent), 0 0 8px var(--accent-glow);
+  box-shadow: var(--glow-md);
 }
 
-/* Progress bars */
-[data-accent-glow="on"] .fp-progress-bar__fill {
-  box-shadow: 0 0 6px var(--accent), 0 0 12px var(--accent-glow);
+/* Focus rings */
+[data-accent-glow="on"] .fp-input:focus,
+[data-accent-glow="on"] .fp-input:focus-visible {
+  box-shadow: var(--inset-recess-strong), var(--glow-md);
+}
+[data-accent-glow="on"] .fp-button:focus-visible,
+[data-accent-glow="on"] .fp-btn:focus-visible,
+[data-accent-glow="on"] .fp-icon-btn:focus-visible {
+  box-shadow: var(--glow-md);
 }
 
-/* Drive bar fill in sidebar */
-[data-accent-glow="on"] .fp-sidebar__drive-bar__fill {
-  box-shadow: 0 0 4px var(--accent), 0 0 8px var(--accent-glow);
+/* ── NOTIFICATIONS & BANNERS ─────────────────────────────────────────────── */
+
+[data-accent-glow="on"] .fp-toast--accent,
+[data-accent-glow="on"] .fp-toast--action {
+  box-shadow: var(--shadow-popover), var(--glow-md);
+  border-color: #fff;
+}
+[data-accent-glow="on"] .fp-snackbar {
+  /* snackbars don't have an accent variant by default, but the progress
+     fill inside is already covered by the bars rule above */
+}
+[data-accent-glow="on"] .fp-mode-banner--accent {
+  box-shadow: inset 0 -1px 0 #fff, var(--glow-md);
 }
 
-/* Active sidebar drive letter */
-[data-accent-glow="on"] .fp-sidebar__item--active .fp-sidebar__drive-letter {
-  text-shadow: 0 0 6px var(--accent), 0 0 12px var(--accent-glow);
+/* ── ACCENT-WASH BACKGROUNDS — subtle ambient glow ───────────────────────── */
+
+[data-accent-glow="on"] [style*="background:var(--accent-wash"],
+[data-accent-glow="on"] [style*="background: var(--accent-wash"] {
+  box-shadow: var(--glow-sm);
 }
 
 /* === prefers-reduced-motion: strict policy per UI-SPEC §A.0 === */
@@ -5007,9 +5241,20 @@ button.fp-pill:hover {
     animation-duration: revert !important;
     transition-duration: revert !important;
   }
-  /* Disable accent glow entirely under reduced-motion (glows can be distracting/triggering) */
-  [data-accent-glow="on"] * {
-    box-shadow: revert !important;
-    filter: revert !important;
+  /* Disable accent glow under reduced-motion by neutering the glow tokens.
+     Safer than `* { box-shadow: revert; filter: revert }`, which stripped
+     every shadow in the app. Only the glow tokens go inert; non-glow
+     shadows (inset recesses, raised buttons, modal depth, etc.) survive. */
+  [data-accent-glow="on"] {
+    --accent-glow:        transparent;
+    --accent-glow-strong: transparent;
+    --glow-sm:            none;
+    --glow-md:            none;
+    --glow-lg:            none;
+    --glow-filter-sm:     none;
+    --glow-filter-md:     none;
+    --glow-filter-lg:     none;
+    --glow-blade-sm:      none;
+    --glow-blade-md:      none;
   }
 }

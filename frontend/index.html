@@ -40,46 +40,9 @@
   </header>
 
   <!-- ═══════════════════════════════════════════════════════════════════
-       A.1.2  TAB BAR  (32px) — explorer-style tabs
-       Active tab: 2px accent underline, bg-content bg (connects to work area)
-       Inactive: bg-chrome, text-secondary
-       Underline slides at dur-slide; content swaps instant
-  ════════════════════════════════════════════════════════════════════════ -->
-  <div class="fp-tabbar" id="tabbar" role="tablist">
-    <!-- Tab: Home (active by default) -->
-    <button class="fp-tab fp-tab--active" role="tab" aria-selected="true"
-            data-tab-screen="home" data-action="switch-tab"
-            title="Home" draggable="true">
-      <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
-        <path d="M1 6.5L7 1l6 5.5V13H9V9H5v4H1V6.5z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
-      </svg>
-      <span class="fp-tab__label">Home</span>
-      <button class="fp-tab__close" data-action="close-tab" title="Close tab" tabindex="-1">
-        <svg width="10" height="10" viewBox="0 0 10 10"><path d="M2 2l6 6M8 2l-6 6" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
-      </button>
-    </button>
-    <!-- Tab: Browser (sample open tab) -->
-    <button class="fp-tab" role="tab" aria-selected="false"
-            data-tab-screen="browser" data-action="switch-tab"
-            title="C:\Users\Justin" draggable="true">
-      <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
-        <path d="M1 4a1 1 0 0 1 1-1h4l1.5 1.5H12a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V4z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
-      </svg>
-      <span class="fp-tab__label">C:\Users\Justin</span>
-      <button class="fp-tab__close" data-action="close-tab" title="Close tab" tabindex="-1">
-        <svg width="10" height="10" viewBox="0 0 10 10"><path d="M2 2l6 6M8 2l-6 6" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
-      </button>
-    </button>
-    <!-- New tab button -->
-    <button class="fp-icon-btn fp-icon-btn--sm" id="btn-new-tab" data-action="new-tab" title="New tab (Ctrl+T)" style="margin-left:2px;flex-shrink:0;-webkit-app-region:no-drag">
-      <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 2v10M2 7h10" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
-    </button>
-    <!-- tab bar spacer fills rest -->
-    <div style="flex:1"></div>
-  </div>
-
-  <!-- ═══════════════════════════════════════════════════════════════════
        SHELL: sidebar + main (fills remaining height)
+       Tab bar now lives INSIDE .main so it starts at the sidebar's right edge
+       rather than spanning the full window width above the sidebar.
   ════════════════════════════════════════════════════════════════════════ -->
   <div class="shell" id="shell">
 
@@ -89,10 +52,11 @@
     ════════════════════════════════════════════════════════════════════ -->
     <aside class="fp-sidebar" id="sidebar">
 
-      <!-- Sidebar header (56px) -->
+      <!-- Sidebar header (88px — sized to span both the tab-bar row and the
+           original header height now that the tab bar lives inside .main) -->
       <div class="fp-sidebar__header">
         <!-- Brand mark — also acts as expand button in collapsed mode -->
-        <svg class="fp-sidebar__brand-mark" width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <svg class="fp-sidebar__brand-mark" width="36" height="36" viewBox="0 0 24 24" fill="none" aria-hidden="true">
           <rect x="2" y="2" width="20" height="20" rx="5" fill="var(--accent)" opacity="0.85"/>
           <path d="M8 12h8M12 8v8" stroke="var(--text-on-accent)" stroke-width="1.8" stroke-linecap="round"/>
         </svg>
@@ -104,13 +68,9 @@
           </svg>
         </button>
         <div style="flex:1;min-width:0">
-          <div class="fp-sidebar__brand-name">FilePlus</div>
-          <!-- INTEGRATION: drive label from GET /api/drives/active -->
-          <div class="fp-sidebar__brand-sub">
-            <span class="mono" id="sb-drive-label">D:\</span>
-            <span style="color:var(--text-tertiary)"> · </span>
-            <span class="mono" id="sb-indexed-count">214k indexed</span>
-          </div>
+          <!-- Editable device name — double-click to rename, persists to localStorage. -->
+          <div class="fp-sidebar__brand-name" id="sb-device-name"
+               title="Double-click to rename" tabindex="0">My PC</div>
         </div>
         <button class="fp-icon-btn fp-icon-btn--sm" id="btn-sidebar-collapse"
                 data-action="toggle-sidebar" title="Collapse sidebar (Ctrl+B)" style="-webkit-app-region:no-drag">
@@ -299,9 +259,43 @@
     </aside><!-- /.fp-sidebar -->
 
     <!-- ═══════════════════════════════════════════════════════════════
-         MAIN  (toolbar + screens)
+         MAIN  (tabbar + toolbar + screens)
     ════════════════════════════════════════════════════════════════════ -->
     <div class="main" id="main">
+
+      <!-- ═════════════════════════════════════════════════════════
+           A.1.2  TAB BAR  (32px) — explorer-style tabs
+           Lives inside .main so its left edge snaps to the sidebar's
+           right edge. Each tab carries its OWN screen state via
+           data-tab-screen — switching tabs restores that tab's state;
+           navigating within a tab updates that tab's state in place.
+      ══════════════════════════════════════════════════════════════ -->
+      <div class="fp-tabbar" id="tabbar" role="tablist">
+        <!-- Initial Home tab (active by default).
+             NOTE: the close affordance is a <span role="button">, NOT a nested
+             <button>. Nesting buttons is invalid HTML — Chromium silently
+             splits the inner one out as a sibling, which left the seed tab's
+             X visually orphaned (no longer a descendant of .fp-tab--active,
+             so the opacity:1 rule didn't apply) and produced a phantom 16px
+             gap between tabs in the row. -->
+        <button class="fp-tab fp-tab--active" role="tab" aria-selected="true"
+                data-tab-id="tab-1" data-tab-screen="home" data-action="switch-tab"
+                title="Home" draggable="true">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+            <path d="M1 6.5L7 1l6 5.5V13H9V9H5v4H1V6.5z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
+          </svg>
+          <span class="fp-tab__label">Home</span>
+          <span class="fp-tab__close" role="button" data-action="close-tab" title="Close tab" tabindex="-1" aria-label="Close tab">
+            <svg width="10" height="10" viewBox="0 0 10 10"><path d="M2 2l6 6M8 2l-6 6" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+          </span>
+        </button>
+        <!-- New tab button -->
+        <button class="fp-icon-btn fp-icon-btn--sm" id="btn-new-tab" data-action="new-tab" title="New tab (Ctrl+T)" style="margin-left:2px;flex-shrink:0;-webkit-app-region:no-drag">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 2v10M2 7h10" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+        </button>
+        <!-- spacer fills rest of row (also acts as window drag region) -->
+        <div style="flex:1;align-self:stretch;-webkit-app-region:drag"></div>
+      </div>
 
       <!-- ═════════════════════════════════════════════════════════
            A.1.4  TOOLBAR  (48px)
@@ -393,7 +387,7 @@
         <div class="screen screen--home active" id="screen-home">
 
           <!-- Sub-tab bar: 44px, underline style, 1px border-hairline baseline -->
-          <div class="fp-tabs" id="home-tabs" style="flex-shrink:0">
+          <div class="fp-tabs" id="home-tabs">
             <button class="fp-tabs__item fp-tabs__item--active"
                     data-tab="recent" data-action="switch-home-tab">Recent</button>
             <button class="fp-tabs__item"
@@ -401,8 +395,7 @@
             <!-- Shared: disabled, v2 tooltip -->
             <button class="fp-tabs__item" data-tab="shared"
                     data-action="switch-home-tab"
-                    disabled title="Cloud and network shared files coming in a future version"
-                    style="opacity:.4;pointer-events:none;cursor:default">
+                    disabled title="Cloud and network shared files coming in a future version">
               Shared
             </button>
             <!-- Sliding underline indicator -->
@@ -410,14 +403,12 @@
           </div>
 
           <!-- ── Recent sub-tab ──────────────────────────────────── -->
-          <div class="home-pane" data-pane="recent" style="flex:1;overflow-y:auto;min-height:0">
+          <div class="home-pane" data-pane="recent">
 
             <!-- Section: Today -->
             <div class="home-section">
               <div class="home-section__head">
                 <span class="home-section__title">Today</span>
-                <button class="fp-btn fp-btn--ghost" style="height:24px;padding:0 8px;font-size:12px"
-                        data-action="view-all-recent" data-group="today">view all →</button>
               </div>
               <!-- File row — selected state shown by default as example -->
               <div class="fp-row fp-row--selected fp-row--recent" role="option"
@@ -425,13 +416,13 @@
                    data-action="open-recent-file" tabindex="0">
                 <svg class="fp-row__icon" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="2" y="1" width="9" height="13" rx="1.5" fill="var(--bg-raised)" stroke="var(--border-subtle)" stroke-width="0.8"/><path d="M11 1v4h3" stroke="var(--border-subtle)" stroke-width="0.8" stroke-linejoin="round"/><path d="M5 6h6M5 8.5h6M5 11h4" stroke="var(--text-tertiary)" stroke-width="0.8" stroke-linecap="round"/></svg>
                 <span class="fp-row__name">design-brief.md</span>
-                <span class="fp-row__recent-path mono" style="color:var(--text-tertiary);font:400 var(--t-compact) var(--font-mono);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">C:\Dev\FilePlus\docs\</span>
-                <span class="fp-row__recent-time mono" style="color:var(--text-secondary);font:400 var(--t-compact) var(--font-mono);flex-shrink:0;white-space:nowrap">opened 11:20</span>
-                <div class="fp-row__tags" style="display:flex;gap:4px;flex-shrink:0">
+                <span class="fp-row__recent-path mono">C:\Dev\FilePlus\docs\</span>
+                <span class="fp-row__recent-time mono">opened 11:20</span>
+                <div class="fp-row__tags">
                   <span class="fp-chip fp-chip--tinted">design</span>
                 </div>
                 <!-- Per-row hover actions (shown on hover via CSS) -->
-                <div class="fp-row__hover-actions" style="display:flex;gap:2px;flex-shrink:0;opacity:0;pointer-events:none">
+                <div class="fp-row__hover-actions">
                   <button class="fp-icon-btn fp-icon-btn--sm" data-action="open-file" title="Open"><svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M11 8v3H2V2h3M8 1h4v4M5 9l5.5-5.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
                   <button class="fp-icon-btn fp-icon-btn--sm" data-action="reveal-file" title="Reveal in Browser"><svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="1" y="3" width="12" height="9" rx="1" stroke="currentColor" stroke-width="1.2"/><path d="M1 6h12M4 3V1.5h6V3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg></button>
                   <button class="fp-icon-btn fp-icon-btn--sm" data-action="copy-path" title="Copy path"><svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="4" y="4" width="8" height="9" rx="1" stroke="currentColor" stroke-width="1.2"/><path d="M2 10V2h8" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
@@ -442,12 +433,12 @@
                    data-action="open-recent-file" tabindex="0">
                 <svg class="fp-row__icon" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="2" y="1" width="9" height="13" rx="1.5" fill="var(--bg-raised)" stroke="var(--border-subtle)" stroke-width="0.8"/><path d="M11 1v4h3" stroke="var(--border-subtle)" stroke-width="0.8" stroke-linejoin="round"/></svg>
                 <span class="fp-row__name">app.py</span>
-                <span class="fp-row__recent-path mono" style="color:var(--text-tertiary);font:400 var(--t-compact) var(--font-mono);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">D:\Projects\</span>
-                <span class="fp-row__recent-time mono" style="color:var(--text-secondary);font:400 var(--t-compact) var(--font-mono);flex-shrink:0;white-space:nowrap">modified 09:44</span>
-                <div class="fp-row__tags" style="display:flex;gap:4px;flex-shrink:0">
+                <span class="fp-row__recent-path mono">D:\Projects\</span>
+                <span class="fp-row__recent-time mono">modified 09:44</span>
+                <div class="fp-row__tags">
                   <span class="fp-chip">code</span>
                 </div>
-                <div class="fp-row__hover-actions" style="display:flex;gap:2px;flex-shrink:0;opacity:0;pointer-events:none">
+                <div class="fp-row__hover-actions">
                   <button class="fp-icon-btn fp-icon-btn--sm" data-action="open-file" title="Open"><svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M11 8v3H2V2h3M8 1h4v4M5 9l5.5-5.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
                   <button class="fp-icon-btn fp-icon-btn--sm" data-action="reveal-file" title="Reveal"><svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="1" y="3" width="12" height="9" rx="1" stroke="currentColor" stroke-width="1.2"/><path d="M1 6h12M4 3V1.5h6V3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg></button>
                   <button class="fp-icon-btn fp-icon-btn--sm" data-action="copy-path" title="Copy path"><svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="4" y="4" width="8" height="9" rx="1" stroke="currentColor" stroke-width="1.2"/><path d="M2 10V2h8" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
@@ -459,18 +450,185 @@
             <div class="home-section">
               <div class="home-section__head">
                 <span class="home-section__title">Yesterday</span>
-                <button class="fp-btn fp-btn--ghost" style="height:24px;padding:0 8px;font-size:12px"
-                        data-action="view-all-recent" data-group="yesterday">view all →</button>
               </div>
               <!-- INTEGRATION: yesterday's files from GET /api/recent?group=yesterday -->
               <div class="fp-row fp-row--recent" role="option" data-path="D:\Photos\vacation.jpg"
                    data-action="open-recent-file" tabindex="0">
                 <svg class="fp-row__icon" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="1" y="2" width="14" height="12" rx="1.5" fill="var(--bg-raised)" stroke="var(--border-subtle)" stroke-width="0.8"/><circle cx="5.5" cy="7" r="1.5" stroke="var(--text-tertiary)" stroke-width="0.8"/><path d="M1 12l4-4 4 4 2-2 4 2" stroke="var(--text-tertiary)" stroke-width="0.8" stroke-linejoin="round"/></svg>
                 <span class="fp-row__name">vacation.jpg</span>
-                <span class="fp-row__recent-path mono" style="color:var(--text-tertiary);font:400 var(--t-compact) var(--font-mono);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">D:\Photos\</span>
-                <span class="fp-row__recent-time mono" style="color:var(--text-secondary);font:400 var(--t-compact) var(--font-mono);flex-shrink:0;white-space:nowrap">viewed yesterday</span>
+                <span class="fp-row__recent-path mono">D:\Photos\</span>
+                <span class="fp-row__recent-time mono">viewed yesterday</span>
                 <div class="fp-row__tags"></div>
-                <div class="fp-row__hover-actions" style="display:flex;gap:2px;flex-shrink:0;opacity:0;pointer-events:none">
+                <div class="fp-row__hover-actions">
+                  <button class="fp-icon-btn fp-icon-btn--sm" data-action="open-file" title="Open"><svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M11 8v3H2V2h3M8 1h4v4M5 9l5.5-5.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+                  <button class="fp-icon-btn fp-icon-btn--sm" data-action="reveal-file" title="Reveal"><svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="1" y="3" width="12" height="9" rx="1" stroke="currentColor" stroke-width="1.2"/><path d="M1 6h12M4 3V1.5h6V3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg></button>
+                  <button class="fp-icon-btn fp-icon-btn--sm" data-action="copy-path" title="Copy path"><svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="4" y="4" width="8" height="9" rx="1" stroke="currentColor" stroke-width="1.2"/><path d="M2 10V2h8" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Section: This week -->
+            <div class="home-section">
+              <div class="home-section__head">
+                <span class="home-section__title">This week</span>
+              </div>
+              <!-- INTEGRATION: this week's files from GET /api/recent?group=this-week -->
+              <div class="fp-row fp-row--recent" role="option" data-path="D:\Work\Q1\budget.xlsx"
+                   data-action="open-recent-file" tabindex="0">
+                <svg class="fp-row__icon" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="2" y="1" width="9" height="13" rx="1.5" fill="var(--bg-raised)" stroke="var(--border-subtle)" stroke-width="0.8"/><path d="M11 1v4h3" stroke="var(--border-subtle)" stroke-width="0.8" stroke-linejoin="round"/><path d="M5 6h6M5 8.5h6M5 11h4" stroke="var(--text-tertiary)" stroke-width="0.8" stroke-linecap="round"/></svg>
+                <span class="fp-row__name">budget.xlsx</span>
+                <span class="fp-row__recent-path mono">D:\Work\Q1\</span>
+                <span class="fp-row__recent-time mono">viewed Tuesday</span>
+                <div class="fp-row__tags"></div>
+                <div class="fp-row__hover-actions">
+                  <button class="fp-icon-btn fp-icon-btn--sm" data-action="open-file" title="Open"><svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M11 8v3H2V2h3M8 1h4v4M5 9l5.5-5.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+                  <button class="fp-icon-btn fp-icon-btn--sm" data-action="reveal-file" title="Reveal"><svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="1" y="3" width="12" height="9" rx="1" stroke="currentColor" stroke-width="1.2"/><path d="M1 6h12M4 3V1.5h6V3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg></button>
+                  <button class="fp-icon-btn fp-icon-btn--sm" data-action="copy-path" title="Copy path"><svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="4" y="4" width="8" height="9" rx="1" stroke="currentColor" stroke-width="1.2"/><path d="M2 10V2h8" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Section: Earlier this month -->
+            <div class="home-section">
+              <div class="home-section__head">
+                <span class="home-section__title">Earlier this month</span>
+              </div>
+              <!-- INTEGRATION: earlier-this-month files from GET /api/recent?group=earlier-month -->
+              <div class="fp-row fp-row--recent" role="option" data-path="D:\Projects\FilePlus"
+                   data-action="open-recent-file" tabindex="0">
+                <svg class="fp-row__icon" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M1 4a1 1 0 0 1 1-1h4l1.5 1.5H14a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V4z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>
+                <span class="fp-row__name">FilePlus</span>
+                <span class="fp-row__recent-path mono">D:\Projects\</span>
+                <span class="fp-row__recent-time mono">modified Apr 12</span>
+                <div class="fp-row__tags"></div>
+                <div class="fp-row__hover-actions">
+                  <button class="fp-icon-btn fp-icon-btn--sm" data-action="open-file" title="Open"><svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M11 8v3H2V2h3M8 1h4v4M5 9l5.5-5.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+                  <button class="fp-icon-btn fp-icon-btn--sm" data-action="reveal-file" title="Reveal"><svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="1" y="3" width="12" height="9" rx="1" stroke="currentColor" stroke-width="1.2"/><path d="M1 6h12M4 3V1.5h6V3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg></button>
+                  <button class="fp-icon-btn fp-icon-btn--sm" data-action="copy-path" title="Copy path"><svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="4" y="4" width="8" height="9" rx="1" stroke="currentColor" stroke-width="1.2"/><path d="M2 10V2h8" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Section: Last month -->
+            <div class="home-section">
+              <div class="home-section__head">
+                <span class="home-section__title">Last month</span>
+              </div>
+              <!-- INTEGRATION: last-month files from GET /api/recent?group=last-month -->
+              <div class="fp-row fp-row--recent" role="option" data-path="D:\Documents\Invoices\invoice-0428.pdf"
+                   data-action="open-recent-file" tabindex="0">
+                <svg class="fp-row__icon" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="2" y="1" width="9" height="13" rx="1.5" fill="var(--bg-raised)" stroke="var(--border-subtle)" stroke-width="0.8"/><path d="M11 1v4h3" stroke="var(--border-subtle)" stroke-width="0.8" stroke-linejoin="round"/><path d="M5 6h6M5 8.5h6M5 11h4" stroke="var(--text-tertiary)" stroke-width="0.8" stroke-linecap="round"/></svg>
+                <span class="fp-row__name">invoice-0428.pdf</span>
+                <span class="fp-row__recent-path mono">D:\Documents\Invoices\</span>
+                <span class="fp-row__recent-time mono">opened Mar 28</span>
+                <div class="fp-row__tags"></div>
+                <div class="fp-row__hover-actions">
+                  <button class="fp-icon-btn fp-icon-btn--sm" data-action="open-file" title="Open"><svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M11 8v3H2V2h3M8 1h4v4M5 9l5.5-5.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+                  <button class="fp-icon-btn fp-icon-btn--sm" data-action="reveal-file" title="Reveal"><svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="1" y="3" width="12" height="9" rx="1" stroke="currentColor" stroke-width="1.2"/><path d="M1 6h12M4 3V1.5h6V3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg></button>
+                  <button class="fp-icon-btn fp-icon-btn--sm" data-action="copy-path" title="Copy path"><svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="4" y="4" width="8" height="9" rx="1" stroke="currentColor" stroke-width="1.2"/><path d="M2 10V2h8" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Section: Earlier this year -->
+            <div class="home-section">
+              <div class="home-section__head">
+                <span class="home-section__title">Earlier this year</span>
+              </div>
+              <!-- INTEGRATION: earlier-this-year files from GET /api/recent?group=earlier-this-year -->
+              <div class="fp-row fp-row--recent" role="option" data-path="D:\Notes\kickoff.md"
+                   data-action="open-recent-file" tabindex="0">
+                <svg class="fp-row__icon" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="2" y="1" width="9" height="13" rx="1.5" fill="var(--bg-raised)" stroke="var(--border-subtle)" stroke-width="0.8"/><path d="M11 1v4h3" stroke="var(--border-subtle)" stroke-width="0.8" stroke-linejoin="round"/><path d="M5 6h6M5 8.5h6M5 11h4" stroke="var(--text-tertiary)" stroke-width="0.8" stroke-linecap="round"/></svg>
+                <span class="fp-row__name">kickoff.md</span>
+                <span class="fp-row__recent-path mono">D:\Notes\</span>
+                <span class="fp-row__recent-time mono">opened Feb 5</span>
+                <div class="fp-row__tags"></div>
+                <div class="fp-row__hover-actions">
+                  <button class="fp-icon-btn fp-icon-btn--sm" data-action="open-file" title="Open"><svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M11 8v3H2V2h3M8 1h4v4M5 9l5.5-5.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+                  <button class="fp-icon-btn fp-icon-btn--sm" data-action="reveal-file" title="Reveal"><svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="1" y="3" width="12" height="9" rx="1" stroke="currentColor" stroke-width="1.2"/><path d="M1 6h12M4 3V1.5h6V3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg></button>
+                  <button class="fp-icon-btn fp-icon-btn--sm" data-action="copy-path" title="Copy path"><svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="4" y="4" width="8" height="9" rx="1" stroke="currentColor" stroke-width="1.2"/><path d="M2 10V2h8" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Section: 2025 (current year - 1) -->
+            <!-- INTEGRATION: section title is dynamic — server emits the last 3 calendar years individually -->
+            <div class="home-section">
+              <div class="home-section__head">
+                <span class="home-section__title">2025</span>
+              </div>
+              <!-- INTEGRATION: year files from GET /api/recent?group=year&year=2025 -->
+              <div class="fp-row fp-row--recent" role="option" data-path="D:\Archive\screenshots.zip"
+                   data-action="open-recent-file" tabindex="0">
+                <svg class="fp-row__icon" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="2" y="1" width="9" height="13" rx="1.5" fill="var(--bg-raised)" stroke="var(--border-subtle)" stroke-width="0.8"/><path d="M11 1v4h3" stroke="var(--border-subtle)" stroke-width="0.8" stroke-linejoin="round"/><path d="M5 6h6M5 8.5h6M5 11h4" stroke="var(--text-tertiary)" stroke-width="0.8" stroke-linecap="round"/></svg>
+                <span class="fp-row__name">screenshots.zip</span>
+                <span class="fp-row__recent-path mono">D:\Archive\</span>
+                <span class="fp-row__recent-time mono">modified Nov 8</span>
+                <div class="fp-row__tags"></div>
+                <div class="fp-row__hover-actions">
+                  <button class="fp-icon-btn fp-icon-btn--sm" data-action="open-file" title="Open"><svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M11 8v3H2V2h3M8 1h4v4M5 9l5.5-5.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+                  <button class="fp-icon-btn fp-icon-btn--sm" data-action="reveal-file" title="Reveal"><svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="1" y="3" width="12" height="9" rx="1" stroke="currentColor" stroke-width="1.2"/><path d="M1 6h12M4 3V1.5h6V3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg></button>
+                  <button class="fp-icon-btn fp-icon-btn--sm" data-action="copy-path" title="Copy path"><svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="4" y="4" width="8" height="9" rx="1" stroke="currentColor" stroke-width="1.2"/><path d="M2 10V2h8" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Section: 2024 (current year - 2) -->
+            <div class="home-section">
+              <div class="home-section__head">
+                <span class="home-section__title">2024</span>
+              </div>
+              <!-- INTEGRATION: year files from GET /api/recent?group=year&year=2024 -->
+              <div class="fp-row fp-row--recent" role="option" data-path="D:\Photos\family-album"
+                   data-action="open-recent-file" tabindex="0">
+                <svg class="fp-row__icon" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M1 4a1 1 0 0 1 1-1h4l1.5 1.5H14a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V4z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>
+                <span class="fp-row__name">family-album</span>
+                <span class="fp-row__recent-path mono">D:\Photos\</span>
+                <span class="fp-row__recent-time mono">opened Aug 14</span>
+                <div class="fp-row__tags"></div>
+                <div class="fp-row__hover-actions">
+                  <button class="fp-icon-btn fp-icon-btn--sm" data-action="open-file" title="Open"><svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M11 8v3H2V2h3M8 1h4v4M5 9l5.5-5.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+                  <button class="fp-icon-btn fp-icon-btn--sm" data-action="reveal-file" title="Reveal"><svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="1" y="3" width="12" height="9" rx="1" stroke="currentColor" stroke-width="1.2"/><path d="M1 6h12M4 3V1.5h6V3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg></button>
+                  <button class="fp-icon-btn fp-icon-btn--sm" data-action="copy-path" title="Copy path"><svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="4" y="4" width="8" height="9" rx="1" stroke="currentColor" stroke-width="1.2"/><path d="M2 10V2h8" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Section: 2023 (current year - 3) -->
+            <div class="home-section">
+              <div class="home-section__head">
+                <span class="home-section__title">2023</span>
+              </div>
+              <!-- INTEGRATION: year files from GET /api/recent?group=year&year=2023 -->
+              <div class="fp-row fp-row--recent" role="option" data-path="D:\Documents\thesis-final.pdf"
+                   data-action="open-recent-file" tabindex="0">
+                <svg class="fp-row__icon" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="2" y="1" width="9" height="13" rx="1.5" fill="var(--bg-raised)" stroke="var(--border-subtle)" stroke-width="0.8"/><path d="M11 1v4h3" stroke="var(--border-subtle)" stroke-width="0.8" stroke-linejoin="round"/><path d="M5 6h6M5 8.5h6M5 11h4" stroke="var(--text-tertiary)" stroke-width="0.8" stroke-linecap="round"/></svg>
+                <span class="fp-row__name">thesis-final.pdf</span>
+                <span class="fp-row__recent-path mono">D:\Documents\</span>
+                <span class="fp-row__recent-time mono">opened May 22</span>
+                <div class="fp-row__tags"></div>
+                <div class="fp-row__hover-actions">
+                  <button class="fp-icon-btn fp-icon-btn--sm" data-action="open-file" title="Open"><svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M11 8v3H2V2h3M8 1h4v4M5 9l5.5-5.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+                  <button class="fp-icon-btn fp-icon-btn--sm" data-action="reveal-file" title="Reveal"><svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="1" y="3" width="12" height="9" rx="1" stroke="currentColor" stroke-width="1.2"/><path d="M1 6h12M4 3V1.5h6V3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg></button>
+                  <button class="fp-icon-btn fp-icon-btn--sm" data-action="copy-path" title="Copy path"><svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="4" y="4" width="8" height="9" rx="1" stroke="currentColor" stroke-width="1.2"/><path d="M2 10V2h8" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Section: A long time ago -->
+            <div class="home-section">
+              <div class="home-section__head">
+                <span class="home-section__title">A long time ago</span>
+              </div>
+              <!-- INTEGRATION: pre-(current year - 3) files from GET /api/recent?group=ancient -->
+              <div class="fp-row fp-row--recent" role="option" data-path="D:\Old\resume-2019.pdf"
+                   data-action="open-recent-file" tabindex="0">
+                <svg class="fp-row__icon" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="2" y="1" width="9" height="13" rx="1.5" fill="var(--bg-raised)" stroke="var(--border-subtle)" stroke-width="0.8"/><path d="M11 1v4h3" stroke="var(--border-subtle)" stroke-width="0.8" stroke-linejoin="round"/><path d="M5 6h6M5 8.5h6M5 11h4" stroke="var(--text-tertiary)" stroke-width="0.8" stroke-linecap="round"/></svg>
+                <span class="fp-row__name">resume-2019.pdf</span>
+                <span class="fp-row__recent-path mono">D:\Old\</span>
+                <span class="fp-row__recent-time mono">opened in 2019</span>
+                <div class="fp-row__tags"></div>
+                <div class="fp-row__hover-actions">
                   <button class="fp-icon-btn fp-icon-btn--sm" data-action="open-file" title="Open"><svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M11 8v3H2V2h3M8 1h4v4M5 9l5.5-5.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
                   <button class="fp-icon-btn fp-icon-btn--sm" data-action="reveal-file" title="Reveal"><svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="1" y="3" width="12" height="9" rx="1" stroke="currentColor" stroke-width="1.2"/><path d="M1 6h12M4 3V1.5h6V3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg></button>
                   <button class="fp-icon-btn fp-icon-btn--sm" data-action="copy-path" title="Copy path"><svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="4" y="4" width="8" height="9" rx="1" stroke="currentColor" stroke-width="1.2"/><path d="M2 10V2h8" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
@@ -490,20 +648,19 @@
           </div><!-- /.home-pane recent -->
 
           <!-- ── Favorites sub-tab ───────────────────────────────── -->
-          <div class="home-pane" data-pane="favorites" style="flex:1;overflow-y:auto;min-height:0;display:none">
+          <div class="home-pane" data-pane="favorites" style="display:none">
             <!-- INTEGRATION: favorites from GET /api/favorites -->
             <!-- Same row layout as Recent, no grouping, star icon to unfavorite -->
-            <div style="padding:0">
+            <div>
               <div class="fp-row fp-row--recent" role="option" data-path="D:\Projects\FilePlus"
                    data-action="open-recent-file" tabindex="0">
                 <svg class="fp-row__icon" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M1 4a1 1 0 0 1 1-1h4l1.5 1.5H14a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V4z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>
                 <span class="fp-row__name">FilePlus</span>
-                <span class="fp-row__recent-path mono" style="color:var(--text-tertiary);font:400 var(--t-compact) var(--font-mono);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">D:\Projects\</span>
-                <span class="fp-row__recent-time mono" style="color:var(--text-secondary);font:400 var(--t-compact) var(--font-mono);flex-shrink:0;white-space:nowrap">opened 2d ago</span>
+                <span class="fp-row__recent-path mono">D:\Projects\</span>
+                <span class="fp-row__recent-time mono">opened 2d ago</span>
                 <!-- Star icon: filled = favorited; click unfavorites -->
-                <button class="fp-icon-btn fp-icon-btn--sm" data-action="unfavorite-file"
-                        data-path="D:\Projects\FilePlus" title="Remove from favorites"
-                        style="flex-shrink:0;color:var(--accent)">
+                <button class="fp-icon-btn fp-icon-btn--sm fp-row__fav-star" data-action="unfavorite-file"
+                        data-path="D:\Projects\FilePlus" title="Remove from favorites">
                   <svg width="14" height="14" viewBox="0 0 14 14" fill="var(--accent)" aria-hidden="true"><path d="M7 1l1.8 3.6L13 5.3l-3 2.9.7 4.1L7 10.4l-3.7 1.9.7-4.1-3-2.9 4.2-.7z" stroke="var(--accent)" stroke-width="0.8"/></svg>
                 </button>
               </div>
@@ -519,7 +676,7 @@
           </div><!-- /.home-pane favorites -->
 
           <!-- ── Shared sub-tab (disabled) ───────────────────────── -->
-          <div class="home-pane" data-pane="shared" style="flex:1;overflow-y:auto;min-height:0;display:none">
+          <div class="home-pane" data-pane="shared" style="display:none">
             <!-- Always shows disabled empty state; tab itself is disabled -->
             <div class="fp-empty-state">
               <svg class="fp-empty-state__icon" viewBox="0 0 48 48" fill="none"><circle cx="24" cy="24" r="20" stroke="currentColor" stroke-width="2"/><path d="M16 24h16M24 16l8 8-8 8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -2210,6 +2367,18 @@
                   </div>
                   <div class="settings-sep"></div>
                   <div class="settings-row">
+                    <div class="settings-row__label">Show in-app notifications</div>
+                    <div class="settings-row__control">
+                      <label class="fp-toggle">
+                        <input type="checkbox" id="settings-show-notifications" data-action="settings-set-show-notifications"/>
+                        <span class="fp-toggle__track"></span>
+                        <span class="fp-toggle__thumb"></span>
+                      </label>
+                      <span style="font:400 var(--t-small) var(--font-ui);color:var(--text-tertiary);margin-left:10px">Toasts and snackbars (tab opened, tab closed, tab order saved, scan complete, etc.). Errors always show.</span>
+                    </div>
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row">
                     <div class="settings-row__label">Density</div>
                     <div class="fp-segmented">
                       <button class="fp-segmented__opt" data-action="settings-set-density" data-val="compact">Compact</button>
@@ -2984,6 +3153,13 @@
       <span class="mono" id="status-count">0 items</span>
       <span class="fp-statusbar__sep">·</span>
       <span id="status-selected">Nothing selected</span>
+      <!-- Zoom percentage pill — shows current Electron webContents zoom factor.
+           Hidden at 100% to avoid noise; appears as soon as the user zooms.
+           Click to reset to 100% (Ctrl+0). -->
+      <span class="fp-statusbar__sep" id="status-zoom-sep" style="display:none">·</span>
+      <button class="fp-statusbar__zoom-pill" id="status-zoom-pill"
+              data-action="zoom-reset" title="Click to reset zoom (Ctrl+0)"
+              style="display:none">100%</button>
     </div>
     <!-- INTEGRATION: show #status-task when GET /api/tasks/active returns a running task -->
     <div class="fp-statusbar__center" id="status-task" style="display:none">

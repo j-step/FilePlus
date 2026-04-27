@@ -20,32 +20,112 @@ const STUB_SCREENS = {
   'settings':       'Settings: most settings persist locally only — backend wiring TODO.',
 };
 
-function switchScreen(id) {
+// Per-tab UI state model
+// ─────────────────────
+// Each tab is an independent state container — its current screen is held on
+// the tab DOM element via data-tab-screen, and its label/title reflect that
+// screen. Two tabs on the same screen are still distinct: clicking one only
+// activates that single tab.
+//
+//   switchScreen(id)   — change the ACTIVE tab's screen in place. Sidebar
+//                        navigation, keyboard shortcuts, and any other "go to
+//                        screen X" entry point should call this. Tabs do NOT
+//                        switch on their own.
+//   switchToTab(tab)   — user clicked a tab; activate that specific tab and
+//                        restore its screen. Other tabs are deactivated; their
+//                        screen state is preserved on their DOM nodes.
+
+// NOTE: 'browser' deliberately maps to 'Files' as a last-resort fallback —
+// in practice every browser-tab entry point should pass an explicit label
+// (a folder/drive name) to switchScreen(), so users see "Downloads" or
+// "D:\\" or "Projects" rather than the meta-label "Browser".
+const SCREEN_LABELS = {
+  home:            'Home',
+  browser:         'Files',
+  ftree:           'File Tree',
+  'scan-config':   'Scan',
+  'scan-progress': 'Scan',
+  'scan-results':  'Scan',
+  'review-bin':    'Review Bin',
+  everything:      'Everything Folder',
+  settings:        'Settings',
+};
+
+const SCREEN_ICONS = {
+  home:    '<svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M1 6.5L7 1l6 5.5V13H9V9H5v4H1V6.5z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>',
+  browser: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M1 4a1 1 0 0 1 1-1h4l1.5 1.5H12a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V4z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>',
+};
+const DEFAULT_TAB_ICON = '<svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><rect x="2" y="2" width="10" height="10" rx="1.5" stroke="currentColor" stroke-width="1.2"/></svg>';
+
+function getScreenLabel(id) { return SCREEN_LABELS[id] || id; }
+function getScreenIcon(id)  { return SCREEN_ICONS[id]  || DEFAULT_TAB_ICON; }
+
+function getActiveTab() {
+  return document.querySelector('.fp-tab.fp-tab--active');
+}
+
+function pathBaseName(p) {
+  if (!p) return '';
+  // "C:\Users\Justin\Documents" → "Documents"; "D:\" → "D:"; "/" → ''
+  const parts = String(p).split(/[\\/]/).filter(Boolean);
+  return parts[parts.length - 1] || String(p);
+}
+
+function updateTabAppearance(tab, screenId, labelOverride) {
+  if (!tab) return;
+  const label = labelOverride || getScreenLabel(screenId);
+  const labelEl = tab.querySelector('.fp-tab__label');
+  if (labelEl) labelEl.textContent = label;
+  // Replace the leading <svg> icon (first child) with the screen's icon.
+  const firstSvg = tab.querySelector(':scope > svg');
+  if (firstSvg) firstSvg.outerHTML = getScreenIcon(screenId);
+  tab.setAttribute('title', label);
+}
+
+// Called whenever the active tab's path changes — keeps the tab title in
+// sync with the current folder so each tab's label reflects its real state.
+function syncActiveTabPath(path) {
+  const active = getActiveTab();
+  if (!active || active.dataset.tabScreen !== 'browser') return;
+  const folderName = pathBaseName(path) || getScreenLabel('browser');
+  updateTabAppearance(active, 'browser', folderName);
+}
+
+// Load a screen's DOM into view (no tab-state changes — caller owns those).
+function showScreenDom(id) {
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
   const target = document.getElementById(`screen-${id}`);
   if (target) target.classList.add('active');
-
-  // Stub-toast for screens whose backend wiring isn't complete
   if (STUB_SCREENS[id] && typeof showToast === 'function') {
     showToast(STUB_SCREENS[id], 'accent');
   }
-
-  // Update tab bar active state
-  document.querySelectorAll('.fp-tab[data-tab-screen]').forEach(tab => {
-    tab.classList.toggle('fp-tab--active', tab.dataset.tabScreen === id);
-    tab.setAttribute('aria-selected', tab.dataset.tabScreen === id ? 'true' : 'false');
-  });
-
-  // When entering the Browser screen, load the sandbox root if we haven't already.
   if (id === 'browser' && navHistory.stack.length === 0) {
-    loadDirectory(null); // null → calls /fs/list/root
+    loadDirectory(null);
   }
-
-  // Store in session for persistence
   sessionStorage.setItem('fp-active-screen', id);
-
-  // Coherent sidebar active state (screen-based for non-browser; path-based for browser)
   updateSidebarActive();
+}
+
+function switchScreen(id, labelOverride) {
+  // Mutate the ACTIVE tab's screen state — never switch tabs from here.
+  // labelOverride lets callers pin the tab title to a meaningful string
+  // (e.g. the folder/drive name) so browser tabs don't briefly read "Files".
+  const active = getActiveTab();
+  if (active) {
+    active.dataset.tabScreen = id;
+    updateTabAppearance(active, id, labelOverride);
+  }
+  showScreenDom(id);
+}
+
+function switchToTab(tab) {
+  if (!tab) return;
+  document.querySelectorAll('.fp-tab').forEach(t => {
+    const isActive = t === tab;
+    t.classList.toggle('fp-tab--active', isActive);
+    t.setAttribute('aria-selected', isActive ? 'true' : 'false');
+  });
+  showScreenDom(tab.dataset.tabScreen || 'home');
 }
 
 // ── Sidebar active-state machinery ────────────────────────────────────────────
@@ -227,6 +307,41 @@ function restoreSidebarState() {
   }
 }
 
+// ── Sidebar device name ───────────────────────────────────────────────────────
+// Editable label at the top of the sidebar — defaults to OS hostname, can be
+// renamed by double-clicking. The chosen name persists in localStorage.
+function initDeviceName() {
+  const el = document.getElementById('sb-device-name');
+  if (!el) return;
+  const saved = localStorage.getItem('fp-device-name');
+  const fallback = (window.electronAPI?.hostname?.() || 'My PC').trim() || 'My PC';
+  el.textContent = saved || fallback;
+
+  el.addEventListener('dblclick', () => {
+    el.setAttribute('contenteditable', 'plaintext-only');
+    el.focus();
+    // Select all so the user can just start typing to replace
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+  });
+
+  function commit() {
+    el.removeAttribute('contenteditable');
+    const next = (el.textContent || '').trim().slice(0, 80) || fallback;
+    el.textContent = next;
+    localStorage.setItem('fp-device-name', next);
+  }
+
+  el.addEventListener('blur',    commit);
+  el.addEventListener('keydown', e => {
+    if (e.key === 'Enter')  { e.preventDefault(); el.blur(); }
+    if (e.key === 'Escape') { e.preventDefault(); el.textContent = saved || fallback; el.blur(); }
+  });
+}
+
 // ── Responsive toolbar search ─────────────────────────────────────────────────
 // Continuous-resize model: search bar is as wide as possible up to MAX. As the
 // breadcrumb (which has flex:1) grows, search shrinks to make room. Below the
@@ -237,7 +352,7 @@ const SEARCH_MAX_WIDTH                  = 220; // px; expanded full width
 const SEARCH_MIN_FULL_PLACEHOLDER       = 170; // px; below this, swap to short placeholder "Search…"
 const SEARCH_MIN_SHORT_PLACEHOLDER      = 110; // px; below this, collapse to icon
 const SEARCH_ICON_WIDTH                 = 28;  // px; collapsed icon width
-const SEARCH_RESIZE_DEAD_ZONE           = 1;   // px; ignore changes smaller than this
+const SEARCH_RESIZE_DEAD_ZONE           = 0;   // px; pixel-for-pixel response
 
 const PLACEHOLDER_FULL  = 'Search files…';
 const PLACEHOLDER_SHORT = 'Search…';
@@ -249,17 +364,35 @@ function initToolbarResponsive() {
   const input      = document.getElementById('search-input');
   if (!toolbar || !breadcrumb || !searchWrap) return;
 
-  let rafId = null;
+  let moRafId = null;
   let lastAppliedWidth = SEARCH_MAX_WIDTH;
   let lastAppliedState = 'full'; // 'full' | 'short' | 'icon'
+  let iconEnteredAt = 0;          // performance.now() when state became 'icon'
+  let caveDelayTimer = null;      // pending setTimeout for deferred cave-show
+  const CAVE_REVEAL_DELAY_MS = 10;
 
   function applyContinuous(width, state) {
+    // Track entry into icon state for the cave-reveal delay.
+    if (state === 'icon' && lastAppliedState !== 'icon') {
+      iconEnteredAt = performance.now();
+    }
     if (state === 'icon') {
       searchWrap.classList.add('fp-toolbar__search--icon');
       searchWrap.style.width = '';
+      // Icon state: breadcrumb may be pushed into the cave. Allow it to shrink
+      // (basis:0, shrink:1) so it claims remaining space and overflow-scrolls.
+      breadcrumb.style.flex = '1 1 0';
+      breadcrumb.style.minWidth = '0';
     } else {
       searchWrap.classList.remove('fp-toolbar__search--icon');
       searchWrap.style.width = width + 'px';
+      // Non-icon: PIN breadcrumb at its natural content width. shrink:0 means
+      // flex layout will NOT clip the path; grow:1 still lets it absorb empty
+      // space when the toolbar is wider than needed. Search absorbs all the
+      // shrink as the toolbar narrows — the path stays put until search has
+      // collapsed to the icon.
+      breadcrumb.style.flex = '1 0 auto';
+      breadcrumb.style.minWidth = '';
       if (input) {
         const desired = state === 'full' ? PLACEHOLDER_FULL : PLACEHOLDER_SHORT;
         if (input.placeholder !== desired) input.placeholder = desired;
@@ -319,30 +452,62 @@ function initToolbarResponsive() {
       targetState = 'icon';
     }
 
-    // Dead zone: skip tiny changes that don't cross a state boundary
-    const widthChanged = Math.abs(targetWidth - lastAppliedWidth) >= SEARCH_RESIZE_DEAD_ZONE;
+    // Pixel-for-pixel: apply if width or state changed at all
+    const widthChanged = targetWidth !== lastAppliedWidth;
     const stateChanged = targetState !== lastAppliedState;
     if (widthChanged || stateChanged) {
       applyContinuous(targetWidth, targetState);
     }
 
-    // Cave fade visibility — driven by ACTUAL breadcrumb overflow, not by state
+    // Cave fade only appears when search has collapsed to the icon AND a short
+    // delay has passed since the collapse — the delay prevents same-frame
+    // visual coupling between the search shrinking and the cave appearing.
+    // Until both conditions are met, the breadcrumb is pinned and cannot show
+    // a cave. The path is only "pushed back" once the search has nowhere
+    // left to give AND the eye has registered the collapse.
     const bcOverflow = breadcrumb.scrollWidth - breadcrumb.clientWidth;
-    breadcrumb.classList.toggle('fp-breadcrumb--scroll', bcOverflow > 1);
-    if (bcOverflow > 1) {
+    const isIcon = lastAppliedState === 'icon';
+    const elapsed = isIcon ? performance.now() - iconEnteredAt : 0;
+    const delayPassed = elapsed >= CAVE_REVEAL_DELAY_MS;
+    const showCave = isIcon && delayPassed && (bcOverflow > 1);
+
+    breadcrumb.classList.toggle('fp-breadcrumb--scroll', showCave);
+    if (showCave) {
       breadcrumb.scrollLeft = breadcrumb.scrollWidth;
+    }
+
+    // If we're in icon state and would show the cave but the delay hasn't
+    // elapsed yet, schedule a deferred recalc so the cave appears right after
+    // the delay window closes.
+    if (isIcon && !delayPassed && (bcOverflow > 1)) {
+      if (caveDelayTimer === null) {
+        const remaining = Math.max(0, CAVE_REVEAL_DELAY_MS - elapsed) + 1;
+        caveDelayTimer = setTimeout(() => {
+          caveDelayTimer = null;
+          actualRecalc();
+        }, remaining);
+      }
+    } else if (caveDelayTimer !== null && !isIcon) {
+      // Left icon state during the delay window — cancel the deferred reveal.
+      clearTimeout(caveDelayTimer);
+      caveDelayTimer = null;
     }
   }
 
-  function recalc() {
-    if (rafId !== null) return;
-    rafId = requestAnimationFrame(() => { rafId = null; actualRecalc(); });
-  }
-
-  const ro = new ResizeObserver(recalc);
+  // ResizeObserver fires post-layout, pre-paint — call actualRecalc directly
+  // (no rAF wrap) so the search width updates in the SAME frame as the toolbar
+  // resize. Wrapping in rAF would push the update to the NEXT frame, which the
+  // user perceives as "smoothing" / lag during fast drags.
+  const ro = new ResizeObserver(() => actualRecalc());
   ro.observe(toolbar);
 
-  const mo = new MutationObserver(recalc);
+  // MutationObserver can fire synchronously many times (e.g. breadcrumb rebuilds);
+  // coalesce those into one rAF to avoid layout thrashing.
+  function moRecalc() {
+    if (moRafId !== null) return;
+    moRafId = requestAnimationFrame(() => { moRafId = null; actualRecalc(); });
+  }
+  const mo = new MutationObserver(moRecalc);
   mo.observe(breadcrumb, { childList: true, characterData: true, subtree: true });
 
   // Click on collapsed icon → open command palette (do NOT expand inline).
@@ -354,7 +519,7 @@ function initToolbarResponsive() {
     }
   }, true /* capture */);
 
-  recalc();
+  actualRecalc();
 }
 
 // ── View modes ────────────────────────────────────────────────────────────────
@@ -738,6 +903,9 @@ function restoreSettings() {
   // Legacy fp-zoom in localStorage is intentionally ignored — Electron persists zoom separately.
   const savedGlow = localStorage.getItem('fp-accent-glow');
   if (savedGlow === 'on') applyAccentGlow(true);
+  // Notifications setting — defaults to OFF if unset
+  const checkbox = document.getElementById('settings-show-notifications');
+  if (checkbox) checkbox.checked = notificationsEnabled();
 }
 
 // ── Zoom — uses Electron webContents.setZoomFactor when in Electron (no layout cut-off),
@@ -749,9 +917,25 @@ function getCurrentZoom() {
   const z = parseFloat(document.documentElement.style.zoom);
   return isNaN(z) ? ZOOM_DEFAULT : z;
 }
+
+// Status-bar zoom pill — visible only when zoom != 100%, click resets.
+function updateZoomPill() {
+  const pill = document.getElementById('status-zoom-pill');
+  const sep  = document.getElementById('status-zoom-sep');
+  if (!pill) return;
+  const z = getCurrentZoom();
+  const pct = Math.round(z * 100);
+  pill.textContent = pct + '%';
+  // Treat 99–101% as "100%" to absorb floating-point drift around the default.
+  const atDefault = Math.abs(z - ZOOM_DEFAULT) < 0.005;
+  pill.style.display = atDefault ? 'none' : '';
+  if (sep) sep.style.display = atDefault ? 'none' : '';
+}
+
 function zoomIn() {
   if (window.electronAPI?.zoomIn) {
     window.electronAPI.zoomIn();
+    updateZoomPill();
     return;
   }
   // Fallback for non-Electron
@@ -759,10 +943,12 @@ function zoomIn() {
   const next = ZOOM_STEPS.find(s => s > cur + 0.001) ?? ZOOM_STEPS[ZOOM_STEPS.length - 1];
   document.documentElement.style.zoom = String(next);
   localStorage.setItem('fp-zoom', String(next));
+  updateZoomPill();
 }
 function zoomOut() {
   if (window.electronAPI?.zoomOut) {
     window.electronAPI.zoomOut();
+    updateZoomPill();
     return;
   }
   // Fallback for non-Electron
@@ -770,16 +956,19 @@ function zoomOut() {
   const prev = [...ZOOM_STEPS].reverse().find(s => s < cur - 0.001) ?? ZOOM_STEPS[0];
   document.documentElement.style.zoom = String(prev);
   localStorage.setItem('fp-zoom', String(prev));
+  updateZoomPill();
 }
 function zoomReset() {
   if (window.electronAPI?.zoomReset) {
     window.electronAPI.zoomReset();
     document.documentElement.style.zoom = '';
     localStorage.removeItem('fp-zoom');
+    updateZoomPill();
     return;
   }
   document.documentElement.style.zoom = '';
   localStorage.removeItem('fp-zoom');
+  updateZoomPill();
 }
 
 // ── Context menu ──────────────────────────────────────────────────────────────
@@ -921,7 +1110,15 @@ document.addEventListener('click', e => {
 });
 
 // ── Snackbar ───────────────────────────────────────────────��────────────────────
+// Notifications gate (single setting controls all transient toasts/snackbars).
+// Defaults to OFF. Critical errors (showErrorBanner) are NOT gated — those
+// are inline banners and must always be shown.
+function notificationsEnabled() {
+  return localStorage.getItem('fp-notifications-enabled') === 'on';
+}
+
 function showSnackbar(message, undoLabel, onUndo) {
+  if (!notificationsEnabled()) return;
   const container = document.getElementById('snackbar-container');
   if (!container) return;
   const el = document.createElement('div');
@@ -943,6 +1140,8 @@ function showSnackbar(message, undoLabel, onUndo) {
 
 // ── Toast ────────────────────────────────────────────────────────────────────────
 function showToast(message, variant = '') {
+  // Errors bypass the gate so failures are never silently swallowed.
+  if (variant !== 'error' && !notificationsEnabled()) return;
   const container = document.getElementById('toast-container');
   if (!container) return;
   const el = document.createElement('div');
@@ -1043,6 +1242,7 @@ async function loadDirectory(absPath) {
   updateBreadcrumb(data.path);
   updateAddressBar(data.path);
   updateSidebarActive();
+  syncActiveTabPath(data.path);
 }
 
 function pushHistory(path) {
@@ -1093,6 +1293,7 @@ async function fetchAndRender(path) {
     updateBreadcrumb(data.path);
     updateAddressBar(data.path);
     updateSidebarActive();
+    syncActiveTabPath(data.path);
   } catch (err) {
     showErrorBanner(`Couldn't reach backend: ${err.message}`);
   }
@@ -1199,7 +1400,7 @@ async function triggerScan(path) {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     showSnackbar(`Scan complete — ${data.count} file${data.count !== 1 ? 's' : ''} indexed`);
-    switchScreen('browser');
+    switchScreen('browser', pathBaseName(data.path) || undefined);
     await loadDirectory(data.path);
   } catch (err) {
     showToast(`Scan failed: ${err.message}`, 'error');
@@ -1263,6 +1464,16 @@ function initWindowControls() {
   document.getElementById('btn-close')?.addEventListener('click', () => api.close?.());
 }
 
+// ── Home > Recent: hide empty time-group sections ─────────────────────────────
+// Each .home-section renders only when it has at least one .fp-row--recent.
+// Order is preserved (Today → Yesterday → This week → Earlier this month →
+// Older); the first non-empty group naturally lands at the top.
+function pruneEmptyHomeSections() {
+  document.querySelectorAll('.home-pane[data-pane="recent"] .home-section').forEach(s => {
+    s.style.display = s.querySelector('.fp-row--recent') ? '' : 'none';
+  });
+}
+
 // ── Underline tab indicator (sub-tabs within screens) ─────────────��──────────
 function initUnderlineTabs(container) {
   if (!container) return;
@@ -1282,9 +1493,23 @@ function initUnderlineTabs(container) {
   tabs.forEach(tab => {
     tab.addEventListener('click', () => setActive(tab));
   });
-  // Initialise with first active tab
+  // Initialise with first active tab. ResizeObserver re-runs setActive once
+  // the tab actually has a measurable width — Electron cold-start can return
+  // offsetWidth:0 at DOMContentLoaded, fonts.ready, and the next rAF, which
+  // pins the indicator at width:0 until the user clicks something.
   const first = container.querySelector('.fp-tabs__item--active') || tabs[0];
-  if (first) { setActive(first); }
+  if (first) {
+    setActive(first);
+    if (typeof ResizeObserver !== 'undefined') {
+      const ro = new ResizeObserver(() => {
+        if (first.offsetWidth > 0) {
+          setActive(first);
+          ro.disconnect();
+        }
+      });
+      ro.observe(first);
+    }
+  }
 }
 
 // ── data-action global delegation ─────────────────────────────────────────────
@@ -1296,14 +1521,16 @@ const IN_SCOPE_ACTIONS = new Set([
   'tag-canvas-select',
   'nav-back', 'nav-forward', 'nav-up', 'navigate-crumb',
   'open-review-bin',
-  'switch-home-tab', 'switch-inspector-tab',
+  'switch-inspector-tab',
   'open-palette', 'close-palette', 'palette-set-mode',
   'modal-cancel', 'modal-confirm', 'modal-confirm-type',
   'ef-filter', 'ef-sort', 'ef-toggle-pause-ai', 'ef-toggle-moving-card',
   'scan-config-switch-mode', 'scan-baseline-confirm',
   'settings-nav', 'settings-set-theme', 'settings-set-density', 'settings-set-accent',
   'settings-set-accent-hex', 'settings-reset-accent', 'settings-set-accent-glow',
+  'settings-set-show-notifications',
   'settings-set-font-scale', 'settings-reset-shortcuts',
+  'zoom-reset',
 ]);
 
 document.addEventListener('click', e => {
@@ -1327,7 +1554,14 @@ document.addEventListener('click', e => {
       btn.setAttribute('data-manual-active', 'true');
       // Pre-seed history stack to prevent switchScreen's auto-load from racing with our explicit load.
       if (navPath && navHistory.stack.length === 0) navHistory.stack.push(null);
-      switchScreen('browser');
+      // Pre-set the tab label to the sidebar item's text (e.g. "Downloads",
+      // "Projects") or the path's basename — so the tab never flashes "Files"
+      // before the async loadDirectory() call lands.
+      const sidebarLabelEl = btn.querySelector('.fp-sidebar__item__label');
+      const initialLabel = (sidebarLabelEl?.textContent || '').trim()
+                        || pathBaseName(navPath || '')
+                        || undefined;
+      switchScreen('browser', initialLabel);
       if (navPath) loadDirectory(navPath);
       break;
     }
@@ -1344,14 +1578,22 @@ document.addEventListener('click', e => {
       if (btn.dataset.path) loadDirectory(btn.dataset.path);
       break;
     case 'switch-tab':
-      switchScreen(btn.dataset.tabScreen);
+      // User explicitly clicked a tab — activate THAT tab specifically.
+      switchToTab(btn);
       break;
-    case 'close-tab':
+    case 'close-tab': {
       e.stopPropagation();
-      closeCurrentTab();
+      // The X button is a child of a .fp-tab — close THAT tab, not whichever
+      // happens to be active.
+      const targetTab = btn.closest('.fp-tab');
+      if (targetTab) closeTab(targetTab);
       break;
+    }
     case 'new-tab':
       openNewTab();
+      break;
+    case 'zoom-reset':
+      zoomReset();
       break;
     case 'scan':
       triggerScan(btn.dataset.path || null);
@@ -1467,20 +1709,6 @@ document.addEventListener('click', e => {
     case 'settings-reset-shortcuts':
       // INTEGRATION: reset to default keybindings
       break;
-    case 'switch-home-tab': {
-      const container = btn.closest('.fp-tabs');
-      if (container) {
-        container.querySelectorAll('.fp-tabs__item').forEach(t => t.classList.remove('fp-tabs__item--active'));
-        btn.classList.add('fp-tabs__item--active');
-        const ind = container.querySelector('.fp-tabs__indicator');
-        if (ind) { ind.style.left = `${btn.offsetLeft}px`; ind.style.width = `${btn.offsetWidth}px`; }
-        const pane = btn.dataset.tab;
-        document.querySelectorAll('.home-pane').forEach(p => {
-          p.style.display = p.dataset.pane === pane ? 'flex' : 'none';
-        });
-      }
-      break;
-    }
     case 'switch-inspector-tab': {
       const inspector = document.getElementById('inspector');
       inspector?.querySelectorAll('.fp-inspector__tab').forEach(t => {
@@ -1514,64 +1742,109 @@ document.addEventListener('change', e => {
   if (t && t.dataset && t.dataset.action === 'settings-set-accent-glow') {
     applyAccentGlow(t.checked);
   }
+  if (t && t.dataset && t.dataset.action === 'settings-set-show-notifications') {
+    setNotificationsEnabled(t.checked);
+  }
 });
+
+function setNotificationsEnabled(enabled) {
+  localStorage.setItem('fp-notifications-enabled', enabled ? 'on' : 'off');
+  const checkbox = document.getElementById('settings-show-notifications');
+  if (checkbox) checkbox.checked = !!enabled;
+}
 
 // ── Tab management (A.1.2) ────────────────────────────────────────────────────
 let _closedTabs = []; // stack of { screen, label, icon }
+let _tabIdSeq   = 1;  // unique id generator (HTML seeds the first tab as tab-1)
+
+function nextTabId() {
+  _tabIdSeq += 1;
+  return `tab-${_tabIdSeq}`;
+}
+
+function buildTabHtml(screen) {
+  // Close affordance is a <span role="button"> — see HTML for the seed tab
+  // for why nesting <button> would silently break the layout.
+  return `${getScreenIcon(screen)}<span class="fp-tab__label">${getScreenLabel(screen)}</span><span class="fp-tab__close" role="button" data-action="close-tab" title="Close tab" tabindex="-1" aria-label="Close tab"><svg width="10" height="10" viewBox="0 0 10 10"><path d="M2 2l6 6M8 2l-6 6" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg></span>`;
+}
+
+function createTabElement(screen) {
+  const btn = document.createElement('button');
+  btn.className = 'fp-tab';
+  btn.setAttribute('role', 'tab');
+  btn.setAttribute('aria-selected', 'false');
+  btn.setAttribute('data-tab-id', nextTabId());
+  btn.setAttribute('data-tab-screen', screen);
+  btn.setAttribute('data-action', 'switch-tab');
+  btn.setAttribute('title', getScreenLabel(screen));
+  btn.setAttribute('draggable', 'true');
+  btn.innerHTML = buildTabHtml(screen);
+  return btn;
+}
 
 function openNewTab() {
   const tabbar = document.getElementById('tabbar');
   if (!tabbar) return;
-  const newBtn = document.createElement('button');
-  newBtn.className = 'fp-tab';
-  newBtn.setAttribute('role', 'tab');
-  newBtn.setAttribute('aria-selected', 'false');
-  newBtn.setAttribute('data-tab-screen', 'home');
-  newBtn.setAttribute('data-action', 'switch-tab');
-  newBtn.setAttribute('title', 'New tab');
-  newBtn.setAttribute('draggable', 'true');
-  newBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M1 6.5L7 1l6 5.5V13H9V9H5v4H1V6.5z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg><span class="fp-tab__label">Home</span><button class="fp-tab__close" data-action="close-tab" title="Close tab" tabindex="-1"><svg width="10" height="10" viewBox="0 0 10 10"><path d="M2 2l6 6M8 2l-6 6" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg></button>`;
-  // Insert before new-tab button
+  const newBtn = createTabElement('home');
   const newTabBtn = document.getElementById('btn-new-tab');
   tabbar.insertBefore(newBtn, newTabBtn);
   initTabDrag(newBtn);
-  newBtn.click();
+  switchToTab(newBtn);
   showSnackbar('New tab opened', null, null);
 }
 
-function closeCurrentTab() {
-  const active = document.querySelector('.fp-tab--active');
-  if (!active) return;
+function closeTab(tab) {
+  if (!tab) return;
   _closedTabs.push({
-    screen: active.dataset.tabScreen,
-    label: active.querySelector('.fp-tab__label')?.textContent,
-    icon: active.querySelector('svg')?.outerHTML,
+    screen: tab.dataset.tabScreen,
+    label:  tab.querySelector('.fp-tab__label')?.textContent,
+    icon:   tab.querySelector(':scope > svg')?.outerHTML,
   });
-  const prev = active.previousElementSibling;
-  const next = active.nextElementSibling;
+  const tabbar = document.getElementById('tabbar');
+  const allTabs = tabbar?.querySelectorAll('.fp-tab') || [];
+  // Last remaining tab → quit the app entirely (per spec: closing the only
+  // tab closes the window).
+  if (allTabs.length <= 1) {
+    if (window.electronAPI?.close) {
+      window.electronAPI.close();
+    } else {
+      window.close();
+    }
+    return;
+  }
+  const wasActive = tab.classList.contains('fp-tab--active');
+  const prev = tab.previousElementSibling;
+  const next = tab.nextElementSibling;
   const neighbor = (prev && prev.classList.contains('fp-tab')) ? prev
                  : (next && next.classList.contains('fp-tab')) ? next : null;
-  active.remove();
-  if (neighbor) neighbor.click();
+  tab.remove();
+  if (wasActive && neighbor) switchToTab(neighbor);
   showSnackbar('Tab closed · Ctrl+Shift+T to reopen', null, null);
 }
 
+// Backwards compat — keyboard shortcut(s) call this name.
+function closeCurrentTab() { closeTab(getActiveTab()); }
+
 function reopenLastTab() {
   if (!_closedTabs.length) { showToast('No recently closed tabs', 'warn'); return; }
-  const tab = _closedTabs.pop();
-  const newBtn = document.createElement('button');
-  newBtn.className = 'fp-tab';
-  newBtn.setAttribute('role', 'tab');
-  newBtn.setAttribute('aria-selected', 'false');
-  newBtn.setAttribute('data-tab-screen', tab.screen || 'home');
-  newBtn.setAttribute('data-action', 'switch-tab');
-  newBtn.setAttribute('title', tab.label || 'Tab');
-  newBtn.setAttribute('draggable', 'true');
-  newBtn.innerHTML = `${tab.icon || ''}<span class="fp-tab__label">${tab.label || 'Home'}</span><button class="fp-tab__close" data-action="close-tab" title="Close tab" tabindex="-1"><svg width="10" height="10" viewBox="0 0 10 10"><path d="M2 2l6 6M8 2l-6 6" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg></button>`;
+  const last = _closedTabs.pop();
+  const screen = last.screen || 'home';
+  const newBtn = createTabElement(screen);
+  // Use the closed tab's saved label/icon if they differed from the screen default.
+  if (last.label) {
+    const labelEl = newBtn.querySelector('.fp-tab__label');
+    if (labelEl) labelEl.textContent = last.label;
+    newBtn.setAttribute('title', last.label);
+  }
+  if (last.icon) {
+    const firstSvg = newBtn.querySelector(':scope > svg');
+    if (firstSvg) firstSvg.outerHTML = last.icon;
+  }
+  const tabbar = document.getElementById('tabbar');
   const newTabBtn = document.getElementById('btn-new-tab');
-  document.getElementById('tabbar')?.insertBefore(newBtn, newTabBtn);
+  tabbar?.insertBefore(newBtn, newTabBtn);
   initTabDrag(newBtn);
-  newBtn.click();
+  switchToTab(newBtn);
 }
 
 // Tab drag-reorder (A.1.2)
@@ -1659,6 +1932,26 @@ document.addEventListener('keydown', e => {
   if (e.altKey && e.key === 'ArrowUp')    { e.preventDefault(); /* nav up stub */ }
 });
 
+// Ctrl + scroll wheel — step through ZOOM_STEPS, one step per gesture.
+// Throttled because trackpads (and high-resolution wheels) emit dozens of
+// wheel events per swipe; without a cooldown a single flick would jump
+// straight to the min/max zoom. ~80ms matches the natural pacing of one
+// "notch" of a physical wheel without making intentional fast scrolls
+// feel sluggish.
+{
+  let lastWheelAt = 0;
+  const COOLDOWN_MS = 80;
+  document.addEventListener('wheel', e => {
+    if (!(e.ctrlKey || e.metaKey)) return;
+    e.preventDefault(); // suppress the default page-scroll while zooming
+    const now = performance.now();
+    if (now - lastWheelAt < COOLDOWN_MS) return;
+    lastWheelAt = now;
+    if (e.deltaY < 0)      zoomIn();
+    else if (e.deltaY > 0) zoomOut();
+  }, { passive: false });
+}
+
 // ── Context menu event listener (A.10) ────────────────────────────────────────
 document.addEventListener('contextmenu', e => {
   e.preventDefault();
@@ -1717,6 +2010,12 @@ document.addEventListener('DOMContentLoaded', () => {
   // Init tab drag-reorder for existing tabs (A.1.2)
   document.querySelectorAll('.fp-tab[draggable]').forEach(initTabDrag);
 
+  // Sidebar device name — load saved name or fall back to OS hostname
+  initDeviceName();
+
+  // Sync the status-bar zoom pill with Electron's persisted zoom factor
+  updateZoomPill();
+
   // Init column sort cycling and marquee selection (A.3.1)
   initColumnSort();
   initMarqueeSelection();
@@ -1727,6 +2026,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Init underline tabs in any pre-existing tab containers
   document.querySelectorAll('.fp-tabs').forEach(initUnderlineTabs);
+
+  // Hide empty Recent home-sections — first non-empty group becomes the
+  // top header. INTEGRATION: re-run after /api/recent updates row markup.
+  pruneEmptyHomeSections();
 
   // Restore persisted settings (theme, density, accent, font scale)
   restoreSettings();

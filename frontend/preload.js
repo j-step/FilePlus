@@ -19,4 +19,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   zoomOut:     () => ipcRenderer.send('win-zoom-out'),
   zoomReset:   () => ipcRenderer.send('win-zoom-reset'),
   getZoom:     () => ipcRenderer.sendSync('win-zoom-get'),
+  // Host info
+  hostname:    () => ipcRenderer.sendSync('get-hostname'),
 });

@@ -6,6 +6,7 @@
  */
 const { app, BrowserWindow, globalShortcut, ipcMain } = require('electron');
 const path = require('path');
+const os   = require('os');
 
 let mainWindow;
 
@@ -62,6 +63,10 @@ app.whenReady().then(() => {
   });
   ipcMain.on('win-zoom-get', (event) => {
     event.returnValue = mainWindow ? mainWindow.webContents.getZoomFactor() : 1.0;
+  });
+
+  ipcMain.on('get-hostname', (event) => {
+    event.returnValue = os.hostname();
   });
 
   createWindow();
