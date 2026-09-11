@@ -197,6 +197,8 @@ def _move_fn(src: Path, dest: Path):
                 raise ConflictError(f"'{dest}' already exists.")
             os.replace(src, dest) if src.is_file() else os.rename(src, dest)
         else:
+            if dest.exists():  # conflict resolution ran earlier; this is the race window
+                raise ConflictError(f"'{dest}' already exists.")
             need = _tree_size(src)
             if _free_bytes(dest.parent) < need + SPACE_MARGIN:
                 raise RefusedError("Not enough free space on the destination volume.")
@@ -218,10 +220,11 @@ async def move(conn, src, dest_dir, *, batch_id=None, on_conflict="fail", reason
     candidate = dest_dir / src.name
     if os.path.normcase(str(candidate)) == os.path.normcase(str(src)):
         raise RefusedError("Source is already in the destination folder.")
+    minted = batch_id is None
     batch_id = batch_id or ol.new_batch_id()
     target, action = _resolve_target(candidate, on_conflict)
     if action in ("conflict", "skipped"):
-        return _result(None, _op_type, action, src, candidate, batch_id)
+        return _result(None, _op_type, action, src, candidate, None if minted else batch_id)
     if not same_volume(src, target):
         need = await asyncio.to_thread(_tree_size, src)
         if await asyncio.to_thread(_free_bytes, dest_dir) < need + SPACE_MARGIN:
@@ -249,10 +252,11 @@ async def copy(conn, src, dest_dir, *, batch_id=None, on_conflict="fail", reason
         raise RefusedError(f"Source does not exist: {src}")
     if src.is_dir() and _config.is_under(dest_dir, src):
         raise RefusedError("Cannot copy a folder into itself.")
+    minted = batch_id is None
     batch_id = batch_id or ol.new_batch_id()
     target, action = _resolve_target(dest_dir / src.name, on_conflict)
     if action in ("conflict", "skipped"):
-        return _result(None, "copy", action, src, dest_dir / src.name, batch_id)
+        return _result(None, "copy", action, src, dest_dir / src.name, None if minted else batch_id)
     need = await asyncio.to_thread(_tree_size, src)
     if await asyncio.to_thread(_free_bytes, dest_dir) < need + SPACE_MARGIN:
         raise RefusedError("Not enough free space on the destination volume.")
@@ -293,14 +297,18 @@ async def restore(conn, trashed_path, original_path, *, batch_id=None, on_confli
     original = _config.path_guard(original_path, "write")
     if not src.exists():
         raise RefusedError(f"Trashed item no longer exists: {src}")
-    original.parent.mkdir(parents=True, exist_ok=True)
+    minted = batch_id is None
     batch_id = batch_id or ol.new_batch_id()
     target, action = _resolve_target(original, on_conflict)
     if action in ("conflict", "skipped"):
-        return _result(None, "restore", action, src, original, batch_id)
+        return _result(None, "restore", action, src, original, None if minted else batch_id)
     if action == "replace":
         await trash(conn, target, batch_id=batch_id, reason="replaced by restore")
-    return await _perform(conn, "restore", src, target, batch_id, reason, lambda: os.rename(src, target), undo_of=_undo_of)
+
+    def run():
+        original.parent.mkdir(parents=True, exist_ok=True)
+        os.rename(src, target)
+    return await _perform(conn, "restore", src, target, batch_id, reason, run, undo_of=_undo_of)
 
 
 async def mkdir(conn, parent, name, *, batch_id=None, reason=None) -> dict:
@@ -351,9 +359,9 @@ async def batch_trash(conn, paths) -> dict:
 
 def _known_trash_roots() -> list[Path]:
     sandbox_root = _config.FILEPLUS_SANDBOX_PATH.resolve() / _config.TRASH_DIRNAME
-    roots = [sandbox_root] if sandbox_root.exists() else []
-    for letter in "CDEFGHIJKLMNOPQRSTUVWXYZ":
-        cand = Path(f"{letter}:\\") / _config.TRASH_DIRNAME
+    candidates = [sandbox_root] + [Path(f"{letter}:\\") / _config.TRASH_DIRNAME for letter in "CDEFGHIJKLMNOPQRSTUVWXYZ"]
+    roots = []
+    for cand in candidates:
         try:
             found = cand.exists()
         except OSError:  # stale/unreachable network drive (e.g. ERROR_BAD_NETPATH)
@@ -385,3 +393,61 @@ async def empty_trash(conn) -> dict:
         await ol.mark_error(conn, op_id, str(exc)); raise
     await ol.mark_executed(conn, op_id)
     return {"batches": len(batches), "roots": [str(r) for r in roots], "skipped_roots": skipped_roots}
+
+
+# ---------------------------------------------------------------------------
+# Undo / redo
+# ---------------------------------------------------------------------------
+
+async def undo_operation(conn, op_id: int, *, batch_id: str | None = None) -> dict:
+    row = await ol.get_operation(conn, op_id)
+    if row is None:
+        raise RefusedError(f"Operation {op_id} not found.")
+    if row["op_type"].endswith(":final"):
+        raise RefusedError("This operation cannot be undone.")
+    if not row["executed"] or row["error"]:
+        raise RefusedError("Operation did not complete; nothing to undo.")
+    if row["undone"]:
+        raise RefusedError("Operation is already undone.")
+    src, dest = row["source_path"], row["dest_path"]
+    t = row["op_type"]
+    batch_id = batch_id or ol.new_batch_id()
+    if t in ("move", "rename"):
+        if not dest or not Path(dest).exists():
+            raise RefusedError("The moved item is no longer where the log left it.")
+        if t == "move":
+            result = await move(conn, dest, Path(src).parent, batch_id=batch_id, on_conflict="keep-both",
+                                reason=f"undo of #{op_id}", _undo_of=op_id)
+        else:
+            result = await rename(conn, dest, Path(src).name, batch_id=batch_id, reason=f"undo of #{op_id}", _undo_of=op_id)
+    elif t == "trash":
+        if not dest or not Path(dest).exists():
+            raise RefusedError("The trashed item is gone (trash emptied?).")
+        result = await restore(conn, dest, src, batch_id=batch_id, reason=f"undo of #{op_id}", _undo_of=op_id)
+    elif t == "restore":
+        if not dest or not Path(dest).exists():
+            raise RefusedError("The restored item is no longer where the log left it.")
+        result = await trash(conn, dest, batch_id=batch_id, reason=f"undo of #{op_id}", _undo_of=op_id)
+    elif t in ("copy", "mkdir", "touch"):
+        if not dest or not Path(dest).exists():
+            raise RefusedError("The created item is no longer where the log left it.")
+        result = await trash(conn, dest, batch_id=batch_id, reason=f"undo of #{op_id}", _undo_of=op_id)
+    else:
+        raise RefusedError(f"Operation type '{t}' has no inverse.")
+    if result["status"] != "done":
+        raise RefusedError(f"Undo could not complete: {result['status']}.")
+    await ol.mark_undone(conn, op_id)
+    return result
+
+
+async def undo_batch(conn, batch_id: str) -> dict:
+    rows = [r for r in await ol.list_batch(conn, batch_id) if r["executed"] and not r["undone"] and not r["error"]]
+    new_batch_id = ol.new_batch_id() if rows else None
+    out = {"batch_id": new_batch_id, "ops": [], "errors": []}
+    for r in rows:
+        try:
+            res = await undo_operation(conn, r["id"], batch_id=new_batch_id)
+            out["ops"].append(res)
+        except (RefusedError, ConflictError, _config.OutOfSandboxError, _config.ProtectedPathError, OSError) as exc:
+            out["errors"].append({"op_id": r["id"], "error": f"{type(exc).__name__}: {exc}"})
+    return out

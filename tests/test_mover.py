@@ -315,3 +315,65 @@ def test_known_trash_roots_skips_oserror_drives(sandbox, monkeypatch):
     monkeypatch.setattr(Path, "exists", flaky_exists)
     roots = mover._known_trash_roots()  # must not raise despite the flaky Z: drive
     assert isinstance(roots, list)
+
+
+# ---- undo / redo -----------------------------------------------------------
+
+async def test_undo_move_then_redo(conn, sandbox):
+    src = _mk(sandbox, "u/a.txt", "A"); (sandbox / "v").mkdir()
+    r = await mover.move(conn, src, sandbox / "v")
+    inv = await mover.undo_operation(conn, r["op_id"])
+    assert src.read_text() == "A" and not (sandbox / "v/a.txt").exists()
+    assert (await ol.get_operation(conn, r["op_id"]))["undone"] == 1
+    assert (await ol.get_operation(conn, inv["op_id"]))["undo_of"] == r["op_id"]
+    redo = await mover.undo_operation(conn, inv["op_id"])          # redo = undo the inverse
+    assert (sandbox / "v/a.txt").exists()
+    assert (await ol.get_operation(conn, redo["op_id"]))["undo_of"] == inv["op_id"]
+
+
+async def test_undo_rename_trash_copy_mkdir_touch(conn, sandbox):
+    p = _mk(sandbox, "r1.txt", "R")
+    r = await mover.rename(conn, p, "r2.txt")
+    await mover.undo_operation(conn, r["op_id"]); assert p.exists()
+    r = await mover.trash(conn, p)
+    await mover.undo_operation(conn, r["op_id"]); assert p.read_text() == "R"
+    (sandbox / "cp").mkdir()
+    r = await mover.copy(conn, p, sandbox / "cp")
+    await mover.undo_operation(conn, r["op_id"]); assert not (sandbox / "cp/r1.txt").exists()
+    assert list((sandbox / _config.TRASH_DIRNAME).rglob("r1.txt"))      # the copy went to trash
+    r = await mover.mkdir(conn, sandbox, "made")
+    await mover.undo_operation(conn, r["op_id"]); assert not (sandbox / "made").exists()
+    r = await mover.touch(conn, sandbox, "t.txt")
+    await mover.undo_operation(conn, r["op_id"]); assert not (sandbox / "t.txt").exists()
+
+
+async def test_undo_refusals(conn, sandbox):
+    p = _mk(sandbox, "x.txt"); (sandbox / "y").mkdir()
+    r = await mover.move(conn, p, sandbox / "y")
+    await mover.undo_operation(conn, r["op_id"])
+    with pytest.raises(mover.RefusedError):
+        await mover.undo_operation(conn, r["op_id"])        # already undone
+    (sandbox / "x.txt").unlink()                             # dest of the inverse gone
+    inv = (await ol.list_operations(conn))[0]
+    with pytest.raises(mover.RefusedError):
+        await mover.undo_operation(conn, inv["id"])
+    op_id = await ol.log_operation(conn, "trash-empty:final", None, None); await ol.mark_executed(conn, op_id)
+    with pytest.raises(mover.RefusedError):
+        await mover.undo_operation(conn, op_id)
+
+
+async def test_undo_batch(conn, sandbox):
+    a = _mk(sandbox, "ba.txt"); b = _mk(sandbox, "bb.txt"); (sandbox / "dst").mkdir()
+    res = await mover.batch_move(conn, [a, b], sandbox / "dst")
+    out = await mover.undo_batch(conn, res["batch_id"])
+    assert len(out["ops"]) == 2 and out["errors"] == [] and a.exists() and b.exists()
+    assert all(r["undone"] == 1 for r in await ol.list_batch(conn, res["batch_id"]))
+
+
+# ---- residual audit minors --------------------------------------------------
+
+async def test_move_conflict_no_batch_id_when_minted(conn, sandbox):
+    _mk(sandbox, "a/f.txt", "new"); _mk(sandbox, "b/f.txt", "old")
+    r = await mover.move(conn, sandbox / "a/f.txt", sandbox / "b")  # fail policy, no batch_id passed in
+    assert r["status"] == "conflict" and r["batch_id"] is None
+    assert await ol.list_operations(conn) == []
