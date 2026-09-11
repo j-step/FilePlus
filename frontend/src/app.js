@@ -1193,6 +1193,7 @@ const IN_SCOPE_ACTIONS = new Set([
   'cm-open-new-tab', 'cm-unpin-sidebar', 'cm-rename-sidebar-item',
   'open-review-bin',
   'switch-inspector-tab',
+  'inspector-open', 'inspector-reveal', 'inspector-remove-tag', 'inspector-undo-op',
   'unfavorite-file', 'open-recent-file',
   'open-palette', 'close-palette', 'palette-set-mode',
   'modal-cancel', 'modal-confirm', 'modal-confirm-type',
@@ -1395,6 +1396,22 @@ document.addEventListener('click', e => {
       inspector?.querySelectorAll('.fp-inspector__pane').forEach(p => {
         p.style.display = p.dataset.pane === btn.dataset.tab ? '' : 'none';
       });
+      break;
+    }
+    case 'inspector-open':
+      inspectorOpenSelected();
+      break;
+    case 'inspector-reveal':
+      inspectorRevealSelected();
+      break;
+    case 'inspector-remove-tag': {
+      const tagId = btn.dataset.tagId;
+      if (tagId) inspectorRemoveTag(tagId);
+      break;
+    }
+    case 'inspector-undo-op': {
+      const opId = btn.dataset.opId;
+      if (opId) inspectorUndoOp(opId);
       break;
     }
     case 'unfavorite-file':
@@ -1888,6 +1905,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   initWindowControls();
   initResizer();
+  initInspectorTagInput();
   initSidebarResize();
   restoreSidebarState();
   initToolbarResponsive();

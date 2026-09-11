@@ -860,24 +860,31 @@ function initBreadcrumbDragDrop() {
   });
 }
 
-/**
- * Hook called whenever the selection changes. Task 3 wires it to the status
- * bar and a minimal inspector call; Task 5 replaces the inspector calls with
- * the real metadata/preview fetches, keeping this function name.
- */
+// Selection → inspector debounce: arrow-key navigation and marquee drags can
+// change the selection many times a second, and each change would otherwise
+// fire a fresh GET /file + GET /preview + GET /files/history round-trip.
+// Wait for the selection to settle for 120ms before fetching; _inspectorSeq
+// (inspector.js) additionally guards against an in-flight fetch from an
+// already-superseded selection overwriting the DOM once it resolves.
+let _inspectorDebounceTimer = null;
+
+/** Hook called whenever the selection changes: updates the status bar
+ * immediately, and (debounced) the inspector panel via showInspectorFor /
+ * showInspectorMulti / updateInspector('none'). */
 function onSelectionChanged() {
-  const n = browserState.selection.size;
-  if (n === 0) {
-    updateInspector('none');
-  } else if (n === 1) {
-    const path = [...browserState.selection][0];
-    const entry = entryForPath(path);
-    const name = entry ? entry.name : path.split(/[\\\/]/).filter(Boolean).pop();
-    updateInspector('single', { name, path });
-  } else {
-    updateInspector('multi', { count: n, totalSize: formatSize(selectionTotalSize()) });
-  }
   updateStatusBar();
+  clearTimeout(_inspectorDebounceTimer);
+  _inspectorDebounceTimer = setTimeout(() => {
+    const n = browserState.selection.size;
+    if (n === 0) {
+      _inspectorSeq++; // invalidate any fetch still in flight from the prior selection
+      updateInspector('none');
+    } else if (n === 1) {
+      showInspectorFor([...browserState.selection][0]);
+    } else {
+      showInspectorMulti(getSelectedPaths());
+    }
+  }, 120);
 }
 
 /** Sums the size of selected files (folders/errored entries contribute 0). */
@@ -938,6 +945,14 @@ function initRowInteractions() {
  * contenteditable has focus. F2/Delete/Ctrl+C/X/V/Z/Y belong to Task 4.
  */
 function browserKeydown(e) {
+  // Never act on Browser shortcuts while a modal or the command palette has
+  // focus/visibility — e.g. Ctrl+Z while a paste-conflict modal is open must
+  // not also undo the last file op behind it, and typing in the palette
+  // search box must not trigger F2/Delete/etc.
+  const modalScrim = document.getElementById('modal-scrim');
+  const paletteOpen = paletteScrim && paletteScrim.style.display !== 'none';
+  if ((modalScrim && modalScrim.style.display !== 'none') || paletteOpen) return;
+
   const key = e.key;
   const ctrl = e.ctrlKey || e.metaKey;
 
@@ -955,9 +970,12 @@ function browserKeydown(e) {
   }
 
   // Undo/redo work even with nothing selected — checked before any
-  // selection-dependent shortcut below.
-  if (ctrl && !e.shiftKey && key.toLowerCase() === 'z') { e.preventDefault(); fileops.undoLast(); return; }
-  if (ctrl && ((key.toLowerCase() === 'y' && !e.shiftKey) || (key.toLowerCase() === 'z' && e.shiftKey))) {
+  // selection-dependent shortcut below. e.repeat is ignored so a held key
+  // can't fire a burst of undo/redo calls (each fileops call is already
+  // async and _inFlight-guarded, but a held key still shouldn't queue up
+  // several dozen intents).
+  if (ctrl && !e.shiftKey && key.toLowerCase() === 'z' && !e.repeat) { e.preventDefault(); fileops.undoLast(); return; }
+  if (ctrl && !e.repeat && ((key.toLowerCase() === 'y' && !e.shiftKey) || (key.toLowerCase() === 'z' && e.shiftKey))) {
     e.preventDefault(); fileops.redoLast(); return;
   }
   if (ctrl && key.toLowerCase() === 'x') { e.preventDefault(); fileops.cutSelection(); return; }

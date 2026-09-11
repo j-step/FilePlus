@@ -1323,6 +1323,25 @@ svg { flex-shrink: 0; }
 
 .fp-chip-group { display: inline-flex; gap: var(--s-6); flex-wrap: wrap; }
 
+/* Trailing "x" remove button inside a chip (Inspector tags tab). */
+.fp-chip__remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  height: 12px;
+  margin-left: 2px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  opacity: .6;
+  cursor: pointer;
+  font-size: 11px;
+  line-height: 1;
+}
+.fp-chip__remove:hover { opacity: 1; }
+
 /* -----------------------------------------------------------------------------
    15. SEGMENTED CONTROL (Section 20)
    ----------------------------------------------------------------------------- */

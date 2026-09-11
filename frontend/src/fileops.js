@@ -51,10 +51,17 @@ const fileops = {
   // undoLast/redoLast PEEK the stack rather than pop — the id is only removed
   // once the request has actually succeeded, so a network/HTTP failure
   // leaves the entry in place (and retryable) instead of silently losing it.
+  // _inFlight makes a second call (a fast repeated Ctrl+Z, or a click while
+  // the first request is still out) a no-op instead of firing a second
+  // /undo for the same batch id.
+  _inFlight: false,
+
   async undoLast() {
+    if (this._inFlight) return;
     const id = this.undoStack[this.undoStack.length - 1];
     if (!id) return;
-    await this.undoBatch(id);
+    this._inFlight = true;
+    try { await this.undoBatch(id); } finally { this._inFlight = false; }
   },
 
   async undoBatch(id) {
@@ -68,14 +75,17 @@ const fileops = {
   },
 
   async redoLast() {
+    if (this._inFlight) return;
     const id = this.redoStack[this.redoStack.length - 1];
     if (!id) return;
+    this._inFlight = true;
     try {
       const res = await API.post(`/operations/batch/${id}/undo`);
       this.redoStack = this.redoStack.filter(b => b !== id);
       if (res.batch_id) this.undoStack.push(res.batch_id);
       await refreshDirectory();
     } catch (err) { showToast(`Redo failed: ${formatApiError(err)}`, 'error'); }
+    finally { this._inFlight = false; }
   },
 
   copySelection() { this.clipboard = { mode: 'copy', paths: getSelectedPaths() }; },
@@ -122,6 +132,11 @@ const fileops = {
   },
 
   async rename(path, newName) {
+    // fn ignores the (overridePaths, onConflict) args run() would pass on a
+    // conflict retry — /fs/rename never returns a "conflict" status (mover.rename
+    // raises ConflictError instead, which the API maps straight to a 409), so
+    // run() can never call fn() with those args here; a 409 falls into run()'s
+    // catch and is toasted as-is via formatApiError, same as any other failure.
     const res = await this.run('Renamed', () => API.post('/fs/rename', { path, new_name: newName }));
     // Select (and focus) the renamed row once refreshDirectory() (inside
     // run()) has re-rendered it under its new path.

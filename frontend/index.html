@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta http-equiv="Content-Security-Policy"
-        content="default-src 'self'; script-src 'self'; img-src 'self' data:; connect-src 'self' http://127.0.0.1:9876 http://localhost:9876; style-src 'self' 'unsafe-inline';" />
+        content="default-src 'self'; script-src 'self'; img-src 'self' data: blob:; connect-src 'self' http://127.0.0.1:9876 http://localhost:9876; style-src 'self' 'unsafe-inline';" />
   <title>FilePlus</title>
   <link rel="stylesheet" href="src/styles.css" />
 </head>
@@ -3025,7 +3025,7 @@
             <div class="inspector__meta">
               <div class="inspector__meta-row">
                 <span class="inspector__meta-key">Kind</span>
-                <span class="inspector__meta-val">Markdown Document</span>
+                <span class="inspector__meta-val" id="inspector-kind">Markdown Document</span>
               </div>
               <div class="inspector__meta-row">
                 <span class="inspector__meta-key">Size</span>
@@ -3049,17 +3049,17 @@
 
           <!-- Tags pane -->
           <div class="fp-inspector__pane" data-pane="tags" style="display:none">
-            <div class="inspector__tags-wrap fp-chip-group" id="inspector-tags">
-              <span class="fp-chip fp-chip--tinted">design</span>
-              <span class="fp-chip">docs</span>
-              <button class="fp-chip fp-chip--add" data-action="add-tag" id="btn-add-tag">+ Add tag</button>
-            </div>
+            <div class="inspector__tags-wrap fp-chip-group" id="inspector-tags"></div>
+            <input class="fp-input" id="inspector-tag-input" placeholder="Add tag…"
+                   list="inspector-tag-suggestions" style="margin-top:10px;width:100%">
+            <datalist id="inspector-tag-suggestions"></datalist>
           </div>
 
           <!-- History pane -->
           <div class="fp-inspector__pane" data-pane="history" style="display:none">
-            <!-- INTEGRATION: file version history from GET /file/history -->
-            <p style="font:400 var(--t-body) var(--font-ui);color:var(--text-tertiary);padding:8px 0">No history available yet.</p>
+            <div id="inspector-history">
+              <p style="font:400 var(--t-body) var(--font-ui);color:var(--text-tertiary);padding:8px 0">No history available yet.</p>
+            </div>
           </div>
 
           <!-- INSPECTOR: multi-select state — shown by updateInspector('multi', ...) when >1 item selected -->
@@ -3088,9 +3088,9 @@
           display:flex;gap:8px;padding-top:12px;
           border-top:1px solid var(--border-hairline);
           flex-shrink:0">
-          <button class="fp-btn fp-btn--primary fp-btn--sm" data-action="open-file" id="btn-open-file">Open</button>
+          <button class="fp-btn fp-btn--primary fp-btn--sm" data-action="inspector-open" id="btn-open-file">Open</button>
           <button class="fp-btn fp-btn--secondary fp-btn--sm" data-action="open-file-with">Open with…</button>
-          <button class="fp-btn fp-btn--secondary fp-btn--sm" data-action="reveal-in-explorer" id="btn-reveal-file">Reveal</button>
+          <button class="fp-btn fp-btn--secondary fp-btn--sm" data-action="inspector-reveal" id="btn-reveal-file">Reveal</button>
           <button class="fp-icon-btn fp-icon-btn--sm" data-action="inspector-more" title="More actions" style="margin-left:auto">
             <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><circle cx="7" cy="3" r="1.2" fill="currentColor"/><circle cx="7" cy="7" r="1.2" fill="currentColor"/><circle cx="7" cy="11" r="1.2" fill="currentColor"/></svg>
           </button>
