@@ -61,7 +61,10 @@ function updateInspector(mode, data = {}) {
     if (data.path && filepathEl) filepathEl.textContent = data.path;
     if (!inspector.classList.contains('inspector--open')) toggleInspector();
   } else {
-    // Empty selection — collapse inspector
+    // Empty selection — collapse inspector. Also revoke any preview blob:
+    // URL here (not just in browser.js's onSelectionChanged) since
+    // updateInspector('none') can be reached from other callers too.
+    renderPreviewNone();
     if (inspector.classList.contains('inspector--open')) toggleInspector();
   }
 }
@@ -287,13 +290,27 @@ function renderInspectorHistory(rows) {
 function renderHistoryRow(row) {
   const srcName  = basenameOf(row.source_path);
   const destName = basenameOf(row.dest_path);
+  // Each basename carries the full path in `title` so hovering a truncated
+  // or ambiguous name (two files with the same basename in different
+  // folders) discloses exactly what it refers to.
   let summary;
-  if (srcName && destName && srcName !== destName) summary = `${escapeHtml(srcName)} → ${escapeHtml(destName)}`;
-  else summary = escapeHtml(destName || srcName || '—');
+  if (srcName && destName && srcName !== destName) {
+    summary = `<span title="${escapeHtml(row.source_path)}">${escapeHtml(srcName)}</span> → <span title="${escapeHtml(row.dest_path)}">${escapeHtml(destName)}</span>`;
+  } else {
+    const singleName = destName || srcName;
+    const singlePath = row.dest_path || row.source_path;
+    summary = singleName ? `<span title="${escapeHtml(singlePath)}">${escapeHtml(singleName)}</span>` : '—';
+  }
 
   const canUndo = !!row.executed && !row.undone && !row.error && !String(row.op_type || '').endsWith(':final');
   const undoBtn = canUndo
     ? `<button class="fp-btn fp-btn--ghost fp-btn--sm" data-action="inspector-undo-op" data-op-id="${row.id}">Undo</button>`
+    : '';
+  const reasonHtml = row.reason
+    ? `<div class="mono" style="font-size:10px;color:var(--text-tertiary)">${escapeHtml(row.reason)}</div>`
+    : '';
+  const errorHtml = row.error
+    ? `<div class="mono" style="font-size:10px;color:var(--bad)">${escapeHtml(row.error)}</div>`
     : '';
 
   return `<div class="inspector-history__row" style="display:flex;flex-direction:column;gap:2px;padding:8px 0;border-bottom:1px solid var(--border-hairline)">
@@ -302,6 +319,8 @@ function renderHistoryRow(row) {
       <span class="mono" style="font-size:10px;color:var(--text-tertiary);flex-shrink:0">${escapeHtml(formatModified(row.timestamp))}</span>
     </div>
     <div class="mono" style="font-size:11px;color:var(--text-secondary);word-break:break-all">${summary}</div>
+    ${reasonHtml}
+    ${errorHtml}
     ${undoBtn}
   </div>`;
 }
@@ -320,19 +339,53 @@ async function loadInspectorHistory(path, seq) {
   renderInspectorHistory(rows);
 }
 
-async function inspectorUndoOp(opId) {
+/** Re-fetches and renders History for `path`, independent of the debounced
+ * selection → inspector pipeline (used when undo keeps the same file
+ * selected, so nothing else is already about to reload it). */
+async function reloadInspectorHistoryFor(path) {
+  _inspectorHistoryPath = path;
   try {
-    await API.post(`/operations/${opId}/undo`);
+    const rows = await API.get('/files/history', { path });
+    renderInspectorHistory(rows);
+  } catch (_) { /* history refresh is best-effort */ }
+}
+
+async function inspectorUndoOp(opId) {
+  // POST /operations/{id}/undo returns the INVERSE operation's own result —
+  // {op_id, op_type, status, src, dest, batch_id} — so res.dest is where the
+  // undo actually left the item (the restored/original path for a
+  // move/rename/trash undo; a .FilePlusTrash path for a copy/mkdir/touch
+  // undo, which won't appear in a normal folder listing).
+  let res;
+  try {
+    res = await API.post(`/operations/${opId}/undo`);
   } catch (err) {
     showToast(formatApiError(err), 'error');
     return;
   }
   if (typeof refreshDirectory === 'function') await refreshDirectory();
-  if (_inspectorHistoryPath) {
-    try {
-      const rows = await API.get('/files/history', { path: _inspectorHistoryPath });
-      renderInspectorHistory(rows);
-    } catch (_) { /* history refresh is best-effort */ }
+
+  const destPath = res && res.dest;
+  const destExists = !!(destPath && typeof entryForPath === 'function' && entryForPath(destPath));
+  const currentPath = browserState.selection.size === 1 ? [...browserState.selection][0] : null;
+  const currentStillValid = !!(currentPath && typeof entryForPath === 'function' && entryForPath(currentPath));
+
+  if (destExists) {
+    // The undone item now lives at a different identity (e.g. a rename/move
+    // was reversed) — follow it: selecting it re-runs the full inspector
+    // (meta/preview/tags/History) for its restored path.
+    if (typeof selectRow === 'function') selectRow(destPath);
+    else await reloadInspectorHistoryFor(destPath);
+  } else if (currentStillValid) {
+    // The current selection survived the refresh as-is (the undone op
+    // didn't change this file's identity/path) — just reload History.
+    await reloadInspectorHistoryFor(currentPath);
+  } else {
+    // Neither the restored path nor the prior selection exists in the
+    // current listing (e.g. undoing a copy/mkdir/touch sends the item to
+    // .FilePlusTrash, off-screen) — nothing left to inspect.
+    _inspectorSeq++;
+    updateInspector('none');
   }
 }
 

@@ -878,6 +878,7 @@ function onSelectionChanged() {
     const n = browserState.selection.size;
     if (n === 0) {
       _inspectorSeq++; // invalidate any fetch still in flight from the prior selection
+      renderPreviewNone(); // revoke the blob: URL — nothing is selected to preview anymore
       updateInspector('none');
     } else if (n === 1) {
       showInspectorFor([...browserState.selection][0]);
