@@ -1,129 +1,76 @@
 /* =============================================================================
    FilePlus — Design Tokens & Component Stylesheet
    v2.0 — FULL REPLACEMENT of v1. Dark first, light second.
-   Personality: Tool, not toy. Warm dark base, single warm amber accent.
-   Tactile chrome, flat content. Multi-layered subtle bevels on chrome.
-   Motion confirms causality, never decorates.
+   Personality: Tool, not toy. Neutral greys, hairline borders, flat surfaces, one fixed blue accent. Segoe UI Variable throughout. Motion confirms causality, never decorates.
    ============================================================================= */
 
-/* Fonts: Inter (UI) + JetBrains Mono (data). System-font fallbacks used in
-   Electron to avoid external network requests and CSP issues. */
+/* Fonts: Segoe UI Variable (system). No webfonts, no monospace face; data uses tabular figures. */
 
 /* -----------------------------------------------------------------------------
    1. TOKENS — dark mode (default)
    ----------------------------------------------------------------------------- */
 :root {
-  /* ---------- Surfaces (narrow tonal ramp) ---------- */
-  --bg-backdrop: #131319;  /* window edge, status bar, behind everything */
-  --bg-chrome:   #191924;  /* sidebar, persistent structural shell */
-  --bg-content:  #1F1F2A;  /* main work area */
-  --bg-raised:   #2A2A36;  /* cards, popovers, hover, button defaults */
-  --bg-pressed:  #353542;  /* active hover, pressed, active sidebar item */
+  /* ---------- Surfaces (neutral ramp, board C) ---------- */
+  --bg-backdrop: #1C1D20;
+  --bg-chrome:   #1C1D20;
+  --bg-content:  #232428;
+  --bg-raised:   #2B2C31;
+  --bg-pressed:  #33353B;
 
-  /* ---------- Accent (single warm amber) ---------- */
-  /* Accent: default amber, runtime-overridable via --accent-custom (Settings → Personalization) */
-  --accent-custom: ;  /* Empty default; setting any value re-resolves --accent */
-  --accent:             var(--accent-custom, #E8965E);
-  --accent-hover:       #F0A574;
-  --accent-press:       #D88248;
-  --accent-wash:        rgba(232, 150, 94, 0.10);
-  --accent-wash-strong: rgba(232, 150, 94, 0.18);
-  --accent-edge:        rgba(232, 150, 94, 0.40);
-  --accent-edge-strong: rgba(232, 150, 94, 0.55);
-  /* Glow halo colors — both auto-track --accent so any custom accent color
-     glows in its OWN hue, not amber. Two strengths: -strong for the tight
-     mid-halo right against the white core, regular for the soft outer wash. */
-  --accent-glow:        color-mix(in srgb, var(--accent) 50%, transparent);
-  --accent-glow-strong: color-mix(in srgb, var(--accent) 80%, transparent);
-  /* True lightsaber core: pure white. The "blade" of every glowing element. */
-  --accent-core:        #ffffff;
-
-  /* Glow design tokens — three sizes. Every chain is structured the same way:
-       inner: tight white halo (the blade core)
-       mid:   saturated accent (the colored heat near the blade)
-       outer: soft accent wash (the broad ambient bloom)
-     Sizes are intentionally large/saturated — the user wants intense glow.
-       sm — small dots, focus rings, list icons
-       md — pills, badges, dots, drive bars, progress bars
-       lg — sidebar active bar, tab underline, brand mark, primary buttons */
-  --glow-sm: 0 0 2px #fff,
-             0 0 6px var(--accent-glow-strong),
-             0 0 14px var(--accent-glow);
-  --glow-md: 0 0 3px #fff,
-             0 0 9px var(--accent-glow-strong),
-             0 0 20px var(--accent-glow),
-             0 0 36px var(--accent-glow);
-  --glow-lg: 0 0 4px #fff,
-             0 0 14px var(--accent-glow-strong),
-             0 0 28px var(--accent-glow),
-             0 0 52px var(--accent-glow);
-
-  /* SVG drop-shadow halo chains. Mirror the box-shadow tokens. Used either
-     standalone (for the brand mark, which keeps its inner colors) or in
-     combination with `brightness(0) invert(1)` to whiten the path first. */
-  --glow-filter-sm: drop-shadow(0 0 1px #fff)
-                    drop-shadow(0 0 4px var(--accent-glow-strong))
-                    drop-shadow(0 0 10px var(--accent-glow));
-  --glow-filter-md: drop-shadow(0 0 2px #fff)
-                    drop-shadow(0 0 6px var(--accent-glow-strong))
-                    drop-shadow(0 0 14px var(--accent-glow));
-  --glow-filter-lg: drop-shadow(0 0 3px #fff)
-                    drop-shadow(0 0 9px var(--accent-glow-strong))
-                    drop-shadow(0 0 22px var(--accent-glow));
-  /* "Whiten + halo" — turns an accent-stroked/filled SVG path pure white
-     (brightness(0) makes pixels black with alpha preserved; invert(1) flips
-     them to white), then stacks the colored halo behind. This is the actual
-     lightsaber treatment for SVG icons. */
-  --glow-blade-sm: brightness(0) invert(1) var(--glow-filter-sm);
-  --glow-blade-md: brightness(0) invert(1) var(--glow-filter-md);
+  /* ---------- Accent (fixed blue; --accent-custom overrides) ---------- */
+  --accent-custom: ;
+  --accent:             var(--accent-custom, #4CC2FF);
+  --accent-hover:       #6DCFFF;
+  --accent-press:       #2FB3F5;
+  --accent-wash:        color-mix(in srgb, var(--accent) 12%, transparent);
+  --accent-wash-strong: color-mix(in srgb, var(--accent) 20%, transparent);
+  --accent-edge:        color-mix(in srgb, var(--accent) 40%, transparent);
+  --accent-edge-strong: color-mix(in srgb, var(--accent) 55%, transparent);
 
   /* ---------- Text ---------- */
-  --text-primary:   #F2EDE8;
-  --text-secondary: #A39BAE;
-  --text-tertiary:  #7C7488;  /* lifted from #6B6478 — was 2.1–3.1:1 on surfaces; now ≥3:1 everywhere */
-  --text-on-accent: #1A1015;
-  --text-on-good:   #0F2E18;
-  --text-on-bad:    #3D0F0D;
+  --text-primary:   #E7E8EA;
+  --text-secondary: #A0A3AA;
+  --text-tertiary:  #74777F;
+  --text-on-accent: #062033;
+  --text-on-good:   #0B2A14;
+  --text-on-bad:    #2B0A0A;
 
   /* ---------- Semantic ---------- */
-  --good: #7DC494;
-  --good-wash: rgba(125, 196, 148, 0.10);
-  --good-edge: rgba(125, 196, 148, 0.40);
-  --bad:  #E08A86;
-  --bad-wash: rgba(224, 138, 134, 0.10);
-  --bad-edge: rgba(224, 138, 134, 0.40);
-  --warn: #E8C56B;
-  --warn-rgb: 232 197 107;  /* space-separated for rgb(var() / alpha) usage */
-  --warn-wash: rgba(232, 197, 107, 0.10);
-  --warn-edge: rgba(232, 197, 107, 0.40);
+  --good:      #7DD48F;
+  --good-wash: color-mix(in srgb, var(--good) 10%, transparent);
+  --good-edge: color-mix(in srgb, var(--good) 40%, transparent);
+  --bad:       #EF8A8A;
+  --bad-wash:  color-mix(in srgb, var(--bad) 10%, transparent);
+  --bad-edge:  color-mix(in srgb, var(--bad) 40%, transparent);
+  --warn:      #E6C465;
+  --warn-rgb:  230 196 101;
+  --warn-wash: color-mix(in srgb, var(--warn) 10%, transparent);
+  --warn-edge: color-mix(in srgb, var(--warn) 40%, transparent);
 
-  /* ---------- Borders ---------- */
-  --border-hairline: rgba(255, 255, 255, 0.06);
-  --border-subtle:   rgba(255, 255, 255, 0.09);
-  --border-mid:      rgba(255, 255, 255, 0.13);
-  --border-strong:   rgba(255, 255, 255, 0.18);
+  /* ---------- Borders (solid, so they read the same over Mica) ---------- */
+  --border-hairline: #2F3136;
+  --border-subtle:   #35373D;
+  --border-mid:      #3C3E45;
+  --border-strong:   #4A4D55;
 
-  /* ---------- Highlights and depth ---------- */
-  --highlight-top:        inset 0 1px 0 rgba(255, 255, 255, 0.06);
-  --highlight-top-strong: inset 0 1px 0 rgba(255, 255, 255, 0.10);
-  --depth-bottom:         inset 0 -1px 0 rgba(0, 0, 0, 0.18);
-  --inset-recess:         inset 0 1px 2px rgba(0, 0, 0, 0.30);
-  --inset-recess-strong:  inset 0 2px 4px rgba(0, 0, 0, 0.40);
-
-  /* ---------- Outer shadows ---------- */
-  --shadow-raised:  0 1px 2px rgba(0, 0, 0, 0.30), 0 0 0 1px rgba(0, 0, 0, 0.15);
-  --shadow-card:    0 2px 6px rgba(0, 0, 0, 0.25), 0 1px 2px rgba(0, 0, 0, 0.20);
-  --shadow-popover: 0 8px 24px rgba(0, 0, 0, 0.40), 0 2px 6px rgba(0, 0, 0, 0.25);
-  --shadow-modal:   0 16px 48px rgba(0, 0, 0, 0.55), 0 4px 12px rgba(0, 0, 0, 0.35);
-  --shadow-window:  0 24px 64px rgba(0, 0, 0, 0.60), 0 8px 24px rgba(0, 0, 0, 0.40);
-
-  --pressed-shadow: var(--inset-recess), inset 0 0 0 1px var(--border-subtle);
+  /* ---------- Elevation: flat. Borders do the work; overlays get one soft shadow ---------- */
+  --highlight-top:        none;
+  --highlight-top-strong: none;
+  --depth-bottom:         none;
+  --inset-recess:         none;
+  --inset-recess-strong:  none;
+  --pressed-shadow:       none;
+  --shadow-raised:  0 0 0 1px var(--border-subtle);
+  --shadow-card:    0 0 0 1px var(--border-subtle);
+  --shadow-popover: 0 8px 24px rgba(0, 0, 0, 0.30);
+  --shadow-modal:   0 16px 48px rgba(0, 0, 0, 0.40);
+  --shadow-window:  none;
 
   /* ---------- Fonts ---------- */
-  --font-ui:   'Inter', -apple-system, system-ui, 'Segoe UI', sans-serif;
-  --font-mono: 'JetBrains Mono', 'Geist Mono', ui-monospace, 'SF Mono', Consolas, monospace;
+  --font-ui:   'Segoe UI Variable Text', 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif;
+  --font-data: var(--font-ui);
 
-  /* Size / line-height pairs */
+  /* Size / line-height pairs (unchanged) */
   --t-micro:      10px/14px;
   --t-small:      11px/16px;
   --t-compact:    12px/18px;
@@ -134,29 +81,31 @@
   --t-display-sm: 22px/30px;
   --t-display:    28px/34px;
 
-  --track-body:    -0.005em;
-  --track-button:  -0.01em;
-  --track-display: -0.015em;
-  --track-hero:    -0.02em;
-  --track-caps:     0.06em;
-  --track-mono:     0;
+  --track-body:    0;
+  --track-button:  0;
+  --track-display: 0;
+  --track-hero:    0;
+  --track-caps:    0.06em;
+  --track-mono:    0;
+  --track-heading: 0;
 
-  /* ---------- Spacing (2px base) ---------- */
+  /* ---------- Spacing (2px base, unchanged) ---------- */
   --s-2: 2px;  --s-4: 4px;   --s-6: 6px;   --s-8: 8px;   --s-10: 10px;
   --s-12: 12px; --s-14: 14px; --s-16: 16px; --s-20: 20px; --s-24: 24px;
   --s-32: 32px; --s-40: 40px; --s-48: 48px; --s-64: 64px;
 
   /* ---------- Radii ---------- */
-  --r-chip:     4px;
-  --r-icon-btn: 5px;
-  --r-button:   6px;
-  --r-card:     8px;
-  --r-modal:    10px;
-  --r-window:   10px;
-  --r-tray:     12px;
+  --r-sm:       3px;
+  --r-chip:     3px;
+  --r-icon-btn: 4px;
+  --r-button:   4px;
+  --r-card:     6px;
+  --r-modal:    8px;
+  --r-window:   8px;
+  --r-tray:     8px;
   --r-pill:     999px;
 
-  /* ---------- Motion ---------- */
+  /* ---------- Motion (unchanged) ---------- */
   --dur-flash:      60ms;
   --dur-press-down: 50ms;
   --dur-press-up:   80ms;
@@ -167,8 +116,9 @@
 
   --ease-out:  cubic-bezier(0.16, 1, 0.3, 1);
   --ease-snap: cubic-bezier(0.4, 0.0, 0.2, 1);
+  --ease-ui:   cubic-bezier(0.4, 0, 0.2, 1);
 
-  /* ---------- Density ---------- */
+  /* ---------- Density (unchanged) ---------- */
   --row-compact:     22px;
   --row-default:     26px;
   --row-comfortable: 32px;
@@ -176,7 +126,7 @@
 
   --sidebar-item-h:  28px;
 
-  /* ---------- Component dimensions ---------- */
+  /* ---------- Component dimensions (unchanged) ---------- */
   --h-titlebar:     32px;
   --h-toolbar:      48px;
   --h-statusbar:    24px;
@@ -191,40 +141,40 @@
 
   --w-sidebar:           240px;
   --w-sidebar-collapsed: 52px;
-
-  /* === Compatibility: tokens referenced elsewhere but historically undefined === */
-  --r-sm: 4px;                                  /* small radius; used in compact buttons/badges */
-  --ease-ui: cubic-bezier(0.4, 0, 0.2, 1);      /* generic UI easing (Material standard); used in transitions */
-  --track-heading: -0.020em;                    /* heading letter-spacing; matches --track-hero display scale */
 }
 
 [data-theme="light"] {
-  --bg-backdrop: #F5F1EC;
-  --bg-chrome:   #EDE8E1;
-  --bg-content:  #F8F4EF;
-  --bg-raised:   #FFFFFF;
-  --bg-pressed:  #E8E2DA;
+  --bg-backdrop: #F4F4F5;
+  --bg-chrome:   #F4F4F5;
+  --bg-content:  #FFFFFF;
+  --bg-raised:   #EBEBED;
+  --bg-pressed:  #E0E0E3;
 
-  --text-primary:   #1F1A22;
-  --text-secondary: #5D5466;
-  --text-tertiary:  #857D92;  /* lifted from #9A93A4 — was ~2.8:1 on light content; now ≥3.6:1 */
+  --accent:             var(--accent-custom, #0067C0);
+  --accent-hover:       #0A74D1;
+  --accent-press:       #005AA8;
+  --accent-wash:        color-mix(in srgb, var(--accent) 10%, transparent);
+  --accent-wash-strong: color-mix(in srgb, var(--accent) 16%, transparent);
 
-  --border-hairline: rgba(0, 0, 0, 0.06);
-  --border-subtle:   rgba(0, 0, 0, 0.09);
-  --border-mid:      rgba(0, 0, 0, 0.14);
-  --border-strong:   rgba(0, 0, 0, 0.18);
+  --text-primary:   #1D1E21;
+  --text-secondary: #5F6168;
+  --text-tertiary:  #82848B;
+  --text-on-accent: #FFFFFF;
+  --text-on-good:   #FFFFFF;
+  --text-on-bad:    #FFFFFF;
 
-  --highlight-top:        inset 0 1px 0 rgba(255, 255, 255, 0.55);
-  --highlight-top-strong: inset 0 1px 0 rgba(255, 255, 255, 0.65);
-  --depth-bottom:         inset 0 -1px 0 rgba(0, 0, 0, 0.06);
-  --inset-recess:         inset 0 1px 2px rgba(0, 0, 0, 0.08);
-  --inset-recess-strong:  inset 0 2px 4px rgba(0, 0, 0, 0.10);
+  --good: #218A3A;
+  --bad:  #C73B3B;
+  --warn: #946200;
+  --warn-rgb: 148 98 0;
 
-  --shadow-raised:  0 1px 2px rgba(0, 0, 0, 0.10), 0 0 0 1px rgba(0, 0, 0, 0.05);
-  --shadow-card:    0 2px 6px rgba(0, 0, 0, 0.09), 0 1px 2px rgba(0, 0, 0, 0.06);
-  --shadow-popover: 0 8px 24px rgba(0, 0, 0, 0.14), 0 2px 6px rgba(0, 0, 0, 0.08);
-  --shadow-modal:   0 16px 48px rgba(0, 0, 0, 0.20), 0 4px 12px rgba(0, 0, 0, 0.12);
-  --shadow-window:  0 24px 64px rgba(0, 0, 0, 0.22), 0 8px 24px rgba(0, 0, 0, 0.14);
+  --border-hairline: #E2E2E5;
+  --border-subtle:   #D8D9DD;
+  --border-mid:      #CFD0D4;
+  --border-strong:   #BFC0C5;
+
+  --shadow-popover: 0 8px 24px rgba(0, 0, 0, 0.14);
+  --shadow-modal:   0 16px 48px rgba(0, 0, 0, 0.20);
 }
 
 /* -----------------------------------------------------------------------------
@@ -240,7 +190,7 @@ html, body {
   font-family: var(--font-ui);
   font-size: 13px;
   line-height: 20px;
-  font-weight: 500;
+  font-weight: 400;
   letter-spacing: var(--track-body);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -256,7 +206,7 @@ button, input, select, textarea {
 button { background: none; border: none; cursor: default; padding: 0; }
 a { color: inherit; text-decoration: none; }
 
-code, kbd, pre, .mono { font-family: var(--font-mono); letter-spacing: var(--track-mono); }
+code, kbd, pre, .mono { font-family: var(--font-data); font-variant-numeric: tabular-nums; letter-spacing: 0; }
 
 ::selection { background: var(--accent-wash-strong); color: var(--text-primary); }
 
