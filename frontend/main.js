@@ -7,9 +7,36 @@
 const { app, BrowserWindow, globalShortcut, ipcMain, nativeTheme, shell, dialog, clipboard } = require('electron');
 const path = require('path');
 const os   = require('os');
+const fs   = require('fs');
 const { spawn } = require('child_process');
 
 let mainWindow;
+
+// ── API token ────────────────────────────────────────────────────────────
+// FILEPLUS_API_TOKEN from our own process environment, else parsed from
+// <repo>/.env (a plain KEY=value line, comments ignored). Stage 5 packaging
+// will instead generate this at startup and pass it to the spawned backend
+// process's environment; for now (dev flow) both the backend and this
+// process read the same source so they agree without any IPC between them.
+function readEnvFileToken() {
+  try {
+    const envPath = path.join(__dirname, '..', '.env');
+    const lines = fs.readFileSync(envPath, 'utf8').split(/\r?\n/);
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) continue;
+      const eq = trimmed.indexOf('=');
+      if (eq === -1) continue;
+      const key = trimmed.slice(0, eq).trim();
+      if (key === 'FILEPLUS_API_TOKEN') return trimmed.slice(eq + 1).trim();
+    }
+  } catch (_) {
+    // .env missing or unreadable — no token
+  }
+  return '';
+}
+
+const API_TOKEN = process.env.FILEPLUS_API_TOKEN || readEnvFileToken();
 
 // Mica needs Windows 11 22H2 (build 22621). Elsewhere Electron ignores the option
 // and the renderer paints solid --bg-chrome.
@@ -72,6 +99,10 @@ app.whenReady().then(() => {
 
   ipcMain.on('get-hostname', (event) => {
     event.returnValue = os.hostname();
+  });
+
+  ipcMain.on('get-api-token', (event) => {
+    event.returnValue = API_TOKEN;
   });
 
   ipcMain.on('mica-available', (event) => { event.returnValue = MICA_AVAILABLE; });

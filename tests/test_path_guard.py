@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 import backend.config as _config
-from backend.config import path_guard, OutOfSandboxError, ProtectedPathError
+from backend.config import path_guard, OutOfSandboxError, ProtectedPathError, BadPathError
 
 
 def test_read_allows_any_path(sandbox, tmp_path):
@@ -100,3 +100,53 @@ def test_system_root_wins_even_inside_sandbox(tmp_path, monkeypatch):
     monkeypatch.setattr(_config, "FILEPLUS_SANDBOX_PATH", sandbox_dir)
     with pytest.raises(ProtectedPathError):
         path_guard(sandbox_dir / "x.txt", "write")
+
+
+# ---------------------------------------------------------------------------
+# Task 0 -- Stage 2A audit item (1): the absolute-input check was dead code
+# because Path.resolve() absolutises a drive-relative or relative spelling
+# before it can be rejected. Reject it up front, in both modes, before any
+# resolving happens.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("spelling", ["C:foo", "foo"])
+def test_drive_relative_and_relative_paths_refused_in_both_modes(spelling):
+    with pytest.raises(BadPathError):
+        path_guard(spelling, "read")
+    with pytest.raises(BadPathError):
+        path_guard(spelling, "write")
+
+
+# ---------------------------------------------------------------------------
+# Task 0 -- Stage 2A audit item (2): loopback admin-share UNC spellings
+# (\\localhost\C$\..., \\127.0.0.1\C$\..., \\<COMPUTERNAME>\C$\...) resolve
+# to UNC form and used to bypass SYSTEM_WRITE_ROOTS string containment when
+# unlocked, since containment compared local-drive roots against a UNC
+# string. They must be mapped back to their local drive spelling before
+# containment checks run.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("host", ["localhost", "127.0.0.1", "LOCALHOST"])
+def test_loopback_admin_share_maps_to_protected_local_drive(host, monkeypatch):
+    monkeypatch.setattr(_config, "SYSTEM_WRITE_ROOTS", [Path("C:/Windows")])
+    monkeypatch.setattr(_config, "PROTECTED_WRITE_ROOTS", [Path("C:/Windows")])
+    monkeypatch.setattr(_config, "WRITE_UNLOCKED", True)
+    with pytest.raises(ProtectedPathError):
+        path_guard(f"\\\\{host}\\C$\\Windows\\x", "write")
+
+
+def test_loopback_admin_share_by_computername(monkeypatch):
+    import os
+    computername = os.environ.get("COMPUTERNAME", "TESTHOST")
+    monkeypatch.setattr(_config, "SYSTEM_WRITE_ROOTS", [Path("C:/Windows")])
+    monkeypatch.setattr(_config, "PROTECTED_WRITE_ROOTS", [Path("C:/Windows")])
+    monkeypatch.setattr(_config, "WRITE_UNLOCKED", True)
+    with pytest.raises(ProtectedPathError):
+        path_guard(f"\\\\{computername}\\C$\\Windows\\x", "write")
+
+
+def test_normal_unc_host_is_not_remapped(sandbox):
+    # A non-loopback UNC host is never a local admin share in disguise; it's
+    # refused by the ordinary out-of-sandbox rule like any other outside path.
+    with pytest.raises(OutOfSandboxError):
+        path_guard(r"\\fileserver\share\x", "write")

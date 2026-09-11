@@ -59,6 +59,9 @@ New-Item -ItemType Directory -Force (Join-Path $root 'artifacts') | Out-Null
 $env:FILEPLUS_DB_PATH = Join-Path $root 'artifacts\verify.db'
 # belt and braces: the smoke run never unlocks writes outside the sandbox
 $env:WRITE_UNLOCKED = 'false'
+# fixed dev token: inherited by the backend (Start-Process below) and by
+# npm test (Electron reads it via main.js, the smoke test via process.env)
+$env:FILEPLUS_API_TOKEN = 'fileplus-dev-token'
 
 $script:teardownFailed = $false
 $backend = Start-Process -FilePath 'py' -ArgumentList '-3', '-m', 'backend.api' `

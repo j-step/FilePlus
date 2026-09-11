@@ -1,5 +1,13 @@
 const API_BASE = 'http://127.0.0.1:9876';
 
+// Attaches X-FilePlus-Token when main.js exposed one (FILEPLUS_API_TOKEN set);
+// a no-op object when it didn't, so callers can always spread the result into
+// a fetch() headers object. TODO(Task 1): move into frontend/src/api.js.
+function apiHeaders(extra = {}) {
+  const t = window.electronAPI?.apiToken?.();
+  return t ? { 'X-FilePlus-Token': t, ...extra } : extra;
+}
+
 // ── DOM references ─────────────────────��────────────────────────────────────
 const shell              = document.getElementById('shell');
 const sidebar            = document.getElementById('sidebar');
@@ -1235,7 +1243,7 @@ async function loadDirectory(absPath) {
 
   let data;
   try {
-    const r = await fetch(url);
+    const r = await fetch(url, { headers: apiHeaders() });
     if (r.status === 403) {
       showErrorBanner(`Path is outside the sandbox: ${absPath}`);
       return;
@@ -1299,7 +1307,7 @@ function navUp() {
 
 async function fetchAndRender(path) {
   try {
-    const r = await fetch(`${API_BASE}/fs/list?path=${encodeURIComponent(path)}`);
+    const r = await fetch(`${API_BASE}/fs/list?path=${encodeURIComponent(path)}`, { headers: apiHeaders() });
     if (!r.ok) {
       showErrorBanner(`Failed to load folder (HTTP ${r.status}).`);
       refreshNavButtons();
@@ -1410,7 +1418,7 @@ async function triggerScan(path) {
   try {
     const res = await fetch(`${API_BASE}/scan`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: apiHeaders({ 'Content-Type': 'application/json' }),
       body,
       signal: AbortSignal.timeout(60000),
     });
@@ -1431,7 +1439,7 @@ async function checkBackend() {
   const dot = el.querySelector('.fp-statusbar__backend-dot');
   const label = el.querySelector('.fp-statusbar__backend-label');
   try {
-    const res = await fetch(`${API_BASE}/health`, { signal: AbortSignal.timeout(2000) });
+    const res = await fetch(`${API_BASE}/health`, { headers: apiHeaders(), signal: AbortSignal.timeout(2000) });
     el.dataset.state = res.ok ? 'ok' : 'error';
     if (label) label.textContent = res.ok ? 'Backend' : 'Backend error';
     return res.ok;

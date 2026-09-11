@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 
 
 class InvalidNameError(ValueError): ...
+class InvalidPolicyError(ValueError): ...
 class ConflictError(Exception): ...
 class RefusedError(Exception): ...
 
@@ -45,7 +46,7 @@ _POLICIES = ("fail", "skip", "keep-both", "replace")
 
 def _validate_conflict_policy(on_conflict: str) -> None:
     if on_conflict not in _POLICIES:
-        raise ValueError(f"unknown on_conflict {on_conflict!r}")
+        raise InvalidPolicyError(f"unknown on_conflict {on_conflict!r}")
 
 
 def _send2trash(path: Path) -> None:  # indirection so tests can stub it
@@ -175,7 +176,7 @@ def _resolve_target(target: Path, on_conflict: str) -> tuple[Path | None, str]:
         return keep_both_name(target), "done"
     if on_conflict == "replace":
         return target, "replace"
-    raise ValueError(f"unknown on_conflict {on_conflict!r}")  # defence in depth; callers validate up front
+    raise InvalidPolicyError(f"unknown on_conflict {on_conflict!r}")  # defence in depth; callers validate up front
 
 
 def _result(op_id, op_type, status, src, dest, batch_id) -> dict:

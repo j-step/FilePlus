@@ -11,10 +11,11 @@ def sandbox(tmp_path, monkeypatch):
     """Temporary sandbox directory wired into config.
 
     Patches FILEPLUS_SANDBOX_PATH, FILEPLUS_DB_PATH, WRITE_UNLOCKED,
-    PROTECTED_WRITE_ROOTS, and SYSTEM_WRITE_ROOTS so every test runs in
-    isolation with a real (but throwaway) filesystem and database. Both root
-    lists are cleared here because tmp dirs can live under any root (e.g. a
-    user profile under Program Files on some CI images, or the real
+    PROTECTED_WRITE_ROOTS, SYSTEM_WRITE_ROOTS, and FILEPLUS_API_TOKEN (cleared
+    to "") so every test runs in isolation with a real (but throwaway)
+    filesystem and database, and without auth gating unrelated requests. Both
+    root lists are cleared here because tmp dirs can live under any root (e.g.
+    a user profile under Program Files on some CI images, or the real
     %SystemRoot%); tests that need a protected root set their own via
     monkeypatch.
 
@@ -29,6 +30,10 @@ def sandbox(tmp_path, monkeypatch):
     monkeypatch.setattr(_config, "WRITE_UNLOCKED", False)
     monkeypatch.setattr(_config, "PROTECTED_WRITE_ROOTS", [])
     monkeypatch.setattr(_config, "SYSTEM_WRITE_ROOTS", [])
+    # Never let a real FILEPLUS_API_TOKEN in the dev's environment (e.g. left
+    # over from a verify.ps1 run) gate unrelated tests; test_api_auth.py sets
+    # its own value per test via monkeypatch.
+    monkeypatch.setattr(_config, "FILEPLUS_API_TOKEN", "")
     return sandbox_dir
 
 

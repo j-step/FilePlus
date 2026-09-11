@@ -19,6 +19,15 @@ test('backend /health is reachable', async () => {
   expect((await r.json()).status).toBe('ok');
 });
 
+test('a token-gated route requires X-FilePlus-Token when FILEPLUS_API_TOKEN is set', async () => {
+  const token = process.env.FILEPLUS_API_TOKEN;
+  test.skip(!token, 'FILEPLUS_API_TOKEN not set in this environment');
+  const unauthed = await fetch(`${API}/drives`);
+  expect(unauthed.status).toBe(401);
+  const authed = await fetch(`${API}/drives`, { headers: { 'X-FilePlus-Token': token } });
+  expect(authed.status).toBe(200);
+});
+
 test('every screen renders with no renderer errors', async () => {
   fs.mkdirSync(SHOTS, { recursive: true });
   // Electron-based dev shells (e.g. this one) export ELECTRON_RUN_AS_NODE=1,

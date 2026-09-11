@@ -13,6 +13,7 @@ ProtectedPathError; (4) WRITE_UNLOCKED -> allowed, else OutOfSandboxError.
 """
 from dotenv import load_dotenv
 import os
+import re
 from pathlib import Path
 
 load_dotenv()
@@ -26,6 +27,11 @@ class ProtectedPathError(Exception):
     """Raised for a write under a protected system root, regardless of unlock state."""
 
 
+class BadPathError(ValueError):
+    """Raised for an input spelling _canonicalize refuses outright (not absolute,
+    no drive/UNC root, or a component that would be silently normalised away)."""
+
+
 FILEPLUS_APP_DIR = Path(__file__).resolve().parents[1]
 
 FILEPLUS_SANDBOX_PATH = Path(os.getenv("FILEPLUS_SANDBOX_PATH", str(FILEPLUS_APP_DIR / "FilePlusTestSandbox")))
@@ -33,6 +39,8 @@ FILEPLUS_DB_PATH = Path(os.getenv("FILEPLUS_DB_PATH", str(FILEPLUS_APP_DIR / "fi
 FILEPLUS_EVERYTHING_PATH = Path(os.getenv("FILEPLUS_EVERYTHING_PATH", r"C:\Everything"))
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+# When set, every route except /health requires header X-FilePlus-Token to match.
+FILEPLUS_API_TOKEN = os.getenv("FILEPLUS_API_TOKEN", "")
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.1:8b")
 
@@ -72,6 +80,35 @@ def is_under(path: Path, root: Path) -> bool:
     return p == r or p.startswith(r.rstrip("\\/") + os.sep)
 
 
+_LOOPBACK_ADMIN_SHARE_RE = re.compile(r"^\\\\(?P<host>[^\\]+)\\(?P<share>[A-Za-z])\$(?P<rest>.*)$")
+
+
+def _map_loopback_admin_share(resolved: Path) -> Path:
+    """Map a loopback admin-share UNC spelling back to its local drive form.
+
+    ``\\\\localhost\\C$\\Windows\\x`` and friends (``127.0.0.1``, ``::1``, the
+    machine's own COMPUTERNAME) are just ``C:\\Windows\\x`` reached over the
+    loopback network stack. Left as UNC, is_under's string containment check
+    against SYSTEM_WRITE_ROOTS (local-drive paths) never matches, so this
+    spelling would otherwise bypass write protection entirely when unlocked.
+    Any other UNC host is a real remote share and passes through unchanged.
+    """
+    s = str(resolved)
+    if not s.startswith("\\\\"):
+        return resolved
+    m = _LOOPBACK_ADMIN_SHARE_RE.match(s)
+    if not m:
+        return resolved
+    host = m.group("host").lower()
+    loopback_hosts = {"localhost", "127.0.0.1", "::1", os.environ.get("COMPUTERNAME", "").lower()}
+    loopback_hosts.discard("")
+    if host not in loopback_hosts:
+        return resolved
+    share = m.group("share")
+    rest = m.group("rest").lstrip("\\")
+    return Path(f"{share}:\\{rest}").resolve()
+
+
 def _canonicalize(path: Path | str) -> Path:
     """Resolve *path* and reject spellings that would defeat containment checks.
 
@@ -79,18 +116,26 @@ def _canonicalize(path: Path | str) -> Path:
     prefix, a drive-relative spelling, and path components with a trailing
     space or dot -- any of which could make a path that is really inside a
     protected or sandboxed location look like it isn't, or vice versa.
+    Path.resolve() absolutises a drive-relative or relative spelling before
+    it can be rejected, so the absolute-input check below runs on the raw
+    *path* first, ahead of any resolving.
     """
-    resolved = Path(path).resolve()
+    p = Path(path)
+    s = str(p)
+    if not (p.is_absolute() and (p.drive or s.startswith("\\\\"))):
+        raise BadPathError(f"Path must be absolute with a drive or UNC root: {path!r}")
+    resolved = p.resolve()
     s = str(resolved)
     if s.startswith("\\\\?\\UNC\\"):
         resolved = Path("\\\\" + s[len("\\\\?\\UNC\\"):]).resolve()
     elif s.startswith("\\\\?\\"):
         resolved = Path(s[len("\\\\?\\"):]).resolve()
+    resolved = _map_loopback_admin_share(resolved)
     if not (resolved.drive and resolved.root):
-        raise ValueError(f"Path must be absolute with a drive: {path!r}")
+        raise BadPathError(f"Path must be absolute with a drive: {path!r}")
     for part in resolved.parts[1:]:
         if part.endswith(" ") or part.endswith("."):
-            raise ValueError(
+            raise BadPathError(
                 f"Path component {part!r} ends with a space or a dot; Windows accepts "
                 f"that spelling but normalises it away, which would defeat containment "
                 f"checks: {resolved}"
