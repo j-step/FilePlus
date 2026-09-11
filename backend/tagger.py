@@ -31,8 +31,10 @@ async def apply_tags(conn, file_id: int, names: list[str]) -> list[int]:
     """Attach a list of tag names to a file, creating tags that don't exist.
 
     Names are de-duplicated within the call. Blank/whitespace-only names are
-    skipped. Creates missing tags with tag_type='user'; logs a 'tag-add'
-    operation per applied name (source=file path, dest=tag name).
+    skipped. Creates missing tags with tag_type='user'. Follows the app-wide
+    log-before-act protocol per name: log a 'tag-add' operation (source=file
+    path, dest=tag name), perform the writes, then mark_executed — or
+    mark_error and re-raise if the writes fail.
 
     Args:
         conn: Active aiosqlite connection.
@@ -50,11 +52,16 @@ async def apply_tags(conn, file_id: int, names: list[str]) -> list[int]:
         if not name or name in seen:
             continue
         seen.add(name)
-        await conn.execute("INSERT OR IGNORE INTO tags (name, tag_type) VALUES (?, 'user')", (name,))
-        cur = await conn.execute("SELECT id FROM tags WHERE name = ?", (name,))
-        tag_id = (await cur.fetchone())[0]
-        await conn.execute("INSERT OR IGNORE INTO file_tags (file_id, tag_id) VALUES (?, ?)", (file_id, tag_id))
-        await ol.log_operation(conn, "tag-add", file_path, name)
+        op_id = await ol.log_operation(conn, "tag-add", file_path, name)
+        try:
+            await conn.execute("INSERT OR IGNORE INTO tags (name, tag_type) VALUES (?, 'user')", (name,))
+            cur = await conn.execute("SELECT id FROM tags WHERE name = ?", (name,))
+            tag_id = (await cur.fetchone())[0]
+            await conn.execute("INSERT OR IGNORE INTO file_tags (file_id, tag_id) VALUES (?, ?)", (file_id, tag_id))
+        except Exception as exc:
+            await ol.mark_error(conn, op_id, f"{type(exc).__name__}: {exc}")
+            raise
+        await ol.mark_executed(conn, op_id)
         tag_ids.append(tag_id)
     return tag_ids
 
@@ -79,7 +86,11 @@ async def get_tags(conn, file_id: int) -> list[dict]:
 
 
 async def remove_tag(conn, file_id: int, tag_id: int) -> None:
-    """Detach a tag from a file and log the removal.
+    """Detach a tag from a file, logging the removal before acting.
+
+    Follows the app-wide log-before-act protocol: log a 'tag-remove'
+    operation, perform the delete, then mark_executed — or mark_error and
+    re-raise if the delete fails.
 
     Args:
         conn: Active aiosqlite connection.
@@ -90,8 +101,13 @@ async def remove_tag(conn, file_id: int, tag_id: int) -> None:
     cur = await conn.execute("SELECT name FROM tags WHERE id = ?", (tag_id,))
     trow = await cur.fetchone()
     tag_name = trow[0] if trow else None
-    await conn.execute("DELETE FROM file_tags WHERE file_id = ? AND tag_id = ?", (file_id, tag_id))
-    await ol.log_operation(conn, "tag-remove", file_path, tag_name)
+    op_id = await ol.log_operation(conn, "tag-remove", file_path, tag_name)
+    try:
+        await conn.execute("DELETE FROM file_tags WHERE file_id = ? AND tag_id = ?", (file_id, tag_id))
+    except Exception as exc:
+        await ol.mark_error(conn, op_id, f"{type(exc).__name__}: {exc}")
+        raise
+    await ol.mark_executed(conn, op_id)
 
 
 async def search_tags(conn, q: str, limit: int = 10) -> list[dict]:

@@ -68,3 +68,30 @@ def test_files_pagination(client, sandbox):
     client.post("/scan", json={})
     assert len(client.get("/files", params={"limit": 2, "offset": 0}).json()) == 2
     assert len(client.get("/files", params={"limit": 2, "offset": 4}).json()) == 1
+
+
+def test_preview_large_text_bounded_read(client, sandbox):
+    big = sandbox / "big.txt"
+    big.write_text("x" * (1024 * 1024))
+    body = client.get("/preview", params={"path": str(big)}).json()
+    assert body["kind"] == "text" and body["truncated"] is True
+    assert len(body["content"]) <= 4096
+    assert body["total_size"] == big.stat().st_size
+
+
+def test_index_protected_root_forbidden(client, tmp_path, monkeypatch):
+    import backend.config as _config
+    protected = tmp_path / "Win"
+    monkeypatch.setattr(_config, "PROTECTED_WRITE_ROOTS", [protected])
+    r = client.post("/index", json={"path": str(protected)})
+    assert r.status_code == 403
+
+
+def test_index_conflict_while_running(client, sandbox):
+    from backend.api import app
+    app.state.index_state["running"] = True
+    try:
+        r = client.post("/index", json={"path": str(sandbox)})
+        assert r.status_code == 409
+    finally:
+        app.state.index_state["running"] = False

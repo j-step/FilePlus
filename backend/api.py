@@ -34,6 +34,7 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     await init_db()
     app.state.index_state = {"running": False, "path": None, "count": 0, "started": None, "error": None}
+    app.state.index_task = None  # holds the running quick-index asyncio.Task, if any
     app.state.reconciled = []  # filled at startup by Task 9's reconcile call
     yield
 
@@ -215,9 +216,11 @@ async def preview(path: str = Query(..., description="Absolute path of the file"
         media_type = mimetypes.guess_type(str(resolved))[0] or "application/octet-stream"
         return FileResponse(str(resolved), media_type=media_type)
     if ext in _PREVIEW_TEXT_EXTS:
-        raw = resolved.read_bytes()
-        content = raw[:4096].decode("utf-8", errors="replace")
-        return {"kind": "text", "content": content, "truncated": size > 4096, "total_size": size}
+        with open(resolved, "rb") as f:
+            raw = f.read(4096)
+        total_size = resolved.stat().st_size
+        content = raw.decode("utf-8", errors="replace")
+        return {"kind": "text", "content": content, "truncated": total_size > 4096, "total_size": total_size}
     return {"kind": "binary", "size": size}
 
 
@@ -401,7 +404,7 @@ async def trigger_scan(body: Optional[ScanRequest] = None):
     root = Path(body.path) if (body and body.path) else _config.FILEPLUS_SANDBOX_PATH
     do_hash = body.hash if body else True
     count = await scan_directory(root, hash=do_hash)
-    stale = await remove_stale_entries()
+    stale = await remove_stale_entries(root)
     return {"count": count, "stale_removed": stale, "path": str(root)}
 
 
@@ -416,7 +419,7 @@ class IndexRequest(BaseModel):
 async def _run_index(path: Path) -> None:
     try:
         count = await scan_directory(path, hash=False)
-        await remove_stale_entries()
+        await remove_stale_entries(path)
         app.state.index_state["count"] = count
     except Exception as exc:
         app.state.index_state["error"] = str(exc)
@@ -442,7 +445,15 @@ async def start_index(body: IndexRequest):
         "running": True, "path": str(resolved), "count": 0,
         "started": datetime.now(timezone.utc).isoformat(timespec="seconds"), "error": None,
     })
-    asyncio.create_task(_run_index(resolved))
+
+    def _log_task_exception(task: "asyncio.Task") -> None:
+        exc = task.exception() if not task.cancelled() else None
+        if exc is not None:
+            logger.error("Quick index task for %s raised: %r", resolved, exc)
+
+    task = asyncio.create_task(_run_index(resolved))
+    task.add_done_callback(_log_task_exception)
+    app.state.index_task = task
     return {"started": True}
 
 

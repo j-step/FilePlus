@@ -198,6 +198,30 @@ async def test_remove_stale_deletes_missing_files(db, sandbox):
     assert row[0] == 0
 
 
+async def test_remove_stale_entries_scoped_to_root(db, sandbox):
+    dir_a = sandbox / "a"; dir_a.mkdir()
+    dir_b = sandbox / "b"; dir_b.mkdir()
+    fa = dir_a / "keep.txt"; fa.write_text("a")
+    fb = dir_b / "gone.txt"; fb.write_text("b")
+    await scan_directory(sandbox)
+
+    fb.unlink()
+
+    removed_a = await remove_stale_entries(dir_a)
+    assert removed_a == 0
+    async with aiosqlite.connect(db) as conn:
+        cur = await conn.execute("SELECT COUNT(*) FROM files WHERE path = ?", (str(fb.resolve()),))
+        row = await cur.fetchone()
+    assert row[0] == 1  # b's stale row survives a root-A-scoped removal
+
+    removed_b = await remove_stale_entries(dir_b)
+    assert removed_b == 1
+    async with aiosqlite.connect(db) as conn:
+        cur = await conn.execute("SELECT COUNT(*) FROM files WHERE path = ?", (str(fb.resolve()),))
+        row = await cur.fetchone()
+    assert row[0] == 0
+
+
 async def test_remove_stale_keeps_existing_files(db, sandbox):
     (sandbox / "stays.txt").write_text("I remain")
     await scan_directory(sandbox)

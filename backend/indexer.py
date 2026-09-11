@@ -131,11 +131,17 @@ async def index_file(path: Path, conn: aiosqlite.Connection, hash: bool = True) 
     return row[0]
 
 
-async def remove_stale_entries() -> int:
+async def remove_stale_entries(root: Path | None = None) -> int:
     """Delete database records for files that no longer exist on disk.
 
     Should be called after scan_directory() to keep the index in sync with
     filesystem reality. Filesystem always wins; DB adapts.
+
+    Args:
+        root: When given, only rows whose path is under *root* are
+            considered — a full scan_directory(root) only walked that
+            subtree, so a global stale sweep would wrongly delete rows for
+            files that still exist but simply weren't visited this pass.
 
     Returns:
         Number of stale rows removed.
@@ -145,6 +151,8 @@ async def remove_stale_entries() -> int:
         cursor = await conn.execute("SELECT id, path FROM files")
         rows = await cursor.fetchall()
         for row_id, path_str in rows:
+            if root is not None and not _config.is_under(Path(path_str), root):
+                continue
             if not Path(path_str).exists():
                 await conn.execute("DELETE FROM files WHERE id = ?", (row_id,))
                 removed += 1
