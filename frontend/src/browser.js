@@ -23,9 +23,14 @@ const browserState = {
   anchor: null,
   focus: null,
   showHidden: false,
+  showExtensions: true,
   parent: null,
   isRoot: false,
   truncated: false,
+  // Last path passed to loadDirectory() (including null for the sandbox
+  // root) — whatever the load's outcome. Used by the error banner's "Retry"
+  // action so it can re-attempt the exact same load that just failed.
+  lastAttemptedPath: null,
 };
 
 /** Reads a validated {key, dir} sort spec from sessionStorage, defaulting to name/asc. */
@@ -260,6 +265,7 @@ function parentOfPath(p) {
 
 async function loadDirectory(absPath, opts = {}) {
   const { addToHistory = true, preserveSelection = false } = opts;
+  browserState.lastAttemptedPath = absPath;
   let data;
   try {
     data = absPath
@@ -309,31 +315,40 @@ function refreshDirectory() {
   return loadDirectory(browserState.path, { addToHistory: false, preserveSelection: true });
 }
 
+// Every load failure gets the same two recovery actions: "Go back" (real
+// history navigation via navBack()) and "Retry" (re-attempt the exact same
+// path that just failed, via browserState.lastAttemptedPath).
+const LOAD_ERROR_ACTIONS = [
+  { label: 'Go back', name: 'nav-back' },
+  { label: 'Retry', name: 'nav-retry' },
+];
+
 function handleLoadError(err, absPath) {
   if (err instanceof ApiError) {
     if (err.status === 403) {
-      showErrorBanner(`Access denied: ${absPath}`, { actionLabel: 'Go back', actionName: 'nav-retreat' });
+      showErrorBanner(`Access denied: ${absPath}`, { actions: LOAD_ERROR_ACTIONS });
       return;
     }
     if (err.status === 404) {
-      showErrorBanner('Folder not found');
+      showErrorBanner('Folder not found', { actions: LOAD_ERROR_ACTIONS });
       return;
     }
     if (err.status === 400) {
-      showErrorBanner('Invalid path');
+      showErrorBanner('Invalid path', { actions: LOAD_ERROR_ACTIONS });
       return;
     }
-    showErrorBanner(formatApiError(err));
+    showErrorBanner(formatApiError(err), { actions: LOAD_ERROR_ACTIONS });
     return;
   }
-  showErrorBanner(`Couldn't reach backend: ${formatApiError(err)}`);
+  showErrorBanner(`Couldn't reach backend: ${formatApiError(err)}`, { actions: LOAD_ERROR_ACTIONS });
 }
 
-// Re-display the last successfully loaded directory — used by the "Go back"
-// action on the access-denied banner. The failed path was never pushed onto
-// navHistory, so this is a reload of the current head, not a stack pop.
-function retreatFromError() {
-  if (browserState.path) loadDirectory(browserState.path, { addToHistory: false });
+// Re-attempts the load that just failed — used by the error banner's "Retry"
+// action. lastAttemptedPath is set by loadDirectory() before the fetch (even
+// for the sandbox root, where it's null), so this always repeats the exact
+// same request.
+function retryLoad() {
+  loadDirectory(browserState.lastAttemptedPath, { addToHistory: false });
 }
 
 function pushHistory(path) {
@@ -401,6 +416,15 @@ function renderTruncatedBanner() {
   </div>`;
 }
 
+/** Strips a file's extension for the show-extensions-off display name (the
+ * on-disk name, path, sort key, etc. are always the untouched full name —
+ * only this rendered label changes). Dotfiles with no real stem (".env")
+ * and extension-less names are returned unchanged. */
+function stemOf(name) {
+  const dot = name.lastIndexOf('.');
+  return dot > 0 ? name.slice(0, dot) : name;
+}
+
 function renderFsRow(entry, parentPath) {
   const childPath = joinPath(parentPath, entry.name);
   const icon = entry.is_dir ? ICON_FOLDER : iconForExt(entry.ext);
@@ -408,11 +432,16 @@ function renderFsRow(entry, parentPath) {
   const modifiedText = entry.error ? '—' : formatModified(entry.modified * 1000);
   const rowClass = `fp-row${entry.is_dir ? ' fp-row--folder' : ''}${entry.error ? ' fp-row--disabled' : ''}`;
   const titleAttr = entry.error ? ' title="Access denied"' : '';
+  // ui.show_extensions === false hides the extension on FILE rows only —
+  // folders never have one to hide. The full name still shows as a tooltip.
+  const hideExt = !entry.is_dir && browserState.showExtensions === false;
+  const displayName = hideExt ? stemOf(entry.name) : entry.name;
+  const nameTitleAttr = hideExt ? ` title="${escapeHtml(entry.name)}"` : '';
   return `<div class="${rowClass}" role="option" draggable="true"
             data-path="${escapeHtml(childPath)}"
             data-type="${entry.is_dir ? 'folder' : 'file'}" tabindex="-1"${titleAttr}>
     ${icon}
-    <span class="fp-row__name">${escapeHtml(entry.name)}</span>
+    <span class="fp-row__name"${nameTitleAttr}>${escapeHtml(displayName)}</span>
     <span class="fp-row__size mono">${sizeText}</span>
     <span class="fp-row__modified mono">${modifiedText}</span>
     <div class="fp-row__tags"></div>
@@ -449,18 +478,26 @@ function updateBreadcrumb(path) {
   crumb.innerHTML = html;
 }
 
+/**
+ * opts.actions is a list of {label, name} buttons rendered right-aligned
+ * (data-action=name, dispatched through the global click delegation);
+ * opts.actionLabel/actionName is kept as a single-button legacy shorthand.
+ */
 function showErrorBanner(message, opts = {}) {
   const listScroll = document.getElementById('list-scroll');
   if (!listScroll) return;
-  const actionHtml = opts.actionLabel
-    ? `<button class="fp-error-banner__action fp-btn fp-btn--ghost" data-action="${escapeHtml(opts.actionName || 'nav-back')}">${escapeHtml(opts.actionLabel)}</button>`
+  const actions = opts.actions || (opts.actionLabel ? [{ label: opts.actionLabel, name: opts.actionName || 'nav-back' }] : []);
+  const actionsHtml = actions.length
+    ? `<div class="fp-error-banner__actions">${actions.map(a =>
+        `<button class="fp-error-banner__action fp-btn fp-btn--ghost" data-action="${escapeHtml(a.name)}">${escapeHtml(a.label)}</button>`
+      ).join('')}</div>`
     : '';
   listScroll.innerHTML = `<div class="fp-error-banner" role="alert">
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
       <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
     </svg>
     <span class="fp-body" style="color: var(--text-primary)">${escapeHtml(message)}</span>
-    ${actionHtml}
+    ${actionsHtml}
   </div>`;
 }
 

@@ -493,6 +493,8 @@
              Mode is set via data-mode attribute on .ftree-wrap
         ════════════════════════════════════════════════════════════ -->
         <div class="screen screen--ftree" id="screen-ftree">
+          <div class="fp-banner fp-banner--planned" role="status">Not built yet — planned for Stage 4.</div>
+          <div class="fp-planned-dim">
           <div class="ftree-layout" data-mode="live">
 
             <!-- Mode banners (only one shown based on data-mode) -->
@@ -717,6 +719,7 @@
 
             </div><!-- /.ftree-body -->
           </div><!-- /.ftree-layout -->
+          </div><!-- /.fp-planned-dim -->
         </div><!-- /#screen-ftree -->
 
         <!-- ═══════════════════════════════════════════════════════════════
@@ -724,6 +727,8 @@
              Two modes: Conversational (default) | Structured Form
         ════════════════════════════════════════════════════════════════ -->
         <div class="screen screen--scan-config" id="screen-scan-config">
+          <div class="fp-banner fp-banner--planned" role="status">Not built yet — planned for Stage 4.</div>
+          <div class="fp-planned-dim">
 
           <!-- Top bar: brand mark (48×48) + mode controls -->
           <div class="scan-topbar" id="scan-topbar">
@@ -954,12 +959,15 @@
             </div>
           </div><!-- /.scan-form -->
 
+          </div><!-- /.fp-planned-dim -->
         </div><!-- /#screen-scan-config -->
 
         <!-- ═══════════════════════════════════════════════════════════════
              A.6  SCAN PROGRESS
         ════════════════════════════════════════════════════════════════ -->
         <div class="screen screen--scan-progress" id="screen-scan-progress">
+          <div class="fp-banner fp-banner--planned" role="status">Not built yet — planned for Stage 4.</div>
+          <div class="fp-planned-dim">
           <div style="flex:1;overflow-y:auto;padding:32px;display:flex;flex-direction:column;gap:24px;max-width:640px;width:100%;margin:0 auto;box-sizing:border-box">
 
             <!-- A.16: Scan interrupted / backend error (comment in when scan fails) -->
@@ -1107,12 +1115,15 @@
             </div>
 
           </div>
+          </div><!-- /.fp-planned-dim -->
         </div><!-- /#screen-scan-progress -->
 
         <!-- ═══════════════════════════════════════════════════════════════
              A.7  SCAN RESULTS  (3 tabs: Duplicates / Cleanup / Reorganization)
         ════════════════════════════════════════════════════════════════ -->
         <div class="screen screen--scan-results" id="screen-scan-results">
+          <div class="fp-banner fp-banner--planned" role="status">Not built yet — planned for Stage 4.</div>
+          <div class="fp-planned-dim">
 
           <!-- A.16: Scan results load error (comment in when /scan/results fails) -->
           <!--
@@ -1361,6 +1372,7 @@
             </div>
           </div><!-- /reorg pane -->
 
+          </div><!-- /.fp-planned-dim -->
         </div><!-- /#screen-scan-results -->
 
         <!-- ═══════════════════════════════════════════════════════════════
@@ -1368,6 +1380,8 @@
              Reached via: sidebar badge, Ctrl+Shift+R
         ═══════════════════════════════════════════════════════════════ -->
         <div class="screen screen--review-bin" id="screen-review-bin">
+          <div class="fp-banner fp-banner--planned" role="status">Not built yet — planned for Stage 3.</div>
+          <div class="fp-planned-dim">
 
           <!-- A.16: Review Bin load error (comment in when /review-bin fails) -->
           <!--
@@ -1673,12 +1687,15 @@
 
           </div><!-- /.rb-layout -->
 
+          </div><!-- /.fp-planned-dim -->
         </div><!-- /#screen-review-bin -->
 
         <!-- ═══════════════════════════════════════════════════════════════
              A.9  EVERYTHING FOLDER  (sidebar bottom-anchor screen)
         ═══════════════════════════════════════════════════════════════ -->
         <div class="screen screen--everything" id="screen-everything">
+          <div class="fp-banner fp-banner--planned" role="status">Not built yet — planned for Stage 3.</div>
+          <div class="fp-planned-dim">
 
           <!-- A.16: Everything Folder watch error (comment in when filesystem watcher fails) -->
           <!--
@@ -1866,6 +1883,7 @@
           </div>
           -->
 
+          </div><!-- /.fp-planned-dim -->
         </div><!-- /#screen-everything -->
 
         <!-- Screen: Settings (A.12) -->
@@ -1989,10 +2007,10 @@
                   </div>
                   <div class="settings-sep"></div>
                   <div class="settings-row">
-                    <div class="settings-row__label">Open on click</div>
+                    <div class="settings-row__label">Open folders with</div>
                     <div class="fp-segmented">
-                      <button class="fp-segmented__opt active" data-action="settings-set-click-mode" data-val="single">Single-click</button>
-                      <button class="fp-segmented__opt" data-action="settings-set-click-mode" data-val="double">Double-click</button>
+                      <button class="fp-segmented__opt active" data-action="settings-set-click-mode" data-val="double">Double click</button>
+                      <button class="fp-segmented__opt" data-action="settings-set-click-mode" data-val="single">Single click</button>
                     </div>
                   </div>
                 </div>
@@ -2034,7 +2052,7 @@
                   <div class="settings-row">
                     <div class="settings-row__label">File content analysis</div>
                     <label class="fp-toggle">
-                      <input type="checkbox" checked data-action="settings-toggle" data-setting="content-analysis" />
+                      <input type="checkbox" checked disabled title="Planned for Stage 4" data-action="settings-toggle" data-setting="content-analysis" />
                       <span class="fp-toggle__track"></span>
                       <span class="fp-toggle__thumb"></span>
                     </label>
@@ -2110,7 +2128,7 @@
                           Chrome
                         </span>
                         <label class="fp-toggle">
-                          <input type="checkbox" checked data-action="settings-toggle" data-setting="redirect-chrome" />
+                          <input type="checkbox" checked disabled title="Planned for Stage 3" data-action="settings-toggle" data-setting="redirect-chrome" />
                           <span class="fp-toggle__track"></span>
                           <span class="fp-toggle__thumb"></span>
                         </label>
@@ -2118,7 +2136,7 @@
                       <div class="settings-row" style="padding:0">
                         <span style="font:400 var(--t-body) var(--font-ui);color:var(--text-primary)">Firefox</span>
                         <label class="fp-toggle">
-                          <input type="checkbox" data-action="settings-toggle" data-setting="redirect-firefox" />
+                          <input type="checkbox" disabled title="Planned for Stage 3" data-action="settings-toggle" data-setting="redirect-firefox" />
                           <span class="fp-toggle__track"></span>
                           <span class="fp-toggle__thumb"></span>
                         </label>
@@ -2126,7 +2144,7 @@
                       <div class="settings-row" style="padding:0">
                         <span style="font:400 var(--t-body) var(--font-ui);color:var(--text-primary)">Edge</span>
                         <label class="fp-toggle">
-                          <input type="checkbox" checked data-action="settings-toggle" data-setting="redirect-edge" />
+                          <input type="checkbox" checked disabled title="Planned for Stage 3" data-action="settings-toggle" data-setting="redirect-edge" />
                           <span class="fp-toggle__track"></span>
                           <span class="fp-toggle__thumb"></span>
                         </label>
@@ -2245,7 +2263,7 @@
                   <div class="settings-row">
                     <div class="settings-row__label">Propose rename of files</div>
                     <label class="fp-toggle">
-                      <input type="checkbox" checked data-action="settings-toggle" data-setting="propose-rename" />
+                      <input type="checkbox" checked disabled title="Planned for Stage 3" data-action="settings-toggle" data-setting="propose-rename" />
                       <span class="fp-toggle__track"></span>
                       <span class="fp-toggle__thumb"></span>
                     </label>
@@ -2254,7 +2272,7 @@
                   <div class="settings-row">
                     <div class="settings-row__label">Propose deletion of duplicates</div>
                     <label class="fp-toggle">
-                      <input type="checkbox" data-action="settings-toggle" data-setting="propose-delete-dupes" />
+                      <input type="checkbox" disabled title="Planned for Stage 3" data-action="settings-toggle" data-setting="propose-delete-dupes" />
                       <span class="fp-toggle__track"></span>
                       <span class="fp-toggle__thumb"></span>
                     </label>
@@ -2301,7 +2319,7 @@
                   <div class="settings-row">
                     <div class="settings-row__label">Cloud inference</div>
                     <label class="fp-toggle">
-                      <input type="checkbox" checked data-action="settings-toggle" data-setting="cloud-inference" />
+                      <input type="checkbox" checked disabled title="Planned for Stage 3" data-action="settings-toggle" data-setting="cloud-inference" />
                       <span class="fp-toggle__track"></span>
                       <span class="fp-toggle__thumb"></span>
                     </label>
@@ -2440,7 +2458,7 @@
                   <div class="settings-row">
                     <div class="settings-row__label">Cloud inference (mirrors AI Config)</div>
                     <label class="fp-toggle">
-                      <input type="checkbox" checked data-action="settings-toggle" data-setting="cloud-inference" />
+                      <input type="checkbox" checked disabled title="Planned for Stage 3" data-action="settings-toggle" data-setting="cloud-inference" />
                       <span class="fp-toggle__track"></span>
                       <span class="fp-toggle__thumb"></span>
                     </label>
@@ -2449,7 +2467,7 @@
                   <div class="settings-row">
                     <div class="settings-row__label">Analytics</div>
                     <label class="fp-toggle">
-                      <input type="checkbox" data-action="settings-toggle" data-setting="analytics" />
+                      <input type="checkbox" disabled title="Planned for Stage 3" data-action="settings-toggle" data-setting="analytics" />
                       <span class="fp-toggle__track"></span>
                       <span class="fp-toggle__thumb"></span>
                     </label>
@@ -2458,7 +2476,7 @@
                   <div class="settings-row">
                     <div class="settings-row__label">Redact file contents from logs</div>
                     <label class="fp-toggle">
-                      <input type="checkbox" checked data-action="settings-toggle" data-setting="redact-logs" />
+                      <input type="checkbox" checked disabled title="Planned for Stage 3" data-action="settings-toggle" data-setting="redact-logs" />
                       <span class="fp-toggle__track"></span>
                       <span class="fp-toggle__thumb"></span>
                     </label>
@@ -2548,6 +2566,16 @@
               <div class="settings-pane" id="settings-pane-data" data-pane="data" style="display:none">
                 <h2 class="settings-pane__title">Data</h2>
                 <div class="fp-card settings-card" style="margin-bottom:var(--s-12)">
+                  <div class="settings-row">
+                    <div class="settings-row__label">FilePlus trash</div>
+                    <button class="fp-btn fp-btn--danger fp-btn--sm" data-action="settings-empty-trash">Empty FilePlus trash…</button>
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row">
+                    <div class="settings-row__label">Writes</div>
+                    <span class="fp-mono" id="settings-writes-status" style="font:400 var(--t-compact) var(--font-data);color:var(--text-secondary)">—</span>
+                  </div>
+                  <div class="settings-sep"></div>
                   <!-- INTEGRATION: sizes from GET /data/stats -->
                   <div class="settings-row">
                     <div class="settings-row__label">Index size</div>
@@ -2567,7 +2595,7 @@
                   <div class="fp-card__header"><span class="fp-card__title">Snapshot retention rules</span></div>
                   <div class="settings-row">
                     <label class="settings-radio-row" style="gap:var(--s-8)">
-                      <input type="checkbox" data-action="settings-toggle" data-setting="snap-daily" />
+                      <input type="checkbox" disabled title="Planned for Stage 4" data-action="settings-toggle" data-setting="snap-daily" />
                       Daily
                     </label>
                     <div style="display:flex;align-items:center;gap:6px;font:400 var(--t-body) var(--font-ui);color:var(--text-secondary)">
@@ -2577,7 +2605,7 @@
                   <div class="settings-sep"></div>
                   <div class="settings-row">
                     <label class="settings-radio-row" style="gap:var(--s-8)">
-                      <input type="checkbox" checked data-action="settings-toggle" data-setting="snap-weekly" />
+                      <input type="checkbox" checked disabled title="Planned for Stage 4" data-action="settings-toggle" data-setting="snap-weekly" />
                       Weekly
                     </label>
                     <div style="display:flex;align-items:center;gap:6px;font:400 var(--t-body) var(--font-ui);color:var(--text-secondary)">
@@ -2587,7 +2615,7 @@
                   <div class="settings-sep"></div>
                   <div class="settings-row">
                     <label class="settings-radio-row" style="gap:var(--s-8)">
-                      <input type="checkbox" checked data-action="settings-toggle" data-setting="snap-monthly" />
+                      <input type="checkbox" checked disabled title="Planned for Stage 4" data-action="settings-toggle" data-setting="snap-monthly" />
                       Monthly
                     </label>
                     <div style="display:flex;align-items:center;gap:6px;font:400 var(--t-body) var(--font-ui);color:var(--text-secondary)">

@@ -18,6 +18,106 @@ async function loadConfig() {
   }
 }
 
+/**
+ * Persists one setting to POST /config, updating window.__fpConfig
+ * optimistically so callers that read the cache synchronously (browserState
+ * seeds, applyDownloadsPath, the click-mode check in browser.js's row click
+ * handler) see the new value immediately. On failure, reverts the cache to
+ * whatever it held before and toasts — the caller's own UI (checkbox/segmented
+ * button) has already visually applied the change and is not rolled back here,
+ * since each caller owns its own apply step and can re-apply if it wants to.
+ */
+async function saveSetting(key, value) {
+  if (!window.__fpConfig) window.__fpConfig = {};
+  const hadPrev = Object.prototype.hasOwnProperty.call(window.__fpConfig, key);
+  const prev = window.__fpConfig[key];
+  window.__fpConfig[key] = value;
+  try {
+    await API.post('/config', { key, value });
+  } catch (err) {
+    if (hadPrev) window.__fpConfig[key] = prev;
+    else delete window.__fpConfig[key];
+    if (typeof showToast === 'function') {
+      showToast(`Failed to save setting: ${formatApiError(err)}`, 'error');
+    }
+  }
+}
+
+/** Removes a persisted setting (DELETE /config/{key}) — used by "Reset to
+ * default" actions (e.g. accent color) so a future load doesn't reapply the
+ * old value. Same optimistic-update/revert-on-failure shape as saveSetting(). */
+async function deleteSetting(key) {
+  const hadPrev = window.__fpConfig && Object.prototype.hasOwnProperty.call(window.__fpConfig, key);
+  const prev = hadPrev ? window.__fpConfig[key] : undefined;
+  if (window.__fpConfig) delete window.__fpConfig[key];
+  try {
+    await API.del(`/config/${encodeURIComponent(key)}`);
+  } catch (err) {
+    if (hadPrev) {
+      if (!window.__fpConfig) window.__fpConfig = {};
+      window.__fpConfig[key] = prev;
+    }
+    if (typeof showToast === 'function') {
+      showToast(`Failed to save setting: ${formatApiError(err)}`, 'error');
+    }
+  }
+}
+
+/**
+ * Applies backend-persisted settings from window.__fpConfig — called once at
+ * startup, right after loadConfig() resolves, following restoreSettings()
+ * (which already applied the localStorage fast-paint cache). Config wins:
+ * theme/density/accent/notifications are only re-applied when the config key
+ * is actually present, so an unset key leaves restoreSettings()'s
+ * localStorage-derived choice alone. show-extensions/show-hidden/click-mode
+ * have no localStorage cache — config (or its documented default) is their
+ * only source. Also syncs the Personalization controls (checkbox `checked`,
+ * segmented `active`) to whatever ends up applied.
+ */
+function applySettingsFromConfig() {
+  const cfg = window.__fpConfig || {};
+
+  if (typeof cfg['ui.theme'] === 'string') applyTheme(cfg['ui.theme']);
+  if (typeof cfg['ui.density'] === 'string') applyDensity(cfg['ui.density']);
+  if (typeof cfg['ui.accent_hex'] === 'string' && cfg['ui.accent_hex']) {
+    applyAccentHex(cfg['ui.accent_hex']);
+    const input = document.getElementById('settings-accent-hex');
+    if (input) input.value = cfg['ui.accent_hex'];
+  }
+  if (typeof cfg['ui.notifications'] === 'boolean') setNotificationsEnabled(cfg['ui.notifications']);
+
+  // Default true (matches the Personalization checkbox's static markup).
+  const showExtensions = cfg['ui.show_extensions'] !== false;
+  browserState.showExtensions = showExtensions;
+  const extToggle = document.querySelector('[data-action="settings-toggle"][data-setting="show-extensions"]');
+  if (extToggle) extToggle.checked = showExtensions;
+
+  // Default false (matches the Personalization checkbox's static markup).
+  const showHidden = !!cfg['ui.show_hidden'];
+  browserState.showHidden = showHidden;
+  const hiddenToggle = document.querySelector('[data-action="settings-toggle"][data-setting="show-hidden"]');
+  if (hiddenToggle) hiddenToggle.checked = showHidden;
+
+  // Default 'double' — matches actual behaviour when the key is unset
+  // (browser.js's row click handler only opens on single click when
+  // ui.click_mode === 'single').
+  const clickMode = cfg['ui.click_mode'] === 'single' ? 'single' : 'double';
+  document.querySelectorAll('[data-action="settings-set-click-mode"]').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.val === clickMode);
+  });
+}
+
+/** Updates the Data pane's read-only "Writes" line from the last /health
+ * result (checkBackend(), in app.js, stores it on window.__fpHealth). No-op
+ * until /health has answered at least once. */
+function updateWritesStatusLine() {
+  const el = document.getElementById('settings-writes-status');
+  if (!el || !window.__fpHealth) return;
+  el.textContent = window.__fpHealth.write_unlocked
+    ? 'Unlocked — real-drive writes enabled'
+    : 'Sandbox only — set WRITE_UNLOCKED=true in .env to enable real-drive writes';
+}
+
 // ── Settings: pane switching + persistence ────────────────────────────────────
 
 function switchSettingsPane(pane) {

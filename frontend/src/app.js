@@ -9,15 +9,17 @@ const paletteInput       = document.getElementById('palette-input');
 const searchInput        = document.getElementById('search-input');
 
 // ── Screen switching ────────────────────────────────────────────────────────
-// Screens whose backend wiring is not yet complete — fire a stub toast on entry.
+// Screens whose backend wiring is not yet complete. Each screen's HTML carries
+// its own static "Not built yet — planned for Stage N" banner (see index.html)
+// — this map is now just the stage-number reference for those banners; entry
+// no longer fires a stub toast (showScreenDom below).
 const STUB_SCREENS = {
-  'review-bin':     'Review Bin: showing placeholder data — backend not wired yet.',
-  'ftree':          'File Tree canvas: showing placeholder — snapshots backend not wired yet.',
-  'scan-config':    'Scan: showing placeholder — scan pipeline not wired yet.',
-  'scan-progress':  'Scan progress: showing placeholder.',
-  'scan-results':   'Scan results: showing placeholder.',
-  'everything':     'Everything Folder: showing placeholder — watcher not wired yet.',
-  'settings':       'Settings: most settings persist locally only — backend wiring TODO.',
+  'review-bin':     3,
+  everything:       3,
+  ftree:            4,
+  'scan-config':    4,
+  'scan-progress':  4,
+  'scan-results':   4,
 };
 
 // Per-tab UI state model
@@ -96,9 +98,6 @@ function showScreenDom(id) {
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
   const target = document.getElementById(`screen-${id}`);
   if (target) target.classList.add('active');
-  if (STUB_SCREENS[id] && typeof showToast === 'function') {
-    showToast(STUB_SCREENS[id], 'accent');
-  }
   if (id === 'browser' && navHistory.stack.length === 0) {
     loadDirectory(null);
   }
@@ -745,13 +744,25 @@ function openModal(type, config = {}) {
     // onConfirm may return false to veto the close (e.g. client-side
     // validation failure) — any other return value (including undefined,
     // the common case) closes the modal as before.
-    if (config.onConfirm) confirm.onclick = () => { if (config.onConfirm() === false) return; closeModal(); };
-    else confirm.onclick = closeModal;
+    confirm.onclick = () => {
+      if (config.confirmWord) {
+        const typed = (document.getElementById('modal-confirm-text')?.value || '').trim();
+        if (typed.toUpperCase() !== config.confirmWord.toUpperCase()) {
+          showToast(`Type ${config.confirmWord} to confirm`, 'error');
+          document.getElementById('modal-confirm-text')?.focus();
+          return;
+        }
+      }
+      if (config.onConfirm && config.onConfirm() === false) return;
+      closeModal();
+    };
   }
   // Typed confirmation (optional)
   if (config.confirmWord && confirmRow && confirmWord) {
     confirmWord.textContent = config.confirmWord;
     confirmRow.style.display = '';
+    const confirmText = document.getElementById('modal-confirm-text');
+    if (confirmText) confirmText.value = ''; // never carry over a previous modal's typed word
   } else if (confirmRow) {
     confirmRow.style.display = 'none';
   }
@@ -1164,7 +1175,9 @@ async function checkBackend() {
     if (res.ok) {
       try {
         const data = await res.json();
+        window.__fpHealth = data; // read by settings.js's Data-pane "Writes" line
         setWriteLockHint(data.write_unlocked === false);
+        if (typeof updateWritesStatusLine === 'function') updateWritesStatusLine();
       } catch (_) { /* body already consumed or not JSON — leave the hint as-is */ }
     }
     return res.ok;
@@ -1315,7 +1328,7 @@ const IN_SCOPE_ACTIONS = new Set([
   'toggle-sidebar', 'toggle-inspector', 'toggle-theme', 'set-view-mode',
   'focus-search', 'filter-by-tag', 'open-tag-canvas', 'close-tag-canvas',
   'tag-canvas-select',
-  'nav-back', 'nav-forward', 'nav-up', 'navigate-crumb', 'nav-retreat',
+  'nav-back', 'nav-forward', 'nav-up', 'navigate-crumb', 'nav-retry',
   // 'sort-by' is handled by initColumnSort()'s own listener (browser.js);
   // 'select-file' only appears on the static placeholder rows in index.html,
   // superseded by browser.js's delegated row click handler. Both are listed
@@ -1335,7 +1348,8 @@ const IN_SCOPE_ACTIONS = new Set([
   'scan-config-switch-mode', 'scan-baseline-confirm',
   'settings-nav', 'settings-set-theme', 'settings-set-density', 'settings-set-accent',
   'settings-set-accent-hex', 'settings-reset-accent',
-  'settings-set-show-notifications',
+  'settings-set-show-notifications', 'settings-toggle', 'settings-set-click-mode',
+  'settings-empty-trash',
   'settings-set-font-scale', 'settings-reset-shortcuts',
   'zoom-reset',
   // File operations (Task 4) — context-menu actions wired in the switch below.
@@ -1387,8 +1401,8 @@ document.addEventListener('click', e => {
     case 'navigate-crumb':
       if (btn.dataset.path) loadDirectory(btn.dataset.path);
       break;
-    case 'nav-retreat':
-      retreatFromError();
+    case 'nav-retry':
+      retryLoad();
       break;
     case 'switch-tab':
       // User explicitly clicked a tab — activate THAT tab specifically.
@@ -1446,7 +1460,14 @@ document.addEventListener('click', e => {
       closeModal();
       break;
     case 'modal-confirm':
-      closeModal();
+      // No-op here by design: openModal() assigns #modal-confirm's own
+      // .onclick to the button directly (gating on a typed confirmWord,
+      // calling config.onConfirm(), and only then closeModal()). A second,
+      // unconditional closeModal() from this delegated switch would race
+      // ahead of that gating on every click — including a wrong typed word
+      // — and close the modal regardless of what onclick decided. 'modal-confirm'
+      // stays in IN_SCOPE_ACTIONS so this case is a deliberate silent no-op,
+      // not a missing handler.
       break;
     case 'scan-config-switch-mode': {
       const conv = document.querySelector('.scan-conv');
@@ -1495,12 +1516,15 @@ document.addEventListener('click', e => {
       break;
     case 'settings-nav':
       switchSettingsPane(btn.dataset.pane);
+      if (btn.dataset.pane === 'data') updateWritesStatusLine();
       break;
     case 'settings-set-theme':
       applyTheme(btn.dataset.theme || btn.dataset.val);
+      saveSetting('ui.theme', btn.dataset.theme || btn.dataset.val);
       break;
     case 'settings-set-density':
       applyDensity(btn.dataset.density || btn.dataset.val);
+      saveSetting('ui.density', btn.dataset.density || btn.dataset.val);
       break;
     case 'settings-set-accent':
       // Legacy: only applies if dataset.accent or dataset.val is a valid hex
@@ -1511,6 +1535,32 @@ document.addEventListener('click', e => {
       break;
     case 'settings-reset-accent':
       resetAccentToDefault();
+      deleteSetting('ui.accent_hex');
+      break;
+    case 'settings-set-click-mode': {
+      const mode = btn.dataset.val === 'single' ? 'single' : 'double';
+      document.querySelectorAll('[data-action="settings-set-click-mode"]').forEach(b => {
+        b.classList.toggle('active', b.dataset.val === mode);
+      });
+      saveSetting('ui.click_mode', mode);
+      break;
+    }
+    case 'settings-empty-trash':
+      openModal('danger', {
+        title: 'Empty FilePlus trash?',
+        body: 'Everything FilePlus has deleted is sent to the Windows Recycle Bin. Undo will no longer be possible for those items.',
+        confirmLabel: 'Empty',
+        confirmWord: 'EMPTY',
+        onConfirm: () => {
+          API.post('/fs/trash/empty').then(result => {
+            const n = result.batches || 0;
+            const skipped = result.skipped_roots && result.skipped_roots.length;
+            let msg = `Sent ${n} batch folder${n === 1 ? '' : 's'} to the Recycle Bin`;
+            if (skipped) msg += ` (${skipped} location${skipped === 1 ? '' : 's'} skipped)`;
+            showToast(msg, 'default');
+          }).catch(err => showToast(`Failed to empty trash: ${formatApiError(err)}`, 'error'));
+        },
+      });
       break;
     case 'settings-set-font-scale': {
       const scale = btn.dataset.scale;
@@ -1817,14 +1867,31 @@ document.addEventListener('click', e => {
 document.addEventListener('input', e => {
   const t = e.target;
   if (t && t.dataset && t.dataset.action === 'settings-set-accent-hex') {
-    applyAccentHex(t.value);
+    // Only persist once the value is actually a valid hex — a half-typed
+    // value ("#4C") shouldn't overwrite the last-good saved accent.
+    if (applyAccentHex(t.value)) saveSetting('ui.accent_hex', t.value.trim());
   }
 });
 
 document.addEventListener('change', e => {
   const t = e.target;
-  if (t && t.dataset && t.dataset.action === 'settings-set-show-notifications') {
+  if (!t || !t.dataset) return;
+  if (t.dataset.action === 'settings-set-show-notifications') {
     setNotificationsEnabled(t.checked);
+    saveSetting('ui.notifications', t.checked);
+    return;
+  }
+  if (t.dataset.action === 'settings-toggle' && t.dataset.setting === 'show-extensions') {
+    browserState.showExtensions = t.checked;
+    saveSetting('ui.show_extensions', t.checked);
+    renderDirectory(); // re-render cached entries locally — no re-fetch needed
+    return;
+  }
+  if (t.dataset.action === 'settings-toggle' && t.dataset.setting === 'show-hidden') {
+    browserState.showHidden = t.checked;
+    saveSetting('ui.show_hidden', t.checked);
+    refreshDirectory();
+    return;
   }
 });
 
@@ -2170,7 +2237,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   // drives/pins. Sequenced (not Promise.all'd) per the plan's init order;
   // each step degrades to a harmless no-op on backend failure.
   await loadConfig();
-  browserState.showHidden = !!(window.__fpConfig && window.__fpConfig['ui.show_hidden']);
+  applySettingsFromConfig();
   applyDownloadsPath();
   await loadDrives();
   await loadPins();
