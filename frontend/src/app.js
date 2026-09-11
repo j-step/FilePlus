@@ -1117,6 +1117,12 @@ const IN_SCOPE_ACTIONS = new Set([
   'focus-search', 'filter-by-tag', 'open-tag-canvas', 'close-tag-canvas',
   'tag-canvas-select',
   'nav-back', 'nav-forward', 'nav-up', 'navigate-crumb', 'nav-retreat',
+  // 'sort-by' is handled by initColumnSort()'s own listener (browser.js);
+  // 'select-file' only appears on the static placeholder rows in index.html,
+  // superseded by browser.js's delegated row click handler. Both are listed
+  // here purely so the data-action bubble to the global switch is a silent
+  // no-op instead of a "not yet implemented" toast.
+  'sort-by', 'select-file',
   'cm-open-new-tab', 'cm-unpin-sidebar', 'cm-rename-sidebar-item',
   'open-review-bin',
   'switch-inspector-tab',
@@ -1604,9 +1610,16 @@ document.addEventListener('keydown', e => {
     closeModal();
     closeTagCanvas();
   }
-  if (e.altKey && e.key === 'ArrowLeft')  { e.preventDefault(); /* nav back stub */ }
-  if (e.altKey && e.key === 'ArrowRight') { e.preventDefault(); /* nav forward stub */ }
-  if (e.altKey && e.key === 'ArrowUp')    { e.preventDefault(); /* nav up stub */ }
+  // Browser-screen keyboard nav (selection, sort-order arrows, Enter, F5,
+  // Ctrl+A, Alt+arrows) only applies when that screen is active and the
+  // user isn't typing into an input/textarea/contenteditable element.
+  const activeEl = document.activeElement;
+  const activeTag = activeEl && activeEl.tagName;
+  const isEditableTarget = activeTag === 'INPUT' || activeTag === 'TEXTAREA' || (activeEl && activeEl.isContentEditable);
+  const browserScreenActive = document.getElementById('screen-browser')?.classList.contains('active');
+  if (browserScreenActive && !isEditableTarget && typeof browserKeydown === 'function') {
+    browserKeydown(e);
+  }
 });
 
 // Ctrl + scroll wheel — step through ZOOM_STEPS, one step per gesture.
@@ -1634,6 +1647,13 @@ document.addEventListener('contextmenu', e => {
   e.preventDefault();
   contextMenuType = getMenuTypeForTarget(e.target);
   contextMenuTarget = contextMenuType === 'sidebar-item' ? e.target.closest('.fp-sidebar__item[data-pin-id]') : e.target;
+  // Right-click on a row that isn't already selected selects it alone before
+  // the menu opens; right-click within an existing multi-selection leaves it
+  // untouched so batch actions (Task 4) apply to the whole selection.
+  if (contextMenuType === 'file' || contextMenuType === 'folder') {
+    const row = e.target.closest('.fp-row[data-path]');
+    if (row && typeof ensureRowSelected === 'function') ensureRowSelected(row.dataset.path);
+  }
   const items = CONTEXT_MENUS[contextMenuType] || CONTEXT_MENUS.file;
   showContextMenu(e.clientX, e.clientY, items);
 });
@@ -1695,9 +1715,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Sync the status-bar zoom pill with Electron's persisted zoom factor
   updateZoomPill();
 
-  // Init column sort cycling and marquee selection (A.3.1)
+  // Init column sort cycling, marquee selection, and row click/dblclick (A.3.1, Task 3)
   initColumnSort();
   initMarqueeSelection();
+  initRowInteractions();
 
   // Restore saved view mode
   const savedView = sessionStorage.getItem('fp-view-mode');
@@ -1745,27 +1766,4 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Crash recovery check on startup
   // INTEGRATION: on app init, call GET /crash-recovery → if crash_detected → uncomment + show #crash-modal-scrim
-
-  // Delegated file row click — works for both static and dynamically rendered rows
-  document.getElementById('list-scroll')?.addEventListener('click', e => {
-    const row = e.target.closest('.fp-row');
-    if (!row) return;
-    // Folder click → navigate into it (read-only).
-    if (row.dataset.type === 'folder' && row.dataset.path) {
-      loadDirectory(row.dataset.path);
-      return;
-    }
-    const listScroll = document.getElementById('list-scroll');
-    listScroll?.querySelectorAll('.fp-row').forEach(r => {
-      r.classList.remove('fp-row--selected');
-      r.removeAttribute('aria-selected');
-    });
-    row.classList.add('fp-row--selected');
-    row.setAttribute('aria-selected', 'true');
-    const name = row.querySelector('.fp-row__name')?.textContent;
-    const path = row.dataset.path;
-    updateInspector('single', { name, path });
-    const statusSel = document.getElementById('status-selected');
-    if (statusSel) statusSel.textContent = name ? `"${name}" selected` : 'Nothing selected';
-  });
 });

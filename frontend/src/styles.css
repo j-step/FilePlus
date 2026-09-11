@@ -2013,6 +2013,11 @@ svg { flex-shrink: 0; }
 }
 .fp-row--selected .fp-row__icon { color: var(--accent); }
 
+.fp-row--focused {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
 .fp-row--active {
   background: var(--bg-pressed);
 }
@@ -3565,6 +3570,7 @@ svg { flex-shrink: 0; }
 .fp-sortable .list-col__caret { opacity: 0; }
 .fp-sortable.active .list-col__caret { opacity: 1; }
 .fp-sortable.active.asc .list-col__caret { transform: rotate(180deg); }
+.fp-sortable.active.desc .list-col__caret { transform: rotate(0deg); }
 
 .list-empty-state {
   display: flex;

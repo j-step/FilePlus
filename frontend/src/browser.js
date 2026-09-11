@@ -1,9 +1,10 @@
 /**
  * FilePlus browser screen: folder navigation via /fs/list, directory list
- * rendering, view-mode/column-sort/marquee-selection UI, and the small
- * formatting helpers (icons, size, modified date, HTML escaping) the row
- * renderer needs. Navigation history (navHistory) stays in app.js — it is
- * also read by the sidebar active-state and dispatch code there.
+ * rendering, view-mode/column-sort/marquee-selection UI, the selection model
+ * + keyboard navigation, and the small formatting helpers (icons, size,
+ * modified date, HTML escaping) the row renderer needs. Navigation history
+ * (navHistory) stays in app.js — it is also read by the sidebar active-state
+ * and dispatch code there.
  */
 
 // ── Browser state ─────────────────────────────────────────────────────────────
@@ -11,7 +12,35 @@
 // /fs/list response so navUp() and the up-button never need to re-derive a
 // parent by string-slicing the path. `showHidden` is seeded from
 // config['ui.show_hidden'] by app.js's init sequence, before the first load.
-const browserState = { path: null, entries: [], parent: null, isRoot: false, showHidden: false };
+// `sort` persists per session (sessionStorage['fp-sort']). `selection` is the
+// set of absolute paths currently selected; `anchor` is the shift-range
+// origin, `focus` is the last row acted on (keyboard/click).
+const browserState = {
+  path: null,
+  entries: [],
+  sort: readSavedSort(),
+  selection: new Set(),
+  anchor: null,
+  focus: null,
+  showHidden: false,
+  parent: null,
+  isRoot: false,
+  truncated: false,
+};
+
+/** Reads a validated {key, dir} sort spec from sessionStorage, defaulting to name/asc. */
+function readSavedSort() {
+  try {
+    const raw = sessionStorage.getItem('fp-sort');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && ['name', 'size', 'modified'].includes(parsed.key) && (parsed.dir === 'asc' || parsed.dir === 'desc')) {
+        return { key: parsed.key, dir: parsed.dir };
+      }
+    }
+  } catch (_) { /* corrupt/missing — fall through to default */ }
+  return { key: 'name', dir: 'asc' };
+}
 
 // ── View modes ────────────────────────────────────────────────────────────────
 function setViewMode(mode) {
@@ -43,40 +72,71 @@ function setViewMode(mode) {
   sessionStorage.setItem('fp-view-mode', mode);
 }
 
-// ── Column sort cycling (A.3.1) ───────────────────────────────────────────────
+// ── Column sort cycling (A.3.1 / Task 3) ────────────────────────────────────
+// A list always has an active sort — there is no "inactive" third state.
+// Clicking a column cycles asc → desc → asc; clicking a different column
+// starts it at asc. The active column always carries `active` plus exactly
+// one of `asc`/`desc`, which the caret CSS rotates on.
 function initColumnSort() {
+  updateSortHeaderUI();
   document.querySelectorAll('.fp-sortable[data-sort]').forEach(col => {
     col.style.cursor = 'pointer';
     col.addEventListener('click', () => {
-      const currentSort = col.dataset.sort;
-      const wasActive = col.classList.contains('active');
-      const wasAsc = col.classList.contains('asc');
-      // Cycle: inactive → asc → desc → inactive
-      document.querySelectorAll('.fp-sortable').forEach(c => {
-        c.classList.remove('active', 'asc');
-      });
-      if (!wasActive) {
-        col.classList.add('active', 'asc');
-      } else if (wasAsc) {
-        col.classList.add('active'); // desc (no asc class)
-      }
-      // else was desc → now inactive (neither class)
-      // INTEGRATION: sort file list by col.dataset.sort direction
+      const key = col.dataset.sort;
+      const dir = (browserState.sort.key === key && browserState.sort.dir === 'asc') ? 'desc' : 'asc';
+      applySort(key, dir);
     });
   });
 }
 
-// ── Marquee selection (A.3.1) ─────────────────────────────────────────────────
+/** Syncs the `.fp-sortable` header classes to browserState.sort. */
+function updateSortHeaderUI() {
+  document.querySelectorAll('.fp-sortable[data-sort]').forEach(col => {
+    const isActive = col.dataset.sort === browserState.sort.key;
+    col.classList.toggle('active', isActive);
+    col.classList.toggle('asc', isActive && browserState.sort.dir === 'asc');
+    col.classList.toggle('desc', isActive && browserState.sort.dir === 'desc');
+  });
+}
+
+/** Sets the active sort, persists it, and re-renders the current directory. */
+function applySort(key, dir) {
+  browserState.sort = { key, dir };
+  try { sessionStorage.setItem('fp-sort', JSON.stringify(browserState.sort)); } catch (_) { /* storage unavailable */ }
+  updateSortHeaderUI();
+  renderDirectory();
+}
+
+/**
+ * Returns browserState.entries sorted for display: folders always precede
+ * files (regardless of direction), then each group is ordered by the active
+ * sort key — name (natural, case-insensitive), size, or modified (numeric).
+ */
+function sortedEntries() {
+  const { key, dir } = browserState.sort;
+  const sign = dir === 'desc' ? -1 : 1;
+  return [...browserState.entries].sort((a, b) => {
+    if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
+    let cmp;
+    if (key === 'size') cmp = (a.size ?? 0) - (b.size ?? 0);
+    else if (key === 'modified') cmp = (a.modified ?? 0) - (b.modified ?? 0);
+    else cmp = a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
+    return cmp * sign;
+  });
+}
+
+// ── Marquee selection (A.3.1 / Task 3) ───────────────────────────────────────
 function initMarqueeSelection() {
   const listScroll = document.getElementById('list-scroll');
   const marqueeRect = document.getElementById('marquee-rect');
   if (!listScroll || !marqueeRect) return;
-  let dragging = false, startX = 0, startY = 0;
+  let dragging = false, startX = 0, startY = 0, ctrlDrag = false;
 
   listScroll.addEventListener('mousedown', e => {
     if (e.target.closest('.fp-row, .fp-row__icon, .fp-row__name')) return;
     if (e.button !== 0) return;
     dragging = true;
+    ctrlDrag = e.ctrlKey;
     startX = e.clientX; startY = e.clientY;
     marqueeRect.style.display = 'block';
     marqueeRect.style.left = startX + 'px';
@@ -96,13 +156,15 @@ function initMarqueeSelection() {
     marqueeRect.style.top    = y + 'px';
     marqueeRect.style.width  = w + 'px';
     marqueeRect.style.height = h + 'px';
-    // Highlight intersecting rows
+    // Highlight intersecting rows — Ctrl+drag also keeps the pre-existing
+    // selection highlighted even where it doesn't intersect the marquee.
     const mr = { left: x, right: x + w, top: y, bottom: y + h };
-    listScroll.querySelectorAll('.fp-row').forEach(row => {
+    listScroll.querySelectorAll('.fp-row[data-path]').forEach(row => {
       const rr = row.getBoundingClientRect();
       const hit = rr.left < mr.right && rr.right > mr.left &&
                   rr.top  < mr.bottom && rr.bottom > mr.top;
-      row.classList.toggle('fp-row--selected', hit);
+      const keep = ctrlDrag && browserState.selection.has(row.dataset.path);
+      row.classList.toggle('fp-row--selected', hit || keep);
     });
   });
 
@@ -110,9 +172,20 @@ function initMarqueeSelection() {
     if (!dragging) return;
     dragging = false;
     marqueeRect.style.display = 'none';
-    // INTEGRATION: selected set drives inspector aggregate view
-    const selected = listScroll.querySelectorAll('.fp-row--selected');
-    if (selected.length > 1) updateInspector('multi', { count: selected.length });
+    const paths = [...listScroll.querySelectorAll('.fp-row--selected')]
+      .map(r => r.dataset.path)
+      .filter(Boolean);
+    browserState.selection = new Set(paths);
+    if (paths.length) {
+      browserState.anchor = paths[0];
+      browserState.focus  = paths[paths.length - 1];
+    } else {
+      browserState.anchor = null;
+      browserState.focus  = null;
+    }
+    applySelectionState();
+    focusListContainer();
+    onSelectionChanged();
   });
 }
 
@@ -160,8 +233,13 @@ function escapeHtml(str) {
     .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
+/** Joins a parent directory path and a child name into an absolute path. */
+function joinPath(parentPath, name) {
+  return parentPath.replace(/[\\\/]+$/, '') + '\\' + name;
+}
+
 async function loadDirectory(absPath, opts = {}) {
-  const { addToHistory = true } = opts;
+  const { addToHistory = true, preserveSelection = false } = opts;
   let data;
   try {
     data = absPath
@@ -172,10 +250,26 @@ async function loadDirectory(absPath, opts = {}) {
     return;
   }
 
+  const prevSelection = preserveSelection ? new Set(browserState.selection) : null;
+  const prevAnchor    = preserveSelection ? browserState.anchor : null;
+  const prevFocus      = preserveSelection ? browserState.focus : null;
+
   browserState.path = data.path;
   browserState.entries = data.entries;
   browserState.parent = data.parent;
   browserState.isRoot = data.is_root;
+
+  if (preserveSelection && prevSelection) {
+    // Keep only paths that still exist in the refreshed listing.
+    const validPaths = new Set(data.entries.map(e => joinPath(data.path, e.name)));
+    browserState.selection = new Set([...prevSelection].filter(p => validPaths.has(p)));
+    browserState.anchor = prevAnchor && validPaths.has(prevAnchor) ? prevAnchor : null;
+    browserState.focus  = prevFocus && validPaths.has(prevFocus) ? prevFocus : null;
+  } else {
+    browserState.selection = new Set();
+    browserState.anchor = null;
+    browserState.focus = null;
+  }
 
   renderDirectory(data);
   if (addToHistory) pushHistory(data.path);
@@ -184,6 +278,13 @@ async function loadDirectory(absPath, opts = {}) {
   updateAddressBar(data.path);
   updateSidebarActive();
   syncActiveTabPath(data.path);
+  onSelectionChanged();
+}
+
+/** Re-fetches the current directory, keeping selection/anchor/focus where the paths still exist. */
+function refreshDirectory() {
+  if (!browserState.path) return;
+  loadDirectory(browserState.path, { addToHistory: false, preserveSelection: true });
 }
 
 function handleLoadError(err, absPath) {
@@ -252,17 +353,21 @@ function refreshNavButtons() {
 }
 
 function renderDirectory(data) {
+  if (data) browserState.truncated = !!data.truncated;
   const listScroll = document.getElementById('list-scroll');
   if (!listScroll) return;
 
-  const truncatedHtml = data.truncated ? renderTruncatedBanner() : '';
+  const truncatedHtml = browserState.truncated ? renderTruncatedBanner() : '';
 
-  if (!data.entries || data.entries.length === 0) {
+  if (!browserState.entries || browserState.entries.length === 0) {
     listScroll.innerHTML = truncatedHtml + renderEmptyFolder();
+    updateStatusBar();
     return;
   }
 
-  listScroll.innerHTML = truncatedHtml + data.entries.map(entry => renderFsRow(entry, data.path)).join('');
+  listScroll.innerHTML = truncatedHtml + sortedEntries().map(entry => renderFsRow(entry, browserState.path)).join('');
+  applySelectionState();
+  updateStatusBar();
 }
 
 function renderTruncatedBanner() {
@@ -275,7 +380,7 @@ function renderTruncatedBanner() {
 }
 
 function renderFsRow(entry, parentPath) {
-  const childPath = parentPath.replace(/[\\\/]+$/, '') + '\\' + entry.name;
+  const childPath = joinPath(parentPath, entry.name);
   const icon = entry.is_dir ? ICON_FOLDER : iconForExt(entry.ext);
   const sizeText = (entry.is_dir || entry.error) ? '—' : formatSize(entry.size);
   const modifiedText = entry.error ? '—' : formatModified(entry.modified * 1000);
@@ -283,7 +388,7 @@ function renderFsRow(entry, parentPath) {
   const titleAttr = entry.error ? ' title="Access denied"' : '';
   return `<div class="${rowClass}" role="option"
             data-path="${escapeHtml(childPath)}"
-            data-type="${entry.is_dir ? 'folder' : 'file'}"${titleAttr}>
+            data-type="${entry.is_dir ? 'folder' : 'file'}" tabindex="-1"${titleAttr}>
     ${icon}
     <span class="fp-row__name">${escapeHtml(entry.name)}</span>
     <span class="fp-row__size mono">${sizeText}</span>
@@ -335,4 +440,276 @@ function showErrorBanner(message, opts = {}) {
     <span class="fp-body" style="color: var(--text-primary)">${escapeHtml(message)}</span>
     ${actionHtml}
   </div>`;
+}
+
+// ── Selection model (Task 3) ─────────────────────────────────────────────────
+
+/** Returns the current selection as an array of absolute paths. */
+function getSelectedPaths() { return [...browserState.selection]; }
+
+/** Looks up the entry object for an absolute path in the current directory, or null. */
+function entryForPath(path) {
+  if (!browserState.path) return null;
+  return browserState.entries.find(e => joinPath(browserState.path, e.name) === path) || null;
+}
+
+/** Finds the rendered row element for an absolute path, or null. */
+function findRowByPath(path) {
+  const rows = document.querySelectorAll('#list-scroll .fp-row[data-path]');
+  for (const row of rows) {
+    if (row.dataset.path === path) return row;
+  }
+  return null;
+}
+
+/** Moves DOM focus to the list container so arrow-key navigation works. */
+function focusListContainer() {
+  document.getElementById('list-scroll')?.focus();
+}
+
+/**
+ * Re-applies `.fp-row--selected` / `.fp-row--focused` classes, aria-selected,
+ * and roving tabindex to the currently rendered rows from browserState.
+ */
+function applySelectionState() {
+  const listScroll = document.getElementById('list-scroll');
+  if (!listScroll) return;
+  listScroll.querySelectorAll('.fp-row[data-path]').forEach(row => {
+    const path = row.dataset.path;
+    const isSelected = browserState.selection.has(path);
+    const isFocused = path === browserState.focus;
+    row.classList.toggle('fp-row--selected', isSelected);
+    row.setAttribute('aria-selected', isSelected ? 'true' : 'false');
+    row.classList.toggle('fp-row--focused', isFocused);
+    row.setAttribute('tabindex', isFocused ? '0' : '-1');
+  });
+}
+
+/**
+ * Click selection semantics: plain click selects only this row; Ctrl toggles
+ * it in/out of the selection; Shift extends a contiguous range from `anchor`
+ * to `path` in the current sorted order.
+ */
+function selectRow(path, { ctrl = false, shift = false } = {}) {
+  if (!browserState.path) return;
+  const order = sortedEntries().map(e => joinPath(browserState.path, e.name));
+
+  if (shift) {
+    const anchorPath = browserState.anchor || path;
+    const a = order.indexOf(anchorPath);
+    const b = order.indexOf(path);
+    if (a === -1 || b === -1) {
+      browserState.selection = new Set([path]);
+      browserState.anchor = path;
+    } else {
+      const [lo, hi] = a <= b ? [a, b] : [b, a];
+      browserState.selection = new Set(order.slice(lo, hi + 1));
+      if (!browserState.anchor) browserState.anchor = anchorPath;
+    }
+  } else if (ctrl) {
+    if (browserState.selection.has(path)) browserState.selection.delete(path);
+    else browserState.selection.add(path);
+    browserState.anchor = path;
+  } else {
+    browserState.selection = new Set([path]);
+    browserState.anchor = path;
+  }
+  browserState.focus = path;
+
+  applySelectionState();
+  focusListContainer();
+  onSelectionChanged();
+}
+
+/** Selects every entry in the current directory. */
+function selectAll() {
+  if (!browserState.path) return;
+  const order = sortedEntries().map(e => joinPath(browserState.path, e.name));
+  browserState.selection = new Set(order);
+  if (order.length) {
+    browserState.anchor = order[0];
+    browserState.focus = browserState.focus && order.includes(browserState.focus)
+      ? browserState.focus
+      : order[order.length - 1];
+  }
+  applySelectionState();
+  focusListContainer();
+  onSelectionChanged();
+}
+
+/** Clears the selection (anchor/focus included). */
+function clearSelection() {
+  browserState.selection = new Set();
+  browserState.anchor = null;
+  browserState.focus = null;
+  applySelectionState();
+  onSelectionChanged();
+}
+
+/**
+ * Moves keyboard focus by `delta` rows (or to 'home'/'end') in the current
+ * sorted order. With `shift`, extends the selection from `anchor` through
+ * the new focus row instead of replacing it.
+ */
+function moveFocus(delta, { shift = false } = {}) {
+  if (!browserState.path) return;
+  const order = sortedEntries().map(e => joinPath(browserState.path, e.name));
+  if (!order.length) return;
+
+  const curIdx = browserState.focus ? order.indexOf(browserState.focus) : -1;
+  let idx;
+  if (delta === 'home') idx = 0;
+  else if (delta === 'end') idx = order.length - 1;
+  else idx = curIdx === -1 ? 0 : Math.max(0, Math.min(order.length - 1, curIdx + delta));
+
+  const path = order[idx];
+  if (shift) {
+    if (!browserState.anchor) browserState.anchor = browserState.focus || path;
+    const a = order.indexOf(browserState.anchor);
+    const [lo, hi] = a <= idx ? [a, idx] : [idx, a];
+    browserState.selection = new Set(order.slice(lo, hi + 1));
+  } else {
+    browserState.selection = new Set([path]);
+    browserState.anchor = path;
+  }
+  browserState.focus = path;
+
+  applySelectionState();
+  findRowByPath(path)?.scrollIntoView({ block: 'nearest' });
+  onSelectionChanged();
+}
+
+/** Opens a directory entry: folder navigates into it, file opens via the OS. */
+function openEntry(path) {
+  const entry = entryForPath(path);
+  if (!entry) return;
+  if (entry.is_dir) {
+    loadDirectory(path);
+    return;
+  }
+  const openPath = window.electronAPI?.openPath;
+  if (!openPath) return;
+  Promise.resolve(openPath(path)).then(result => {
+    if (result) showToast(result, 'error');
+  }).catch(err => showToast(formatApiError(err), 'error'));
+}
+
+/** Enter key: opens the currently focused row, if any. */
+function openFocused() {
+  if (browserState.focus) openEntry(browserState.focus);
+}
+
+/**
+ * Selects `path` alone if it is not already part of the current selection —
+ * used before opening the context menu on a row (right-click on an
+ * unselected row selects it alone; right-click within an existing
+ * multi-selection leaves the selection untouched).
+ */
+function ensureRowSelected(path) {
+  if (!browserState.selection.has(path)) selectRow(path, {});
+}
+
+/**
+ * Hook called whenever the selection changes. Task 3 wires it to the status
+ * bar and a minimal inspector call; Task 5 replaces the inspector calls with
+ * the real metadata/preview fetches, keeping this function name.
+ */
+function onSelectionChanged() {
+  const n = browserState.selection.size;
+  if (n === 0) {
+    updateInspector('none');
+  } else if (n === 1) {
+    const path = [...browserState.selection][0];
+    const entry = entryForPath(path);
+    const name = entry ? entry.name : path.split(/[\\\/]/).filter(Boolean).pop();
+    updateInspector('single', { name, path });
+  } else {
+    updateInspector('multi', { count: n, totalSize: formatSize(selectionTotalSize()) });
+  }
+  updateStatusBar();
+}
+
+/** Sums the size of selected files (folders/errored entries contribute 0). */
+function selectionTotalSize() {
+  let total = 0;
+  browserState.selection.forEach(path => {
+    const entry = entryForPath(path);
+    if (entry && !entry.is_dir && !entry.error && typeof entry.size === 'number') total += entry.size;
+  });
+  return total;
+}
+
+/** Updates the status bar's item count and selection summary. */
+function updateStatusBar() {
+  const countEl = document.getElementById('status-count');
+  const selEl = document.getElementById('status-selected');
+  if (countEl) countEl.textContent = `${browserState.entries.length} items`;
+  if (selEl) {
+    const n = browserState.selection.size;
+    if (n === 0) selEl.textContent = 'Nothing selected';
+    else if (n === 1) selEl.textContent = '1 selected';
+    else selEl.textContent = `${n} selected · ${formatSize(selectionTotalSize())}`;
+  }
+}
+
+// ── Row click/dblclick + keyboard (Task 3) ────────────────────────────────────
+
+/**
+ * Delegated row interactions on #list-scroll: single click selects (or, in
+ * single-click mode, opens folders); double-click always opens.
+ */
+function initRowInteractions() {
+  const listScroll = document.getElementById('list-scroll');
+  if (!listScroll) return;
+
+  listScroll.addEventListener('click', e => {
+    const row = e.target.closest('.fp-row[data-path]');
+    if (!row) return;
+    const path = row.dataset.path;
+    const clickMode = window.__fpConfig && window.__fpConfig['ui.click_mode'];
+    if (clickMode === 'single' && row.dataset.type === 'folder') {
+      openEntry(path);
+      return;
+    }
+    selectRow(path, { ctrl: e.ctrlKey, shift: e.shiftKey });
+  });
+
+  listScroll.addEventListener('dblclick', e => {
+    const row = e.target.closest('.fp-row[data-path]');
+    if (!row) return;
+    openEntry(row.dataset.path);
+  });
+}
+
+/**
+ * Browser-screen keyboard shortcuts. Called from app.js's global keydown
+ * handler only when the Browser screen is active and no input/textarea/
+ * contenteditable has focus. F2/Delete/Ctrl+C/X/V/Z/Y belong to Task 4.
+ */
+function browserKeydown(e) {
+  const key = e.key;
+
+  if (e.altKey) {
+    if (key === 'ArrowUp')         { e.preventDefault(); navUp(); }
+    else if (key === 'ArrowLeft')  { e.preventDefault(); navBack(); }
+    else if (key === 'ArrowRight') { e.preventDefault(); navForward(); }
+    return;
+  }
+
+  if ((e.ctrlKey || e.metaKey) && key.toLowerCase() === 'a') {
+    e.preventDefault();
+    selectAll();
+    return;
+  }
+
+  switch (key) {
+    case 'ArrowDown': e.preventDefault(); moveFocus(1, { shift: e.shiftKey }); break;
+    case 'ArrowUp':   e.preventDefault(); moveFocus(-1, { shift: e.shiftKey }); break;
+    case 'Home':      e.preventDefault(); moveFocus('home', { shift: e.shiftKey }); break;
+    case 'End':       e.preventDefault(); moveFocus('end', { shift: e.shiftKey }); break;
+    case 'Enter':     e.preventDefault(); openFocused(); break;
+    case 'Backspace': e.preventDefault(); navUp(); break;
+    case 'F5':        e.preventDefault(); refreshDirectory(); break;
+    default: break;
+  }
 }
