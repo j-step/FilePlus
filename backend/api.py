@@ -127,8 +127,9 @@ def _scandir_entries(directory: Path) -> list[dict]:
 async def fs_list(path: str = Query(..., description="Absolute path of directory to list")):
     """Return a directory listing for the given absolute path.
 
-    Returns 404 if the path doesn't exist or isn't a directory.
-    Returns 403 if path_guard rejects the path (outside sandbox).
+    Read-only, so path_guard (mode="read") allows any path — browsing real
+    drives is the product (D2). Returns 404 if the path doesn't exist or
+    isn't a directory.
     """
     try:
         resolved = path_guard(Path(path))

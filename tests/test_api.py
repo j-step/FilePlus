@@ -78,12 +78,13 @@ def test_scan_removes_stale_rows(client, sandbox):
     assert body["stale_removed"] == 1
 
 
-def test_scan_outside_sandbox_is_403(client, tmp_path):
+def test_scan_outside_sandbox_indexes_read_only(client, tmp_path):
     outside = tmp_path / "outside"
     outside.mkdir()
+    (outside / "o.txt").write_text("o")
     r = client.post("/scan", json={"path": str(outside)})
-    assert r.status_code == 403
-    assert "sandbox" in r.json()["detail"].lower()
+    assert r.status_code == 200
+    assert r.json()["count"] == 1
 
 
 def test_tags_empty(client):

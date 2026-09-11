@@ -10,8 +10,12 @@ from backend.database import init_db
 def sandbox(tmp_path, monkeypatch):
     """Temporary sandbox directory wired into config.
 
-    Patches FILEPLUS_SANDBOX_PATH, FILEPLUS_DB_PATH, and SAFETY_MODE so every
-    test runs in isolation with a real (but throwaway) filesystem and database.
+    Patches FILEPLUS_SANDBOX_PATH, FILEPLUS_DB_PATH, WRITE_UNLOCKED, and
+    PROTECTED_WRITE_ROOTS so every test runs in isolation with a real (but
+    throwaway) filesystem and database. PROTECTED_WRITE_ROOTS is cleared here
+    because tmp dirs can live under any root (e.g. a user profile under
+    Program Files on some CI images); tests that need a protected root set
+    their own via monkeypatch.
 
     The sandbox is a *subdirectory* of tmp_path so that test.db (at tmp_path
     root) is never inside the scanned directory and won't show up in counts.
@@ -21,7 +25,8 @@ def sandbox(tmp_path, monkeypatch):
     db_path = tmp_path / "test.db"
     monkeypatch.setattr(_config, "FILEPLUS_SANDBOX_PATH", sandbox_dir)
     monkeypatch.setattr(_config, "FILEPLUS_DB_PATH", db_path)
-    monkeypatch.setattr(_config, "SAFETY_MODE", True)
+    monkeypatch.setattr(_config, "WRITE_UNLOCKED", False)
+    monkeypatch.setattr(_config, "PROTECTED_WRITE_ROOTS", [])
     return sandbox_dir
 
 

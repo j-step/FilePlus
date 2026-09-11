@@ -53,17 +53,17 @@ def test_path_guard_allows_path_inside_sandbox(sandbox):
     assert result == inside.resolve()
 
 
-def test_path_guard_blocks_path_outside_sandbox(sandbox):
+def test_path_guard_blocks_write_outside_sandbox(sandbox):
     outside = Path("C:/Windows/System32/ntdll.dll")
     with pytest.raises(OutOfSandboxError):
-        _config.path_guard(outside)
+        _config.path_guard(outside, "write")
 
 
-def test_path_guard_no_op_when_safety_mode_false(sandbox, monkeypatch, tmp_path):
-    monkeypatch.setattr(_config, "SAFETY_MODE", False)
+def test_path_guard_write_allowed_outside_sandbox_when_unlocked(sandbox, monkeypatch):
+    monkeypatch.setattr(_config, "WRITE_UNLOCKED", True)
     outside = Path("C:/Windows")
     # Should not raise
-    result = _config.path_guard(outside)
+    result = _config.path_guard(outside, "write")
     assert result == outside.resolve()
 
 
@@ -169,10 +169,14 @@ async def test_scan_recurses_into_subdirectories(db, sandbox):
     assert count == 2
 
 
-async def test_scan_blocked_outside_sandbox(db, sandbox):
-    outside = Path("C:/Windows")
-    with pytest.raises(OutOfSandboxError):
-        await scan_directory(outside)
+async def test_scan_outside_sandbox_succeeds_read_only(db, sandbox, tmp_path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "o.txt").write_text("o")
+
+    count = await scan_directory(outside)
+
+    assert count == 1
 
 
 # ---------------------------------------------------------------------------

@@ -30,7 +30,7 @@ async def scan_directory(root: Path) -> int:
     Opens a single DB connection for the entire walk for efficiency.
 
     Args:
-        root: Directory to scan. Must be inside the sandbox when SAFETY_MODE is on.
+        root: Directory to scan. Reads are allowed anywhere (path_guard mode="read").
 
     Returns:
         Number of files indexed during this scan.
@@ -71,7 +71,6 @@ async def index_file(path: Path, conn: aiosqlite.Connection) -> None:
         conn: Active aiosqlite connection (caller owns commit).
 
     Raises:
-        OutOfSandboxError: If SAFETY_MODE is True and path escapes the sandbox.
         OSError: If the file cannot be read or hashed.
     """
     path = _config.path_guard(path)
