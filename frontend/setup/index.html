@@ -53,7 +53,7 @@
       color: var(--text-primary);
     }
     .setup-rail__version {
-      font: var(--t-small) var(--font-mono);
+      font: var(--t-small) var(--font-data);
       color: var(--text-tertiary);
     }
 
@@ -130,7 +130,7 @@
     .setup-rail__footer {
       padding: 14px 20px 18px;
       border-top: 1px solid var(--border-hairline);
-      font: var(--t-small) var(--font-mono);
+      font: var(--t-small) var(--font-data);
       color: var(--text-tertiary);
       line-height: 1.6;
       flex-shrink: 0;
@@ -187,7 +187,6 @@
       padding: 0 var(--s-14);
       background: var(--bg-raised);
       border: 1px solid var(--border-subtle);
-      box-shadow: var(--highlight-top);
       border-radius: 6px;
     }
     .setup-dl-row__icon { width: 16px; height: 16px; flex-shrink: 0; }
@@ -204,13 +203,12 @@
       min-width: 100px;
     }
     .setup-dl-row__size {
-      font: var(--t-small) var(--font-mono);
+      font: var(--t-small) var(--font-data);
       color: var(--text-tertiary);
     }
     .setup-dl-row__bar {
       width: 100px;
       height: 4px;
-      background: var(--inset-recess);
       border-radius: 999px;
       overflow: hidden;
     }
@@ -232,7 +230,7 @@
       padding: var(--s-14);
       background: var(--bg-raised);
       border: 1px solid var(--border-subtle);
-      box-shadow: var(--highlight-top), var(--shadow-card);
+      box-shadow: var(--shadow-card);
       border-radius: 8px;
       cursor: pointer;
       transition: background var(--dur-fast) var(--ease-out);
@@ -254,7 +252,7 @@
       margin-top: 2px;
     }
     .setup-opt-card__size {
-      font: var(--t-small) var(--font-mono);
+      font: var(--t-small) var(--font-data);
       color: var(--text-tertiary);
       flex-shrink: 0;
       margin-top: 2px;
@@ -276,12 +274,11 @@
     .setup-ready-card--primary {
       background: var(--accent-wash);
       border: 1px solid var(--accent-edge);
-      box-shadow: var(--highlight-top);
     }
     .setup-ready-card--secondary {
       background: var(--bg-raised);
       border: 1px solid var(--border-subtle);
-      box-shadow: var(--highlight-top), var(--shadow-card);
+      box-shadow: var(--shadow-card);
     }
     .setup-ready-card__title {
       font: 600 var(--t-title-sm) var(--font-ui);
@@ -297,7 +294,7 @@
     .setup-shortcuts-card {
       background: var(--bg-raised);
       border: 1px solid var(--border-subtle);
-      box-shadow: var(--highlight-top), var(--shadow-card);
+      box-shadow: var(--shadow-card);
       border-radius: 8px;
       padding: var(--s-12) var(--s-14);
     }
@@ -316,7 +313,7 @@
       border: 1px solid var(--border-subtle);
       border-radius: 4px;
       padding: 1px 6px;
-      font: 500 var(--t-small) var(--font-mono);
+      font: 500 var(--t-small) var(--font-data);
       color: var(--text-tertiary);
     }
 
@@ -364,7 +361,6 @@
       max-height: 120px;
       resize: none;
       background: var(--bg-content);
-      box-shadow: var(--inset-recess);
       border: 1px solid var(--border-subtle);
       border-radius: 6px;
       padding: 10px 12px;
@@ -375,7 +371,6 @@
     .setup-chat-input:focus {
       outline: none;
       border-color: var(--accent-edge);
-      box-shadow: var(--inset-recess-strong), 0 0 0 3px var(--accent-glow);
     }
   </style>
 </head>
@@ -795,19 +790,19 @@
         <div class="setup-chat-area" id="setup-chat-messages">
           <!-- AI message (left) -->
           <div style="display:flex;flex-direction:column;gap:4px;max-width:80%">
-            <div style="background:var(--bg-raised);border:1px solid var(--border-subtle);box-shadow:var(--highlight-top),var(--shadow-card);border-radius:0 8px 8px 8px;padding:10px 14px;font: var(--t-body) var(--font-ui);color:var(--text-primary);line-height:1.5">
+            <div style="background:var(--bg-raised);border:1px solid var(--border-subtle);box-shadow:var(--shadow-card);border-radius:0 8px 8px 8px;padding:10px 14px;font: var(--t-body) var(--font-ui);color:var(--text-primary);line-height:1.5">
               What kinds of files do you work with most? (e.g. code, design files, documents, media, or a mix)
             </div>
           </div>
           <!-- User message (right) — example state -->
           <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;max-width:80%;align-self:flex-end">
-            <div style="background:var(--accent-wash);border:1px solid var(--accent-edge);box-shadow:var(--highlight-top);border-radius:8px 0 8px 8px;padding:10px 14px;font: var(--t-body) var(--font-ui);color:var(--text-primary);line-height:1.5">
+            <div style="background:var(--accent-wash);border:1px solid var(--accent-edge);border-radius:8px 0 8px 8px;padding:10px 14px;font: var(--t-body) var(--font-ui);color:var(--text-primary);line-height:1.5">
               Mostly code projects and design files, some PDFs and screenshots
             </div>
           </div>
           <!-- AI follow-up -->
           <div style="display:flex;flex-direction:column;gap:4px;max-width:80%">
-            <div style="background:var(--bg-raised);border:1px solid var(--border-subtle);box-shadow:var(--highlight-top),var(--shadow-card);border-radius:0 8px 8px 8px;padding:10px 14px;font: var(--t-body) var(--font-ui);color:var(--text-primary);line-height:1.5">
+            <div style="background:var(--bg-raised);border:1px solid var(--border-subtle);box-shadow:var(--shadow-card);border-radius:0 8px 8px 8px;padding:10px 14px;font: var(--t-body) var(--font-ui);color:var(--text-primary);line-height:1.5">
               Got it. How aggressively should FilePlus propose reorganisation?
             </div>
             <!-- Tag chip selection for aggressiveness -->

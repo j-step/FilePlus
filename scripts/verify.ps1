@@ -34,11 +34,15 @@ function Stop-Backend {
   }
 }
 
-Write-Host '== 1/3 pytest ==' -ForegroundColor Cyan
+Write-Host '== 1/4 pytest ==' -ForegroundColor Cyan
 py -3 -m pytest -q
 if ($LASTEXITCODE -ne 0) { Write-Host 'pytest failed' -ForegroundColor Red; exit 1 }
 
-Write-Host '== 2/3 backend ==' -ForegroundColor Cyan
+Write-Host '== 2/4 contrast ==' -ForegroundColor Cyan
+py -3 scripts/contrast_check.py frontend/src/styles.css
+if ($LASTEXITCODE -ne 0) { Write-Host 'contrast check failed' -ForegroundColor Red; exit 1 }
+
+Write-Host '== 3/4 backend ==' -ForegroundColor Cyan
 
 try {
   Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:9876/health' -TimeoutSec 1 | Out-Null
@@ -71,7 +75,7 @@ if (-not $healthy) {
   exit 1
 }
 
-Write-Host '== 3/3 electron smoke ==' -ForegroundColor Cyan
+Write-Host '== 4/4 electron smoke ==' -ForegroundColor Cyan
 $code = 1
 try {
   Push-Location (Join-Path $root 'frontend')

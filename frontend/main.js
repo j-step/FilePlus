@@ -4,11 +4,15 @@
  * Creates the application window, configures security settings,
  * and wires up the dev-tools shortcut.
  */
-const { app, BrowserWindow, globalShortcut, ipcMain } = require('electron');
+const { app, BrowserWindow, globalShortcut, ipcMain, nativeTheme } = require('electron');
 const path = require('path');
 const os   = require('os');
 
 let mainWindow;
+
+// Mica needs Windows 11 22H2 (build 22621). Elsewhere Electron ignores the option
+// and the renderer paints solid --bg-chrome.
+const MICA_AVAILABLE = process.platform === 'win32' && Number(os.release().split('.')[2] || 0) >= 22621;
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -16,7 +20,8 @@ function createWindow() {
     height: 800,
     minWidth: 800,
     minHeight: 500,
-    backgroundColor: '#181522',
+    backgroundColor: '#00000000',
+    backgroundMaterial: 'mica',
     title: 'FilePlus',
     frame: false,
     webPreferences: {
@@ -66,6 +71,12 @@ app.whenReady().then(() => {
 
   ipcMain.on('get-hostname', (event) => {
     event.returnValue = os.hostname();
+  });
+
+  ipcMain.on('mica-available', (event) => { event.returnValue = MICA_AVAILABLE; });
+
+  ipcMain.on('set-theme-source', (_e, mode) => {
+    nativeTheme.themeSource = ['dark', 'light'].includes(mode) ? mode : 'system';
   });
 
   createWindow();

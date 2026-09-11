@@ -39,6 +39,20 @@ test('every screen renders with no renderer errors', async () => {
     page.on('console', (m) => { if (m.type() === 'error') errors.push(`console: ${m.text()}`); });
 
     await page.waitForSelector('#shell');
+
+    // Screenshots must show default settings, not whatever this machine's profile persisted.
+    await page.evaluate(() => localStorage.clear());
+    await page.reload();
+    await page.waitForSelector('#shell');
+
+    // Capture the solid fallback chrome: Mica is a live desktop material that
+    // screenshots as transparent pixels under the harness.
+    await page.evaluate(() => { delete document.documentElement.dataset.mica; });
+
+    // Screenshot passes must be deterministic: force dark for the base pass
+    // (Playwright emulates prefers-color-scheme: light by default).
+    await page.evaluate(() => applyTheme('dark'));
+
     await page.waitForTimeout(1500); // fonts, first /health poll
 
     for (const id of SCREENS) {
@@ -50,6 +64,13 @@ test('every screen renders with no renderer errors', async () => {
     await page.evaluate(() => openPalette());
     await page.screenshot({ path: path.join(SHOTS, 'palette.png') });
     await page.evaluate(() => closePalette());
+
+    await page.evaluate(() => applyTheme('light'));
+    for (const id of ['home', 'browser', 'settings']) {
+      await page.evaluate((s) => switchScreen(s), id);
+      await page.screenshot({ path: path.join(SHOTS, `${id}-light.png`) });
+    }
+    await page.evaluate(() => applyTheme('system'));
   } finally {
     await app.close();
   }

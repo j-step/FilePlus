@@ -790,9 +790,17 @@ function closeModal() {
 }
 
 // ── Theme toggle ─────────��─────────────────────────────────────────────────────
+const THEME_MODES = ['dark', 'light', 'system'];
+const _systemDark = window.matchMedia('(prefers-color-scheme: dark)');
+let _systemListenerAttached = false;
+
+function resolveTheme(mode) {
+  return mode === 'system' ? (_systemDark.matches ? 'dark' : 'light') : mode;
+}
+
 function toggleTheme() {
-  const html = document.documentElement;
-  const next = html.dataset.theme === 'dark' ? 'light' : 'dark';
+  const current = localStorage.getItem('fp-theme') || 'system';
+  const next = THEME_MODES[(THEME_MODES.indexOf(current) + 1) % THEME_MODES.length];
   applyTheme(next);
 }
 
@@ -809,13 +817,22 @@ function switchSettingsPane(pane) {
   sessionStorage.setItem('fp-settings-pane', pane);
 }
 
-function applyTheme(theme) {
-  document.documentElement.dataset.theme = theme;
-  localStorage.setItem('fp-theme', theme);
-  // Sync segmented controls in personalization pane
+function applyTheme(mode) {
+  if (!THEME_MODES.includes(mode)) mode = 'system';
+  const html = document.documentElement;
+  html.dataset.theme = resolveTheme(mode);
+  html.dataset.themeMode = mode;
+  localStorage.setItem('fp-theme', mode);
+  if (window.electronAPI?.setThemeSource) window.electronAPI.setThemeSource(mode);
+  if (mode === 'system' && !_systemListenerAttached) {
+    _systemDark.addEventListener('change', () => {
+      if ((localStorage.getItem('fp-theme') || 'system') === 'system') applyTheme('system');
+    });
+    _systemListenerAttached = true;
+  }
   document.querySelectorAll('[data-action="settings-set-theme"]').forEach(btn => {
     const v = btn.dataset.theme || btn.dataset.val;
-    btn.classList.toggle('active', v === theme);
+    btn.classList.toggle('active', v === mode);
   });
 }
 
@@ -829,7 +846,7 @@ function applyDensity(density) {
 }
 
 const HEX_RE = /^#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$/;
-const DEFAULT_ACCENT = '#E8965E';
+const DEFAULT_ACCENT = '#4CC2FF';
 
 function isValidHex(s) {
   return typeof s === 'string' && HEX_RE.test(s.trim());
@@ -840,7 +857,7 @@ function applyAccentHex(rawHex) {
   const errorEl = document.getElementById('settings-accent-error');
   if (!isValidHex(hex)) {
     if (errorEl) {
-      errorEl.textContent = 'Enter a valid hex color (e.g. #E8965E or #abc).';
+      errorEl.textContent = 'Enter a valid hex color (e.g. #4CC2FF or #abc).';
       errorEl.hidden = false;
     }
     return false;
@@ -871,23 +888,19 @@ function applyAccent(value) {
   if (isValidHex(value)) applyAccentHex(value);
 }
 
-function applyAccentGlow(enabled) {
-  if (enabled) {
-    document.documentElement.setAttribute('data-accent-glow', 'on');
-    localStorage.setItem('fp-accent-glow', 'on');
-  } else {
-    document.documentElement.removeAttribute('data-accent-glow');
-    localStorage.setItem('fp-accent-glow', 'off');
-  }
-  const checkbox = document.getElementById('settings-accent-glow');
-  if (checkbox) checkbox.checked = !!enabled;
-}
-
 function restoreSettings() {
-  const theme = localStorage.getItem('fp-theme');
-  if (theme) applyTheme(theme);
+  if (window.electronAPI?.micaAvailable?.()) document.documentElement.dataset.mica = 'on';
+  applyTheme(localStorage.getItem('fp-theme') || 'system');
   const density = localStorage.getItem('fp-density');
   if (density) applyDensity(density);
+  // One-time migration: drop the retired amber default (#E8965E) that older
+  // sessions re-saved to localStorage, so the new blue accent takes over.
+  const RETIRED_AMBER_ACCENT = '#E8965E';
+  const persistedAccent = localStorage.getItem('fp-accent');
+  if (persistedAccent && persistedAccent.toLowerCase() === RETIRED_AMBER_ACCENT.toLowerCase()) {
+    localStorage.removeItem('fp-accent');
+    console.info('[fp-accent] Dropped retired amber default; using the new blue accent.');
+  }
   const savedAccent = localStorage.getItem('fp-accent');
   if (savedAccent) {
     if (isValidHex(savedAccent)) {
@@ -898,15 +911,15 @@ function restoreSettings() {
       const swatch = document.getElementById('settings-accent-swatch');
       if (swatch) swatch.style.background = savedAccent;
     } else {
-      // Invalid (e.g., 'lavender' from pre-A4 sessions) — purge so default amber wins
+      // Invalid (e.g., 'lavender' from pre-A4 sessions) — purge so the default accent wins
       console.warn(`[fp-accent] Discarding invalid persisted value: ${savedAccent}`);
       localStorage.removeItem('fp-accent');
     }
   }
   // Zoom is now handled by Electron webContents.setZoomFactor (no CSS zoom persistence needed).
   // Legacy fp-zoom in localStorage is intentionally ignored — Electron persists zoom separately.
-  const savedGlow = localStorage.getItem('fp-accent-glow');
-  if (savedGlow === 'on') applyAccentGlow(true);
+  // Stage 1: glow feature removed
+  localStorage.removeItem('fp-accent-glow');
   // Notifications setting — defaults to OFF if unset
   const checkbox = document.getElementById('settings-show-notifications');
   if (checkbox) checkbox.checked = notificationsEnabled();
@@ -1540,7 +1553,7 @@ const IN_SCOPE_ACTIONS = new Set([
   'ef-filter', 'ef-sort', 'ef-toggle-pause-ai', 'ef-toggle-moving-card',
   'scan-config-switch-mode', 'scan-baseline-confirm',
   'settings-nav', 'settings-set-theme', 'settings-set-density', 'settings-set-accent',
-  'settings-set-accent-hex', 'settings-reset-accent', 'settings-set-accent-glow',
+  'settings-set-accent-hex', 'settings-reset-accent',
   'settings-set-show-notifications',
   'settings-set-font-scale', 'settings-reset-shortcuts',
   'zoom-reset',
@@ -1768,12 +1781,8 @@ document.addEventListener('input', e => {
   }
 });
 
-// Accent glow toggle (change event, not click)
 document.addEventListener('change', e => {
   const t = e.target;
-  if (t && t.dataset && t.dataset.action === 'settings-set-accent-glow') {
-    applyAccentGlow(t.checked);
-  }
   if (t && t.dataset && t.dataset.action === 'settings-set-show-notifications') {
     setNotificationsEnabled(t.checked);
   }
@@ -1996,7 +2005,7 @@ document.addEventListener('contextmenu', e => {
 document.addEventListener('DOMContentLoaded', () => {
   // Restore theme from localStorage
   const savedTheme = localStorage.getItem('fp-theme');
-  if (savedTheme) document.documentElement.dataset.theme = savedTheme;
+  if (THEME_MODES.includes(savedTheme)) document.documentElement.dataset.theme = resolveTheme(savedTheme);
 
   initWindowControls();
   initResizer();
