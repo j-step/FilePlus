@@ -160,7 +160,10 @@ class ScanRequest(BaseModel):
 async def trigger_scan(body: Optional[ScanRequest] = None):
     """Index a directory. Uses FILEPLUS_SANDBOX_PATH when no path is provided."""
     root = Path(body.path) if (body and body.path) else _config.FILEPLUS_SANDBOX_PATH
-    count = await scan_directory(root)
+    try:
+        count = await scan_directory(root)
+    except OutOfSandboxError as e:
+        raise HTTPException(status_code=403, detail=str(e))
     stale = await remove_stale_entries()
     return {"count": count, "stale_removed": stale, "path": str(root)}
 
