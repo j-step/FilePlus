@@ -1,5 +1,5 @@
 # scripts/verify.ps1 — the single gate for every autonomous run.
-# Runs: pytest -> start backend -> Electron smoke test -> stop backend.
+# Runs: fixtures -> pytest -> contrast -> start backend -> Electron smoke test -> stop backend.
 # Exit code is non-zero if any stage fails.
 $ErrorActionPreference = 'Continue'
 $root = Split-Path -Parent $PSScriptRoot
@@ -34,15 +34,19 @@ function Stop-Backend {
   }
 }
 
-Write-Host '== 1/4 pytest ==' -ForegroundColor Cyan
+Write-Host '== 1/5 fixtures ==' -ForegroundColor Cyan
+py -3 scripts/gen_sandbox.py
+if ($LASTEXITCODE -ne 0) { Write-Host 'sandbox generation failed' -ForegroundColor Red; exit 1 }
+
+Write-Host '== 2/5 pytest ==' -ForegroundColor Cyan
 py -3 -m pytest -q
 if ($LASTEXITCODE -ne 0) { Write-Host 'pytest failed' -ForegroundColor Red; exit 1 }
 
-Write-Host '== 2/4 contrast ==' -ForegroundColor Cyan
+Write-Host '== 3/5 contrast ==' -ForegroundColor Cyan
 py -3 scripts/contrast_check.py frontend/src/styles.css
 if ($LASTEXITCODE -ne 0) { Write-Host 'contrast check failed' -ForegroundColor Red; exit 1 }
 
-Write-Host '== 3/4 backend ==' -ForegroundColor Cyan
+Write-Host '== 4/5 backend ==' -ForegroundColor Cyan
 
 try {
   Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:9876/health' -TimeoutSec 1 | Out-Null
@@ -53,6 +57,8 @@ try {
 New-Item -ItemType Directory -Force (Join-Path $root 'artifacts') | Out-Null
 # keep verify off the developer's real fileplus.db; load_dotenv does not override an existing env var
 $env:FILEPLUS_DB_PATH = Join-Path $root 'artifacts\verify.db'
+# belt and braces: the smoke run never unlocks writes outside the sandbox
+$env:WRITE_UNLOCKED = 'false'
 
 $script:teardownFailed = $false
 $backend = Start-Process -FilePath 'py' -ArgumentList '-3', '-m', 'backend.api' `
@@ -75,7 +81,7 @@ if (-not $healthy) {
   exit 1
 }
 
-Write-Host '== 4/4 electron smoke ==' -ForegroundColor Cyan
+Write-Host '== 5/5 electron smoke ==' -ForegroundColor Cyan
 $code = 1
 try {
   Push-Location (Join-Path $root 'frontend')

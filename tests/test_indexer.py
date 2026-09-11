@@ -53,17 +53,17 @@ def test_path_guard_allows_path_inside_sandbox(sandbox):
     assert result == inside.resolve()
 
 
-def test_path_guard_blocks_path_outside_sandbox(sandbox):
+def test_path_guard_blocks_write_outside_sandbox(sandbox):
     outside = Path("C:/Windows/System32/ntdll.dll")
     with pytest.raises(OutOfSandboxError):
-        _config.path_guard(outside)
+        _config.path_guard(outside, "write")
 
 
-def test_path_guard_no_op_when_safety_mode_false(sandbox, monkeypatch, tmp_path):
-    monkeypatch.setattr(_config, "SAFETY_MODE", False)
+def test_path_guard_write_allowed_outside_sandbox_when_unlocked(sandbox, monkeypatch):
+    monkeypatch.setattr(_config, "WRITE_UNLOCKED", True)
     outside = Path("C:/Windows")
     # Should not raise
-    result = _config.path_guard(outside)
+    result = _config.path_guard(outside, "write")
     assert result == outside.resolve()
 
 
@@ -169,10 +169,28 @@ async def test_scan_recurses_into_subdirectories(db, sandbox):
     assert count == 2
 
 
-async def test_scan_blocked_outside_sandbox(db, sandbox):
-    outside = Path("C:/Windows")
-    with pytest.raises(OutOfSandboxError):
-        await scan_directory(outside)
+async def test_scan_outside_sandbox_succeeds_read_only(db, sandbox, tmp_path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "o.txt").write_text("o")
+
+    count = await scan_directory(outside)
+
+    assert count == 1
+
+
+async def test_scan_sandbox_exempt_from_app_dir_like_protected_root(db, sandbox, monkeypatch):
+    """The default sandbox lives inside FILEPLUS_APP_DIR, itself a protected
+    root -- scanning it must not be treated as scanning a protected root.
+    PROTECTED_WRITE_ROOTS is set to something app-dir-like (not a
+    SYSTEM_WRITE_ROOTS entry) to prove the exemption, not merely that the
+    conftest fixture happens to clear PROTECTED_WRITE_ROOTS to []."""
+    (sandbox / "counted.txt").write_text("counted")
+    monkeypatch.setattr(_config, "PROTECTED_WRITE_ROOTS", [sandbox.parent])
+
+    count = await scan_directory(sandbox)
+
+    assert count == 1
 
 
 # ---------------------------------------------------------------------------
@@ -190,6 +208,30 @@ async def test_remove_stale_deletes_missing_files(db, sandbox):
     assert removed == 1
     async with aiosqlite.connect(db) as conn:
         cur = await conn.execute("SELECT COUNT(*) FROM files")
+        row = await cur.fetchone()
+    assert row[0] == 0
+
+
+async def test_remove_stale_entries_scoped_to_root(db, sandbox):
+    dir_a = sandbox / "a"; dir_a.mkdir()
+    dir_b = sandbox / "b"; dir_b.mkdir()
+    fa = dir_a / "keep.txt"; fa.write_text("a")
+    fb = dir_b / "gone.txt"; fb.write_text("b")
+    await scan_directory(sandbox)
+
+    fb.unlink()
+
+    removed_a = await remove_stale_entries(dir_a)
+    assert removed_a == 0
+    async with aiosqlite.connect(db) as conn:
+        cur = await conn.execute("SELECT COUNT(*) FROM files WHERE path = ?", (str(fb.resolve()),))
+        row = await cur.fetchone()
+    assert row[0] == 1  # b's stale row survives a root-A-scoped removal
+
+    removed_b = await remove_stale_entries(dir_b)
+    assert removed_b == 1
+    async with aiosqlite.connect(db) as conn:
+        cur = await conn.execute("SELECT COUNT(*) FROM files WHERE path = ?", (str(fb.resolve()),))
         row = await cur.fetchone()
     assert row[0] == 0
 

@@ -24,4 +24,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   micaAvailable: () => ipcRenderer.sendSync('mica-available'),
   // Theme — syncs Electron's nativeTheme.themeSource so window chrome (e.g. Mica tint) agrees
   setThemeSource: (mode) => ipcRenderer.send('set-theme-source', mode),
+  // Shell / dialog / clipboard bridge (Plan 2B wires renderer callers)
+  openPath:          (p) => ipcRenderer.invoke('shell-open-path', p),
+  showItemInFolder:  (p) => ipcRenderer.send('shell-show-item', p),
+  openWith:          (p) => ipcRenderer.send('shell-open-with', p),
+  pickFolder:        (defaultPath) => ipcRenderer.invoke('dialog-pick-folder', defaultPath),
+  clipboardWriteText: (text) => ipcRenderer.send('clipboard-write-text', text),
 });

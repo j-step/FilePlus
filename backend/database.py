@@ -11,7 +11,7 @@ import backend.config as _config
 
 logger = logging.getLogger(__name__)
 
-CURRENT_SCHEMA_VERSION = 2
+CURRENT_SCHEMA_VERSION = 3
 
 # ---------------------------------------------------------------------------
 # Table definitions — match HANDOFF.md §7.3 exactly
@@ -63,7 +63,9 @@ CREATE TABLE IF NOT EXISTS operations_log (
     batch_id    TEXT,
     reason      TEXT,
     executed    INTEGER DEFAULT 0,
-    undone      INTEGER DEFAULT 0
+    undone      INTEGER DEFAULT 0,
+    error       TEXT,
+    undo_of     INTEGER
 );
 """
 
@@ -107,6 +109,42 @@ CREATE TABLE IF NOT EXISTS schema_version (
 );
 """
 
+CREATE_CONFIG = """
+CREATE TABLE IF NOT EXISTS config (
+    key     TEXT PRIMARY KEY,
+    value   TEXT NOT NULL,
+    updated TEXT NOT NULL
+);
+"""
+
+CREATE_RECENT_ACTIONS = """
+CREATE TABLE IF NOT EXISTS recent_actions (
+    id     INTEGER PRIMARY KEY AUTOINCREMENT,
+    path   TEXT NOT NULL,
+    action TEXT NOT NULL,
+    ts     TEXT NOT NULL
+);
+"""
+
+CREATE_FAVORITES = """
+CREATE TABLE IF NOT EXISTS favorites (
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    path     TEXT UNIQUE NOT NULL,
+    position INTEGER NOT NULL,
+    created  TEXT NOT NULL
+);
+"""
+
+CREATE_PINNED_FOLDERS = """
+CREATE TABLE IF NOT EXISTS pinned_folders (
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    path     TEXT UNIQUE NOT NULL,
+    label    TEXT,
+    position INTEGER NOT NULL,
+    created  TEXT NOT NULL
+);
+"""
+
 ALL_TABLES = [
     CREATE_SCHEMA_VERSION,
     CREATE_FILES,
@@ -116,6 +154,19 @@ ALL_TABLES = [
     CREATE_SNAPSHOTS,
     CREATE_APPROVALS,
     CREATE_TRAINING_SIGNALS,
+    CREATE_CONFIG,
+    CREATE_RECENT_ACTIONS,
+    CREATE_FAVORITES,
+    CREATE_PINNED_FOLDERS,
+]
+
+ALL_INDEXES = [
+    "CREATE INDEX IF NOT EXISTS idx_ops_source ON operations_log(source_path);",
+    "CREATE INDEX IF NOT EXISTS idx_ops_dest ON operations_log(dest_path);",
+    "CREATE INDEX IF NOT EXISTS idx_ops_batch ON operations_log(batch_id);",
+    "CREATE INDEX IF NOT EXISTS idx_file_tags_tag ON file_tags(tag_id);",
+    "CREATE INDEX IF NOT EXISTS idx_files_filename ON files(filename);",
+    "CREATE INDEX IF NOT EXISTS idx_recent_ts ON recent_actions(ts);",
 ]
 
 
@@ -151,6 +202,16 @@ async def _run_migrations(db: aiosqlite.Connection, current: int) -> None:
                 # Column already exists — safe to ignore
                 pass
 
+    if current < 3:
+        for stmt in (
+            "ALTER TABLE operations_log ADD COLUMN error TEXT",
+            "ALTER TABLE operations_log ADD COLUMN undo_of INTEGER",
+        ):
+            try:
+                await db.execute(stmt)
+            except Exception:
+                pass  # column already exists
+
 
 # ---------------------------------------------------------------------------
 # Public API
@@ -168,6 +229,9 @@ async def init_db(db_path: Path | None = None) -> None:
         await db.execute("PRAGMA foreign_keys=ON")
 
         for stmt in ALL_TABLES:
+            await db.execute(stmt)
+
+        for stmt in ALL_INDEXES:
             await db.execute(stmt)
 
         version = await _get_schema_version(db)

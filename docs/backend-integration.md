@@ -203,7 +203,7 @@ v2 only. Tab is permanently `disabled`. No backend integration in v1.
   - **other**: `{ kind:'binary', size, hash }` only — renderer falls back to the metadata grid.
 - Cache responses for 5 min keyed by `(path, mtime)` so flipping back to a file doesn't re-extract.
 - Hard cap on payload: refuse files > 50 MB for text preview (return `{ kind:'too-large', size }`).
-- Path safety: `path_guard()` always; reject anything outside sandbox when `SAFETY_MODE=true`.
+- Path safety: `path_guard()` always. `SAFETY_MODE` was replaced by `WRITE_UNLOCKED` + `path_guard(path, mode)` in Stage 2A (2026-09-11).
 
 ### 4. Inspector — Tags tab (read/write)
 **What.** Tag chip list and "Add tag" input — currently dummy.

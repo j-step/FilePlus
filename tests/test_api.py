@@ -78,12 +78,13 @@ def test_scan_removes_stale_rows(client, sandbox):
     assert body["stale_removed"] == 1
 
 
-def test_scan_outside_sandbox_is_403(client, tmp_path):
+def test_scan_outside_sandbox_indexes_read_only(client, tmp_path):
     outside = tmp_path / "outside"
     outside.mkdir()
+    (outside / "o.txt").write_text("o")
     r = client.post("/scan", json={"path": str(outside)})
-    assert r.status_code == 403
-    assert "sandbox" in r.json()["detail"].lower()
+    assert r.status_code == 200
+    assert r.json()["count"] == 1
 
 
 def test_tags_empty(client):
@@ -100,8 +101,7 @@ def test_fs_list_root_returns_sandbox(client, sandbox):
 
 
 def test_stub_routes_report_not_implemented(client):
-    """Stage 2 replaces each of these with a real assertion."""
-    assert client.post("/files/1/tags").json() == {"status": "not_implemented"}
+    """/files/{id}/tags is real now (Task 8): unknown file id -> 404."""
+    assert client.post("/files/999/tags", json={"name": "work"}).status_code == 404
     assert client.get("/operations").json() == []
-    assert client.post("/operations/1/undo").json() == {"status": "not_implemented"}
-    assert client.post("/operations/batch/abc/undo").json() == {"status": "not_implemented"}
+    assert client.post("/operations/999/undo").status_code == 409

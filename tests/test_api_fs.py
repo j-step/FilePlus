@@ -73,12 +73,15 @@ def test_fs_list_404_when_path_is_file_not_dir(client, sandbox):
     assert r.json().get("detail") != "Not Found"
 
 
-def test_fs_list_403_when_path_outside_sandbox(client, sandbox, tmp_path):
-    """Path outside the sandbox is rejected by path_guard."""
+def test_fs_list_outside_sandbox_succeeds_read_only(client, sandbox, tmp_path):
+    """/fs/list is a read; path_guard (mode="read") allows any path (D2)."""
     outside = tmp_path / "outside"
     outside.mkdir()
+    (outside / "o.txt").write_text("o")
     r = client.get(f"/fs/list?path={outside}")
-    assert r.status_code == 403
+    assert r.status_code == 200
+    names = {e["name"] for e in r.json()["entries"]}
+    assert names == {"o.txt"}
 
 
 def test_fs_list_root_returns_sandbox_root(client, sandbox):
