@@ -21,10 +21,16 @@ test('backend /health is reachable', async () => {
 
 test('every screen renders with no renderer errors', async () => {
   fs.mkdirSync(SHOTS, { recursive: true });
+  // Electron-based dev shells (e.g. this one) export ELECTRON_RUN_AS_NODE=1,
+  // which turns the Electron binary into plain Node and breaks the launch;
+  // strip it so the gate works regardless of the caller's shell.
+  const env = { ...process.env };
+  delete env.ELECTRON_RUN_AS_NODE;
   const app = await electron.launch({
     executablePath: require('electron'),
     args: [FRONTEND],
     cwd: FRONTEND,
+    env,
   });
   const page = await app.firstWindow();
   const errors = [];
