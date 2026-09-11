@@ -205,6 +205,13 @@ html, body {
   text-rendering: optimizeLegibility;
 }
 
+/* Mica: on Windows 11 the OS paints the desktop-tinted material behind the window;
+   only the titlebar and sidebar let it through. Everything else stays solid. */
+html[data-mica="on"],
+html[data-mica="on"] body { background: transparent; }
+html[data-mica="on"] .fp-titlebar,
+html[data-mica="on"] .fp-sidebar { background: transparent; }
+
 button, input, select, textarea {
   font: inherit;
   color: inherit;

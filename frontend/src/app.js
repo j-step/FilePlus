@@ -889,6 +889,7 @@ function applyAccent(value) {
 }
 
 function restoreSettings() {
+  if (window.electronAPI?.micaAvailable?.()) document.documentElement.dataset.mica = 'on';
   applyTheme(localStorage.getItem('fp-theme') || 'system');
   const density = localStorage.getItem('fp-density');
   if (density) applyDensity(density);
