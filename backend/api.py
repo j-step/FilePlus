@@ -17,12 +17,13 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+from typing import Any
 
 import backend.config as _config
 from backend.config import OutOfSandboxError, ProtectedPathError, path_guard
 from backend.database import init_db
 from backend.indexer import scan_directory, remove_stale_entries
-from backend import mover, operations_log as ol
+from backend import mover, operations_log as ol, stores
 
 logger = logging.getLogger(__name__)
 
@@ -405,6 +406,142 @@ async def undo_operation(op_id: int):
 async def undo_batch(batch_id: str):
     async with _db() as conn:
         return await mover.undo_batch(conn, batch_id)
+
+
+# ---------------------------------------------------------------------------
+# Config / recent / favorites / pins
+# ---------------------------------------------------------------------------
+
+class ConfigSet(BaseModel):
+    key: str
+    value: Any
+
+
+class RecentAdd(BaseModel):
+    path: str
+    action: str
+
+
+class PathBody(BaseModel):
+    path: str
+
+
+class ReorderPaths(BaseModel):
+    paths: list[str]
+
+
+class PinAdd(BaseModel):
+    path: str
+    label: Optional[str] = None
+
+
+class PinPatch(BaseModel):
+    label: str
+
+
+class ReorderIds(BaseModel):
+    ids: list[int]
+
+
+@app.get("/config")
+async def get_config():
+    async with _db() as conn:
+        return await stores.config_get_all(conn)
+
+
+@app.get("/config/{key}")
+async def get_config_key(key: str):
+    async with _db() as conn:
+        value = await stores.config_get(conn, key)
+    if value is None:
+        raise HTTPException(status_code=404, detail=f"No such config key: {key}")
+    return {"key": key, "value": value}
+
+
+@app.post("/config")
+async def post_config(body: ConfigSet):
+    async with _db() as conn:
+        await stores.config_set(conn, body.key, body.value)
+    return {"key": body.key, "value": body.value}
+
+
+@app.delete("/config/{key}")
+async def delete_config(key: str):
+    async with _db() as conn:
+        await stores.config_delete(conn, key)
+    return {"status": "deleted", "key": key}
+
+
+@app.get("/recent")
+async def get_recent(limit: int = 200):
+    async with _db() as conn:
+        return await stores.recent_groups(conn, limit=limit)
+
+
+@app.post("/recent")
+async def post_recent(body: RecentAdd):
+    async with _db() as conn:
+        await stores.recent_add(conn, body.path, body.action)
+    return {"status": "ok"}
+
+
+@app.get("/favorites")
+async def get_favorites():
+    async with _db() as conn:
+        return await stores.favorites_list(conn)
+
+
+@app.post("/favorites")
+async def post_favorites(body: PathBody):
+    async with _db() as conn:
+        return await stores.favorites_add(conn, body.path)
+
+
+@app.delete("/favorites")
+async def delete_favorites(path: str = Query(...)):
+    async with _db() as conn:
+        await stores.favorites_remove(conn, path)
+    return {"status": "deleted", "path": path}
+
+
+@app.post("/favorites/reorder")
+async def post_favorites_reorder(body: ReorderPaths):
+    async with _db() as conn:
+        await stores.favorites_reorder(conn, body.paths)
+    return {"status": "ok"}
+
+
+@app.get("/pins")
+async def get_pins():
+    async with _db() as conn:
+        return await stores.pins_list(conn)
+
+
+@app.post("/pins")
+async def post_pins(body: PinAdd):
+    async with _db() as conn:
+        return await stores.pins_add(conn, body.path, body.label)
+
+
+@app.patch("/pins/{pin_id}")
+async def patch_pins(pin_id: int, body: PinPatch):
+    async with _db() as conn:
+        await stores.pins_update(conn, pin_id, body.label)
+    return {"status": "ok", "id": pin_id, "label": body.label}
+
+
+@app.delete("/pins/{pin_id}")
+async def delete_pins(pin_id: int):
+    async with _db() as conn:
+        await stores.pins_remove(conn, pin_id)
+    return {"status": "deleted", "id": pin_id}
+
+
+@app.post("/pins/reorder")
+async def post_pins_reorder(body: ReorderIds):
+    async with _db() as conn:
+        await stores.pins_reorder(conn, body.ids)
+    return {"status": "ok"}
 
 
 # ---------------------------------------------------------------------------
