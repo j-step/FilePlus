@@ -685,24 +685,42 @@ function startInlineRename(path) {
     settled = true;
     input.replaceWith(nameEl);
   };
-  const commit = () => {
+  const doRename = (newName) => {
+    settled = true;
+    // fileops.rename()'s own run() re-fetches the directory and re-renders
+    // every row (including this one) on success — and reselects it there
+    // too; on failure the row stays as-is under the (now orphaned) input —
+    // restore the static name span.
+    fileops.rename(path, newName).catch(() => { if (input.isConnected) input.replaceWith(nameEl); });
+  };
+  // Enter and blur both "commit", but a validation failure means something
+  // different on each: on Enter the user is still in the field, so keep
+  // editing (toast + refocus, let them fix it). On blur they've already left
+  // — calling .focus() from inside a blur handler fights the browser's own
+  // focus change (can loop/trap focus), so instead just cancel the rename
+  // (restore the static name) and toast why.
+  const commitFromKeydown = () => {
     if (settled) return;
     const newName = input.value.trim();
     if (!newName || newName === currentName) { restore(); return; }
     const error = validateEntryName(newName);
     if (error) { showToast(error, 'error'); input.focus(); return; }
-    settled = true;
-    // fileops.rename()'s own run() re-fetches the directory and re-renders
-    // every row (including this one) on success; on failure the row stays
-    // as-is under the (now orphaned) input — restore the static name span.
-    fileops.rename(path, newName).catch(() => { if (input.isConnected) input.replaceWith(nameEl); });
+    doRename(newName);
+  };
+  const commitFromBlur = () => {
+    if (settled) return;
+    const newName = input.value.trim();
+    if (!newName || newName === currentName) { restore(); return; }
+    const error = validateEntryName(newName);
+    if (error) { showToast(error, 'error'); restore(); return; }
+    doRename(newName);
   };
   input.addEventListener('keydown', e => {
-    if (e.key === 'Enter') { e.preventDefault(); commit(); }
+    if (e.key === 'Enter') { e.preventDefault(); commitFromKeydown(); }
     else if (e.key === 'Escape') { e.preventDefault(); restore(); }
     e.stopPropagation();
   });
-  input.addEventListener('blur', commit);
+  input.addEventListener('blur', commitFromBlur);
   input.addEventListener('click', e => e.stopPropagation());
 }
 
@@ -714,18 +732,54 @@ function startInlineRename(path) {
 // was physically dragged.
 const FP_DRAG_MIME = 'application/x-fileplus-paths';
 
+// The dragged selection, tracked separately from dataTransfer: per the HTML5
+// DnD spec, dataTransfer.getData() only returns real data during the 'drop'
+// event — during 'dragover'/'dragenter' it reads back empty for security
+// reasons, even within the same page. dragover needs to know what's being
+// dragged (to skip highlighting an invalid target), so dragstart mirrors the
+// paths here too; dragend clears it.
+let _draggingPaths = [];
+
+/** Why `destDir` is not a valid drop target for `paths`, or null if it's fine.
+ *  'self'       — destDir is (case-insensitively) one of the dragged paths
+ *  'current'    — destDir is the directory already open
+ *  'descendant' — destDir is nested inside one of the dragged folders */
+function dropViolation(destDir, paths) {
+  if (!destDir || !paths || !paths.length) return 'self';
+  const norm = p => String(p).replace(/[\\\/]+$/, '').toLowerCase();
+  const destLower = norm(destDir);
+  if (paths.some(p => norm(p) === destLower)) return 'self';
+  if (destLower === norm(browserState.path || '')) return 'current';
+  if (paths.some(p => destLower.startsWith(norm(p) + '\\'))) return 'descendant';
+  return null;
+}
+
 /** Shared drop handler for every drop target (folder rows, sidebar items,
- * breadcrumb crumbs). No-ops when the target IS the source (dropping a
- * folder onto itself) or resolves to the directory already open. */
+ * breadcrumb crumbs). */
 function handleFsDrop(e, destDir) {
   let paths;
   try { paths = JSON.parse(e.dataTransfer.getData(FP_DRAG_MIME) || '[]'); }
   catch (_) { paths = []; }
-  if (!Array.isArray(paths) || !paths.length || !destDir) return;
-  if (paths.includes(destDir)) return; // dropped onto one of the dragged items
-  const norm = p => String(p).replace(/[\\\/]+$/, '').toLowerCase();
-  if (norm(destDir) === norm(browserState.path || '')) return; // dropped onto the current folder
+  const violation = dropViolation(destDir, paths);
+  if (violation === 'descendant') { showToast('Cannot move a folder into itself', 'error'); return; }
+  if (violation) return; // 'self' (dropped onto a dragged item) / 'current' (the open folder) — silent no-op
   fileops.moveTo(paths, destDir, e.ctrlKey);
+}
+
+/** Shared dragover handler. A 'self'/'current' violation is not a drop
+ * target at all — skip preventDefault() entirely so the browser shows its
+ * native "not allowed" cursor and 'drop' never fires (nothing to refuse; a
+ * dragged item never paints as its own drop target). A 'descendant'
+ * violation DOES need preventDefault() — 'drop' must still fire so
+ * handleFsDrop can refuse it with the "Cannot move a folder into itself"
+ * toast — but it's never highlighted, matching the "not highlighted" rule
+ * for a target that will just bounce. */
+function dragOverTarget(e, el, destDir, dragTargetClass) {
+  const violation = dropViolation(destDir, _draggingPaths);
+  if (violation === 'self' || violation === 'current') return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = e.ctrlKey ? 'copy' : 'move';
+  if (!violation) el.classList.add(dragTargetClass);
 }
 
 function initRowDragDrop() {
@@ -737,17 +791,17 @@ function initRowDragDrop() {
     if (!row) { e.preventDefault(); return; }
     if (!browserState.selection.has(row.dataset.path)) selectRow(row.dataset.path, {});
     const paths = getSelectedPaths();
+    _draggingPaths = paths;
     e.dataTransfer.effectAllowed = 'copyMove';
     e.dataTransfer.setData(FP_DRAG_MIME, JSON.stringify(paths));
     e.dataTransfer.setData('text/plain', paths.join('\n'));
   });
+  listScroll.addEventListener('dragend', () => { _draggingPaths = []; });
 
   listScroll.addEventListener('dragover', e => {
     const row = e.target.closest('.fp-row[data-type="folder"][data-path]');
     if (!row) return;
-    e.preventDefault();
-    e.dataTransfer.dropEffect = e.ctrlKey ? 'copy' : 'move';
-    row.classList.add('fp-row--drag-target');
+    dragOverTarget(e, row, row.dataset.path, 'fp-row--drag-target');
   });
   listScroll.addEventListener('dragleave', e => {
     const row = e.target.closest('.fp-row[data-type="folder"][data-path]');
@@ -769,9 +823,7 @@ function initSidebarDragDrop() {
   sidebarEl.addEventListener('dragover', e => {
     const item = e.target.closest('.fp-sidebar__item[data-path]');
     if (!item) return;
-    e.preventDefault();
-    e.dataTransfer.dropEffect = e.ctrlKey ? 'copy' : 'move';
-    item.classList.add('fp-sidebar__item--drag-target');
+    dragOverTarget(e, item, item.dataset.path, 'fp-sidebar__item--drag-target');
   });
   sidebarEl.addEventListener('dragleave', e => {
     const item = e.target.closest('.fp-sidebar__item[data-path]');
@@ -793,9 +845,7 @@ function initBreadcrumbDragDrop() {
   crumb.addEventListener('dragover', e => {
     const btn = e.target.closest('.fp-breadcrumb__crumb[data-path]');
     if (!btn) return;
-    e.preventDefault();
-    e.dataTransfer.dropEffect = e.ctrlKey ? 'copy' : 'move';
-    btn.classList.add('fp-breadcrumb__crumb--drag-target');
+    dragOverTarget(e, btn, btn.dataset.path, 'fp-breadcrumb__crumb--drag-target');
   });
   crumb.addEventListener('dragleave', e => {
     const btn = e.target.closest('.fp-breadcrumb__crumb[data-path]');

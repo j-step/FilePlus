@@ -48,23 +48,31 @@ const fileops = {
     } catch (err) { showToast(`${label} failed: ${formatApiError(err)}`, 'error'); throw err; }
   },
 
-  async undoLast() { const id = this.undoStack.pop(); if (!id) return; await this.undoBatch(id, { fromStack: true }); },
+  // undoLast/redoLast PEEK the stack rather than pop — the id is only removed
+  // once the request has actually succeeded, so a network/HTTP failure
+  // leaves the entry in place (and retryable) instead of silently losing it.
+  async undoLast() {
+    const id = this.undoStack[this.undoStack.length - 1];
+    if (!id) return;
+    await this.undoBatch(id);
+  },
 
-  async undoBatch(id, { fromStack = false } = {}) {
+  async undoBatch(id) {
     try {
       const res = await API.post(`/operations/batch/${id}/undo`);
+      this.undoStack = this.undoStack.filter(b => b !== id);
       if (res.batch_id) this.redoStack.push(res.batch_id);
-      if (!fromStack) this.undoStack = this.undoStack.filter(b => b !== id);
       if (res.errors.length) showToast(`Undo: ${res.errors[0].error}`, 'error'); else showSnackbar('Undone', null, null);
       await refreshDirectory();
     } catch (err) { showToast(`Undo failed: ${formatApiError(err)}`, 'error'); }
   },
 
   async redoLast() {
-    const id = this.redoStack.pop();
+    const id = this.redoStack[this.redoStack.length - 1];
     if (!id) return;
     try {
       const res = await API.post(`/operations/batch/${id}/undo`);
+      this.redoStack = this.redoStack.filter(b => b !== id);
       if (res.batch_id) this.undoStack.push(res.batch_id);
       await refreshDirectory();
     } catch (err) { showToast(`Redo failed: ${formatApiError(err)}`, 'error'); }
@@ -77,9 +85,12 @@ const fileops = {
     const { mode, paths } = this.clipboard;
     if (!mode || !paths.length || !dir) return;
     const route = mode === 'cut' ? '/fs/move' : '/fs/copy';
-    await this.run(mode === 'cut' ? 'Moved' : 'Copied',
+    const res = await this.run(mode === 'cut' ? 'Moved' : 'Copied',
       (overridePaths, onConflict) => API.post(route, { sources: overridePaths || paths, dest: dir, on_conflict: onConflict || 'fail' }));
-    if (mode === 'cut') this.clipboard = { mode: null, paths: [] };
+    // A conflict the user cancelled (resolveConflicts settles 'cancel') means
+    // nothing new happened for the still-pending sources — keep the clipboard
+    // so Ctrl+V can be retried instead of silently losing the cut selection.
+    if (mode === 'cut' && res !== 'cancel') this.clipboard = { mode: null, paths: [] };
   },
 
   async trashSelection() {
@@ -110,7 +121,14 @@ const fileops = {
     if (typeof startInlineRename === 'function') startInlineRename(path);
   },
 
-  async rename(path, newName) { return this.run('Renamed', () => API.post('/fs/rename', { path, new_name: newName })); },
+  async rename(path, newName) {
+    const res = await this.run('Renamed', () => API.post('/fs/rename', { path, new_name: newName }));
+    // Select (and focus) the renamed row once refreshDirectory() (inside
+    // run()) has re-rendered it under its new path.
+    const newPath = res && res.ops && res.ops[0] && res.ops[0].dest;
+    if (newPath && typeof selectRow === 'function') selectRow(newPath);
+    return res;
+  },
 
   async moveTo(paths, dir, copy = false) {
     if (!paths || !paths.length || !dir) return;
@@ -128,8 +146,13 @@ const fileops = {
    *
    * Any ops that already succeeded in `res` were logged/executed by the
    * backend regardless of how the conflicts resolve, so the listing is
-   * refreshed immediately (covers the Cancel path too, where no follow-up
-   * request happens).
+   * refreshed immediately (covers dismissal — Cancel, Escape, a backdrop
+   * click — where no follow-up request happens).
+   *
+   * Dismissal of any kind resolves the promise with the string 'cancel' via
+   * openModal's config.onClose, which closeModal() calls exactly once no
+   * matter which path closed the modal — so Escape/backdrop are handled the
+   * same as clicking Cancel, and nothing is left listening afterward.
    */
   resolveConflicts(label, res, fn) {
     if (typeof refreshDirectory === 'function') refreshDirectory();
@@ -138,18 +161,10 @@ const fileops = {
     const count = conflictPaths.length;
 
     return new Promise(settle => {
-      const cancelBtn = document.getElementById('modal-cancel');
       let done = false;
-      const finish = (result) => {
-        if (done) return;
-        done = true;
-        cancelBtn?.removeEventListener('click', onCancel);
-        settle(result);
-      };
-      const onCancel = () => finish(res);
+      const finish = (result) => { if (done) return; done = true; settle(result); };
       const choose = (policy) => finish(this.run(label, () => fn(conflictPaths, policy)));
 
-      cancelBtn?.addEventListener('click', onCancel);
       openModal('warn', {
         title: `${count} item${count === 1 ? '' : 's'} already exist${count === 1 ? 's' : ''}`,
         body: `${names.join(', ')} already ${names.length === 1 ? 'exists' : 'exist'} at the destination. Choose how to proceed.`,
@@ -158,6 +173,10 @@ const fileops = {
           { label: 'Skip',      variant: 'secondary', onClick: () => choose('skip') },
           { label: 'Keep both', variant: 'primary',   onClick: () => choose('keep-both') },
         ],
+        // Fires on Escape/backdrop/Cancel, AND (redundantly but harmlessly —
+        // `finish` is idempotent) right after an extraActions click, since
+        // that button's own handler also calls closeModal().
+        onClose: () => finish('cancel'),
       });
     });
   },

@@ -617,19 +617,19 @@ def _single(res: dict) -> dict:
 @app.post("/fs/mkdir")
 async def fs_mkdir(body: DirName):
     async with _db() as conn:
-        return _single(await mover.mkdir(conn, Path(body.dir), body.name))
+        return _single(await mover.mkdir(conn, Path(body.dir), body.name, batch_id=ol.new_batch_id()))
 
 
 @app.post("/fs/touch")
 async def fs_touch(body: DirName):
     async with _db() as conn:
-        return _single(await mover.touch(conn, Path(body.dir), body.name))
+        return _single(await mover.touch(conn, Path(body.dir), body.name, batch_id=ol.new_batch_id()))
 
 
 @app.post("/fs/rename")
 async def fs_rename(body: RenameReq):
     async with _db() as conn:
-        return _single(await mover.rename(conn, Path(body.path), body.new_name))
+        return _single(await mover.rename(conn, Path(body.path), body.new_name, batch_id=ol.new_batch_id()))
 
 
 @app.post("/fs/move")

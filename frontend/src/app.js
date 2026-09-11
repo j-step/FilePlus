@@ -590,6 +590,15 @@ function closeTagCanvas() {
 }
 
 // ── Confirmation modal (A.11.3) ───────────────────────────────────────────────
+// The modal can close via several independent paths — the Cancel button, a
+// backdrop click, Escape, an extraActions button, or the default Confirm
+// button — and a caller that needs to know "the modal closed, however that
+// happened" (fileops.resolveConflicts, to settle its promise and avoid a
+// leaked handler) registers config.onClose. closeModal() invokes it exactly
+// once per open() and clears it, so it fires regardless of which path closed
+// the modal and never double-fires or leaks into the next modal.
+let _modalOnClose = null;
+
 function openModal(type, config = {}) {
   const scrim   = document.getElementById('modal-scrim');
   const icon    = document.getElementById('modal-icon');
@@ -660,15 +669,21 @@ function openModal(type, config = {}) {
     if (confirm) confirm.style.display = '';
   }
 
+  _modalOnClose = typeof config.onClose === 'function' ? config.onClose : null;
+
   scrim.style.display = 'flex';
   scrim.removeAttribute('aria-hidden');
 }
 
 function closeModal() {
   const scrim = document.getElementById('modal-scrim');
-  if (!scrim) return;
-  scrim.style.display = 'none';
-  scrim.setAttribute('aria-hidden', 'true');
+  const onClose = _modalOnClose;
+  _modalOnClose = null;
+  if (scrim) {
+    scrim.style.display = 'none';
+    scrim.setAttribute('aria-hidden', 'true');
+  }
+  if (onClose) onClose();
 }
 
 // ── Theme toggle ─────────��─────────────────────────────────────────────────────
@@ -1569,11 +1584,18 @@ document.addEventListener('click', e => {
       break;
     }
     case 'cm-toggle-hidden': {
-      browserState.showHidden = !browserState.showHidden;
-      if (window.__fpConfig) window.__fpConfig['ui.show_hidden'] = browserState.showHidden;
-      API.post('/config', { key: 'ui.show_hidden', value: browserState.showHidden })
-        .catch(err => showToast(`Failed to save setting: ${formatApiError(err)}`, 'error'));
+      const next = !browserState.showHidden;
+      browserState.showHidden = next;
+      if (window.__fpConfig) window.__fpConfig['ui.show_hidden'] = next;
       refreshDirectory();
+      API.post('/config', { key: 'ui.show_hidden', value: next }).catch(err => {
+        // Persisting the setting failed — revert the (already-applied) local
+        // state and re-refresh so the listing matches what's actually saved.
+        browserState.showHidden = !next;
+        if (window.__fpConfig) window.__fpConfig['ui.show_hidden'] = !next;
+        showToast(`Failed to save setting: ${formatApiError(err)}`, 'error');
+        refreshDirectory();
+      });
       break;
     }
     case 'cm-view-list':
