@@ -418,6 +418,10 @@ async def undo_operation(conn, op_id: int, *, batch_id: str | None = None) -> di
         if t == "move":
             result = await move(conn, dest, Path(src).parent, batch_id=batch_id, on_conflict="keep-both",
                                 reason=f"undo of #{op_id}", _undo_of=op_id)
+            if (result["status"] == "done" and Path(result["dest"]).name != Path(src).name
+                    and not Path(src).exists()):
+                result = await rename(conn, result["dest"], Path(src).name, batch_id=batch_id,
+                                      reason=f"undo of #{op_id}", _undo_of=op_id)
         else:
             result = await rename(conn, dest, Path(src).name, batch_id=batch_id, reason=f"undo of #{op_id}", _undo_of=op_id)
     elif t == "trash":
@@ -448,6 +452,6 @@ async def undo_batch(conn, batch_id: str) -> dict:
         try:
             res = await undo_operation(conn, r["id"], batch_id=new_batch_id)
             out["ops"].append(res)
-        except (RefusedError, ConflictError, _config.OutOfSandboxError, _config.ProtectedPathError, OSError) as exc:
+        except (InvalidNameError, RefusedError, ConflictError, _config.OutOfSandboxError, _config.ProtectedPathError, OSError) as exc:
             out["errors"].append({"op_id": r["id"], "error": f"{type(exc).__name__}: {exc}"})
     return out

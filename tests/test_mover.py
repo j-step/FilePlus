@@ -377,3 +377,29 @@ async def test_move_conflict_no_batch_id_when_minted(conn, sandbox):
     r = await mover.move(conn, sandbox / "a/f.txt", sandbox / "b")  # fail policy, no batch_id passed in
     assert r["status"] == "conflict" and r["batch_id"] is None
     assert await ol.list_operations(conn) == []
+
+
+async def test_undo_move_keep_both_restores_original_name(conn, sandbox):
+    src = _mk(sandbox, "u/a.txt", "A")
+    dst = sandbox / "v"; dst.mkdir()
+    _mk(sandbox, "v/a.txt", "already here")  # forces keep-both on the forward move
+    r = await mover.move(conn, src, dst, on_conflict="keep-both")
+    landed = Path(r["dest"])
+    assert r["status"] == "done" and landed.name == "a (2).txt"
+    inv = await mover.undo_operation(conn, r["op_id"])
+    assert inv["status"] == "done"
+    assert (sandbox / "u" / "a.txt").exists() and (sandbox / "u" / "a.txt").read_text() == "A"
+    assert not landed.exists()
+
+
+async def test_undo_batch_catches_invalid_name_error(conn, sandbox, monkeypatch):
+    a = _mk(sandbox, "ia.txt"); (sandbox / "dst2").mkdir()
+    res = await mover.batch_move(conn, [a], sandbox / "dst2")
+    op_id = res["ops"][0]["op_id"]
+
+    async def _boom(*args, **kwargs):
+        raise mover.InvalidNameError("bad name")
+    monkeypatch.setattr(mover, "undo_operation", _boom)
+    out = await mover.undo_batch(conn, res["batch_id"])
+    assert out["ops"] == [] and len(out["errors"]) == 1
+    assert "InvalidNameError" in out["errors"][0]["error"]
