@@ -101,7 +101,7 @@ def test_fs_list_root_returns_sandbox(client, sandbox):
 
 
 def test_stub_routes_report_not_implemented(client):
-    """/files/{id}/tags is still a stub (replaced again in Task 8); operations routes are now real."""
-    assert client.post("/files/1/tags").json() == {"status": "not_implemented"}
+    """/files/{id}/tags is real now (Task 8): unknown file id -> 404."""
+    assert client.post("/files/999/tags", json={"name": "work"}).status_code == 404
     assert client.get("/operations").json() == []
     assert client.post("/operations/999/undo").status_code == 409

@@ -6,8 +6,10 @@ All business logic lives here; the renderer never touches the filesystem directl
 import asyncio
 import ctypes
 import logging
+import mimetypes
 import os
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -15,15 +17,15 @@ import aiosqlite
 import psutil
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 from typing import Any
 
 import backend.config as _config
 from backend.config import OutOfSandboxError, ProtectedPathError, path_guard
 from backend.database import init_db
-from backend.indexer import scan_directory, remove_stale_entries
-from backend import mover, operations_log as ol, stores
+from backend.indexer import index_file, scan_directory, remove_stale_entries
+from backend import mover, operations_log as ol, stores, tagger
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +80,45 @@ def _db():
 
 
 # ---------------------------------------------------------------------------
+# Human-readable "kind" by extension, for /file
+# ---------------------------------------------------------------------------
+
+KIND_BY_EXT = {
+    ".md": "Markdown", ".txt": "Text", ".py": "Python source", ".js": "JavaScript",
+    ".json": "JSON", ".pdf": "PDF document",
+    ".png": "Image", ".jpg": "Image", ".jpeg": "Image", ".gif": "Image",
+    ".webp": "Image", ".bmp": "Image", ".svg": "Image", ".ico": "Image",
+    ".mp3": "Audio", ".wav": "Audio", ".flac": "Audio", ".m4a": "Audio", ".ogg": "Audio",
+    ".mp4": "Video", ".mkv": "Video", ".mov": "Video", ".avi": "Video",
+    ".zip": "Archive", ".7z": "Archive", ".rar": "Archive", ".tar": "Archive", ".gz": "Archive",
+    ".exe": "Application", ".msi": "Application",
+    ".docx": "Word document", ".xlsx": "Excel workbook", ".pptx": "PowerPoint",
+}
+
+
+def _kind_for(path: Path) -> str:
+    if path.is_dir():
+        return "Folder"
+    ext = path.suffix.lower()
+    if ext in KIND_BY_EXT:
+        return KIND_BY_EXT[ext]
+    return f"{ext[1:].upper()} file" if ext else "File"
+
+
+# ---------------------------------------------------------------------------
+# Preview extension sets
+# ---------------------------------------------------------------------------
+
+_PREVIEW_TEXT_EXTS = {
+    "md", "txt", "py", "js", "ts", "json", "yaml", "yml", "toml", "csv", "log", "ini",
+    "xml", "html", "css", "sh", "ps1", "c", "cpp", "h", "rs", "go", "java", "kt", "swift",
+    "rb", "php", "sql", "bat", "cmd",
+}
+_PREVIEW_IMAGE_EXTS = {"png", "jpg", "jpeg", "gif", "webp", "bmp", "svg", "ico"}
+_PREVIEW_MAX_IMAGE_BYTES = 25 * 1024 * 1024
+
+
+# ---------------------------------------------------------------------------
 # Health check
 # ---------------------------------------------------------------------------
 
@@ -109,6 +150,8 @@ async def health() -> dict:
 async def list_files(
     path: Optional[str] = Query(None, description="Filter to files whose path starts with this prefix"),
     q: Optional[str] = Query(None, description="Substring search on filename"),
+    limit: Optional[int] = Query(None),
+    offset: int = Query(0),
 ):
     """Return all indexed files, optionally filtered by path prefix and/or filename search."""
     conditions = []
@@ -121,9 +164,84 @@ async def list_files(
         params.append(f"%{q}%")
     where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
     sql = f"SELECT id, path, filename, extension, size, modified, category, status, is_pinned FROM files {where} ORDER BY filename COLLATE NOCASE"
+    if limit is not None:
+        sql += " LIMIT ? OFFSET ?"
+        params += [limit, offset]
     async with aiosqlite.connect(_config.FILEPLUS_DB_PATH) as conn:
         conn.row_factory = aiosqlite.Row
         cur = await conn.execute(sql, params)
+        rows = await cur.fetchall()
+    return [dict(row) for row in rows]
+
+
+@app.get("/file")
+async def file_meta(path: str = Query(..., description="Absolute path of the file")):
+    """Return DB metadata for a single file, indexing it on demand if unseen.
+
+    Unlike /files/{id}, this is addressed by filesystem path (what the
+    Inspector has on hand) rather than DB id.
+    """
+    resolved = path_guard(Path(path), "read")
+    if not resolved.exists():
+        raise HTTPException(status_code=404, detail=f"Not found: {path}")
+    async with _db() as conn:
+        conn.row_factory = aiosqlite.Row
+        cur = await conn.execute("SELECT * FROM files WHERE path = ?", (str(resolved),))
+        row = await cur.fetchone()
+        if row is None:
+            await index_file(resolved, conn, hash=True)
+            await conn.commit()
+            cur = await conn.execute("SELECT * FROM files WHERE path = ?", (str(resolved),))
+            row = await cur.fetchone()
+        data = dict(row)
+        data["tags"] = await tagger.get_tags(conn, data["id"])
+    data["kind"] = _kind_for(resolved)
+    return data
+
+
+@app.get("/preview")
+async def preview(path: str = Query(..., description="Absolute path of the file")):
+    """Return a lightweight preview: text snippet, an image response, or a binary marker."""
+    resolved = path_guard(Path(path), "read")
+    if not resolved.exists():
+        raise HTTPException(status_code=404, detail=f"Not found: {path}")
+    if resolved.is_dir():
+        raise HTTPException(status_code=400, detail=f"Not a file: {path}")
+    ext = resolved.suffix.lower().lstrip(".")
+    size = resolved.stat().st_size
+    if ext in _PREVIEW_IMAGE_EXTS:
+        if size > _PREVIEW_MAX_IMAGE_BYTES:
+            return {"kind": "too-large"}
+        media_type = mimetypes.guess_type(str(resolved))[0] or "application/octet-stream"
+        return FileResponse(str(resolved), media_type=media_type)
+    if ext in _PREVIEW_TEXT_EXTS:
+        raw = resolved.read_bytes()
+        content = raw[:4096].decode("utf-8", errors="replace")
+        return {"kind": "text", "content": content, "truncated": size > 4096, "total_size": size}
+    return {"kind": "binary", "size": size}
+
+
+@app.get("/files/history")
+async def files_history(path: str = Query(..., description="Absolute path to look up operation history for")):
+    """Return the operations_log rows touching *path*, most recent first.
+
+    Registered before /files/{file_id} so "history" is never swallowed as an
+    (invalid) integer file id.
+    """
+    resolved = path_guard(Path(path), "read")
+    async with _db() as conn:
+        return await ol.list_operations(conn, path=str(resolved))
+
+
+@app.get("/search")
+async def search_files(q: str = Query(..., description="Substring to match against filename or path"), limit: int = Query(50)):
+    async with _db() as conn:
+        conn.row_factory = aiosqlite.Row
+        cur = await conn.execute(
+            "SELECT id, path, filename, extension, size, modified, hash FROM files "
+            "WHERE filename LIKE ? OR path LIKE ? ORDER BY filename COLLATE NOCASE LIMIT ?",
+            (f"%{q}%", f"%{q}%", limit),
+        )
         rows = await cur.fetchall()
     return [dict(row) for row in rows]
 
@@ -274,15 +392,63 @@ async def drives():
 
 class ScanRequest(BaseModel):
     path: Optional[str] = None
+    hash: bool = True
 
 
 @app.post("/scan")
 async def trigger_scan(body: Optional[ScanRequest] = None):
     """Index a directory. Uses FILEPLUS_SANDBOX_PATH when no path is provided."""
     root = Path(body.path) if (body and body.path) else _config.FILEPLUS_SANDBOX_PATH
-    count = await scan_directory(root)
+    do_hash = body.hash if body else True
+    count = await scan_directory(root, hash=do_hash)
     stale = await remove_stale_entries()
     return {"count": count, "stale_removed": stale, "path": str(root)}
+
+
+# ---------------------------------------------------------------------------
+# Quick index — background scan without hashing
+# ---------------------------------------------------------------------------
+
+class IndexRequest(BaseModel):
+    path: str
+
+
+async def _run_index(path: Path) -> None:
+    try:
+        count = await scan_directory(path, hash=False)
+        await remove_stale_entries()
+        app.state.index_state["count"] = count
+    except Exception as exc:
+        app.state.index_state["error"] = str(exc)
+        logger.exception("Quick index of %s failed", path)
+    finally:
+        app.state.index_state["running"] = False
+
+
+@app.post("/index")
+async def start_index(body: IndexRequest):
+    """Kick off a background, non-hashing scan of *path*.
+
+    Refused with 403 for a protected system root (reads are otherwise
+    allowed everywhere, so this is an explicit check rather than relying on
+    path_guard's write-mode rules) and with 409 while another index runs.
+    """
+    resolved = path_guard(Path(body.path), "read")
+    if any(_config.is_under(resolved, root) for root in _config.PROTECTED_WRITE_ROOTS):
+        raise HTTPException(status_code=403, detail="system folders are not indexed")
+    if app.state.index_state["running"]:
+        raise HTTPException(status_code=409, detail="An index is already running")
+    app.state.index_state.update({
+        "running": True, "path": str(resolved), "count": 0,
+        "started": datetime.now(timezone.utc).isoformat(timespec="seconds"), "error": None,
+    })
+    asyncio.create_task(_run_index(resolved))
+    return {"started": True}
+
+
+@app.get("/index/status")
+async def index_status():
+    return app.state.index_state
 
 
 # ---------------------------------------------------------------------------
@@ -290,18 +456,50 @@ async def trigger_scan(body: Optional[ScanRequest] = None):
 # ---------------------------------------------------------------------------
 
 @app.get("/tags")
-async def list_tags():
-    async with aiosqlite.connect(_config.FILEPLUS_DB_PATH) as conn:
+async def list_tags(q: Optional[str] = Query(None), limit: int = Query(10)):
+    async with _db() as conn:
+        if q:
+            return await tagger.search_tags(conn, q, limit)
         conn.row_factory = aiosqlite.Row
         cur = await conn.execute("SELECT * FROM tags ORDER BY name COLLATE NOCASE")
         rows = await cur.fetchall()
     return [dict(row) for row in rows]
 
 
+class TagAdd(BaseModel):
+    name: str
+
+
+async def _require_file(conn, file_id: int) -> None:
+    cur = await conn.execute("SELECT 1 FROM files WHERE id = ?", (file_id,))
+    if await cur.fetchone() is None:
+        raise HTTPException(status_code=404, detail=f"File not found: {file_id}")
+
+
+@app.get("/files/{file_id}/tags")
+async def get_file_tags(file_id: int):
+    async with _db() as conn:
+        await _require_file(conn, file_id)
+        return await tagger.get_tags(conn, file_id)
+
+
 @app.post("/files/{file_id}/tags")
-async def add_tag(file_id: int):
-    # TODO: implement — Phase 2 (tagger)
-    return {"status": "not_implemented"}
+async def add_file_tag(file_id: int, body: TagAdd):
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Tag name must not be empty")
+    async with _db() as conn:
+        await _require_file(conn, file_id)
+        tag_ids = await tagger.apply_tags(conn, file_id, [name])
+    return {"status": "ok", "tag_ids": tag_ids}
+
+
+@app.delete("/files/{file_id}/tags/{tag_id}")
+async def delete_file_tag(file_id: int, tag_id: int):
+    async with _db() as conn:
+        await _require_file(conn, file_id)
+        await tagger.remove_tag(conn, file_id, tag_id)
+    return {"status": "ok"}
 
 
 # ---------------------------------------------------------------------------
