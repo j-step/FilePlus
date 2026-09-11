@@ -50,8 +50,8 @@ April "one fix at a time" rule is retired (D10).
 ## Frontend traps (load-bearing, learned the hard way)
 
 - Click dispatch is the `switch` in `frontend/src/app.js` (`document.addEventListener('click', …)`).
-  `actions.js` exports an `ACTION_MAP` that nothing calls; helpers there are fine, the registry is dead.
-  Stage 2 decides its fate.
+  `actions.js` defines an `ACTIONS` registry that nothing iterates or dispatches through; helpers there are
+  fine, the registry itself is dead. Stage 2 decides its fate.
 - `index.html` loads `actions.js` before `app.js`; both define `showSnackbar`/`showToast` and the later
   (app.js) binding wins. Use app.js's signature `showSnackbar(msg, 'Undo', fn)`.
 - Snackbars/toasts are gated by `localStorage['fp-notifications-enabled']` (default off). Only
