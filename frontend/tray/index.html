@@ -366,7 +366,7 @@
   <!-- Title + subtitle -->
   <div class="tray-header__titles">
     <span class="tray-header__title">Recent downloads</span>
-    <!-- INTEGRATION: subtitle shows active Everything Folder path from GET /api/config -->
+    <!-- INTEGRATION: subtitle shows active Everything Folder path from GET /config -->
     <span class="tray-header__subtitle">C:\Users\Me\Downloads</span>
   </div>
 
@@ -375,7 +375,7 @@
     <!-- Review Bin with approval count badge -->
     <button class="tray-icon-btn fp-icon-btn" id="btn-tray-review-bin" title="Review Bin" data-action="tray-open-review-bin">
       <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M2 4h10M2 7h7M2 10h5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
-      <!-- INTEGRATION: badge count from GET /api/review-bin/count -->
+      <!-- INTEGRATION: badge count from GET /review-bin/count -->
       <span class="tray-badge" id="tray-rb-badge">3</span>
     </button>
     <!-- Everything Folder -->
@@ -431,7 +431,7 @@
      FILE LIST (A.14.3-4) — 32px rows, 16×16 icons, 6px state dots
      ═══════════════════════════════════════════════════════ -->
 <main class="tray-list" id="tray-list" role="list">
-  <!-- INTEGRATION: list populated from GET /api/recent or GET /api/favorites -->
+  <!-- INTEGRATION: list populated from GET /recent or GET /favorites -->
 
   <!-- Row: settled (no dot) -->
   <div class="tray-row selected" role="listitem" data-path="C:\Dev\FilePlus\design-brief.md" data-action="tray-select-row">
@@ -512,7 +512,7 @@
      ═══════════════════════════════════════════════════════ -->
 <!-- Hidden by default; shown when files are actively being moved -->
 <div class="tray-moving" id="tray-moving-card" style="display:none">
-  <!-- INTEGRATION: data from GET /api/mover/status -->
+  <!-- INTEGRATION: data from GET /mover/status -->
   <div class="tray-moving__header">
     <span class="tray-moving__title">Currently moving</span>
     <span class="tray-moving__count" id="tray-moving-count">3 of 12 files</span>
@@ -571,89 +571,6 @@
   <div class="cm-item cm-item--danger" role="menuitem" data-action="tray-remove-from-list">Remove from list</div>
 </div>
 
-<script>
-  const api = window.electronAPI;
-
-  // ── IPC handlers ──────────────────────────────────────────
-  document.getElementById('btn-tray-close')?.addEventListener('click', () => api?.hideTray?.());
-  document.getElementById('btn-tray-open-main')?.addEventListener('click', () => api?.openMain?.());
-
-  // ── Tab switching ─────────────────────────────────────────
-  document.addEventListener('click', e => {
-    const btn = e.target.closest('[data-action]');
-    if (!btn) return;
-    const action = btn.dataset.action;
-
-    switch (action) {
-      case 'tray-switch-tab': {
-        document.querySelectorAll('[data-action="tray-switch-tab"]').forEach(b => {
-          b.classList.toggle('active', b === btn);
-          b.setAttribute('aria-selected', b === btn ? 'true' : 'false');
-        });
-        // INTEGRATION: swap list content for recent vs favorites
-        break;
-      }
-      case 'tray-select-row': {
-        const row = btn.closest('.tray-row');
-        document.querySelectorAll('.tray-row').forEach(r => r.classList.remove('selected'));
-        row?.classList.add('selected');
-        break;
-      }
-      case 'tray-open-main':
-        api?.openMain?.();
-        break;
-      case 'tray-open-review-bin':
-        api?.openMain?.();
-        // INTEGRATION: navigate main window to Review Bin screen
-        break;
-      case 'tray-open-everything':
-        api?.openMain?.();
-        // INTEGRATION: navigate main window to Everything Folder screen
-        break;
-      case 'tray-toggle-pause-ai': {
-        btn.classList.toggle('tray-icon-btn--active');
-        // INTEGRATION: POST /api/ai/pause
-        break;
-      }
-      case 'tray-expand':
-        api?.expandTray?.();
-        break;
-      case 'tray-close':
-        api?.hideTray?.();
-        break;
-      case 'tray-toggle-moving': {
-        const card = document.getElementById('tray-moving-card');
-        // INTEGRATION: toggle collapsed state
-        break;
-      }
-      case 'tray-open-settings':
-        api?.openMain?.();
-        // INTEGRATION: navigate to settings screen
-        break;
-      case 'tray-search':
-        api?.openMain?.();
-        // INTEGRATION: open command palette
-        break;
-    }
-  });
-
-  // ── Context menu ──────────────────────────────────────────
-  const ctxMenu = document.getElementById('tray-context-menu');
-  document.querySelectorAll('.tray-row').forEach(row => {
-    row.addEventListener('contextmenu', e => {
-      e.preventDefault();
-      ctxMenu.style.display = '';
-      ctxMenu.style.left = e.clientX + 'px';
-      ctxMenu.style.top  = e.clientY + 'px';
-      ctxMenu.setAttribute('aria-hidden', 'false');
-    });
-  });
-  document.addEventListener('click', e => {
-    if (!ctxMenu.contains(e.target)) {
-      ctxMenu.style.display = 'none';
-      ctxMenu.setAttribute('aria-hidden', 'true');
-    }
-  });
-</script>
+<script src="tray.js"></script>
 </body>
 </html>

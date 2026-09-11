@@ -80,7 +80,7 @@
   /* ---------- Text ---------- */
   --text-primary:   #F2EDE8;
   --text-secondary: #A39BAE;
-  --text-tertiary:  #6B6478;
+  --text-tertiary:  #7C7488;  /* lifted from #6B6478 — was 2.1–3.1:1 on surfaces; now ≥3:1 everywhere */
   --text-on-accent: #1A1015;
   --text-on-good:   #0F2E18;
   --text-on-bad:    #3D0F0D;
@@ -93,6 +93,7 @@
   --bad-wash: rgba(224, 138, 134, 0.10);
   --bad-edge: rgba(224, 138, 134, 0.40);
   --warn: #E8C56B;
+  --warn-rgb: 232 197 107;  /* space-separated for rgb(var() / alpha) usage */
   --warn-wash: rgba(232, 197, 107, 0.10);
   --warn-edge: rgba(232, 197, 107, 0.40);
 
@@ -206,7 +207,7 @@
 
   --text-primary:   #1F1A22;
   --text-secondary: #5D5466;
-  --text-tertiary:  #9A93A4;
+  --text-tertiary:  #857D92;  /* lifted from #9A93A4 — was ~2.8:1 on light content; now ≥3.6:1 */
 
   --border-hairline: rgba(0, 0, 0, 0.06);
   --border-subtle:   rgba(0, 0, 0, 0.09);
@@ -461,6 +462,37 @@ svg { flex-shrink: 0; }
   text-transform: uppercase;
   color: var(--text-tertiary);
   padding: var(--s-14) var(--s-8) var(--s-6);
+}
+
+/* Group separation between sidebar sections (Quick Access / Tree / Tags /
+   System). Specificity beats the collapsed-mode margin reset on purpose:
+   collapsed labels are invisible spacers and keep this same rhythm. */
+.fp-sidebar__scroll > .fp-sidebar__section-label:not(:first-child) {
+  margin-top: var(--s-8);
+}
+
+#sb-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-4);
+  padding: 0 var(--s-8) var(--s-4);
+}
+
+/* Accent dot on AI-organised drive rows */
+.fp-sidebar__drive-ai-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--r-pill);
+  background: var(--accent);
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+/* "View all" ghost button sized to sit in the tag chip cloud */
+.fp-btn.fp-sidebar__tags-more {
+  height: var(--h-chip);
+  padding: 0 var(--s-6);
+  font: 500 var(--t-small) var(--font-ui);
 }
 
 .fp-sidebar__item {
@@ -991,7 +1023,8 @@ svg { flex-shrink: 0; }
   padding: 0 12px;
   border: 1px solid transparent;
   border-radius: var(--r-button);
-  font: var(--t-body);
+  font: 500 var(--t-body) var(--font-ui);
+  letter-spacing: var(--track-button);
   cursor: pointer;
   user-select: none;
   transition: transform var(--dur-flash) var(--ease-snap),
@@ -1259,11 +1292,12 @@ svg { flex-shrink: 0; }
   color: var(--text-secondary);
   border: 1px solid var(--border-subtle);
   border-radius: var(--r-chip);
-  font: var(--t-data);
+  font: 500 var(--t-small) var(--font-mono);
   user-select: none;
   white-space: nowrap;
 }
 .fp-chip svg, .fp-chip .icon { width: 10px; height: 10px; }
+.fp-chip__count { color: var(--text-tertiary); }
 
 .fp-chip--active {
   background: var(--accent-wash);
@@ -1327,7 +1361,7 @@ svg { flex-shrink: 0; }
   color: var(--text-secondary);
   border: none;
   border-radius: var(--r-button);
-  font: var(--t-body);
+  font: 500 var(--t-body) var(--font-ui);
   cursor: pointer;
   position: relative;
   z-index: 1;
@@ -1475,7 +1509,7 @@ svg { flex-shrink: 0; }
   border: 1px solid var(--border-subtle);
   border-radius: var(--r-button);
   box-shadow: var(--inset-recess);
-  font: var(--t-body);
+  font: 500 var(--t-body) var(--font-ui);
   transition: border-color var(--dur-fast) var(--ease-out),
               box-shadow var(--dur-fast) var(--ease-out);
 }
@@ -1503,7 +1537,7 @@ svg { flex-shrink: 0; }
   display: block;
   margin-top: 4px;
   color: var(--bad);
-  font: var(--t-caption);
+  font: 400 var(--t-small) var(--font-ui);
 }
 
 /* === fp-kbd-pill === */
@@ -1918,7 +1952,8 @@ svg { flex-shrink: 0; }
   margin-bottom: 12px;
 }
 .fp-modal__title {
-  font: 600 var(--t-headline) var(--font-ui);
+  font: 600 var(--t-display-sm) var(--font-ui);
+  letter-spacing: var(--track-display);
   color: var(--text-primary);
 }
 .fp-modal__body {
@@ -2849,6 +2884,15 @@ svg { flex-shrink: 0; }
   min-width: 0;
   overflow: hidden;
   background: var(--bg-content);
+}
+
+/* Content row: hosts the .screens stack + the global resizer + inspector
+   that lives outside any single screen so it's available across screens. */
+.content-row {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
 }
 
 /* =============================================================================
@@ -4637,12 +4681,12 @@ button.fp-pill:hover {
 /* Recent file rows have inline path + time + hover actions */
 .fp-row--recent {
   display: grid;
-  grid-template-columns: 16px 1fr minmax(0, 160px) 120px auto auto;
+  grid-template-columns: 16px 1fr minmax(0, 160px) 120px auto;
   gap: var(--s-8);
   padding: 0 var(--s-14);
 }
 .fp-row--recent:hover { background: var(--bg-raised); box-shadow: var(--highlight-top); }
-.fp-row--recent:hover .fp-row__hover-actions { opacity: 1 !important; pointer-events: all !important; }
+.fp-row--recent:hover .fp-row__hover-actions { opacity: 1; pointer-events: all; }
 .fp-row--recent.fp-row--selected {
   background: var(--accent-wash);
 }
@@ -4681,11 +4725,83 @@ button.fp-pill:hover {
   flex-shrink: 0;
   opacity: 0;
   pointer-events: none;
+  position: absolute;
+  right: var(--s-8);
+  top: 50%;
+  transform: translateY(-50%);
+  transition: opacity var(--dur-fast) var(--ease-out);
 }
 /* Favorites star (right-most icon button on a Favorites row) */
 .fp-row__fav-star {
   flex-shrink: 0;
   color: var(--accent);
+}
+/* Unfavoriting fade-out (JS adds this class then removes the row after var(--dur-slide)) */
+.fp-row--unfavoriting {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--dur-slide) var(--ease-out);
+}
+
+/* ── Home grid view (toolbar's segmented control flips data-view) ─────────── */
+.home-pane[data-view="grid"] .home-section {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: var(--s-8);
+  padding: var(--s-12) var(--s-20) var(--s-8);
+}
+.home-pane[data-view="grid"] .home-section__head {
+  grid-column: 1 / -1;
+  margin-bottom: 0;
+}
+.home-pane[data-view="grid"] .fp-row--recent {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  grid-template-columns: none;
+  height: auto;
+  min-height: 110px;
+  padding: var(--s-12) var(--s-8);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-card);
+  background: var(--bg-raised);
+  box-shadow: var(--highlight-top), var(--shadow-card);
+}
+.home-pane[data-view="grid"] .fp-row--recent:hover {
+  background: var(--bg-pressed);
+}
+.home-pane[data-view="grid"] .fp-row--recent.fp-row--selected {
+  background: var(--accent-wash);
+  border-color: var(--accent-edge);
+}
+.home-pane[data-view="grid"] .fp-row--recent.fp-row--selected::before {
+  display: none;
+}
+.home-pane[data-view="grid"] .fp-row__icon {
+  width: 40px;
+  height: 40px;
+}
+.home-pane[data-view="grid"] .fp-row__icon svg {
+  width: 40px;
+  height: 40px;
+}
+.home-pane[data-view="grid"] .fp-row__name {
+  font: 500 var(--t-compact) var(--font-ui);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  white-space: normal;
+}
+.home-pane[data-view="grid"] .fp-row__recent-path,
+.home-pane[data-view="grid"] .fp-row__recent-time,
+.home-pane[data-view="grid"] .fp-row__tags,
+.home-pane[data-view="grid"] .fp-row__hover-actions,
+.home-pane[data-view="grid"] .fp-row__fav-star {
+  display: none;
 }
 
 /* ══════════════════════════════════════════════════════════════════════════════

@@ -545,6 +545,10 @@ function setViewMode(mode) {
       listScroll.style.opacity = '';
     });
   }
+  // Home — Recent and Favorites panes share the same view-mode toggle
+  document.querySelectorAll('.home-pane').forEach(pane => {
+    pane.dataset.view = mode;
+  });
   sessionStorage.setItem('fp-view-mode', mode);
 }
 
@@ -1464,13 +1468,21 @@ function initWindowControls() {
   document.getElementById('btn-close')?.addEventListener('click', () => api.close?.());
 }
 
-// ── Home > Recent: hide empty time-group sections ─────────────────────────────
-// Each .home-section renders only when it has at least one .fp-row--recent.
-// Order is preserved (Today → Yesterday → This week → Earlier this month →
-// Older); the first non-empty group naturally lands at the top.
+// ── Home > Recent/Favorites: prune empty sections + toggle empty states ───────
+// Each .home-section in Recent renders only when it has at least one
+// .fp-row--recent. Order is preserved (Today → Yesterday → This week →
+// Earlier this month → Older); the first non-empty group naturally lands at
+// the top. Additionally, .fp-empty-state[data-empty-for="recent"|"favorites"]
+// elements toggle visible iff their pane has zero .fp-row--recent rows.
 function pruneEmptyHomeSections() {
   document.querySelectorAll('.home-pane[data-pane="recent"] .home-section').forEach(s => {
     s.style.display = s.querySelector('.fp-row--recent') ? '' : 'none';
+  });
+  document.querySelectorAll('.fp-empty-state.home-pane__empty[data-empty-for]').forEach(es => {
+    const key  = es.dataset.emptyFor;
+    const pane = document.querySelector(`.home-pane[data-pane="${key}"]`);
+    const empty = !!pane && !pane.querySelector('.fp-row--recent');
+    es.style.display = empty ? '' : 'none';
   });
 }
 
@@ -1522,6 +1534,7 @@ const IN_SCOPE_ACTIONS = new Set([
   'nav-back', 'nav-forward', 'nav-up', 'navigate-crumb',
   'open-review-bin',
   'switch-inspector-tab',
+  'unfavorite-file', 'open-recent-file',
   'open-palette', 'close-palette', 'palette-set-mode',
   'modal-cancel', 'modal-confirm', 'modal-confirm-type',
   'ef-filter', 'ef-sort', 'ef-toggle-pause-ai', 'ef-toggle-moving-card',
@@ -1717,6 +1730,25 @@ document.addEventListener('click', e => {
       inspector?.querySelectorAll('.fp-inspector__pane').forEach(p => {
         p.style.display = p.dataset.pane === btn.dataset.tab ? '' : 'none';
       });
+      break;
+    }
+    case 'unfavorite-file':
+      unfavoriteFile(btn);
+      break;
+    case 'open-recent-file': {
+      const row = btn;
+      const path = row.dataset.path || '';
+      const name = row.querySelector('.fp-row__name')?.textContent?.trim()
+                || path.split(/[\\/]/).pop() || '';
+      const pane = row.closest('.home-pane');
+      pane?.querySelectorAll('.fp-row--selected').forEach(r => {
+        if (r !== row) r.classList.remove('fp-row--selected');
+      });
+      row.classList.add('fp-row--selected');
+      // Populate + open the global inspector. INTEGRATION: real meta/preview
+      // data per backend-integration.md §A.2.1 item 2 (time-label formatter)
+      // and §A.3 (file/info, file/preview, file/hash).
+      updateInspector('single', { name, path });
       break;
     }
     default:
@@ -1972,7 +2004,8 @@ document.addEventListener('DOMContentLoaded', () => {
   restoreSidebarState();
   initToolbarResponsive();
   checkBackend();
-  setInterval(checkBackend, 30_000);
+  const _backendPollId = setInterval(checkBackend, 30_000);
+  window.addEventListener('beforeunload', () => clearInterval(_backendPollId), { once: true });
 
   // NOTE: sidebar-collapse and theme-toggle are wired via data-action delegation
   // (see the click switch above). Direct addEventListener calls were removed
@@ -2034,9 +2067,11 @@ document.addEventListener('DOMContentLoaded', () => {
   // Restore persisted settings (theme, density, accent, font scale)
   restoreSettings();
 
-  // Restore last active screen
-  const last = sessionStorage.getItem('fp-active-screen') || 'home';
-  switchScreen(last);
+  // Always start on Home — the previous "restore last active screen"
+  // behaviour landed users on whatever they last visited (often Browser),
+  // which was disorienting on cold start. Tabs preserve their own state
+  // through `switchToTab()`; this only sets the initial paint.
+  switchScreen('home');
 
   // ── A.17 Edge case INTEGRATION stubs ──────────────────────────────────────
   // #2  External folder missing on navigation → show fp-error-banner "This folder no longer exists"

@@ -67,10 +67,15 @@ fileplus/
 
 ## Current State
 
-Phase 1 complete: hasher, indexer, database schema implemented and tested (18/18 passing).
-
----
+- **Backend:** Phase 1 complete (hasher, indexer, database schema; 18/18 tests passing). Phase 3 partially done — `backend/api.py` ships `/health`, `/files`, `/files/{id}`, `/fs/list`, `/fs/list/root`, `/scan`, `/tags`. Phase 2 modules (`tagger.py`, `classifier.py`) are still stubs.
+- **Frontend:** Global chrome polished (titlebar, tab bar, sidebar, toolbar, status bar). Home + Browser screens partially live. All other screens are HTML stubs with placeholder data.
+- **Integration:** `POST /scan` calls the indexer and returns count; `GET /files` and `GET /fs/list` are wired. Inspector opens on row click but most fields are placeholders.
+- **Tests:** 18/18 passing (indexer + hasher + config). No tests for API or frontend yet.
 
 ## Next Task
 
-Phase 2 per PLAN.md: tagger.py (metadata extraction via Pillow / mutagen / python-magic-bin).
+Two reasonable orderings exist:
+1. **Finish Phase 2** (`tagger.py` then `classifier.py`) so the scan pipeline produces real categories and tags. Recommended if the next visible feature is real Inspector tags or the Review Bin.
+2. **Implement `operations_log.py` + `mover.py`** (Phase 10) so any file-touching action — drag-drop, right-click rename/delete, snapshot restore — is safe and undoable. Recommended if the next visible feature involves moving files.
+
+See [docs/backend-integration.md](docs/backend-integration.md) for the full per-screen backend feature list and [PLAN.md](PLAN.md) for phase definitions.

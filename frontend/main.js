@@ -37,7 +37,6 @@ function createWindow() {
 const ZOOM_STEPS   = [0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.33, 1.5, 1.75, 2.0];
 
 app.whenReady().then(() => {
-  const { ipcMain } = require('electron');
   ipcMain.on('win-minimize', () => mainWindow?.minimize());
   ipcMain.on('win-maximize', () => {
     if (mainWindow?.isMaximized()) mainWindow.unmaximize();
