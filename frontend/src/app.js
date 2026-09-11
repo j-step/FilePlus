@@ -2005,7 +2005,7 @@ document.addEventListener('contextmenu', e => {
 document.addEventListener('DOMContentLoaded', () => {
   // Restore theme from localStorage
   const savedTheme = localStorage.getItem('fp-theme');
-  if (savedTheme) document.documentElement.dataset.theme = savedTheme;
+  if (savedTheme) document.documentElement.dataset.theme = resolveTheme(savedTheme);
 
   initWindowControls();
   initResizer();

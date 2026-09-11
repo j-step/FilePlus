@@ -62,12 +62,6 @@
   --border-strong:   #4A4D55;
 
   /* ---------- Elevation: flat. Borders do the work; overlays get one soft shadow ---------- */
-  --highlight-top:        none;
-  --highlight-top-strong: none;
-  --depth-bottom:         none;
-  --inset-recess:         none;
-  --inset-recess-strong:  none;
-  --pressed-shadow:       none;
   --shadow-raised:  0 0 0 1px var(--border-subtle);
   --shadow-card:    0 0 0 1px var(--border-subtle);
   --shadow-popover: 0 8px 24px rgba(0, 0, 0, 0.30);
@@ -4081,10 +4075,7 @@ svg { flex-shrink: 0; }
   position: relative;
   height: 28px;
   padding: 0 var(--s-8) 0 var(--s-10);
-  border-top-left-radius: 6px;
-  border-top-right-radius: 6px;
-  border-bottom-left-radius: 0;
-  border-bottom-right-radius: 0;
+  border-radius: var(--r-button) var(--r-button) 0 0;
   background: transparent;
   border: 1px solid transparent;
   border-bottom: none;

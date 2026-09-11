@@ -16,31 +16,7 @@ This document describes every screen, surface, overlay, and component in FilePlu
 
 ## A.0 Aesthetic baseline
 
-- Tool, not toy. Warm muted purple base with a single warm amber accent. Tactile chrome, flat content. Every chrome element combines border, inner highlight, and subtle shadow. File rows and data surfaces stay flat.
-- Multi-layered, subtle bevels on interactive elements. Buttons, cards, popovers, and the Approvals pill feel "convex" (light from above, subtle drop shadow). Text inputs and the search field feel "concave" (inset recess). File rows and content lists stay flat.
-- Blur is reserved for overlays only (modals, command palette, tooltips, popovers, tray popout). Panels, the sidebar, the toolbar, and file lists do not use blur.
-- Inter for UI, JetBrains Mono for paths, timestamps, file sizes, hashes, file counts, keyboard shortcuts, and tag chip text.
-- No emoji in UI chrome (file names rendered by the OS may show emoji).
-- Single accent: defaults to amber `#E8965E`. No gradient. The active accent value is read from a `--accent` CSS custom property; users may override it with a custom hex via Settings → Personalization (see §A.12.1). The same active accent value is used in both light and dark mode for identity consistency. Brand identity is the design language as a whole, not a single locked color.
-- Semantic state colors:
-  - Neutral / unprocessed: `text-tertiary` grey
-  - Active / in-progress / selected: `accent` (amber)
-  - Needs attention / low confidence: `warn` (muted gold)
-  - Success: `good` (muted green)
-  - Error / failed: `bad` (muted coral)
-- Border radius scale:
-  - 4px: chips, small badges
-  - 5px: icon buttons, file row selection bar
-  - 6px: standard buttons, search field, segmented control items, sidebar items
-  - 8px: cards, popovers, context menus, inspector panels
-  - 10px: modals, command palette, stat cards, window corners
-  - 12px: tray popout
-  - 999px: Approvals pill, status pills, toggle thumbs, avatars
-- Spacing base: 2px, working scale 2, 4, 6, 8, 10, 12, 14, 16, 20, 24, 32, 40, 48, 64.
-- Window: frameless custom titlebar, dark by default, light mode fully supported (warm cream, not pure white). Native Windows chrome is disabled.
-- **Reduced motion (`prefers-reduced-motion: reduce`):** Strictly applied. All animation collapses to instant EXCEPT the live-data sparkline on the Scan Progress screen (sparkline = data, not decoration). Specifically disabled under reduced-motion: tab-underline slide, sidebar active-pill slide, snackbar progress bar, drop-target scale, AI-just-filed border pulse, badge pulses, segmented-control active-pill slide, modal/popover open transitions.
-
-For the complete token set (color hex values, chrome composition formulas, typography scale, motion durations, icon sizing, audit checklist), reference the **FilePlus Design Tokens v2 spec** which accompanies this document. Any specific styling question not covered here is answered there.
+Visual style is specified in `superpowers/specs/2026-09-10-stage-1-redesign-design.md` (§3 tokens, §4 component treatments). This document specifies layout, sizing, density and behaviour only.
 
 ---
 

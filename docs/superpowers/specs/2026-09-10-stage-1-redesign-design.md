@@ -46,12 +46,12 @@ Borders become **solid hex**, not white/black alphas, so they render identically
 |---|---|---|
 | `--text-primary` | `#E7E8EA` | `#1D1E21` |
 | `--text-secondary` | `#A0A3AA` | `#5F6168` |
-| `--text-tertiary` | `#74777F` | `#8E9097` |
+| `--text-tertiary` | `#74777F` | `#82848B` |
 | `--text-on-accent` | `#062033` | `#FFFFFF` |
 | `--text-on-good` | `#0B2A14` | `#FFFFFF` |
 | `--text-on-bad` | `#2B0A0A` | `#FFFFFF` |
 
-Contrast floors (checked by `scripts/contrast_check.py`, §6): primary ≥ 7:1 on `--bg-content`; secondary ≥ 4.5:1 on `--bg-content` and `--bg-chrome`; tertiary ≥ 3:1 on `--bg-content`, `--bg-chrome` and `--bg-raised`; `--text-on-accent` ≥ 4.5:1 on `--accent`.
+Contrast floors (checked by `scripts/contrast_check.py`, §6): primary ≥ 7:1 on `--bg-content`; secondary ≥ 4.5:1 on `--bg-content` and `--bg-chrome`; tertiary ≥ 3:1 on `--bg-content`, `--bg-chrome` and `--bg-raised`; `--text-on-accent` ≥ 4.5:1 on `--accent`. (#8E9097 from board C failed the 3:1 floor on light chrome; corrected during Task 1.)
 
 ### 3.3 Accent and semantic
 
@@ -68,6 +68,8 @@ Contrast floors (checked by `scripts/contrast_check.py`, §6): primary ≥ 7:1 o
 | `--bad` / `--bad-wash` / `--bad-edge` | `#EF8A8A` / 10% / 40% | `#C73B3B` / same |
 | `--warn` / `--warn-wash` / `--warn-edge` | `#E6C465` / 10% / 40% | `#946200` / same |
 | `--warn-rgb` | `230 196 101` | `148 98 0` |
+
+`--accent-custom` is NOT declared in `:root` — an empty declaration (`--accent-custom: ;`) is a valid empty value and would make `var(--accent-custom, #hex)` resolve to nothing. The Settings override defines it at runtime via `style.setProperty`.
 
 Wash/edge tokens move to `color-mix` on the base token so a custom accent recolours them (this was already the rule for glow; it becomes the rule for everything).
 

@@ -60,8 +60,10 @@ April "one fix at a time" rule is retired (D10).
   `showToast(msg, 'error')` bypasses. No other exceptions.
 - Tab close affordance is `<span role="button">`, never a nested `<button>`. Per-tab screen state lives
   on `data-tab-screen`; `switchScreen(id)` mutates the active tab, `switchToTab(tab)` activates another.
-- Repeating visual treatments become tokens in `:root` of `styles.css`; accent-derived colours use
-  `color-mix(... var(--accent) ...)`, never hardcoded rgba.
+- Elevation is flat: borders (`--border-*`) do the work, overlays get one soft shadow
+  (`--shadow-popover`/`--shadow-modal`), nothing else casts or insets. Repeating treatments become
+  tokens in `:root`; accent-derived colours use `color-mix(... var(--accent) ...)`, never hardcoded
+  rgba. Style spec: `docs/superpowers/specs/2026-09-10-stage-1-redesign-design.md` §3–§4.
 
 ## Current state
 
