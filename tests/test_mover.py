@@ -1,4 +1,5 @@
 """mover: every mutation is guarded, logged before acting, and reversible."""
+import ctypes
 import os
 from pathlib import Path
 
@@ -26,13 +27,13 @@ def _mk(sandbox, rel, content="x"):
 
 # ---- names / helpers -------------------------------------------------------
 
-@pytest.mark.parametrize("bad", ["", "a/b", "a\\b", "con", "NUL", "COM1", "x.", "x ", "a:b", "a?b", ".", "..", "a\x00b"])
+@pytest.mark.parametrize("bad", ["", "a/b", "a\\b", "con", "NUL", "COM1", "x.", "x ", "a:b", "a?b", ".", "..", "a\x00b", "con.txt", "NUL.txt"])
 def test_validate_name_rejects(bad):
     with pytest.raises(mover.InvalidNameError):
         mover.validate_name(bad)
 
 
-@pytest.mark.parametrize("ok", ["a.txt", "Résumé (final).docx", "no-ext", "con.txt", ".hidden"])
+@pytest.mark.parametrize("ok", ["a.txt", "Résumé (final).docx", "no-ext", ".hidden"])
 def test_validate_name_accepts(ok):
     mover.validate_name(ok)
 
@@ -124,6 +125,62 @@ async def test_disk_space_refusal(conn, sandbox, monkeypatch):
     assert src.exists()
 
 
+async def test_move_replace_shares_batch(conn, sandbox):
+    _mk(sandbox, "a/f.txt", "new"); _mk(sandbox, "b/f.txt", "old")
+    r = await mover.move(conn, sandbox / "a/f.txt", sandbox / "b", on_conflict="replace")
+    assert r["status"] == "done" and r["batch_id"]
+    rows = await ol.list_batch(conn, r["batch_id"])
+    assert len(rows) == 2
+    assert {row["op_type"] for row in rows} == {"trash", "move"}
+
+
+async def test_move_same_directory_refused(conn, sandbox):
+    p = _mk(sandbox, "here/f.txt", "content")
+    with pytest.raises(mover.RefusedError):
+        await mover.move(conn, p, sandbox / "here", on_conflict="replace")
+    assert p.read_text() == "content"
+    assert await ol.list_operations(conn) == []
+
+
+async def test_replace_checks_space_before_trashing_target(conn, sandbox, monkeypatch):
+    _mk(sandbox, "a/f.txt", "new"); _mk(sandbox, "b/f.txt", "old")
+    monkeypatch.setattr(mover, "same_volume", lambda a, b: False)
+    monkeypatch.setattr(mover, "_free_bytes", lambda p: 0)
+    with pytest.raises(mover.RefusedError):
+        await mover.move(conn, sandbox / "a/f.txt", sandbox / "b", on_conflict="replace")
+    assert (sandbox / "b/f.txt").read_text() == "old"  # target untouched, not trashed
+    assert await ol.list_operations(conn) == []
+
+
+def test_move_fn_detects_race(sandbox):
+    src = _mk(sandbox, "race_src.txt")
+    dest = sandbox / "race_dest.txt"
+    dest.write_text("already here")
+    with pytest.raises(mover.ConflictError):
+        mover._move_fn(src, dest)()
+
+
+async def test_cross_volume_move_preserves_empty_dir(conn, sandbox, monkeypatch):
+    _mk(sandbox, "tree/a.txt", "A")
+    (sandbox / "tree" / "empty_sub").mkdir()
+    (sandbox / "dst2").mkdir()
+    monkeypatch.setattr(mover, "same_volume", lambda a, b: False)
+    r = await mover.move(conn, sandbox / "tree", sandbox / "dst2")
+    assert r["status"] == "done"
+    assert (sandbox / "dst2" / "tree" / "empty_sub").is_dir()
+
+
+def test_verify_copy_catches_missing_empty_dir(sandbox):
+    src = sandbox / "vsrc"
+    (src / "sub").mkdir(parents=True)
+    (src / "f.txt").write_text("x")
+    dest = sandbox / "vdst"
+    dest.mkdir()
+    (dest / "f.txt").write_text("x")  # dest is missing the empty "sub" directory
+    with pytest.raises(mover.RefusedError):
+        mover._verify_copy(src, dest)
+
+
 # ---- rename / mkdir / touch / copy ----------------------------------------
 
 async def test_rename(conn, sandbox):
@@ -155,6 +212,13 @@ async def test_copy_file_and_dir(conn, sandbox):
     assert (sandbox / "out/c/sub/b.txt").read_text() == "B"
 
 
+async def test_batch_move_skip_goes_to_skipped_not_ops(conn, sandbox):
+    _mk(sandbox, "a/dup.txt", "new"); _mk(sandbox, "b/dup.txt", "old")
+    res = await mover.batch_move(conn, [sandbox / "a/dup.txt"], sandbox / "b", on_conflict="skip")
+    assert res["ops"] == [] and res["conflicts"] == [] and len(res["skipped"]) == 1
+    assert (sandbox / "a/dup.txt").exists()  # untouched, truly skipped
+
+
 # ---- trash / restore / empty ----------------------------------------------
 
 async def test_trash_and_restore(conn, sandbox):
@@ -180,6 +244,8 @@ async def test_batch_trash_and_empty(conn, sandbox, monkeypatch):
     a = _mk(sandbox, "e1.txt"); b = _mk(sandbox, "e2.txt")
     res = await mover.batch_trash(conn, [a, b])
     assert len(res["ops"]) == 2 and res["batch_id"]
+    # not coupled to real drive letters: only the sandbox trash root is considered
+    monkeypatch.setattr(mover, "_known_trash_roots", lambda: [sandbox / _config.TRASH_DIRNAME])
     sent = []
     monkeypatch.setattr(mover, "_send2trash", lambda p: sent.append(Path(p)))
     out = await mover.empty_trash(conn)
@@ -193,3 +259,59 @@ async def test_trash_root_is_hidden(conn, sandbox):
     await mover.trash(conn, p)
     attrs = (sandbox / _config.TRASH_DIRNAME).stat().st_file_attributes
     assert attrs & 0x2
+
+
+async def test_trash_guards_computed_batch_dir_before_acting(conn, sandbox, monkeypatch, tmp_path):
+    p = _mk(sandbox, "g.txt")
+    outside = tmp_path / "outside_trash_root"
+    monkeypatch.setattr(mover, "trash_root_for", lambda path: outside)
+    with pytest.raises(OutOfSandboxError):
+        await mover.trash(conn, p)
+    assert not outside.exists()  # guard ran before any directory was created
+    assert await ol.list_operations(conn) == []
+    assert p.exists()
+
+
+async def test_trash_refuses_ancestor_of_trash_root(conn, sandbox):
+    _mk(sandbox, "keep.txt")
+    with pytest.raises(mover.RefusedError):
+        await mover.trash(conn, sandbox)
+    assert await ol.list_operations(conn) == []
+
+
+async def test_empty_trash_skips_out_of_sandbox_roots(conn, sandbox, tmp_path, monkeypatch):
+    p = _mk(sandbox, "z.txt")
+    await mover.trash(conn, p)
+    sandbox_root = mover.trash_root_for(sandbox / "z.txt")
+    outside_root = tmp_path / "outside_trash"
+    (outside_root / "batchX").mkdir(parents=True)
+    monkeypatch.setattr(mover, "_known_trash_roots", lambda: [sandbox_root, outside_root])
+    sent = []
+    monkeypatch.setattr(mover, "_send2trash", lambda p: sent.append(Path(p)))
+    out = await mover.empty_trash(conn)
+    assert str(outside_root) in out["skipped_roots"]
+    assert str(outside_root) not in out["roots"]
+    assert len(sent) == 1  # only the sandbox batch was emptied
+
+
+def test_hide_preserves_existing_attributes(sandbox):
+    d = sandbox / "preserve_me"
+    d.mkdir()
+    FILE_ATTRIBUTE_READONLY = 0x1
+    ctypes.windll.kernel32.SetFileAttributesW(str(d), FILE_ATTRIBUTE_READONLY)
+    mover._hide(d)
+    attrs = d.stat().st_file_attributes
+    assert attrs & FILE_ATTRIBUTE_READONLY and attrs & 0x2
+
+
+def test_known_trash_roots_skips_oserror_drives(sandbox, monkeypatch):
+    real_exists = Path.exists
+
+    def flaky_exists(self):
+        if str(self).upper().startswith("Z:\\"):
+            raise OSError("bad netpath")
+        return real_exists(self)
+
+    monkeypatch.setattr(Path, "exists", flaky_exists)
+    roots = mover._known_trash_roots()  # must not raise despite the flaky Z: drive
+    assert isinstance(roots, list)

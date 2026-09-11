@@ -19,7 +19,6 @@ import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
-import aiosqlite
 from send2trash import send2trash as _send2trash_impl
 
 import backend.config as _config
@@ -53,7 +52,7 @@ def validate_name(name: str) -> None:
         raise InvalidNameError('Name contains a character that Windows does not allow: \\ / : * ? " < > |')
     if name[-1] in ". ":
         raise InvalidNameError("Name may not end with a dot or a space.")
-    if name.split(".")[0].upper() in _RESERVED and name.upper() in _RESERVED:
+    if name.split(".")[0].upper() in _RESERVED:  # Win32 ignores the extension: CON.txt is still CON
         raise InvalidNameError(f"'{name}' is a reserved device name.")
 
 
@@ -93,17 +92,14 @@ def _tree_size(path: Path) -> int:
 
 
 def _hide(path: Path) -> None:
-    if os.name == "nt":
-        ctypes.windll.kernel32.SetFileAttributesW(str(path), FILE_ATTRIBUTE_HIDDEN)
-
-
-def _ensure_trash_batch_dir(root: Path, batch_id: str) -> Path:
-    if not root.exists():
-        root.mkdir(parents=True)
-        _hide(root)
-    d = root / batch_id
-    d.mkdir(exist_ok=True)
-    return d
+    if os.name != "nt":
+        return
+    attrs = ctypes.windll.kernel32.GetFileAttributesW(str(path))
+    if attrs in (-1, 0xFFFFFFFF):  # INVALID_FILE_ATTRIBUTES
+        logger.warning("could not read attributes for %s; leaving it visible", path)
+        return
+    if not ctypes.windll.kernel32.SetFileAttributesW(str(path), attrs | FILE_ATTRIBUTE_HIDDEN):
+        logger.warning("could not hide %s", path)
 
 
 def _append_manifest(batch_dir: Path, original: Path, trashed: Path) -> None:
@@ -120,17 +116,36 @@ def _copy_tree_or_file(src: Path, dest: Path) -> None:
         shutil.copy2(src, dest)
 
 
+def _verify_file(src: Path, dest: Path) -> None:
+    if src.stat().st_size != dest.stat().st_size:
+        raise RefusedError(f"Copy verification failed: size mismatch (partial copy left at {dest}).")
+    if src.stat().st_size <= HASH_VERIFY_LIMIT and hash_file(src) != hash_file(dest):
+        raise RefusedError(f"Copy verification failed: hash mismatch (partial copy left at {dest}).")
+
+
 def _verify_copy(src: Path, dest: Path) -> None:
+    """Verify a copy before the source may be removed.
+
+    Files: size must match, and content is hashed and compared for files up to
+    HASH_VERIFY_LIMIT bytes; larger files are checked by size only (hashing a
+    multi-gigabyte file twice would double the I/O cost of every large
+    cross-volume move).
+
+    Directories: the full sorted set of relative paths -- files AND
+    subdirectories, including empty ones -- must match between src and dest,
+    then every file entry is verified as above.
+    """
     if src.is_file():
-        if src.stat().st_size != dest.stat().st_size:
-            raise RefusedError("Copy verification failed: size mismatch.")
-        if src.stat().st_size <= HASH_VERIFY_LIMIT and hash_file(src) != hash_file(dest):
-            raise RefusedError("Copy verification failed: hash mismatch.")
+        _verify_file(src, dest)
         return
-    s = sorted((p.relative_to(src), p.stat().st_size) for p in src.rglob("*") if p.is_file())
-    d = sorted((p.relative_to(dest), p.stat().st_size) for p in dest.rglob("*") if p.is_file())
-    if s != d:
-        raise RefusedError("Copy verification failed: tree mismatch.")
+    s_entries = sorted(p.relative_to(src) for p in src.rglob("*"))
+    d_entries = sorted(p.relative_to(dest) for p in dest.rglob("*"))
+    if s_entries != d_entries:
+        raise RefusedError(f"Copy verification failed: tree mismatch (partial copy left at {dest}).")
+    for rel in s_entries:
+        sp = src / rel
+        if sp.is_file():
+            _verify_file(sp, dest / rel)
 
 
 def _remove_after_verified_copy(src: Path) -> None:
@@ -171,12 +186,15 @@ async def _perform(conn, op_type, src, dest, batch_id, reason, fn, undo_of=None)
         await ol.mark_error(conn, op_id, f"{type(exc).__name__}: {exc}")
         raise
     await ol.mark_executed(conn, op_id)
+    logger.info("%s: %s -> %s", op_type, src, dest)
     return _result(op_id, op_type, "done", src, dest, batch_id)
 
 
 def _move_fn(src: Path, dest: Path):
     def run():
         if same_volume(src, dest):
+            if dest.exists():  # conflict resolution ran earlier; this is the race window
+                raise ConflictError(f"'{dest}' already exists.")
             os.replace(src, dest) if src.is_file() else os.rename(src, dest)
         else:
             need = _tree_size(src)
@@ -197,15 +215,19 @@ async def move(conn, src, dest_dir, *, batch_id=None, on_conflict="fail", reason
         raise RefusedError("Cannot move a folder into itself.")
     if not dest_dir.is_dir():
         raise RefusedError(f"Destination folder does not exist: {dest_dir}")
-    target, action = _resolve_target(dest_dir / src.name, on_conflict)
+    candidate = dest_dir / src.name
+    if os.path.normcase(str(candidate)) == os.path.normcase(str(src)):
+        raise RefusedError("Source is already in the destination folder.")
+    batch_id = batch_id or ol.new_batch_id()
+    target, action = _resolve_target(candidate, on_conflict)
     if action in ("conflict", "skipped"):
-        return _result(None, _op_type, action, src, dest_dir / src.name, batch_id)
-    if action == "replace":
-        await trash(conn, target, batch_id=batch_id, reason="replaced")
+        return _result(None, _op_type, action, src, candidate, batch_id)
     if not same_volume(src, target):
         need = await asyncio.to_thread(_tree_size, src)
         if await asyncio.to_thread(_free_bytes, dest_dir) < need + SPACE_MARGIN:
             raise RefusedError("Not enough free space on the destination volume.")
+    if action == "replace":
+        await trash(conn, target, batch_id=batch_id, reason="replaced")
     return await _perform(conn, _op_type, src, target, batch_id, reason, _move_fn(src, target), undo_of=_undo_of)
 
 
@@ -227,14 +249,15 @@ async def copy(conn, src, dest_dir, *, batch_id=None, on_conflict="fail", reason
         raise RefusedError(f"Source does not exist: {src}")
     if src.is_dir() and _config.is_under(dest_dir, src):
         raise RefusedError("Cannot copy a folder into itself.")
+    batch_id = batch_id or ol.new_batch_id()
     target, action = _resolve_target(dest_dir / src.name, on_conflict)
     if action in ("conflict", "skipped"):
         return _result(None, "copy", action, src, dest_dir / src.name, batch_id)
-    if action == "replace":
-        await trash(conn, target, batch_id=batch_id, reason="replaced")
     need = await asyncio.to_thread(_tree_size, src)
     if await asyncio.to_thread(_free_bytes, dest_dir) < need + SPACE_MARGIN:
         raise RefusedError("Not enough free space on the destination volume.")
+    if action == "replace":
+        await trash(conn, target, batch_id=batch_id, reason="replaced")
 
     def run():
         _copy_tree_or_file(src, target)
@@ -250,10 +273,16 @@ async def trash(conn, path, *, batch_id=None, reason=None, _undo_of=None) -> dic
     root = trash_root_for(src)
     if _config.is_under(src, root):
         raise RefusedError("Already in the FilePlus trash.")
-    batch_dir = await asyncio.to_thread(_ensure_trash_batch_dir, root, batch_id)
-    target = keep_both_name(batch_dir / src.name)
+    if src.is_dir() and _config.is_under(root, src):
+        raise RefusedError("Cannot trash a folder that contains the FilePlus trash.")
+    batch_dir = _config.path_guard(root / batch_id, "write")  # guard the computed path before anything touches disk
+    target = _config.path_guard(keep_both_name(batch_dir / src.name), "write")
 
     def run():
+        if not root.exists():
+            root.mkdir(parents=True)
+            _hide(root)
+        batch_dir.mkdir(exist_ok=True)
         os.rename(src, target)
         _append_manifest(batch_dir, src, target)
     return await _perform(conn, "trash", src, target, batch_id, reason, run, undo_of=_undo_of)
@@ -265,6 +294,7 @@ async def restore(conn, trashed_path, original_path, *, batch_id=None, on_confli
     if not src.exists():
         raise RefusedError(f"Trashed item no longer exists: {src}")
     original.parent.mkdir(parents=True, exist_ok=True)
+    batch_id = batch_id or ol.new_batch_id()
     target, action = _resolve_target(original, on_conflict)
     if action in ("conflict", "skipped"):
         return _result(None, "restore", action, src, original, batch_id)
@@ -291,14 +321,19 @@ async def touch(conn, parent, name, *, batch_id=None, reason=None) -> dict:
 
 async def _batch(conn, items, fn) -> dict:
     batch_id = ol.new_batch_id()
-    out = {"batch_id": batch_id, "ops": [], "conflicts": [], "errors": []}
+    out = {"batch_id": batch_id, "ops": [], "conflicts": [], "skipped": [], "errors": []}
     for item in items:
         try:
             r = await fn(item, batch_id)
         except (InvalidNameError, ConflictError, RefusedError, _config.OutOfSandboxError, _config.ProtectedPathError, OSError) as exc:
             out["errors"].append({"src": str(item), "error": f"{type(exc).__name__}: {exc}"})
             continue
-        (out["conflicts"] if r["status"] == "conflict" else out["ops"]).append(r)
+        if r["status"] == "conflict":
+            out["conflicts"].append(r)
+        elif r["status"] == "skipped":
+            out["skipped"].append(r)
+        else:
+            out["ops"].append(r)
     return out
 
 
@@ -315,16 +350,29 @@ async def batch_trash(conn, paths) -> dict:
 
 
 def _known_trash_roots() -> list[Path]:
-    roots = [_config.FILEPLUS_SANDBOX_PATH.resolve() / _config.TRASH_DIRNAME]
+    sandbox_root = _config.FILEPLUS_SANDBOX_PATH.resolve() / _config.TRASH_DIRNAME
+    roots = [sandbox_root] if sandbox_root.exists() else []
     for letter in "CDEFGHIJKLMNOPQRSTUVWXYZ":
         cand = Path(f"{letter}:\\") / _config.TRASH_DIRNAME
-        if cand.exists():
+        try:
+            found = cand.exists()
+        except OSError:  # stale/unreachable network drive (e.g. ERROR_BAD_NETPATH)
+            logger.warning("could not probe %s for a trash folder; skipping", cand)
+            continue
+        if found:
             roots.append(cand)
-    return [r for r in roots if r.exists()]
+    return roots
 
 
 async def empty_trash(conn) -> dict:
-    roots = _known_trash_roots()
+    candidates = _known_trash_roots()
+    roots, skipped_roots = [], []
+    for r in candidates:
+        try:
+            roots.append(_config.path_guard(r, "write"))
+        except (_config.OutOfSandboxError, _config.ProtectedPathError) as exc:
+            logger.warning("skipping trash root %s: %s", r, exc)
+            skipped_roots.append(str(r))
     batches = [d for r in roots for d in r.iterdir() if d.is_dir()]
     op_id = await ol.log_operation(conn, "trash-empty:final", None, None, reason=f"{len(batches)} batch folders -> Recycle Bin")
 
@@ -336,4 +384,4 @@ async def empty_trash(conn) -> dict:
     except Exception as exc:
         await ol.mark_error(conn, op_id, str(exc)); raise
     await ol.mark_executed(conn, op_id)
-    return {"batches": len(batches), "roots": [str(r) for r in roots]}
+    return {"batches": len(batches), "roots": [str(r) for r in roots], "skipped_roots": skipped_roots}
