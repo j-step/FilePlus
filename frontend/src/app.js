@@ -551,6 +551,8 @@ function closePalette() {
   if (!paletteScrim) return;
   paletteScrim.style.display = 'none';
   paletteScrim.setAttribute('aria-hidden', 'true');
+  clearTimeout(_paletteSearchTimer);
+  _paletteSearchSeq++; // invalidate any in-flight search response
 }
 
 // ── Palette search mode (A.11.1 / Task 6) ─────────────────────────────────
@@ -579,6 +581,7 @@ function paletteSelectFirst() {
 }
 
 function paletteResetToCommands() {
+  clearTimeout(_paletteSearchTimer);
   _paletteSearchSeq++; // invalidate any in-flight search response
   const resultsEl = document.getElementById('palette-search-results');
   const commandsEl = document.getElementById('palette-commands');
@@ -651,8 +654,8 @@ paletteInput?.addEventListener('keydown', e => {
   if (!items.length) return;
   if (e.key === 'Enter') {
     e.preventDefault();
-    const sel = items.find(i => i.classList.contains('fp-palette__item--selected')) || items[0];
-    sel.click();
+    const sel = items.find(i => i.classList.contains('fp-palette__item--selected'));
+    if (sel) sel.click();
     return;
   }
   e.preventDefault();

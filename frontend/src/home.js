@@ -274,10 +274,12 @@ function unfavoriteFile(el) {
   }
 
   let deleted = false;
+  let _deletePromise = null;
   const removeTimer = setTimeout(() => {
     row.remove();
     deleted = true;
-    API.del('/favorites', { path }).catch(err => {
+    _deletePromise = API.del('/favorites', { path });
+    _deletePromise.catch(err => {
       // The server never dropped it — put it back and surface the failure
       // instead of silently leaving the UI out of sync with the backend.
       deleted = false;
@@ -291,11 +293,19 @@ function unfavoriteFile(el) {
   // home.js → settings.js → app.js (see index.html), so app.js's
   // function showSnackbar(message, undoLabel, onUndo) is already defined by
   // the time this runs. Call with the 3-arg signature.
-  showSnackbar(`Removed "${filename}" from favorites`, 'Undo', () => {
+  showSnackbar(`Removed "${filename}" from favorites`, 'Undo', async () => {
     clearTimeout(removeTimer);
     favoritesSet.add(path);
     restoreRow();
     if (deleted) {
+      // The DELETE may still be in flight (Undo clicked right after the
+      // 200ms timer fired) — wait for it to actually settle before
+      // re-adding, otherwise a slow DELETE resolving after this POST would
+      // wipe out the just-restored favorite. Its own .catch above already
+      // reconciles `deleted`/favoritesSet/the row on failure; this await
+      // just sequences after that, ignoring the rejection itself.
+      if (_deletePromise) await _deletePromise.catch(() => {});
+      if (!deleted) return; // the delete failed and already reconciled everything
       API.post('/favorites', { path })
         .then(() => API.post('/favorites/reorder', { paths: orderSnapshot }))
         .catch(err => showToast(`Failed to restore favorite: ${formatApiError(err)}`, 'error'));
@@ -304,10 +314,16 @@ function unfavoriteFile(el) {
 }
 
 // ── Favorites reorder: drag-and-drop + Alt+Up/Down ─────────────────────────
+/** Persists the current DOM order of #home-favorites to the server. On
+ * failure, the DOM has already moved (drag/drop and Alt+Up/Down both
+ * reorder optimistically) but the server hasn't — re-pulling via
+ * loadFavorites() resyncs the DOM back to the server's actual order rather
+ * than leaving the UI showing an order that never took. */
 function persistFavoritesOrder() {
   const paths = [...document.querySelectorAll('#home-favorites .fp-row[data-path]')].map(r => r.dataset.path);
   API.post('/favorites/reorder', { paths }).catch(err => {
     showToast(`Failed to save favorites order: ${formatApiError(err)}`, 'error');
+    loadFavorites();
   });
 }
 
