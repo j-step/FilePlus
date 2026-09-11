@@ -4,9 +4,11 @@
   "description": "AI-powered Windows file explorer replacement",
   "main": "main.js",
   "scripts": {
-    "start": "electron ."
+    "start": "electron .",
+    "test": "playwright test"
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "electron": "^41.3.0"
   }
 }
