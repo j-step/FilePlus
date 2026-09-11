@@ -35,7 +35,8 @@ async def lifespan(app: FastAPI):
     await init_db()
     app.state.index_state = {"running": False, "path": None, "count": 0, "started": None, "error": None}
     app.state.index_task = None  # holds the running quick-index asyncio.Task, if any
-    app.state.reconciled = []  # filled at startup by Task 9's reconcile call
+    async with _db() as conn:
+        app.state.reconciled = await ol.reconcile_pending(conn)  # classifies crash leftovers; warns per row
     yield
 
 

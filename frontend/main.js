@@ -4,9 +4,10 @@
  * Creates the application window, configures security settings,
  * and wires up the dev-tools shortcut.
  */
-const { app, BrowserWindow, globalShortcut, ipcMain, nativeTheme } = require('electron');
+const { app, BrowserWindow, globalShortcut, ipcMain, nativeTheme, shell, dialog, clipboard } = require('electron');
 const path = require('path');
 const os   = require('os');
+const { spawn } = require('child_process');
 
 let mainWindow;
 
@@ -78,6 +79,21 @@ app.whenReady().then(() => {
   ipcMain.on('set-theme-source', (_e, mode) => {
     nativeTheme.themeSource = ['dark', 'light'].includes(mode) ? mode : 'system';
   });
+
+  // Shell / dialog / clipboard bridge — renderer never touches Node fs directly;
+  // these are the only filesystem-adjacent capabilities exposed (Plan 2B wires the renderer side).
+  const isStr = (v) => typeof v === 'string' && v.length > 0;
+  ipcMain.handle('shell-open-path', async (_e, p) => isStr(p) ? await shell.openPath(p) : 'invalid path');
+  ipcMain.on('shell-show-item', (_e, p) => { if (isStr(p)) shell.showItemInFolder(p); });
+  ipcMain.on('shell-open-with', (_e, p) => {
+    if (!isStr(p)) return;
+    spawn('rundll32.exe', ['shell32.dll,OpenAs_RunDLL', p], { detached: true, stdio: 'ignore' }).unref();
+  });
+  ipcMain.handle('dialog-pick-folder', async (_e, defaultPath) => {
+    const r = await dialog.showOpenDialog(mainWindow, { properties: ['openDirectory'], defaultPath: isStr(defaultPath) ? defaultPath : undefined });
+    return r.canceled || !r.filePaths.length ? null : r.filePaths[0];
+  });
+  ipcMain.on('clipboard-write-text', (_e, t) => { if (typeof t === 'string') clipboard.writeText(t); });
 
   createWindow();
 

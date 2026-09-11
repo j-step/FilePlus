@@ -16,11 +16,12 @@ Frontend Electron 41, plain HTML/CSS/JS, no framework, no build step. Tests: pyt
 
 - Nothing moves, renames or deletes without explicit user approval.
 - Every file operation is written to `operations_log` BEFORE it executes.
-- `path_guard()` gates every filesystem touch. Today `SAFETY_MODE=true` (`backend/config.py`) confines
-  both reads and writes to `FILEPLUS_SANDBOX_PATH`.
-- Stage 2 introduces decision D2: reads may span real drives, writes stay sandboxed until
-  `WRITE_UNLOCKED=true`. Neither the read/write split nor `WRITE_UNLOCKED` exists yet.
-- Deletes go to the Recycle Bin or a staging area, never straight to gone.
+- `path_guard(path, mode)` gates every filesystem touch: reads anywhere; writes inside
+  `FILEPLUS_SANDBOX_PATH` until `WRITE_UNLOCKED=true` in `.env`; Windows system roots and the app
+  directory are never writable (`ProtectedPathError`).
+- Delete is a same-volume move into `.FilePlusTrash`; `POST /fs/trash/empty` sends it to the Recycle
+  Bin. The app never hard-deletes. Every mutation: guard → log (`executed=0`) → act → mark; undo is a
+  logged inverse (`undo_of`).
 
 ## Verify before every commit
 
@@ -67,7 +68,12 @@ April "one fix at a time" rule is retired (D10).
 
 ## Current state
 
-See `docs/superpowers/runs/` for the latest run summary and the roadmap spec §2 for the baseline
-inventory. Canonical docs: `PRODUCT.md`, `docs/UI-SPEC.md` (behaviour; style superseded),
-`docs/backend-integration.md` (wiring ledger), `docs/fileplus-feature-list.md` (backlog).
-Everything else is under `docs/archive/`.
+Stage 2A backend core is landed — see `docs/superpowers/runs/2026-09-11-stage-2a.md` for the run
+summary (backend safety core, every API route, the Electron shell/dialog/clipboard bridge, startup
+crash reconciliation) and the roadmap spec §2 for the baseline inventory. Canonical docs: `PRODUCT.md`,
+`docs/UI-SPEC.md` (behaviour; style superseded), `docs/backend-integration.md` (wiring ledger),
+`docs/fileplus-feature-list.md` (backlog). Everything else is under `docs/archive/`.
+
+The sandbox default is now `FILEPLUS_APP_DIR/FilePlusTestSandbox` (`backend/config.py`), so each git
+worktree gets its own empty sandbox with no cross-worktree collisions; `.env` can override it via
+`FILEPLUS_SANDBOX_PATH`.

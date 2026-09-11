@@ -1,5 +1,8 @@
+import aiosqlite
 import pytest
 from fastapi.testclient import TestClient
+
+from backend import operations_log as ol
 
 
 @pytest.fixture
@@ -38,3 +41,23 @@ def test_trash_empty_endpoint(client, sandbox, monkeypatch):
     client.post("/fs/trash", json={"paths": [str(sandbox / "e.txt")]})
     r = client.post("/fs/trash/empty")
     assert r.status_code == 200 and r.json()["batches"] == 1 and len(sent) == 1
+
+
+async def test_startup_reconcile_marks_completed_move(sandbox, db):
+    """A crash-left pending 'move' row whose dest exists and source is gone is
+    classified 'completed' by the lifespan's reconcile_pending call, before any
+    request is served."""
+    dest = sandbox / "recovered.txt"
+    dest.write_text("d")
+    async with aiosqlite.connect(db) as conn:
+        await ol.log_operation(conn, "move", str(sandbox / "gone.txt"), str(dest))
+
+    from backend.api import app
+    with TestClient(app) as c:
+        pending = c.get("/operations/pending").json()
+        assert len(pending) == 1
+        assert pending[0]["resolution"] == "completed"
+        assert pending[0]["dest_path"] == str(dest)
+
+        health = c.get("/health").json()
+        assert health["pending_ops"] == 0
