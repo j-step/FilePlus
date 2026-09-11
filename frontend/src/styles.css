@@ -17,8 +17,16 @@
   --bg-raised:   #2B2C31;
   --bg-pressed:  #33353B;
 
-  /* ---------- Accent (fixed blue; --accent-custom overrides) ---------- */
-  --accent-custom: ;
+  /* ---------- Accent (fixed blue; --accent-custom overrides) ----------
+     --accent-custom is intentionally NOT declared here. JS sets it as an
+     inline style on <html> when the user picks a custom accent, and
+     removes the property (style.removeProperty) to reset to default.
+     A real, empty declaration here (--accent-custom: ;) would defeat the
+     var() fallback below — an explicitly-empty custom property is valid-
+     but-empty, not "unset", so var(--accent-custom, #4CC2FF) would
+     substitute the empty value instead of falling back, breaking --accent
+     (and everything derived from it) app-wide whenever no custom color is
+     set. Leave this property undeclared so the fallback works. */
   --accent:             var(--accent-custom, #4CC2FF);
   --accent-hover:       #6DCFFF;
   --accent-press:       #2FB3F5;
@@ -250,8 +258,9 @@ svg { flex-shrink: 0; }
    ----------------------------------------------------------------------------- */
 *:focus { outline: none; }
 *:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 2px var(--bg-content);
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+  box-shadow: none;
 }
 
 /* -----------------------------------------------------------------------------
@@ -618,7 +627,7 @@ svg { flex-shrink: 0; }
   border-radius: var(--r-pill);
   background: var(--bg-raised);
   border: 1px solid var(--border-subtle);
-  box-shadow: var(--shadow-raised);
+  box-shadow: none;
   display: inline-flex;
   align-items: center;
   gap: var(--s-8);
@@ -635,7 +644,7 @@ svg { flex-shrink: 0; }
 .fp-approvals:hover {
   background: var(--bg-pressed);
   border-color: var(--border-mid);
-  box-shadow: var(--shadow-card);
+  box-shadow: none;
   transform: translateY(-0.5px);
 }
 .fp-approvals:active {
@@ -644,8 +653,8 @@ svg { flex-shrink: 0; }
 }
 .fp-approvals--active {
   background: var(--accent-wash);
-  border-color: var(--accent-edge);
-  box-shadow: var(--shadow-raised);
+  border: 0;
+  box-shadow: none;
 }
 
 .fp-approvals__badge {
@@ -727,9 +736,10 @@ svg { flex-shrink: 0; }
   height: var(--h-input);
   width: 220px;
   padding: 0 var(--s-12);
-  background: var(--bg-content);
+  background: var(--bg-raised);
   border: 1px solid var(--border-subtle);
   border-radius: var(--r-button);
+  box-shadow: none;
   display: flex;
   align-items: center;
   gap: var(--s-8);
@@ -741,7 +751,7 @@ svg { flex-shrink: 0; }
 }
 .fp-search:hover { border-color: var(--border-mid); }
 .fp-search:focus-within {
-  border-color: var(--accent-edge);
+  border-color: var(--accent);
 }
 .fp-search__icon { width: 14px; height: 14px; color: var(--text-tertiary); flex-shrink: 0; }
 .fp-search__input {
@@ -979,7 +989,8 @@ svg { flex-shrink: 0; }
               box-shadow var(--dur-flash) var(--ease-snap);
 }
 .fp-button:focus-visible, .fp-btn:focus-visible {
-  outline: none;
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
 }
 .fp-button:disabled,
 .fp-button[disabled],
@@ -996,7 +1007,7 @@ svg { flex-shrink: 0; }
 .fp-button--primary, .fp-btn--primary {
   background: var(--accent);
   color: var(--text-on-accent);
-  box-shadow: var(--shadow-raised);
+  box-shadow: none;
 }
 .fp-button--primary:hover, .fp-btn--primary:hover {
   background: var(--accent-hover);
@@ -1009,10 +1020,14 @@ svg { flex-shrink: 0; }
   background: var(--bg-raised);
   color: var(--text-primary);
   border-color: var(--border-subtle);
-  box-shadow: var(--shadow-raised);
+  box-shadow: none;
 }
 .fp-button--secondary:hover, .fp-btn--secondary:hover {
   background: var(--bg-pressed);
+}
+.fp-button--secondary:active, .fp-btn--secondary:active {
+  background: var(--bg-pressed);
+  border-color: var(--border-mid);
 }
 
 .fp-button--ghost, .fp-btn--ghost {
@@ -1023,6 +1038,9 @@ svg { flex-shrink: 0; }
 .fp-button--ghost:hover, .fp-btn--ghost:hover {
   background: var(--bg-raised);
   color: var(--text-primary);
+}
+.fp-button--ghost:active, .fp-btn--ghost:active {
+  background: var(--bg-pressed);
 }
 
 .fp-button--icon,
@@ -1051,12 +1069,14 @@ svg { flex-shrink: 0; }
 .fp-button--icon:active,
 .fp-btn--icon:active,
 .fp-icon-btn:active {
+  background: var(--bg-pressed);
   transform: translateY(1px);
 }
 .fp-button--icon:focus-visible,
 .fp-btn--icon:focus-visible,
 .fp-icon-btn:focus-visible {
-  outline: none;
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
 }
 
 .fp-icon-btn:disabled,
@@ -1116,9 +1136,9 @@ svg { flex-shrink: 0; }
 .fp-circle-btn {
   width: 40px; height: 40px;
   border-radius: var(--r-pill);
-  background: var(--bg-raised);
-  border: 1px solid var(--border-subtle);
-  box-shadow: var(--shadow-card);
+  background: transparent;
+  border: 0;
+  box-shadow: none;
   display: inline-flex; align-items: center; justify-content: center;
   color: var(--text-secondary);
   transition: background var(--dur-flash) var(--ease-snap),
@@ -1129,12 +1149,12 @@ svg { flex-shrink: 0; }
 }
 .fp-circle-btn svg, .fp-circle-btn .icon { width: 16px; height: 16px; }
 .fp-circle-btn:hover {
-  background: var(--bg-pressed);
-  border-color: var(--border-mid);
-  box-shadow: var(--shadow-popover);
+  background: var(--bg-raised);
+  box-shadow: none;
   color: var(--text-primary);
 }
 .fp-circle-btn:active {
+  background: var(--bg-pressed);
   transform: translateY(1px);
   transition-duration: var(--dur-press-down);
 }
@@ -1150,8 +1170,8 @@ svg { flex-shrink: 0; }
   height: 18px;
   min-width: 18px;
   padding: 0 6px;
-  background: var(--accent);
-  color: var(--text-on-accent);
+  background: var(--accent-wash);
+  color: var(--accent);
   border-radius: var(--r-pill);
   font: 500 11px/16px var(--font-data);
   font-variant-numeric: tabular-nums;
@@ -1159,8 +1179,8 @@ svg { flex-shrink: 0; }
   user-select: none;
 }
 .fp-badge--accent {
-  background: var(--accent);
-  color: var(--text-on-accent);
+  background: var(--accent-wash);
+  color: var(--accent);
 }
 .fp-badge--good {
   background: var(--good-wash);
@@ -1183,7 +1203,7 @@ svg { flex-shrink: 0; }
   padding: 0 var(--s-10);
   background: var(--bg-raised);
   border: 1px solid var(--border-subtle);
-  box-shadow: var(--shadow-raised);
+  box-shadow: none;
   color: var(--text-secondary);
   font: 500 var(--t-small) var(--font-ui);
   border-radius: var(--r-pill);
@@ -1226,9 +1246,9 @@ svg { flex-shrink: 0; }
   gap: 4px;
   height: 20px;
   padding: 0 6px;
-  background: var(--bg-raised);
+  background: transparent;
   color: var(--text-secondary);
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--border-strong);
   border-radius: var(--r-chip);
   font: 500 var(--t-small) var(--font-data);
   font-variant-numeric: tabular-nums;
@@ -1237,10 +1257,13 @@ svg { flex-shrink: 0; }
 }
 .fp-chip svg, .fp-chip .icon { width: 10px; height: 10px; }
 .fp-chip__count { color: var(--text-tertiary); }
+.fp-chip:hover:not(.fp-chip--active):not(.fp-chip--good):not(.fp-chip--warn):not(.fp-chip--bad):not(.fp-chip--add) {
+  background: var(--bg-raised);
+}
 
 .fp-chip--active {
   background: var(--accent-wash);
-  color: var(--text-primary);
+  color: var(--accent);
   border-color: var(--accent-edge);
 }
 .fp-chip--good {
@@ -1284,7 +1307,7 @@ svg { flex-shrink: 0; }
   position: relative;
   height: 30px;
   padding: 2px;
-  background: var(--bg-content);
+  background: var(--bg-raised);
   border: 1px solid var(--border-subtle);
   border-radius: var(--r-button);
 }
@@ -1296,7 +1319,7 @@ svg { flex-shrink: 0; }
   height: 100%;
   padding: 0 12px;
   background: transparent;
-  color: var(--text-secondary);
+  color: var(--text-tertiary);
   border: none;
   border-radius: var(--r-button);
   font: 500 var(--t-body) var(--font-ui);
@@ -1308,21 +1331,22 @@ svg { flex-shrink: 0; }
 }
 .fp-segmented__option:hover,
 .fp-segmented__opt:hover {
-  color: var(--text-primary);
+  color: var(--text-secondary);
 }
 .fp-segmented__option--active,
 .fp-segmented__option.active,
 .fp-segmented__opt--active,
 .fp-segmented__opt.active {
-  background: var(--bg-raised);
+  background: var(--bg-content);
   color: var(--text-primary);
-  box-shadow: var(--shadow-raised);
+  box-shadow: none;
   transition: background-color var(--dur-slide) var(--ease-out),
               color var(--dur-fast) var(--ease-out);
 }
 .fp-segmented__option:focus-visible,
 .fp-segmented__opt:focus-visible {
-  outline: none;
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
 }
 
 /* -----------------------------------------------------------------------------
@@ -1414,13 +1438,14 @@ svg { flex-shrink: 0; }
 .fp-select, .fp-textarea {
   height: var(--h-input);
   padding: 0 var(--s-12);
-  background: var(--bg-content);
+  background: var(--bg-raised);
   border: 1px solid var(--border-subtle);
   border-radius: var(--r-button);
   color: var(--text-primary);
   font: 400 var(--t-body) var(--font-ui);
   letter-spacing: var(--track-body);
   outline: none;
+  box-shadow: none;
   transition: border-color var(--dur-flash) var(--ease-snap),
               box-shadow var(--dur-flash) var(--ease-snap);
   width: 100%;
@@ -1428,7 +1453,8 @@ svg { flex-shrink: 0; }
 .fp-textarea::placeholder { color: var(--text-tertiary); }
 .fp-select:hover, .fp-textarea:hover { border-color: var(--border-mid); }
 .fp-select:focus, .fp-textarea:focus {
-  border-color: var(--accent-edge);
+  border-color: var(--accent);
+  outline: none;
 }
 .fp-select:disabled, .fp-textarea:disabled { opacity: 0.5; }
 
@@ -1438,10 +1464,11 @@ svg { flex-shrink: 0; }
   width: 100%;
   height: 30px;
   padding: 0 12px;
-  background: var(--bg-content);
+  background: var(--bg-raised);
   color: var(--text-primary);
   border: 1px solid var(--border-subtle);
   border-radius: var(--r-button);
+  box-shadow: none;
   font: 500 var(--t-body) var(--font-ui);
   transition: border-color var(--dur-fast) var(--ease-out),
               box-shadow var(--dur-fast) var(--ease-out);
@@ -1452,7 +1479,7 @@ svg { flex-shrink: 0; }
 .fp-input:focus,
 .fp-input:focus-visible {
   outline: none;
-  border-color: var(--accent-edge);
+  border-color: var(--accent);
 }
 .fp-input:disabled,
 .fp-input[disabled] {
@@ -1478,10 +1505,10 @@ svg { flex-shrink: 0; }
   height: 16px;
   min-width: 16px;
   padding: 0 4px;
-  background: var(--bg-raised);
+  background: transparent;
   color: var(--text-tertiary);
-  border: 1px solid var(--border-subtle);
-  border-radius: 4px;
+  border: 1px solid var(--border-strong);
+  border-radius: 3px;
   font: 500 10px/16px var(--font-data);
   font-variant-numeric: tabular-nums;
   letter-spacing: 0;
@@ -1515,7 +1542,8 @@ svg { flex-shrink: 0; }
 .fp-toggle__track {
   position: absolute;
   inset: 0;
-  background: var(--bg-pressed);
+  background: var(--bg-raised);
+  border: 1px solid var(--border-mid);
   border-radius: var(--r-pill);
   transition: background-color var(--dur-fast) var(--ease-out);
 }
@@ -1528,17 +1556,22 @@ svg { flex-shrink: 0; }
   background: var(--bg-raised);
   border: 1px solid var(--border-subtle);
   border-radius: var(--r-pill);
-  box-shadow: var(--shadow-raised);
+  box-shadow: none;
   transition: transform var(--dur-slide) var(--ease-out),
               background-color var(--dur-fast) var(--ease-out);
 }
 .fp-toggle input:checked ~ .fp-toggle__track {
   background: var(--accent);
+  border-color: var(--accent);
   box-shadow: none;
 }
 .fp-toggle input:checked ~ .fp-toggle__thumb {
   transform: translateX(14px);
   background: var(--text-on-accent);
+}
+.fp-toggle input:focus-visible ~ .fp-toggle__track {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
 }
 .fp-toggle input:disabled ~ .fp-toggle__track,
 .fp-toggle input:disabled ~ .fp-toggle__thumb {
@@ -1555,7 +1588,7 @@ svg { flex-shrink: 0; }
   justify-content: center;
   width: 16px;
   height: 16px;
-  background: var(--bg-content);
+  background: var(--bg-raised);
   border: 1px solid var(--border-mid);
   border-radius: 3px;
   color: var(--text-on-accent);
@@ -1563,6 +1596,10 @@ svg { flex-shrink: 0; }
               border-color var(--dur-fast) var(--ease-out);
   cursor: pointer;
   flex-shrink: 0;
+}
+.fp-checkbox:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
 }
 .fp-checkbox--checked,
 .fp-checkbox--indeterminate {
@@ -1594,7 +1631,7 @@ svg { flex-shrink: 0; }
 .fp-checkbox__mark {
   position: absolute;
   inset: 0;
-  background: var(--bg-content);
+  background: var(--bg-raised);
   border: 1px solid var(--border-mid);
   border-radius: 3px;
   transition: background-color var(--dur-fast) var(--ease-out),
@@ -1619,6 +1656,10 @@ svg { flex-shrink: 0; }
 .fp-checkbox input:checked ~ .fp-checkbox__mark::after {
   transform: scale(1) rotate(45deg);
 }
+.fp-checkbox input:focus-visible ~ .fp-checkbox__mark {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+}
 
 /* === fp-radio === */
 /* Modifier-class variant: <span class="fp-radio [fp-radio--checked]"> (existing HTML) */
@@ -1629,24 +1670,30 @@ svg { flex-shrink: 0; }
   justify-content: center;
   width: 16px;
   height: 16px;
-  background: var(--bg-content);
+  background: var(--bg-raised);
   border: 1px solid var(--border-mid);
   border-radius: var(--r-pill);
-  transition: border-color var(--dur-fast) var(--ease-out);
+  transition: background-color var(--dur-fast) var(--ease-out),
+              border-color var(--dur-fast) var(--ease-out);
   cursor: pointer;
   flex-shrink: 0;
+}
+.fp-radio:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
 }
 .fp-radio::after {
   content: '';
   width: 6px;
   height: 6px;
-  background: var(--accent);
+  background: var(--text-on-accent);
   border-radius: var(--r-pill);
   transform: scale(0);
   transition: transform var(--dur-fast) var(--ease-out);
 }
 .fp-radio--checked {
-  border-color: var(--accent-edge);
+  background: var(--accent);
+  border-color: var(--accent);
 }
 .fp-radio--checked::after {
   transform: scale(1);
@@ -1662,10 +1709,11 @@ svg { flex-shrink: 0; }
 .fp-radio__mark {
   position: absolute;
   inset: 0;
-  background: var(--bg-content);
+  background: var(--bg-raised);
   border: 1px solid var(--border-mid);
   border-radius: var(--r-pill);
-  transition: border-color var(--dur-fast) var(--ease-out);
+  transition: background-color var(--dur-fast) var(--ease-out),
+              border-color var(--dur-fast) var(--ease-out);
 }
 .fp-radio__mark::after {
   content: '';
@@ -1675,16 +1723,21 @@ svg { flex-shrink: 0; }
   width: 6px;
   height: 6px;
   margin: -3px 0 0 -3px;
-  background: var(--accent);
+  background: var(--text-on-accent);
   border-radius: var(--r-pill);
   transform: scale(0);
   transition: transform var(--dur-fast) var(--ease-out);
 }
 .fp-radio input:checked ~ .fp-radio__mark {
-  border-color: var(--accent-edge);
+  background: var(--accent);
+  border-color: var(--accent);
 }
 .fp-radio input:checked ~ .fp-radio__mark::after {
   transform: scale(1);
+}
+.fp-radio input:focus-visible ~ .fp-radio__mark {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
 }
 
 .fp-slider {
@@ -1697,12 +1750,12 @@ svg { flex-shrink: 0; }
 }
 .fp-slider::-webkit-slider-runnable-track {
   height: 4px;
-  background: var(--bg-pressed);
+  background: var(--bg-raised);
   border-radius: var(--r-pill);
 }
 .fp-slider::-moz-range-track {
   height: 4px;
-  background: var(--bg-pressed);
+  background: var(--bg-raised);
   border-radius: var(--r-pill);
 }
 .fp-slider::-webkit-slider-thumb {
@@ -1711,26 +1764,30 @@ svg { flex-shrink: 0; }
   width: 14px;
   height: 14px;
   margin-top: -5px;
-  background: var(--bg-raised);
-  border: 1px solid var(--border-subtle);
+  background: var(--text-primary);
+  border: 1px solid var(--border-strong);
   border-radius: var(--r-pill);
-  box-shadow: var(--shadow-raised);
+  box-shadow: none;
   cursor: pointer;
 }
 .fp-slider::-moz-range-thumb {
   width: 14px;
   height: 14px;
-  background: var(--bg-raised);
-  border: 1px solid var(--border-subtle);
+  background: var(--text-primary);
+  border: 1px solid var(--border-strong);
   border-radius: var(--r-pill);
-  box-shadow: var(--shadow-raised);
+  box-shadow: none;
   cursor: pointer;
 }
 .fp-slider:focus-visible::-webkit-slider-thumb {
-  box-shadow: var(--shadow-raised);
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+  box-shadow: none;
 }
 .fp-slider:focus-visible::-moz-range-thumb {
-  box-shadow: var(--shadow-raised);
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+  box-shadow: none;
 }
 .fp-slider:disabled {
   opacity: 0.5;
@@ -2063,7 +2120,7 @@ svg { flex-shrink: 0; }
    ----------------------------------------------------------------------------- */
 .fp-progress {
   height: 4px;
-  background: var(--bg-pressed);
+  background: var(--bg-raised);
   border-radius: var(--r-pill);
   overflow: hidden;
   width: 100%;
@@ -4310,13 +4367,17 @@ svg { flex-shrink: 0; }
   gap: var(--s-4);
   padding: 0 var(--s-6);
   height: 18px;
-  border-radius: 999px;
+  background: var(--accent-wash);
+  border-color: transparent;
+  box-shadow: none;
+  color: var(--accent);
+  border-radius: var(--r-pill);
   font: 500 var(--t-small) var(--font-ui);
   cursor: default;
 }
 .fp-pill--live {
   background: var(--accent-wash);
-  border: 1px solid var(--accent-edge);
+  border-color: transparent;
   color: var(--accent);
 }
 button.fp-pill {
