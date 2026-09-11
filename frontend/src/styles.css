@@ -206,9 +206,17 @@ html, body {
 }
 
 /* Mica: on Windows 11 the OS paints the desktop-tinted material behind the window;
-   only the titlebar and sidebar let it through. Everything else stays solid. */
+   only the titlebar and sidebar let it through. Everything else stays solid.
+   Every ancestor between <body> and .fp-titlebar/.fp-sidebar must also go
+   transparent, or its own solid paint blocks the material — .app wraps the
+   titlebar directly; .app > .shell wraps the sidebar. Content-side siblings
+   (.main, .screens, .content, .list-pane, tab bar/toolbar/status bar,
+   inspector) keep their own explicit solid backgrounds below so they never
+   depend on these now-transparent ancestors. */
 html[data-mica="on"],
 html[data-mica="on"] body { background: transparent; }
+html[data-mica="on"] .app,
+html[data-mica="on"] .shell { background: transparent; }
 html[data-mica="on"] .fp-titlebar,
 html[data-mica="on"] .fp-sidebar { background: transparent; }
 
@@ -2860,7 +2868,10 @@ svg { flex-shrink: 0; }
   flex-direction: column;
   min-width: 0;
   overflow: hidden;
-  background: var(--bg-content);
+  /* Chrome-toned to match its siblings (tab bar/toolbar/status bar) now that
+     .shell is transparent under Mica; .screens repaints bg-content on top
+     for every screen, so this change is not visible. */
+  background: var(--bg-chrome);
 }
 
 /* Content row: hosts the .screens stack + the global resizer + inspector
@@ -3010,6 +3021,9 @@ svg { flex-shrink: 0; }
   min-height: 0;
   position: relative;
   overflow: hidden;
+  /* Explicit so every screen (most have no background of their own) paints
+     content tone rather than falling through to .main's chrome tone. */
+  background: var(--bg-content);
 }
 .screen {
   display: none;
@@ -3431,6 +3445,7 @@ svg { flex-shrink: 0; }
   flex: 1;
   min-height: 0;
   overflow: hidden;
+  background: var(--bg-content);
 }
 
 .list-pane {
@@ -3439,6 +3454,7 @@ svg { flex-shrink: 0; }
   flex: 1;
   min-width: 0;
   overflow: hidden;
+  background: var(--bg-content);
 }
 
 /* Column header */
