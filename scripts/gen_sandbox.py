@@ -1,0 +1,140 @@
+"""Deterministic sandbox fixture generator for FilePlus.
+
+Creates a small, varied file tree that exercises every indexer/tagger path:
+text, markdown, code, PNG images, a PDF header, duplicates by content,
+Windows-hidden files, a partial download, unicode names, deep nesting and
+(optionally) a 101 MB sparse file for the large-file rule.
+
+Usage:
+    py -3 scripts/gen_sandbox.py [--out DIR] [--large]
+
+Default output: <repo>/FilePlusTestSandbox/_gen  (gitignored via FilePlusTestSandbox/).
+Re-running is idempotent: the tree is removed and rebuilt from a fixed seed.
+"""
+from __future__ import annotations
+
+import argparse
+import ctypes
+import os
+import random
+import shutil
+import struct
+import zlib
+from pathlib import Path
+
+SEED = 20260910
+EXPECTED_FILES = 42
+EXPECTED_FILES_LARGE = EXPECTED_FILES + 1
+LARGE_BYTES = 101 * 1024 * 1024
+FILE_ATTRIBUTE_HIDDEN = 0x2
+
+_WORDS = ("invoice", "render", "sample", "draft", "budget", "session", "mix", "notes",
+          "brief", "archive", "plan", "sketch", "log", "export", "master", "preview")
+
+
+def _text(rng: random.Random, words: int) -> str:
+    return " ".join(rng.choice(_WORDS) for _ in range(words)) + "\n"
+
+
+def _png(width: int, height: int, rgb: tuple[int, int, int]) -> bytes:
+    """Minimal valid RGB PNG (one colour), no external deps."""
+    def chunk(tag: bytes, data: bytes) -> bytes:
+        c = struct.pack(">I", len(data)) + tag + data
+        return c + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
+    row = b"\x00" + bytes(rgb) * width
+    raw = row * height
+    ihdr = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr)
+            + chunk(b"IDAT", zlib.compress(raw, 9)) + chunk(b"IEND", b""))
+
+
+def _hide(path: Path) -> None:
+    if os.name == "nt":
+        ok = ctypes.windll.kernel32.SetFileAttributesW(str(path), FILE_ATTRIBUTE_HIDDEN)
+        if not ok:
+            raise OSError(f"SetFileAttributesW failed for {path}")
+
+
+def _write(path: Path, data: bytes | str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if isinstance(data, str):
+        path.write_text(data, encoding="utf-8")
+    else:
+        path.write_bytes(data)
+
+
+def build(out: Path, large: bool = False) -> dict:
+    """Rebuild the fixture tree at *out* and return counts."""
+    out = Path(out)
+    if out.exists():
+        shutil.rmtree(out)
+    out.mkdir(parents=True)
+    rng = random.Random(SEED)
+    files = 0
+
+    # Documents: 12 txt + 3 md + 1 pdf header + 3 unicode names  (19)
+    for i in range(12):
+        _write(out / "Documents" / f"doc-{i:02d}.txt", _text(rng, 40 + i * 7)); files += 1
+    for name in ("readme.md", "meeting-notes.md", "todo.md"):
+        _write(out / "Documents" / name, "# " + name + "\n\n" + _text(rng, 60)); files += 1
+    _write(out / "Documents" / "contract.pdf", b"%PDF-1.4\n%FilePlus fixture\n" + _text(rng, 200).encode()); files += 1
+    for name in ("Rechnung_Müller.txt", "ノート.md", "café menu.txt"):
+        _write(out / "Documents" / name, _text(rng, 25)); files += 1
+
+    # Duplicate set: 1 original + 3 byte-identical copies  (4)
+    report = _text(rng, 300)
+    _write(out / "Documents" / "report-2025.txt", report); files += 1
+    for rel in ("Downloads/report-2025.txt", "Documents/old/report-2025 (1).txt", "Desktop/report-2025 - Copy.txt"):
+        _write(out / rel, report); files += 1
+
+    # Pictures: 6 PNGs  (6)
+    for i in range(6):
+        rgb = (rng.randrange(256), rng.randrange(256), rng.randrange(256))
+        _write(out / "Pictures" / f"IMG_{i + 1:04d}.png", _png(16 + i * 8, 16 + i * 4, rgb)); files += 1
+
+    # Projects: 3 code files + deep nesting  (4)
+    _write(out / "Projects" / "app" / "main.py", "def main():\n    print('fileplus')\n\nif __name__ == '__main__':\n    main()\n"); files += 1
+    _write(out / "Projects" / "app" / "utils.py", "def add(a, b):\n    return a + b\n"); files += 1
+    _write(out / "Projects" / "web" / "app.js", "console.log('fileplus');\n"); files += 1
+    _write(out / "Projects" / "a" / "b" / "c" / "d" / "e" / "f" / "deep.txt", _text(rng, 10)); files += 1
+
+    # Music: 4 fake wav headers  (4)
+    for i in range(4):
+        _write(out / "Music" / f"take-{i + 1:02d}.wav", b"RIFF" + struct.pack("<I", 36) + b"WAVEfmt " + bytes(rng.randrange(256) for _ in range(64))); files += 1
+
+    # Downloads: installer stub, zip stub, partial download  (3)
+    _write(out / "Downloads" / "setup-tool.exe", b"MZ" + bytes(rng.randrange(256) for _ in range(512))); files += 1
+    _write(out / "Downloads" / "presets.zip", b"PK\x03\x04" + bytes(rng.randrange(256) for _ in range(256))); files += 1
+    _write(out / "Downloads" / "movie.mkv.crdownload", bytes(rng.randrange(256) for _ in range(1024))); files += 1
+
+    # Hidden: dotfile + thumbs.db, both with the Windows hidden attribute  (2)
+    _write(out / ".hidden-config", "hidden=1\n"); _hide(out / ".hidden-config"); files += 1
+    _write(out / "thumbs.db", bytes(64)); _hide(out / "thumbs.db"); files += 1
+
+    # Empty folders (0 files, 2 dirs)
+    (out / "Empty").mkdir()
+    (out / "Videos").mkdir()
+
+    if large:
+        big = out / "Videos" / "large-render.mov"
+        with open(big, "wb") as fh:
+            fh.truncate(LARGE_BYTES)
+        files += 1
+
+    assert files == (EXPECTED_FILES_LARGE if large else EXPECTED_FILES), files
+    dirs = sum(1 for p in out.rglob("*") if p.is_dir())
+    return {"files": files, "dirs": dirs, "duplicates": 3, "hidden": 2}
+
+
+def main() -> None:
+    repo = Path(__file__).resolve().parents[1]
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--out", type=Path, default=repo / "FilePlusTestSandbox" / "_gen")
+    ap.add_argument("--large", action="store_true", help="also create a 101 MB sparse file")
+    args = ap.parse_args()
+    stats = build(args.out, large=args.large)
+    print(f"built {stats['files']} files in {stats['dirs']} dirs at {args.out}")
+
+
+if __name__ == "__main__":
+    main()
