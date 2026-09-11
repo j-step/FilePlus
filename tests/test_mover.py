@@ -392,6 +392,21 @@ async def test_undo_move_keep_both_restores_original_name(conn, sandbox):
     assert not landed.exists()
 
 
+async def test_undo_move_keep_both_survives_failed_corrective_rename(conn, sandbox):
+    src = _mk(sandbox, "u/a.txt", "A")
+    dst = sandbox / "v"; dst.mkdir()
+    _mk(sandbox, "v/a.txt", "already here")  # forces keep-both on the forward move
+    r = await mover.move(conn, src, dst, on_conflict="keep-both")
+    assert r["status"] == "done" and Path(r["dest"]).name == "a (2).txt"
+    _mk(sandbox, "u/a.txt", "blocker")  # occupies the original name before undo runs
+    inv = await mover.undo_operation(conn, r["op_id"])
+    assert inv["status"] == "done"
+    assert (sandbox / "u" / "a (2).txt").exists()
+    assert (sandbox / "u" / "a (2).txt").read_text() == "A"
+    assert (sandbox / "u" / "a.txt").read_text() == "blocker"  # blocker left untouched
+    assert (await ol.get_operation(conn, r["op_id"]))["undone"] == 1
+
+
 async def test_undo_batch_catches_invalid_name_error(conn, sandbox, monkeypatch):
     a = _mk(sandbox, "ia.txt"); (sandbox / "dst2").mkdir()
     res = await mover.batch_move(conn, [a], sandbox / "dst2")

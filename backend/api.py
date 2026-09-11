@@ -255,7 +255,7 @@ async def drives():
     def scan():
         out = []
         for p in psutil.disk_partitions(all=False):
-            if "fixed" not in p.opts and "rw" not in p.opts:
+            if "fixed" not in p.opts:
                 continue
             try:
                 u = psutil.disk_usage(p.mountpoint)

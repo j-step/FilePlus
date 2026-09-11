@@ -418,10 +418,17 @@ async def undo_operation(conn, op_id: int, *, batch_id: str | None = None) -> di
         if t == "move":
             result = await move(conn, dest, Path(src).parent, batch_id=batch_id, on_conflict="keep-both",
                                 reason=f"undo of #{op_id}", _undo_of=op_id)
-            if (result["status"] == "done" and Path(result["dest"]).name != Path(src).name
-                    and not Path(src).exists()):
-                result = await rename(conn, result["dest"], Path(src).name, batch_id=batch_id,
-                                      reason=f"undo of #{op_id}", _undo_of=op_id)
+            if result["status"] == "done" and Path(result["dest"]).name != Path(src).name:
+                # the move landed under a keep-both name (either the forward op used
+                # keep-both, or the original name is occupied again); try to restore
+                # the original name, but a failure here must not fail the undo -- the
+                # item is already safely back in its original folder either way.
+                try:
+                    result = await rename(conn, result["dest"], Path(src).name, batch_id=batch_id,
+                                          reason=f"undo of #{op_id}", _undo_of=op_id)
+                except (ConflictError, OSError, InvalidNameError) as exc:
+                    logger.warning("undo #%s: could not restore original name %r (%s); leaving '%s'",
+                                   op_id, Path(src).name, exc, result["dest"])
         else:
             result = await rename(conn, dest, Path(src).name, batch_id=batch_id, reason=f"undo of #{op_id}", _undo_of=op_id)
     elif t == "trash":
