@@ -1,10 +1,12 @@
 # FilePlus — UI Specification (canonical)
 
+> **Style note (2026-09-10).** Section A.0 "Aesthetic baseline" and every colour, bevel, glow and font reference in this document describe the April 2026 design, which the roadmap replaces (decisions D7/D8 in `superpowers/specs/2026-09-10-fileplus-roadmap-design.md`). Layout, sizing, density and behaviour in this document remain canonical.
+
 **Status:** Canonical source of truth.
 **Date last updated:** 2026-04-25.
-**Supersedes:** `docs/design-brief.md` (kept in place; see history). `docs/finalization-spec.md` (to be archived under `docs/archive/finalization-spec-v0.md` per Task A17 of the foundation plan).
+**Supersedes:** `docs/archive/design-brief.md`. `docs/finalization-spec.md` (archived under `docs/archive/finalization-spec-v0.md`).
 **Decision register:** [docs/superpowers/specs/2026-04-25-fileplus-ui-re-pass-design.md](superpowers/specs/2026-04-25-fileplus-ui-re-pass-design.md) §2.
-**Tokens:** [docs/design-tokens.md](design-tokens.md).
+**Tokens:** [docs/archive/design-tokens.md](archive/design-tokens.md).
 
 This document describes every screen, surface, overlay, and component in FilePlus v1. It is the only doc Impeccable sessions audit against.
 

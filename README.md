@@ -56,9 +56,25 @@ npm start
 ### Test
 
 ```bash
-pytest tests/
+py -3 -m pytest -q
 ```
+
+### Fixtures
+
+```bash
+py -3 scripts/gen_sandbox.py
+```
+
+Builds `FilePlusTestSandbox/_gen`.
 
 ## Development status
 
-See [PLAN.md](PLAN.md) for the phase-by-phase build plan and [CLAUDE.md](CLAUDE.md) for session context.
+Restarted 2026-09-10. The roadmap and every decision live in
+[docs/superpowers/specs/2026-09-10-fileplus-roadmap-design.md](docs/superpowers/specs/2026-09-10-fileplus-roadmap-design.md).
+Session rules are in [CLAUDE.md](CLAUDE.md).
+
+Run everything with one command from the repo root:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/verify.ps1
+```

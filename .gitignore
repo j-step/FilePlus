@@ -38,3 +38,6 @@ Thumbs.db
 # Local sandbox / test data (synthetic file trees used during dev)
 FilePlusTestSandbox/
 FilePlusTestSandbox - Backup/
+
+# Test artefacts (screenshots, Playwright output)
+artifacts/
