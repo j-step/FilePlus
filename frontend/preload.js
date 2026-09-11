@@ -21,4 +21,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getZoom:     () => ipcRenderer.sendSync('win-zoom-get'),
   // Host info
   hostname:    () => ipcRenderer.sendSync('get-hostname'),
+  // Theme — syncs Electron's nativeTheme.themeSource so window chrome (e.g. Mica tint) agrees
+  setThemeSource: (mode) => ipcRenderer.send('set-theme-source', mode),
 });

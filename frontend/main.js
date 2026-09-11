@@ -4,7 +4,7 @@
  * Creates the application window, configures security settings,
  * and wires up the dev-tools shortcut.
  */
-const { app, BrowserWindow, globalShortcut, ipcMain } = require('electron');
+const { app, BrowserWindow, globalShortcut, ipcMain, nativeTheme } = require('electron');
 const path = require('path');
 const os   = require('os');
 
@@ -66,6 +66,10 @@ app.whenReady().then(() => {
 
   ipcMain.on('get-hostname', (event) => {
     event.returnValue = os.hostname();
+  });
+
+  ipcMain.on('set-theme-source', (_e, mode) => {
+    nativeTheme.themeSource = ['dark', 'light'].includes(mode) ? mode : 'system';
   });
 
   createWindow();

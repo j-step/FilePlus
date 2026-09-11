@@ -790,9 +790,17 @@ function closeModal() {
 }
 
 // ── Theme toggle ─────────��─────────────────────────────────────────────────────
+const THEME_MODES = ['dark', 'light', 'system'];
+const _systemDark = window.matchMedia('(prefers-color-scheme: dark)');
+let _systemListenerAttached = false;
+
+function resolveTheme(mode) {
+  return mode === 'system' ? (_systemDark.matches ? 'dark' : 'light') : mode;
+}
+
 function toggleTheme() {
-  const html = document.documentElement;
-  const next = html.dataset.theme === 'dark' ? 'light' : 'dark';
+  const current = localStorage.getItem('fp-theme') || 'system';
+  const next = THEME_MODES[(THEME_MODES.indexOf(current) + 1) % THEME_MODES.length];
   applyTheme(next);
 }
 
@@ -809,13 +817,22 @@ function switchSettingsPane(pane) {
   sessionStorage.setItem('fp-settings-pane', pane);
 }
 
-function applyTheme(theme) {
-  document.documentElement.dataset.theme = theme;
-  localStorage.setItem('fp-theme', theme);
-  // Sync segmented controls in personalization pane
+function applyTheme(mode) {
+  if (!THEME_MODES.includes(mode)) mode = 'system';
+  const html = document.documentElement;
+  html.dataset.theme = resolveTheme(mode);
+  html.dataset.themeMode = mode;
+  localStorage.setItem('fp-theme', mode);
+  if (window.electronAPI?.setThemeSource) window.electronAPI.setThemeSource(mode);
+  if (mode === 'system' && !_systemListenerAttached) {
+    _systemDark.addEventListener('change', () => {
+      if ((localStorage.getItem('fp-theme') || 'system') === 'system') applyTheme('system');
+    });
+    _systemListenerAttached = true;
+  }
   document.querySelectorAll('[data-action="settings-set-theme"]').forEach(btn => {
     const v = btn.dataset.theme || btn.dataset.val;
-    btn.classList.toggle('active', v === theme);
+    btn.classList.toggle('active', v === mode);
   });
 }
 
@@ -872,8 +889,7 @@ function applyAccent(value) {
 }
 
 function restoreSettings() {
-  const theme = localStorage.getItem('fp-theme');
-  if (theme) applyTheme(theme);
+  applyTheme(localStorage.getItem('fp-theme') || 'system');
   const density = localStorage.getItem('fp-density');
   if (density) applyDensity(density);
   // One-time migration: drop the retired amber default (#E8965E) that older
@@ -894,7 +910,7 @@ function restoreSettings() {
       const swatch = document.getElementById('settings-accent-swatch');
       if (swatch) swatch.style.background = savedAccent;
     } else {
-      // Invalid (e.g., 'lavender' from pre-A4 sessions) — purge so default amber wins
+      // Invalid (e.g., 'lavender' from pre-A4 sessions) — purge so the default accent wins
       console.warn(`[fp-accent] Discarding invalid persisted value: ${savedAccent}`);
       localStorage.removeItem('fp-accent');
     }

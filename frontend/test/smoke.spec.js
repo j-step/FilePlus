@@ -56,6 +56,13 @@ test('every screen renders with no renderer errors', async () => {
     await page.evaluate(() => openPalette());
     await page.screenshot({ path: path.join(SHOTS, 'palette.png') });
     await page.evaluate(() => closePalette());
+
+    await page.evaluate(() => applyTheme('light'));
+    for (const id of ['home', 'browser', 'settings']) {
+      await page.evaluate((s) => switchScreen(s), id);
+      await page.screenshot({ path: path.join(SHOTS, `${id}-light.png`) });
+    }
+    await page.evaluate(() => applyTheme('system'));
   } finally {
     await app.close();
   }
