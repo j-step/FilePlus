@@ -653,7 +653,7 @@ svg { flex-shrink: 0; }
 }
 .fp-approvals--active {
   background: var(--accent-wash);
-  border: 0;
+  border-color: transparent;
   box-shadow: none;
 }
 
