@@ -526,14 +526,18 @@ async def post_pins(body: PinAdd):
 @app.patch("/pins/{pin_id}")
 async def patch_pins(pin_id: int, body: PinPatch):
     async with _db() as conn:
-        await stores.pins_update(conn, pin_id, body.label)
+        ok = await stores.pins_update(conn, pin_id, body.label)
+    if not ok:
+        raise HTTPException(status_code=404, detail="pin not found")
     return {"status": "ok", "id": pin_id, "label": body.label}
 
 
 @app.delete("/pins/{pin_id}")
 async def delete_pins(pin_id: int):
     async with _db() as conn:
-        await stores.pins_remove(conn, pin_id)
+        ok = await stores.pins_remove(conn, pin_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="pin not found")
     return {"status": "deleted", "id": pin_id}
 
 

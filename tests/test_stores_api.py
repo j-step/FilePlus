@@ -59,6 +59,46 @@ def test_pins_crud(client, sandbox):
     assert [p["id"] for p in client.get("/pins").json()] == [pin2["id"]]
 
 
+def test_favorites_reorder_partial(client, sandbox):
+    paths = {}
+    for name in "abcd":
+        p = sandbox / f"{name}.txt"; p.write_text(name)
+        paths[name] = str(p)
+        client.post("/favorites", json={"path": paths[name]})
+    client.post("/favorites/reorder", json={"paths": [paths["c"], paths["a"]]})
+    files = client.get("/favorites").json()["files"]
+    assert [f["name"] for f in files] == ["c.txt", "a.txt", "b.txt", "d.txt"]
+    assert [f["position"] for f in files] == [0, 1, 2, 3]
+    assert len({f["name"] for f in files}) == 4  # no duplicates
+
+
+def test_pins_reorder_partial(client, sandbox):
+    ids = {}
+    for name in "abcd":
+        d = sandbox / name; d.mkdir()
+        ids[name] = client.post("/pins", json={"path": str(d)}).json()["id"]
+    client.post("/pins/reorder", json={"ids": [ids["c"], ids["a"]]})
+    pins = client.get("/pins").json()
+    assert [p["id"] for p in pins] == [ids["c"], ids["a"], ids["b"], ids["d"]]
+    assert [p["position"] for p in pins] == [0, 1, 2, 3]
+    assert len({p["id"] for p in pins}) == 4  # no duplicates
+
+
+def test_pins_add_idempotent(client, sandbox):
+    d = sandbox / "Projects"; d.mkdir()
+    r1 = client.post("/pins", json={"path": str(d)}).json()
+    r2 = client.post("/pins", json={"path": str(d)}).json()
+    assert r1["id"] == r2["id"]
+    assert len(client.get("/pins").json()) == 1
+    pin_adds = [o for o in client.get("/operations").json() if o["op_type"] == "pin-add"]
+    assert len(pin_adds) == 1
+
+
+def test_pins_unknown_id_404(client):
+    assert client.patch("/pins/999", json={"label": "x"}).status_code == 404
+    assert client.delete("/pins/999").status_code == 404
+
+
 def test_recent_groups_buckets():
     """Pin the bucket boundaries (unit test on the pure function).
 

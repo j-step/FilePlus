@@ -221,7 +221,20 @@ async def favorites_remove(conn: aiosqlite.Connection, path: str) -> None:
 
 
 async def favorites_reorder(conn: aiosqlite.Connection, paths: list[str]) -> None:
-    for i, p in enumerate(paths):
+    """Reorder favorites, tolerating a partial list.
+
+    Rows named in `paths` (in that order, unknown entries ignored) come
+    first; every row not mentioned keeps its previous relative order and is
+    appended after. Positions are then re-packed 0..n-1 for all rows so a
+    partial list can never leave duplicate or stale positions behind.
+    """
+    cur = await conn.execute("SELECT path FROM favorites ORDER BY position")
+    current = [r[0] for r in await cur.fetchall()]
+    current_set = set(current)
+    new_order = [p for p in paths if p in current_set]
+    named = set(new_order)
+    new_order += [p for p in current if p not in named]
+    for i, p in enumerate(new_order):
         await conn.execute("UPDATE favorites SET position = ? WHERE path = ?", (i, p))
     await conn.commit()
 
@@ -238,6 +251,12 @@ async def pins_list(conn: aiosqlite.Connection) -> list[dict]:
 
 
 async def pins_add(conn: aiosqlite.Connection, path: str, label: str | None = None) -> dict:
+    conn.row_factory = aiosqlite.Row
+    cur = await conn.execute("SELECT id, path, label, position, created FROM pinned_folders WHERE path = ?", (path,))
+    existing = await cur.fetchone()
+    if existing is not None:
+        return dict(existing)
+
     if not label:
         label = Path(path).name
 
@@ -255,26 +274,39 @@ async def pins_add(conn: aiosqlite.Connection, path: str, label: str | None = No
     return {"id": cur.lastrowid, "path": path, "label": label, "position": next_pos, "created": created}
 
 
-async def pins_update(conn: aiosqlite.Connection, pin_id: int, label: str) -> None:
-    await conn.execute("UPDATE pinned_folders SET label = ? WHERE id = ?", (label, pin_id))
+async def pins_update(conn: aiosqlite.Connection, pin_id: int, label: str) -> bool:
+    """Return False when no row matched, so the route can answer 404."""
+    cur = await conn.execute("UPDATE pinned_folders SET label = ? WHERE id = ?", (label, pin_id))
     await conn.commit()
+    return cur.rowcount > 0
 
 
-async def pins_remove(conn: aiosqlite.Connection, pin_id: int) -> None:
+async def pins_remove(conn: aiosqlite.Connection, pin_id: int) -> bool:
+    """Return False when no row matched, so the route can answer 404."""
     conn.row_factory = aiosqlite.Row
     cur = await conn.execute("SELECT path FROM pinned_folders WHERE id = ?", (pin_id,))
     row = await cur.fetchone()
-    source = row["path"] if row else None
+    if row is None:
+        return False
+    source = row["path"]
 
     op_id = await ol.log_operation(conn, "pin-remove", source)
     await conn.execute("DELETE FROM pinned_folders WHERE id = ?", (pin_id,))
     await conn.commit()
     await ol.mark_executed(conn, op_id)
     await _repack_positions(conn, "pinned_folders")
+    return True
 
 
 async def pins_reorder(conn: aiosqlite.Connection, ids: list[int]) -> None:
-    for i, pin_id in enumerate(ids):
+    """Reorder pins, tolerating a partial list (see favorites_reorder)."""
+    cur = await conn.execute("SELECT id FROM pinned_folders ORDER BY position")
+    current = [r[0] for r in await cur.fetchall()]
+    current_set = set(current)
+    new_order = [i for i in ids if i in current_set]
+    named = set(new_order)
+    new_order += [i for i in current if i not in named]
+    for i, pin_id in enumerate(new_order):
         await conn.execute("UPDATE pinned_folders SET position = ? WHERE id = ?", (i, pin_id))
     await conn.commit()
 
