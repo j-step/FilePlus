@@ -4784,6 +4784,19 @@ button.fp-pill:hover {
   pointer-events: none;
   transition: opacity var(--dur-slide) var(--ease-out);
 }
+/* Favorites drag-reorder insertion indicator (JS toggles these on dragover) */
+.fp-row--drop-before::after,
+.fp-row--drop-after::after {
+  content: '';
+  position: absolute;
+  left: var(--s-8);
+  right: var(--s-8);
+  height: 2px;
+  background: var(--accent);
+  border-radius: 999px;
+}
+.fp-row--drop-before::after { top: -1px; }
+.fp-row--drop-after::after { bottom: -1px; }
 
 /* ── Home grid view (toolbar's segmented control flips data-view) ─────────── */
 .home-pane[data-view="grid"] .home-section {

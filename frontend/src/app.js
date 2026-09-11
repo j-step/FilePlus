@@ -102,6 +102,10 @@ function showScreenDom(id) {
   if (id === 'browser' && navHistory.stack.length === 0) {
     loadDirectory(null);
   }
+  if (id === 'home') {
+    loadRecent();
+    loadFavorites();
+  }
   sessionStorage.setItem('fp-active-screen', id);
   updateSidebarActive();
 }
@@ -127,7 +131,7 @@ function switchScreen(id, labelOverride) {
 function openBrowserAt(path, label) {
   if (path && navHistory.stack.length === 0) navHistory.stack.push(null);
   switchScreen('browser', label);
-  if (path) loadDirectory(path);
+  if (path) return loadDirectory(path);
 }
 
 function switchToTab(tab) {
@@ -540,6 +544,7 @@ function openPalette() {
   paletteScrim.style.display = 'flex';
   paletteScrim.removeAttribute('aria-hidden');
   if (paletteInput) { paletteInput.value = ''; paletteInput.focus(); }
+  paletteResetToCommands();
 }
 
 function closePalette() {
@@ -547,6 +552,116 @@ function closePalette() {
   paletteScrim.style.display = 'none';
   paletteScrim.setAttribute('aria-hidden', 'true');
 }
+
+// ── Palette search mode (A.11.1 / Task 6) ─────────────────────────────────
+// Below the 2-char threshold (including empty), the static Commands group is
+// shown and search results are cleared. At 2+ chars, input is debounced
+// 150ms then GET /search?q=&limit=30 fires; results replace the Commands
+// group until the query drops back below the threshold.
+const PALETTE_FILE_ICON = `<svg width="14" height="14" viewBox="0 0 14 14" fill="none" style="flex-shrink:0;color:var(--text-secondary)"><rect x="2" y="1" width="8" height="11" rx="1" fill="var(--bg-raised)" stroke="currentColor" stroke-width="1.1"/><path d="M10 1v3h3" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round"/><path d="M4 6h6M4 8h4" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/></svg>`;
+const PALETTE_FOLDER_ICON = `<svg width="14" height="14" viewBox="0 0 14 14" fill="none" style="flex-shrink:0;color:var(--text-secondary)"><path d="M1 3.5a1 1 0 0 1 1-1h3l1 1.5H12a1 1 0 0 1 1 1V10a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V3.5z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>`;
+const PALETTE_MIN_CHARS = 2;
+const PALETTE_DEBOUNCE_MS = 150;
+let _paletteSearchTimer = null;
+let _paletteSearchSeq = 0;
+
+/** Every visible (not display:none-ancestor'd), non-disabled palette item —
+ * whichever group (Commands or search results) is currently shown. */
+function paletteVisibleItems() {
+  return [...document.querySelectorAll('#palette-search-pane .fp-palette__item:not([disabled])')]
+    .filter(el => el.offsetParent !== null);
+}
+
+function paletteSelectFirst() {
+  const items = paletteVisibleItems();
+  items.forEach(i => i.classList.remove('fp-palette__item--selected'));
+  if (items[0]) items[0].classList.add('fp-palette__item--selected');
+}
+
+function paletteResetToCommands() {
+  _paletteSearchSeq++; // invalidate any in-flight search response
+  const resultsEl = document.getElementById('palette-search-results');
+  const commandsEl = document.getElementById('palette-commands');
+  if (resultsEl) resultsEl.innerHTML = '';
+  if (commandsEl) commandsEl.style.display = '';
+  paletteSelectFirst();
+}
+
+async function runPaletteSearch(q) {
+  const seq = ++_paletteSearchSeq;
+  const resultsEl = document.getElementById('palette-search-results');
+  if (!resultsEl) return;
+  let hits = [];
+  try {
+    hits = await API.get('/search', { q, limit: 30 });
+  } catch (err) {
+    hits = [];
+  }
+  if (seq !== _paletteSearchSeq) return; // a newer query has since superseded this response
+
+  if (!hits || hits.length === 0) {
+    resultsEl.innerHTML = `<button class="fp-palette__item" role="option" disabled aria-disabled="true">
+      <span>No matches in the index — index folders from the sidebar (right-click a folder → Index for search)</span>
+    </button>`;
+    return;
+  }
+
+  const fileItems = hits.map(hit => `
+    <button class="fp-palette__item" role="option" data-action="palette-open-file" data-path="${escapeHtml(hit.path)}">
+      ${PALETTE_FILE_ICON}
+      <span>${escapeHtml(hit.filename)}</span>
+      <span class="fp-palette__item-meta fp-mono">${escapeHtml(parentOfPath(hit.path))}</span>
+    </button>`).join('');
+
+  // One folder item per distinct parent of the first 5 hits.
+  const seenParents = new Set();
+  const folderItems = [];
+  for (const hit of hits.slice(0, 5)) {
+    const parent = parentOfPath(hit.path);
+    if (seenParents.has(parent)) continue;
+    seenParents.add(parent);
+    folderItems.push(`
+      <button class="fp-palette__item" role="option" data-action="palette-open-folder" data-path="${escapeHtml(parent)}">
+        ${PALETTE_FOLDER_ICON}
+        <span>Open folder ${escapeHtml(pathBaseName(parent))}</span>
+        <span class="fp-palette__item-meta fp-mono">${escapeHtml(parent)}</span>
+      </button>`);
+  }
+
+  resultsEl.innerHTML = `<div class="fp-palette__section">Files</div>${fileItems}`
+    + (folderItems.length ? `<div class="fp-palette__section">Folders</div>${folderItems.join('')}` : '');
+  paletteSelectFirst();
+}
+
+paletteInput?.addEventListener('input', () => {
+  const q = paletteInput.value.trim();
+  clearTimeout(_paletteSearchTimer);
+  if (q.length < PALETTE_MIN_CHARS) {
+    paletteResetToCommands();
+    return;
+  }
+  const commandsEl = document.getElementById('palette-commands');
+  if (commandsEl) commandsEl.style.display = 'none';
+  _paletteSearchTimer = setTimeout(() => runPaletteSearch(q), PALETTE_DEBOUNCE_MS);
+});
+
+paletteInput?.addEventListener('keydown', e => {
+  if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp' && e.key !== 'Enter') return;
+  const items = paletteVisibleItems();
+  if (!items.length) return;
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    const sel = items.find(i => i.classList.contains('fp-palette__item--selected')) || items[0];
+    sel.click();
+    return;
+  }
+  e.preventDefault();
+  let idx = items.findIndex(i => i.classList.contains('fp-palette__item--selected'));
+  idx = e.key === 'ArrowDown' ? (idx + 1) % items.length : (idx - 1 + items.length) % items.length;
+  items.forEach(i => i.classList.remove('fp-palette__item--selected'));
+  items[idx].classList.add('fp-palette__item--selected');
+  items[idx].scrollIntoView({ block: 'nearest' });
+});
 
 function handlePaletteAction(btn) {
   const { action, screen: screenTarget } = btn.dataset;
@@ -860,6 +975,17 @@ const CONTEXT_MENUS = {
     { label: 'Unpin',              action: 'cm-unpin-sidebar' },
     { label: 'Rename label',       action: 'cm-rename-sidebar-item' },
   ],
+
+  // A.10.6 — Home row context menu (Recent + Favorites rows). "Add/Remove
+  // from Favorites" label is set dynamically at contextmenu time (see the
+  // listener below) based on home.js's favoritesSet.
+  'home-row': [
+    { label: 'Open',               action: 'open-file' },
+    { label: 'Reveal in Browser',  action: 'reveal-file' },
+    { label: 'Copy path',          action: 'copy-path' },
+    'sep',
+    { label: 'Add to Favorites',   action: 'home-toggle-favorite' },
+  ],
 };
 
 function getMenuTypeForTarget(target) {
@@ -867,8 +993,11 @@ function getMenuTypeForTarget(target) {
   // Only user pins carry data-pin-id — Home/Downloads/drives are not pins
   // and fall through to the empty-area menu instead.
   if (target.closest('.fp-sidebar__item[data-pin-id]')) return 'sidebar-item';
+  // Home's Recent/Favorites rows get their own menu — checked before the
+  // generic folder/file checks below so a Home row never falls into those.
+  if (target.closest('.fp-row--recent')) return 'home-row';
   if (target.closest('.fp-row[data-type="folder"], .ef-row[data-type="folder"]')) return 'folder';
-  if (target.closest('.fp-row, .ef-row, .rb-row, .home-row')) return 'file';
+  if (target.closest('.fp-row, .ef-row, .rb-row')) return 'file';
   return 'empty-area';
 }
 
@@ -1195,6 +1324,8 @@ const IN_SCOPE_ACTIONS = new Set([
   'switch-inspector-tab',
   'inspector-open', 'inspector-reveal', 'inspector-remove-tag', 'inspector-undo-op',
   'unfavorite-file', 'open-recent-file',
+  'open-file', 'reveal-file', 'copy-path', 'home-toggle-favorite',
+  'palette-open-file', 'palette-open-folder',
   'open-palette', 'close-palette', 'palette-set-mode',
   'modal-cancel', 'modal-confirm', 'modal-confirm-type',
   'ef-filter', 'ef-sort', 'ef-toggle-pause-ai', 'ef-toggle-moving-card',
@@ -1433,6 +1564,47 @@ document.addEventListener('click', e => {
       updateInspector('single', { name, path });
       break;
     }
+    // Home hover actions (Recent + Favorites rows) and the home-row context
+    // menu's Open/Reveal/Copy path — resolveHomeRowTarget (home.js) resolves
+    // the acting row whether `btn` is the hover-action button itself (nested
+    // inside the row) or a context-menu popup button (rendered outside the
+    // row; falls back to contextMenuTarget, captured at right-click time).
+    case 'open-file': {
+      const target = resolveHomeRowTarget(btn);
+      if (target) homeOpenPath(target.path, target.ext);
+      break;
+    }
+    case 'reveal-file': {
+      const target = resolveHomeRowTarget(btn);
+      if (target) homeRevealInBrowser(target.path);
+      break;
+    }
+    case 'copy-path': {
+      const target = resolveHomeRowTarget(btn);
+      if (target) homeCopyPath(target.path);
+      break;
+    }
+    case 'home-toggle-favorite': {
+      const target = resolveHomeRowTarget(btn);
+      if (target) homeToggleFavorite(target.path);
+      break;
+    }
+    case 'palette-open-file': {
+      const path = btn.dataset.path;
+      if (!path) break;
+      closePalette();
+      const parent = parentOfPath(path);
+      const loaded = openBrowserAt(parent, pathBaseName(parent) || undefined);
+      Promise.resolve(loaded).then(() => selectRow(path));
+      break;
+    }
+    case 'palette-open-folder': {
+      const path = btn.dataset.path;
+      if (!path) break;
+      closePalette();
+      openBrowserAt(path, pathBaseName(path) || undefined);
+      break;
+    }
     // Sidebar pinned-item context menu (A.10.5). These are only reachable
     // through the 'sidebar-item' menu type (see getMenuTypeForTarget), which
     // is raised solely for elements with data-pin-id — so any other menu
@@ -1514,6 +1686,7 @@ document.addEventListener('click', e => {
         Promise.resolve(openPath(path)).then(result => { if (result) showToast(result, 'error'); })
           .catch(err => showToast(formatApiError(err), 'error'));
       }
+      API.post('/recent', { path, action: 'opened' }).catch(() => { /* best-effort logging */ });
       break;
     }
     case 'cm-open-with': {
@@ -1842,6 +2015,10 @@ document.addEventListener('keydown', e => {
   if (browserScreenActive && !isEditableTarget && typeof browserKeydown === 'function') {
     browserKeydown(e);
   }
+  const homeScreenActive = document.getElementById('screen-home')?.classList.contains('active');
+  if (homeScreenActive && !isEditableTarget && typeof homeKeydown === 'function') {
+    homeKeydown(e);
+  }
 });
 
 // Ctrl + scroll wheel — step through ZOOM_STEPS, one step per gesture.
@@ -1878,13 +2055,19 @@ document.addEventListener('contextmenu', e => {
   }
   let items = CONTEXT_MENUS[contextMenuType] || CONTEXT_MENUS.file;
 
-  // Home's Recent/Favorites rows share the Browser 'file' menu type, but the
-  // Browser file menu dropped "Reveal in Browser" (redundant with Open there)
-  // — Home rows still need it, so splice it back in for that source only.
-  if (contextMenuType === 'file' && e.target.closest('.home-pane')) {
-    const revealItem = { label: 'Reveal in Browser', action: 'cm-reveal-browser' };
-    const sepIdx = items.findIndex(i => i === 'sep');
-    items = sepIdx === -1 ? [...items, revealItem] : [...items.slice(0, sepIdx), revealItem, ...items.slice(sepIdx)];
+  // Home row menu: select the row (mirrors the plain-click select+inspect
+  // behavior) and relabel the favorite toggle to reflect current membership.
+  if (contextMenuType === 'home-row') {
+    const row = e.target.closest('.fp-row[data-path]');
+    if (row) {
+      const pane = row.closest('.home-pane');
+      pane?.querySelectorAll('.fp-row--selected').forEach(r => { if (r !== row) r.classList.remove('fp-row--selected'); });
+      row.classList.add('fp-row--selected');
+      const isFav = typeof favoritesSet !== 'undefined' && favoritesSet.has(row.dataset.path);
+      items = items.map(i => (i !== 'sep' && i.action === 'home-toggle-favorite')
+        ? { ...i, label: isFav ? 'Remove from Favorites' : 'Add to Favorites' }
+        : i);
+    }
   }
 
   // Empty-area menu's "Show hidden files" reflects current state.
@@ -1965,16 +2148,16 @@ document.addEventListener('DOMContentLoaded', async () => {
   initSidebarDragDrop();
   initBreadcrumbDragDrop();
 
+  // Home: double-click to open (Task 6) + Favorites drag-to-reorder
+  initHomeRowInteractions();
+  initFavoritesDragDrop();
+
   // Restore saved view mode
   const savedView = sessionStorage.getItem('fp-view-mode');
   if (savedView) setViewMode(savedView);
 
   // Init underline tabs in any pre-existing tab containers
   document.querySelectorAll('.fp-tabs').forEach(initUnderlineTabs);
-
-  // Hide empty Recent home-sections — first non-empty group becomes the
-  // top header. INTEGRATION: re-run after /recent updates row markup.
-  pruneEmptyHomeSections();
 
   // Restore persisted settings (theme, density, accent, font scale)
   restoreSettings();

@@ -601,7 +601,9 @@ function moveFocus(delta, { shift = false } = {}) {
   onSelectionChanged();
 }
 
-/** Opens a directory entry: folder navigates into it, file opens via the OS. */
+/** Opens a directory entry: folder navigates into it, file opens via the OS
+ * and is logged as a recent action (folders are not — see home.js's
+ * loadRecent, which only ever expects file entries in /recent's groups). */
 function openEntry(path) {
   const entry = entryForPath(path);
   if (!entry) return;
@@ -614,6 +616,7 @@ function openEntry(path) {
   Promise.resolve(openPath(path)).then(result => {
     if (result) showToast(result, 'error');
   }).catch(err => showToast(formatApiError(err), 'error'));
+  API.post('/recent', { path, action: 'opened' }).catch(() => { /* best-effort logging */ });
 }
 
 /** Enter key: opens the currently focused row, if any. */
