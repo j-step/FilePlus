@@ -53,7 +53,7 @@ A Windows Explorer replacement where new files land in one inbox, the AI propose
 | D5 | Redesign timing | **Redesign first, then build.** Author will not live with the current design. | Stage 1 is the redesign. Bounded by D6. |
 | D6 | Redesign budget | **One system pass, then stop.** Tokens + all shared components + chrome/Home/Browser, one run, one review. Corrections queue for later stages. | Guardrail against repeating April. Placeholder screens get restyled when they become real. |
 | D7 | Redesign dislikes | Purple/amber palette, tactile chrome (bevels/glows/convex), Inter + JetBrains Mono. **Density and sizing stay.** | Layout, row heights, bar heights, spacing scale unchanged. |
-| D8 | Redesign direction | **Windows 11 native × utilitarian dev tool.** Segoe UI Variable + a mono for data, neutral greys, hairline borders, flat surfaces, system accent. Light + dark. | Direction brief for Stage 1. Two or three mockups on a design canvas precede the Stage 1 spec. |
+| D8 | Redesign direction | **Windows 11 native × utilitarian dev tool.** Neutral greys, hairline borders, flat surfaces, system accent. Light + dark. Three boards were mocked on a design canvas (A Fluent, B Terminal, C Blend); **author chose C with A's typeface: Segoe UI Variable throughout, tabular figures for data, no monospace face.** Token values are in the canvas's board C token sheet (dark: win `#1c1d20`, content `#232428`, raised `#2b2c31`, border `#2f3136`, text `#e7e8ea` / `#a0a3aa` / `#74777f`, accent `#4cc2ff`; light: win `#f4f4f5`, content `#ffffff`, raised `#ebebed`, border `#e2e2e5`, text `#1d1e21` / `#5f6168` / `#8e9097`, accent `#0067c0`). | Direction settled 2026-09-10. Stage 1 spec refines exact values and component states from board C. |
 | D9 | Stack | **Keep Electron + Python FastAPI.** | Changing it would cost a stage on its own. |
 | D10 | Working rule "one fix at a time, reload, verify" | **Retired.** It was right for pixel polish; it is the opposite of what autonomous runs need. | Memory + CLAUDE.md updated. |
 
@@ -99,10 +99,10 @@ Each stage: brainstorm → spec (`docs/superpowers/specs/`) → plan (`docs/supe
 
 **Goal:** the app looks like something the author wants to open, per D7/D8, without touching layout or behaviour.
 
-**Pre-work (brainstorm):** design canvas with 2–3 rendered directions of the Browser screen (Win11-native, dev-tool, blend). Author picks or blends. Stage 1 spec records the chosen token set.
+**Pre-work (done 2026-09-10):** design canvas with three rendered directions of the Browser screen; author chose board C with Segoe UI Variable throughout (D8). Stage 1 spec starts from board C's token sheet.
 
 **Scope in:**
-- New token set in `styles.css` `:root` (light + dark): neutral grey surface ramp, hairline border token, flat elevation model (borders + at most one subtle shadow for overlays), system-accent default with the existing `--accent-custom` override preserved, Segoe UI Variable (with fallback stack) + a data mono (Cascadia Mono or JetBrains Mono — decided in mockups).
+- New token set in `styles.css` `:root` (light + dark): neutral grey surface ramp, hairline border token, flat elevation model (borders + at most one subtle shadow for overlays), system-accent default with the existing `--accent-custom` override preserved, Segoe UI Variable (with fallback stack) for every role; data columns use `font-variant-numeric: tabular-nums`. The `--font-mono` token and JetBrains Mono are removed.
 - Every shared `fp-*` component restyled: buttons, inputs, chips, badges, rows, sidebar items, tabs, segmented, toggle, slider, modal, popover, snackbar, toast, kbd pill, state dot, breadcrumb.
 - Chrome (titlebar, tab bar, sidebar, toolbar, status bar), Home, Browser restyled.
 - Remove the bevel/glow/convex/concave token families and the lightsaber glow feature. Remove `prefers-reduced-motion` exceptions that only existed for glow.
@@ -210,7 +210,7 @@ The author's memory rule "one fix, reload, verify" is retired for build stages (
 
 ## 9. Deferred to stage brainstorms
 
-- **Stage 1:** exact palette values, mono font choice, whether Mica-style translucency is used (Electron `backgroundMaterial`), accent = Windows system accent by default or fixed neutral accent.
+- **Stage 1:** component state details (hover, pressed, focus, disabled) for board C, whether Mica-style translucency is used (Electron `backgroundMaterial`), accent = Windows system accent by default or fixed blue.
 - **Stage 2:** `actions.js` fate; Settings storage (SQLite config table vs electron-store); whether `/files` (index) and `/fs/list` (live) stay separate or unify; default-folder-handler registration timing.
 - **Stage 3:** tier order (D4); whether Ollama ships at all in v1; eval set composition; confidence thresholds.
 - **Stage 4:** tree editor as canvas vs two-pane list; snapshot retention.
