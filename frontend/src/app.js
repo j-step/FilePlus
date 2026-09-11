@@ -118,6 +118,18 @@ function switchScreen(id, labelOverride) {
   showScreenDom(id);
 }
 
+// Shared by the 'navigate-path' dispatch case and the sidebar pin's "Open in
+// new tab" context-menu action: pre-seed navHistory before switching to the
+// browser screen, so showScreenDom's automatic loadDirectory(null) (sandbox
+// root, fired when navHistory.stack is still empty) can never race this
+// call's own explicit loadDirectory(path) for a real target path. Extracted
+// so the guard can't be forgotten by a future third caller.
+function openBrowserAt(path, label) {
+  if (path && navHistory.stack.length === 0) navHistory.stack.push(null);
+  switchScreen('browser', label);
+  if (path) loadDirectory(path);
+}
+
 function switchToTab(tab) {
   if (!tab) return;
   document.querySelectorAll('.fp-tab').forEach(t => {
@@ -603,7 +615,10 @@ function openModal(type, config = {}) {
   if (confirm) {
     confirm.textContent = config.confirmLabel || (isDanger ? 'Delete' : 'Confirm');
     confirm.className = `fp-btn fp-btn--sm ${isDanger ? 'fp-btn--danger' : 'fp-btn--primary'}`;
-    if (config.onConfirm) confirm.onclick = () => { config.onConfirm(); closeModal(); };
+    // onConfirm may return false to veto the close (e.g. client-side
+    // validation failure) — any other return value (including undefined,
+    // the common case) closes the modal as before.
+    if (config.onConfirm) confirm.onclick = () => { if (config.onConfirm() === false) return; closeModal(); };
     else confirm.onclick = closeModal;
   }
   // Typed confirmation (optional)
@@ -1136,8 +1151,6 @@ document.addEventListener('click', e => {
       });
       btn.classList.add('fp-sidebar__item--active');
       btn.setAttribute('data-manual-active', 'true');
-      // Pre-seed history stack to prevent switchScreen's auto-load from racing with our explicit load.
-      if (navPath && navHistory.stack.length === 0) navHistory.stack.push(null);
       // Pre-set the tab label to the sidebar item's text (e.g. "Downloads",
       // "Projects") or the path's basename — so the tab never flashes "Files"
       // before the async loadDirectory() call lands.
@@ -1145,8 +1158,7 @@ document.addEventListener('click', e => {
       const initialLabel = (sidebarLabelEl?.textContent || '').trim()
                         || pathBaseName(navPath || '')
                         || undefined;
-      switchScreen('browser', initialLabel);
-      if (navPath) loadDirectory(navPath);
+      openBrowserAt(navPath, initialLabel);
       break;
     }
     case 'nav-back':
@@ -1336,8 +1348,7 @@ document.addEventListener('click', e => {
           const labelEl = contextMenuTarget.querySelector('.fp-sidebar__item__label');
           const label = (labelEl?.textContent || '').trim() || pathBaseName(pinPath) || undefined;
           openNewTab();
-          switchScreen('browser', label);
-          loadDirectory(pinPath);
+          openBrowserAt(pinPath, label);
         }
       } else {
         console.log(`[FilePlus] data-action stub: ${action}`, btn.dataset);
@@ -1370,8 +1381,13 @@ document.addEventListener('click', e => {
             confirmLabel: 'Rename',
             textInput: { value: currentLabel, placeholder: 'Label' },
             onConfirm: () => {
-              const val = (document.getElementById('modal-text-input')?.value || '').trim();
-              if (!val) return;
+              const input = document.getElementById('modal-text-input');
+              const val = (input?.value || '').trim();
+              if (!val) {
+                showToast('Label cannot be empty', 'error');
+                input?.focus();
+                return false; // veto the close — keep the modal open
+              }
               API.patch(`/pins/${pinId}`, { label: val })
                 .then(loadPins)
                 .catch(err => showToast(`Failed to rename: ${formatApiError(err)}`, 'error'));

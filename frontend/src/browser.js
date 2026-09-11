@@ -277,7 +277,7 @@ function renderTruncatedBanner() {
 function renderFsRow(entry, parentPath) {
   const childPath = parentPath.replace(/[\\\/]+$/, '') + '\\' + entry.name;
   const icon = entry.is_dir ? ICON_FOLDER : iconForExt(entry.ext);
-  const sizeText = entry.is_dir ? '—' : formatSize(entry.size);
+  const sizeText = (entry.is_dir || entry.error) ? '—' : formatSize(entry.size);
   const modifiedText = entry.error ? '—' : formatModified(entry.modified * 1000);
   const rowClass = `fp-row${entry.is_dir ? ' fp-row--folder' : ''}${entry.error ? ' fp-row--disabled' : ''}`;
   const titleAttr = entry.error ? ' title="Access denied"' : '';
