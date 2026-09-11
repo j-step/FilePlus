@@ -1,81 +1,69 @@
 # FilePlus — Claude Code Reference
 
-**FilePlus** is a Windows desktop application: an AI-driven alternative to Windows Explorer.
+Windows desktop app: an AI-driven replacement for Windows Explorer. Files land in one inbox, the AI
+proposes where they belong, the user approves, every move is logged and undoable.
 
----
+**Read first:** `docs/superpowers/specs/2026-09-10-fileplus-roadmap-design.md` (roadmap, decisions D1–D10,
+run protocol). Check which stage is active in `docs/superpowers/runs/` before doing anything.
 
-## Tech Stack
+## Stack
 
-- **Backend:** Python 3.11+ / FastAPI on `localhost:9876` / uvicorn
-- **DB:** aiosqlite + SQLite (WAL mode) — filesystem is reality, DB adapts
-- **Local LLM:** Ollama `llama3.1:8b` — first-pass classification
-- **Cloud LLM:** Claude API — fallback for ambiguous cases, batched
-- **File events:** watchdog
-- **Hashing:** xxhash (xxh64)
-- **Metadata:** Pillow / mutagen / python-magic-bin
-- **Frontend:** Electron, plain HTML/CSS/JS (no framework, no React)
+Backend Python 3.14 (`py -3`) · FastAPI on `localhost:9876` · aiosqlite/SQLite WAL · xxhash · watchdog.
+Frontend Electron 41, plain HTML/CSS/JS, no framework, no build step. Tests: pytest (asyncio auto) and
+`@playwright/test` driving Electron.
 
----
+## Hard safety rules (non-negotiable)
 
-## Hard Safety Principle (non-negotiable)
+- Nothing moves, renames or deletes without explicit user approval.
+- Every file operation is written to `operations_log` BEFORE it executes.
+- `path_guard()` gates every filesystem touch. Reads may span real drives; writes stay inside
+  `FILEPLUS_SANDBOX_PATH` until `WRITE_UNLOCKED=true` (decision D2; implemented in Stage 2).
+- Deletes go to the Recycle Bin or a staging area, never straight to gone.
 
-- The app never moves, renames, or deletes a file without explicit user approval.
-- Every file operation is logged to the `operations_log` table BEFORE it executes.
-- `SAFETY_MODE` in `config.py` defaults to `True` during development and restricts all filesystem
-  operations to a sandbox path via `path_guard()`, which raises on any out-of-sandbox target.
-- `SAFETY_MODE` is flipped to `False` only after the scan/classify pipeline has been validated
-  against the sandbox at least three times.
+## Verify before every commit
 
----
-
-## Repo Layout
-
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/verify.ps1
 ```
-fileplus/
-  backend/
-    __init__.py        config.py           database.py
-    indexer.py         hasher.py           tagger.py
-    classifier.py      watcher.py          mover.py
-    operations_log.py  snapshotter.py      api.py
-  frontend/
-    package.json       main.js             preload.js
-    index.html         tray/index.html
-    src/app.js         src/actions.js      src/styles.css
-  tests/
-    __init__.py        test_indexer.py     test_tagger.py
-    test_classifier.py test_mover.py
-    test_operations_log.py                 test_snapshotter.py
-  docs/
-    design-tokens.md   design-brief.md     finalization-spec.md
-  .gitignore  .env.example  requirements.txt  README.md
-  CLAUDE.md   PLAN.md
-```
+Runs pytest, starts the backend, runs the Electron smoke test (every screen, zero console errors,
+screenshots to `artifacts/screenshots/`), stops the backend. Red means stop and fix; never commit on red.
+Fixtures: `py -3 scripts/gen_sandbox.py` rebuilds `FilePlusTestSandbox/_gen`.
 
----
+## Working protocol (spec §6)
 
-## Coding Conventions
+Brainstorm → stage spec → task plan → one autonomous run on `stage/<n>-<slug>` → author reviews once →
+merge. Per task: implement, verify green, commit. Stop only for a destructive action outside the spec,
+a spec ambiguity that changes design, or verify red after two fixes. Runs end with
+`docs/superpowers/runs/<date>-stage-<n>.md`. Do NOT pause after each change for a visual check; the
+April "one fix at a time" rule is retired (D10).
 
-- **All paths from `backend/config.py`** — never hardcode a path anywhere.
-- **Log before you act** — call `operations_log.log_operation()` BEFORE every file operation.
-- **Never delete without approval** — move to staging or mark for review; never silently delete.
-- **Enforce `path_guard()`** in every function that touches the filesystem.
-- **Async everywhere** in the backend — use `async def`, `aiosqlite`, `aiohttp`.
-- **Frontend uses `fetch()` only** — the Electron renderer never calls Node fs APIs directly.
-- **Run Section 41 audit** (from `docs/design-tokens.md`) before declaring any UI phase complete.
+## Coding conventions
 
----
+- All paths come from `backend/config.py`; never hardcode one.
+- Backend is async everywhere (`async def`, `aiosqlite`, `aiohttp`). No global DB connection.
+- Frontend talks to the backend with `fetch()` only; the renderer never touches Node fs.
+- API routes have NO `/api/` prefix.
+- Model IDs and AI tier order live in config only (spec §7); no model string in any `.py` outside
+  `config.py` defaults.
+- Placeholders are debt: a screen with fake data is not built. Wire real data or hide the screen.
 
-## Current State
+## Frontend traps (load-bearing, learned the hard way)
 
-- **Backend:** Phase 1 complete (hasher, indexer, database schema; 18/18 tests passing). Phase 3 partially done — `backend/api.py` ships `/health`, `/files`, `/files/{id}`, `/fs/list`, `/fs/list/root`, `/scan`, `/tags`. Phase 2 modules (`tagger.py`, `classifier.py`) are still stubs.
-- **Frontend:** Global chrome polished (titlebar, tab bar, sidebar, toolbar, status bar). Home + Browser screens partially live. All other screens are HTML stubs with placeholder data.
-- **Integration:** `POST /scan` calls the indexer and returns count; `GET /files` and `GET /fs/list` are wired. Inspector opens on row click but most fields are placeholders.
-- **Tests:** 18/18 passing (indexer + hasher + config). No tests for API or frontend yet.
+- Click dispatch is the `switch` in `frontend/src/app.js` (`document.addEventListener('click', …)`).
+  `actions.js` exports an `ACTION_MAP` that nothing calls; helpers there are fine, the registry is dead.
+  Stage 2 decides its fate.
+- `index.html` loads `actions.js` before `app.js`; both define `showSnackbar`/`showToast` and the later
+  (app.js) binding wins. Use app.js's signature `showSnackbar(msg, 'Undo', fn)`.
+- Snackbars/toasts are gated by `localStorage['fp-notifications-enabled']` (default off). Only
+  `showToast(msg, 'error')` bypasses. No other exceptions.
+- Tab close affordance is `<span role="button">`, never a nested `<button>`. Per-tab screen state lives
+  on `data-tab-screen`; `switchScreen(id)` mutates the active tab, `switchToTab(tab)` activates another.
+- Repeating visual treatments become tokens in `:root` of `styles.css`; accent-derived colours use
+  `color-mix(... var(--accent) ...)`, never hardcoded rgba.
 
-## Next Task
+## Current state
 
-Two reasonable orderings exist:
-1. **Finish Phase 2** (`tagger.py` then `classifier.py`) so the scan pipeline produces real categories and tags. Recommended if the next visible feature is real Inspector tags or the Review Bin.
-2. **Implement `operations_log.py` + `mover.py`** (Phase 10) so any file-touching action — drag-drop, right-click rename/delete, snapshot restore — is safe and undoable. Recommended if the next visible feature involves moving files.
-
-See [docs/backend-integration.md](docs/backend-integration.md) for the full per-screen backend feature list and [PLAN.md](PLAN.md) for phase definitions.
+See `docs/superpowers/runs/` for the latest run summary and the roadmap spec §2 for the baseline
+inventory. Canonical docs: `PRODUCT.md`, `docs/UI-SPEC.md` (behaviour; style superseded),
+`docs/backend-integration.md` (wiring ledger), `docs/fileplus-feature-list.md` (backlog).
+Everything else is under `docs/archive/`.
