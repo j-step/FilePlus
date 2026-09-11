@@ -90,6 +90,17 @@ async def test_move_conflict_policies(conn, sandbox):
     assert len(trashed) == 1 and trashed[0].read_text() == "old"
 
 
+async def test_move_bad_on_conflict_raises_even_without_conflict(conn, sandbox):
+    """on_conflict is validated up front, before any conflict-resolution logic
+    runs -- so a bogus policy raises even for a clean, conflict-free move."""
+    src = _mk(sandbox, "a/clean.txt", "1")
+    (sandbox / "b").mkdir()
+    with pytest.raises(ValueError):
+        await mover.move(conn, src, sandbox / "b", on_conflict="bogus")
+    assert src.exists()
+    assert await ol.list_operations(conn) == []
+
+
 async def test_move_into_self_refused(conn, sandbox):
     _mk(sandbox, "d/x.txt")
     with pytest.raises(mover.RefusedError):

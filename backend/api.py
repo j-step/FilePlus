@@ -11,7 +11,7 @@ import os
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
 
 import aiosqlite
 import psutil
@@ -70,6 +70,11 @@ async def _conflict(_r, exc):
 @app.exception_handler(FileNotFoundError)
 async def _missing(_r, exc):
     return JSONResponse(status_code=404, content={"detail": str(exc)})
+
+
+@app.exception_handler(ValueError)
+async def _bad_request(_r, exc):
+    return JSONResponse(status_code=400, content={"detail": str(exc)})
 
 
 @app.exception_handler(PermissionError)
@@ -186,6 +191,24 @@ async def file_meta(path: str = Query(..., description="Absolute path of the fil
     resolved = path_guard(Path(path), "read")
     if not resolved.exists():
         raise HTTPException(status_code=404, detail=f"Not found: {path}")
+    if resolved.is_dir():
+        stat = resolved.stat()
+        return {
+            "id": None,
+            "path": str(resolved),
+            "filename": resolved.name or str(resolved),
+            "extension": "",
+            "size": None,
+            "hash": None,
+            "created": datetime.fromtimestamp(stat.st_ctime).isoformat(),
+            "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+            "category": None,
+            "confidence": 0.0,
+            "status": "directory",
+            "is_pinned": 0,
+            "tags": [],
+            "kind": "Folder",
+        }
     async with _db() as conn:
         conn.row_factory = aiosqlite.Row
         cur = await conn.execute("SELECT * FROM files WHERE path = ?", (str(resolved),))
@@ -341,12 +364,17 @@ async def fs_list(
     """Return a directory listing for the given absolute path.
 
     Read-only, so path_guard (mode="read") allows any path -- browsing real
-    drives is the product (D2). Returns 404 if the path doesn't exist or
-    isn't a directory; per-entry permission errors never 500 (see
-    _scandir_entries), but a PermissionError on the directory itself is
-    mapped to 403 by the exception handler above.
+    drives is the product (D2). *path* must be absolute with a drive (a bare
+    "C:" or a relative path is refused with 400 -- neither is a listable
+    location). Returns 404 if the path doesn't exist or isn't a directory;
+    per-entry permission errors never 500 (see _scandir_entries), but a
+    PermissionError on the directory itself is mapped to 403 by the
+    exception handler above.
     """
-    resolved = path_guard(Path(path), "read")
+    candidate = Path(path)
+    if not (candidate.is_absolute() and candidate.drive):
+        raise ValueError(f"Path must be absolute with a drive: {path!r}")
+    resolved = path_guard(candidate, "read")
     if not resolved.is_dir():
         raise HTTPException(status_code=404, detail=f"Not a directory: {path}")
     entries, truncated = await asyncio.to_thread(_scandir_entries, resolved, show_hidden)
@@ -436,9 +464,12 @@ async def start_index(body: IndexRequest):
     Refused with 403 for a protected system root (reads are otherwise
     allowed everywhere, so this is an explicit check rather than relying on
     path_guard's write-mode rules) and with 409 while another index runs.
+    The default sandbox lives inside FILEPLUS_APP_DIR, one of the protected
+    roots -- config.is_protected_read exempts it the same way path_guard
+    does for writes, so indexing the sandbox is never wrongly refused.
     """
     resolved = path_guard(Path(body.path), "read")
-    if any(_config.is_under(resolved, root) for root in _config.PROTECTED_WRITE_ROOTS):
+    if _config.is_protected_read(resolved):
         raise HTTPException(status_code=403, detail="system folders are not indexed")
     if app.state.index_state["running"]:
         raise HTTPException(status_code=409, detail="An index is already running")
@@ -531,7 +562,7 @@ class RenameReq(BaseModel):
 class MoveReq(BaseModel):
     sources: list[str]
     dest: str
-    on_conflict: str = "fail"
+    on_conflict: Literal["fail", "skip", "keep-both", "replace"] = "fail"
 
 
 class PathsReq(BaseModel):

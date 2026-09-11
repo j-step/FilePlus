@@ -87,6 +87,28 @@ def test_index_protected_root_forbidden(client, tmp_path, monkeypatch):
     assert r.status_code == 403
 
 
+def test_index_sandbox_exempt_from_app_dir_like_protected_root(client, sandbox, monkeypatch):
+    """Same rationale as test_indexer's counterpart: the sandbox sits inside
+    FILEPLUS_APP_DIR (a protected root) and must stay indexable."""
+    import backend.config as _config
+    monkeypatch.setattr(_config, "PROTECTED_WRITE_ROOTS", [sandbox.parent])
+    r = client.post("/index", json={"path": str(sandbox)})
+    assert r.status_code == 200 and r.json()["started"] is True
+
+
+def test_file_meta_on_directory_returns_folder_record(client, sandbox):
+    sub = sandbox / "subdir"
+    sub.mkdir()
+    r = client.get("/file", params={"path": str(sub)})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["kind"] == "Folder"
+    assert body["status"] == "directory"
+    assert body["id"] is None
+    assert body["size"] is None
+    assert body["tags"] == []
+
+
 def test_index_conflict_while_running(client, sandbox):
     from backend.api import app
     app.state.index_state["running"] = True

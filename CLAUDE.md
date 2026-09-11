@@ -17,8 +17,8 @@ Frontend Electron 41, plain HTML/CSS/JS, no framework, no build step. Tests: pyt
 - Nothing moves, renames or deletes without explicit user approval.
 - Every file operation is written to `operations_log` BEFORE it executes.
 - `path_guard(path, mode)` gates every filesystem touch: reads anywhere; writes inside
-  `FILEPLUS_SANDBOX_PATH` until `WRITE_UNLOCKED=true` in `.env`; Windows system roots and the app
-  directory are never writable (`ProtectedPathError`).
+  `FILEPLUS_SANDBOX_PATH` until `WRITE_UNLOCKED=true` in `.env`; Windows system roots are never
+  writable; the app directory is never writable except the sandbox inside it (`ProtectedPathError`).
 - Delete is a same-volume move into `.FilePlusTrash`; `POST /fs/trash/empty` sends it to the Recycle
   Bin. The app never hard-deletes. Every mutation: guard → log (`executed=0`) → act → mark; undo is a
   logged inverse (`undo_of`).

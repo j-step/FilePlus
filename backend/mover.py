@@ -40,6 +40,13 @@ FILE_ATTRIBUTE_HIDDEN = 0x2
 SPACE_MARGIN = 100 * 1024 * 1024
 HASH_VERIFY_LIMIT = 1024 ** 3
 
+_POLICIES = ("fail", "skip", "keep-both", "replace")
+
+
+def _validate_conflict_policy(on_conflict: str) -> None:
+    if on_conflict not in _POLICIES:
+        raise ValueError(f"unknown on_conflict {on_conflict!r}")
+
 
 def _send2trash(path: Path) -> None:  # indirection so tests can stub it
     _send2trash_impl(str(path))
@@ -168,7 +175,7 @@ def _resolve_target(target: Path, on_conflict: str) -> tuple[Path | None, str]:
         return keep_both_name(target), "done"
     if on_conflict == "replace":
         return target, "replace"
-    raise ValueError(f"unknown on_conflict {on_conflict!r}")
+    raise ValueError(f"unknown on_conflict {on_conflict!r}")  # defence in depth; callers validate up front
 
 
 def _result(op_id, op_type, status, src, dest, batch_id) -> dict:
@@ -209,6 +216,7 @@ def _move_fn(src: Path, dest: Path):
 
 
 async def move(conn, src, dest_dir, *, batch_id=None, on_conflict="fail", reason=None, _op_type="move", _undo_of=None) -> dict:
+    _validate_conflict_policy(on_conflict)
     src = _config.path_guard(src, "write")
     dest_dir = _config.path_guard(dest_dir, "write")
     if not src.exists():
@@ -225,6 +233,7 @@ async def move(conn, src, dest_dir, *, batch_id=None, on_conflict="fail", reason
     target, action = _resolve_target(candidate, on_conflict)
     if action in ("conflict", "skipped"):
         return _result(None, _op_type, action, src, candidate, None if minted else batch_id)
+    target = _config.path_guard(target, "write")
     if not same_volume(src, target):
         need = await asyncio.to_thread(_tree_size, src)
         if await asyncio.to_thread(_free_bytes, dest_dir) < need + SPACE_MARGIN:
@@ -246,6 +255,7 @@ async def rename(conn, path, new_name, *, batch_id=None, reason=None, _undo_of=N
 
 
 async def copy(conn, src, dest_dir, *, batch_id=None, on_conflict="fail", reason=None) -> dict:
+    _validate_conflict_policy(on_conflict)
     src = _config.path_guard(src, "read")
     dest_dir = _config.path_guard(dest_dir, "write")
     if not src.exists():
@@ -257,6 +267,7 @@ async def copy(conn, src, dest_dir, *, batch_id=None, on_conflict="fail", reason
     target, action = _resolve_target(dest_dir / src.name, on_conflict)
     if action in ("conflict", "skipped"):
         return _result(None, "copy", action, src, dest_dir / src.name, None if minted else batch_id)
+    target = _config.path_guard(target, "write")
     need = await asyncio.to_thread(_tree_size, src)
     if await asyncio.to_thread(_free_bytes, dest_dir) < need + SPACE_MARGIN:
         raise RefusedError("Not enough free space on the destination volume.")
@@ -293,6 +304,7 @@ async def trash(conn, path, *, batch_id=None, reason=None, _undo_of=None) -> dic
 
 
 async def restore(conn, trashed_path, original_path, *, batch_id=None, on_conflict="keep-both", reason=None, _undo_of=None) -> dict:
+    _validate_conflict_policy(on_conflict)
     src = _config.path_guard(trashed_path, "write")
     original = _config.path_guard(original_path, "write")
     if not src.exists():
@@ -302,6 +314,7 @@ async def restore(conn, trashed_path, original_path, *, batch_id=None, on_confli
     target, action = _resolve_target(original, on_conflict)
     if action in ("conflict", "skipped"):
         return _result(None, "restore", action, src, original, None if minted else batch_id)
+    target = _config.path_guard(target, "write")
     if action == "replace":
         await trash(conn, target, batch_id=batch_id, reason="replaced by restore")
 

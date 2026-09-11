@@ -54,3 +54,49 @@ def test_case_insensitive_containment(sandbox):
 def test_unknown_mode_rejected(sandbox):
     with pytest.raises(ValueError):
         path_guard(sandbox / "x", "delete")
+
+
+# ---------------------------------------------------------------------------
+# C1 -- canonicalisation: strip \\?\ prefixes, refuse drive-relative paths and
+# components that end with a space or a dot (Win32 accepts these spellings
+# but silently normalises them away, which would defeat containment checks).
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("spelling", [
+    "{win} \\evil",           # trailing space on a path component
+    "\\\\?\\{win}\\evil",     # extended-length prefix
+    "{win}.\\evil",           # trailing dot on a path component
+])
+def test_evasive_spellings_never_return_write(tmp_path, monkeypatch, spelling):
+    win = tmp_path / "Win"
+    win.mkdir()
+    monkeypatch.setattr(_config, "WRITE_UNLOCKED", True)
+    monkeypatch.setattr(_config, "PROTECTED_WRITE_ROOTS", [win])
+    candidate = spelling.format(win=str(win))
+    with pytest.raises((ProtectedPathError, ValueError)):
+        path_guard(candidate, "write")
+
+
+def test_extended_length_prefix_canonicalised_inside_sandbox(sandbox):
+    candidate = "\\\\?\\" + str(sandbox / "ok.txt")
+    assert path_guard(candidate, "write") == (sandbox / "ok.txt").resolve()
+
+
+def test_is_under_drive_root():
+    assert _config.is_under(Path("C:/Windows/x"), Path("C:/")) is True
+
+
+# ---------------------------------------------------------------------------
+# I4 -- guard ordering: SYSTEM_WRITE_ROOTS win even over the sandbox exemption.
+# ---------------------------------------------------------------------------
+
+def test_system_root_wins_even_inside_sandbox(tmp_path, monkeypatch):
+    win = tmp_path / "Win"
+    win.mkdir()
+    sandbox_dir = win / "sb"
+    sandbox_dir.mkdir()
+    monkeypatch.setattr(_config, "SYSTEM_WRITE_ROOTS", [win])
+    monkeypatch.setattr(_config, "PROTECTED_WRITE_ROOTS", [win])
+    monkeypatch.setattr(_config, "FILEPLUS_SANDBOX_PATH", sandbox_dir)
+    with pytest.raises(ProtectedPathError):
+        path_guard(sandbox_dir / "x.txt", "write")

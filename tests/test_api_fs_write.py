@@ -40,6 +40,17 @@ def test_write_outside_sandbox_is_403(client, tmp_path):
     assert r.status_code == 403 and "WRITE_UNLOCKED" in r.json()["detail"]
 
 
+def test_move_bad_on_conflict_is_422(client, sandbox):
+    (sandbox / "s.txt").write_text("x")
+    r = client.post("/fs/move", json={"sources": [str(sandbox / "s.txt")], "dest": str(sandbox), "on_conflict": "bogus"})
+    assert r.status_code == 422
+
+
+def test_fs_list_relative_or_driveless_path_is_400(client):
+    assert client.get("/fs/list", params={"path": "C:"}).status_code == 400
+    assert client.get("/fs/list", params={"path": "relative"}).status_code == 400
+
+
 def test_fs_list_reads_anywhere_and_flags_root(client, tmp_path, sandbox):
     out = tmp_path / "o"; out.mkdir(); (out / "z.txt").write_text("z")
     r = client.get("/fs/list", params={"path": str(out)})

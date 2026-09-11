@@ -179,6 +179,20 @@ async def test_scan_outside_sandbox_succeeds_read_only(db, sandbox, tmp_path):
     assert count == 1
 
 
+async def test_scan_sandbox_exempt_from_app_dir_like_protected_root(db, sandbox, monkeypatch):
+    """The default sandbox lives inside FILEPLUS_APP_DIR, itself a protected
+    root -- scanning it must not be treated as scanning a protected root.
+    PROTECTED_WRITE_ROOTS is set to something app-dir-like (not a
+    SYSTEM_WRITE_ROOTS entry) to prove the exemption, not merely that the
+    conftest fixture happens to clear PROTECTED_WRITE_ROOTS to []."""
+    (sandbox / "counted.txt").write_text("counted")
+    monkeypatch.setattr(_config, "PROTECTED_WRITE_ROOTS", [sandbox.parent])
+
+    count = await scan_directory(sandbox)
+
+    assert count == 1
+
+
 # ---------------------------------------------------------------------------
 # remove_stale_entries
 # ---------------------------------------------------------------------------

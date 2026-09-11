@@ -24,7 +24,7 @@ _SKIP_EXTENSIONS = {".crdownload", ".part", ".tmp"}
 
 
 def _is_protected(path: Path) -> bool:
-    return any(_config.is_under(path, root) for root in _config.PROTECTED_WRITE_ROOTS)
+    return _config.is_protected_read(path)
 
 
 async def scan_directory(root: Path, hash: bool = True) -> int:
@@ -32,8 +32,10 @@ async def scan_directory(root: Path, hash: bool = True) -> int:
 
     Skips hidden files/dirs (names starting with '.'), partial downloads,
     any directory named ``TRASH_DIRNAME``, and any path under a protected
-    write root (``PROTECTED_WRITE_ROOTS``). Opens a single DB connection for
-    the entire walk for efficiency.
+    write root per ``config.is_protected_read`` (a Windows system root, or
+    another protected root such as the app dir -- but never the sandbox,
+    even though it lives inside the app dir). Opens a single DB connection
+    for the entire walk for efficiency.
 
     Args:
         root: Directory to scan. Reads are allowed anywhere (path_guard mode="read").

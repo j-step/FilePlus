@@ -90,6 +90,7 @@ app.whenReady().then(() => {
     spawn('rundll32.exe', ['shell32.dll,OpenAs_RunDLL', p], { detached: true, stdio: 'ignore' }).unref();
   });
   ipcMain.handle('dialog-pick-folder', async (_e, defaultPath) => {
+    if (!mainWindow) return null;
     const r = await dialog.showOpenDialog(mainWindow, { properties: ['openDirectory'], defaultPath: isStr(defaultPath) ? defaultPath : undefined });
     return r.canceled || !r.filePaths.length ? null : r.filePaths[0];
   });
