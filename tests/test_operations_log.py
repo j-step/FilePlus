@@ -64,3 +64,13 @@ async def test_reconcile_pending(conn, sandbox):
     assert (await ol.get_operation(conn, b))["error"] == "not-started"
     assert (await ol.get_operation(conn, c))["error"] == "ambiguous"
     assert await ol.pending_operations(conn) == []
+
+
+async def test_reconcile_pathless_rows(conn, sandbox):
+    made = sandbox / "made"; made.mkdir()
+    a = await ol.log_operation(conn, "mkdir", None, str(made))                # dest exists => completed
+    b = await ol.log_operation(conn, "mkdir", None, str(sandbox / "never"))   # dest missing => not-started
+    c = await ol.log_operation(conn, "trash-empty:final", None, None)         # final => not-started, no ambiguity
+    d = await ol.log_operation(conn, "config-change", "ui.theme", "dark")
+    by_id = {r["id"]: r["resolution"] for r in await ol.reconcile_pending(conn)}
+    assert by_id == {a: "completed", b: "not-started", c: "not-started", d: "not-started"}

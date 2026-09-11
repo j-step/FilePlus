@@ -90,10 +90,15 @@ async def reconcile_pending(conn) -> list[dict]:
         src, dst = row["source_path"], row["dest_path"]
         src_exists = bool(src) and Path(src).exists()
         dst_exists = bool(dst) and Path(dst).exists()
-        if dst_exists and not src_exists:
-            await mark_executed(conn, row["id"]); resolution = "completed"
+        t = row["op_type"]
+        if t.endswith(":final") or t.split("-")[0] in ("config", "tag", "favorite", "pin"):
+            await mark_error(conn, row["id"], "not-started"); resolution = "not-started"
         elif src_exists and not dst_exists:
             await mark_error(conn, row["id"], "not-started"); resolution = "not-started"
+        elif dst_exists and not src_exists:
+            await mark_executed(conn, row["id"]); resolution = "completed"
+        elif not src and not dst_exists:
+            await mark_error(conn, row["id"], "not-started"); resolution = "not-started"   # mkdir/touch never started
         else:
             await mark_error(conn, row["id"], "ambiguous"); resolution = "ambiguous"
         logger.warning("reconciled op %s (%s %s -> %s): %s", row["id"], row["op_type"], src, dst, resolution)
