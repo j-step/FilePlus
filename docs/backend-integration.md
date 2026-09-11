@@ -798,7 +798,7 @@ No backend. Pure UI.
 **What.** Every filesystem-touching operation must call `operations_log.log_operation()` BEFORE execution, per [CLAUDE.md](../CLAUDE.md)'s hard safety principle. Currently [operations_log.py](../backend/operations_log.py) is all stubs.
 
 **How.**
-- Implement [operations_log](../backend/operations_log.py) per Phase 10 spec in [PLAN.md](../PLAN.md):
+- Implement [operations_log](../backend/operations_log.py) per Phase 10 spec in [PLAN.md](archive/PLAN.md):
   - `log_operation(op_type, source_path, dest_path, batch_id, reason) -> int` inserts with `executed=0`.
   - `mark_executed(op_id)` sets `executed=1`.
   - `undo_operation(op_id)` reverses (move dest→src etc.) and sets `undone=1`.
@@ -1037,7 +1037,7 @@ New endpoints:
 - On any new forward op: push to `undo_stack`, clear `redo_stack` (standard text-editor semantics).
 - On app restart: rebuild `undo_stack` from `SELECT id FROM operations_log WHERE undone=0 AND op_type NOT LIKE '%:final' ORDER BY id DESC LIMIT 50`. Don't restore the redo stack — it's session-scoped (otherwise the user could redo something across an app restart, which is surprising). Cap at 50 entries to bound memory; older log rows are still on disk and accessible via `POST /undo/{op_id}`.
 
-**Single-instance lock:** the undo stack is global per app instance. If the user runs two FilePlus instances against the same DB, the stacks would diverge — block multi-instance at the Electron layer with `app.requestSingleInstanceLock()` (already in PLAN.md §10), full stop.
+**Single-instance lock:** the undo stack is global per app instance. If the user runs two FilePlus instances against the same DB, the stacks would diverge — block multi-instance at the Electron layer with `app.requestSingleInstanceLock()` (already in docs/archive/PLAN.md §10), full stop.
 
 **Atomicity:** every undo/redo handler must itself log a new op (with `redo_of` pointing back to the original) — i.e. undoing a move logs a *new* `move` op (in reverse) plus updates the original row's `undone=1`. This way the operations_log remains an append-only audit trail and the Inspector → History tab shows undos as their own entries with a "(undo)" badge.
 
