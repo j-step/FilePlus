@@ -1,15 +1,16 @@
 """The sandbox generator must be deterministic and cover every fixture class."""
-import os
 from pathlib import Path
 
+import pytest
+
 from backend.hasher import hash_file
-from scripts.gen_sandbox import build, EXPECTED_FILES
+from scripts.gen_sandbox import build, EXPECTED_FILES, MARKER
 
 
 def _listing(root: Path) -> list[tuple[str, int]]:
     return sorted(
         (str(p.relative_to(root)), p.stat().st_size)
-        for p in root.rglob("*") if p.is_file()
+        for p in root.rglob("*") if p.is_file() and p.name != MARKER
     )
 
 
@@ -70,3 +71,21 @@ def test_large_flag_adds_one_sparse_file(tmp_path):
     big = root / "Videos" / "large-render.mov"
     assert stats["files"] == EXPECTED_FILES + 1
     assert big.stat().st_size == 101 * 1024 * 1024
+
+
+def test_rebuild_over_marked_tree_succeeds(tmp_path):
+    root = tmp_path / "gen"
+    build(root)
+    stats = build(root)
+    assert stats["files"] == EXPECTED_FILES
+    assert len(_listing(root)) == EXPECTED_FILES
+
+
+def test_refuses_to_remove_unmarked_nonempty_dir(tmp_path):
+    precious = tmp_path / "precious"
+    precious.mkdir()
+    guarded = precious / "do-not-delete.txt"
+    guarded.write_text("precious data\n")
+    with pytest.raises(RuntimeError):
+        build(precious)
+    assert guarded.exists()
