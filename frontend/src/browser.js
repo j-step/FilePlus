@@ -6,6 +6,13 @@
  * also read by the sidebar active-state and dispatch code there.
  */
 
+// ── Browser state ─────────────────────────────────────────────────────────────
+// The last-loaded directory listing. `parent`/`isRoot` come straight from the
+// /fs/list response so navUp() and the up-button never need to re-derive a
+// parent by string-slicing the path. `showHidden` is seeded from
+// config['ui.show_hidden'] by app.js's init sequence, before the first load.
+const browserState = { path: null, entries: [], parent: null, isRoot: false, showHidden: false };
+
 // ── View modes ────────────────────────────────────────────────────────────────
 function setViewMode(mode) {
   // v2 segmented opts
@@ -153,38 +160,57 @@ function escapeHtml(str) {
     .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-async function loadDirectory(absPath) {
-  const url = absPath
-    ? `${API_BASE}/fs/list?path=${encodeURIComponent(absPath)}`
-    : `${API_BASE}/fs/list/root`;
-
+async function loadDirectory(absPath, opts = {}) {
+  const { addToHistory = true } = opts;
   let data;
   try {
-    const r = await fetch(url, { headers: apiHeaders() });
-    if (r.status === 403) {
-      showErrorBanner(`Path is outside the sandbox: ${absPath}`);
-      return;
-    }
-    if (r.status === 404) {
-      showErrorBanner(`Folder not found: ${absPath}`);
-      return;
-    }
-    if (!r.ok) {
-      showErrorBanner(`Failed to load folder (HTTP ${r.status}).`);
-      return;
-    }
-    data = await r.json();
+    data = absPath
+      ? await API.get('/fs/list', { path: absPath, show_hidden: browserState.showHidden })
+      : await API.get('/fs/list/root');
   } catch (err) {
-    showErrorBanner(`Couldn't reach backend: ${err.message}`);
+    handleLoadError(err, absPath);
     return;
   }
 
+  browserState.path = data.path;
+  browserState.entries = data.entries;
+  browserState.parent = data.parent;
+  browserState.isRoot = data.is_root;
+
   renderDirectory(data);
-  pushHistory(data.path);
+  if (addToHistory) pushHistory(data.path);
+  else refreshNavButtons();
   updateBreadcrumb(data.path);
   updateAddressBar(data.path);
   updateSidebarActive();
   syncActiveTabPath(data.path);
+}
+
+function handleLoadError(err, absPath) {
+  if (err instanceof ApiError) {
+    if (err.status === 403) {
+      showErrorBanner(`Access denied: ${absPath}`, { actionLabel: 'Go back', actionName: 'nav-retreat' });
+      return;
+    }
+    if (err.status === 404) {
+      showErrorBanner('Folder not found');
+      return;
+    }
+    if (err.status === 400) {
+      showErrorBanner('Invalid path');
+      return;
+    }
+    showErrorBanner(formatApiError(err));
+    return;
+  }
+  showErrorBanner(`Couldn't reach backend: ${formatApiError(err)}`);
+}
+
+// Re-display the last successfully loaded directory — used by the "Go back"
+// action on the access-denied banner. The failed path was never pushed onto
+// navHistory, so this is a reload of the current head, not a stack pop.
+function retreatFromError() {
+  if (browserState.path) loadDirectory(browserState.path, { addToHistory: false });
 }
 
 function pushHistory(path) {
@@ -202,44 +228,18 @@ function pushHistory(path) {
 function navBack() {
   if (navHistory.idx <= 0) return;
   navHistory.idx -= 1;
-  const path = navHistory.stack[navHistory.idx];
-  fetchAndRender(path);
+  loadDirectory(navHistory.stack[navHistory.idx], { addToHistory: false });
 }
 
 function navForward() {
   if (navHistory.idx >= navHistory.stack.length - 1) return;
   navHistory.idx += 1;
-  const path = navHistory.stack[navHistory.idx];
-  fetchAndRender(path);
+  loadDirectory(navHistory.stack[navHistory.idx], { addToHistory: false });
 }
 
 function navUp() {
-  const cur = navHistory.stack[navHistory.idx];
-  if (!cur) return;
-  // Compute parent: strip last path segment. Keep the drive-letter root intact.
-  const parent = cur.replace(/[\\\/]+[^\\\/]+[\\\/]?$/, '') || cur;
-  if (parent === cur) return; // Already at root.
-  loadDirectory(parent);
-}
-
-async function fetchAndRender(path) {
-  try {
-    const r = await fetch(`${API_BASE}/fs/list?path=${encodeURIComponent(path)}`, { headers: apiHeaders() });
-    if (!r.ok) {
-      showErrorBanner(`Failed to load folder (HTTP ${r.status}).`);
-      refreshNavButtons();
-      return;
-    }
-    const data = await r.json();
-    renderDirectory(data);
-    updateBreadcrumb(data.path);
-    updateAddressBar(data.path);
-    updateSidebarActive();
-    syncActiveTabPath(data.path);
-  } catch (err) {
-    showErrorBanner(`Couldn't reach backend: ${err.message}`);
-  }
-  refreshNavButtons();
+  if (browserState.isRoot || !browserState.parent) return;
+  loadDirectory(browserState.parent);
 }
 
 function refreshNavButtons() {
@@ -248,38 +248,42 @@ function refreshNavButtons() {
   const up   = document.querySelector('[data-action="nav-up"]');
   if (back) back.disabled = navHistory.idx <= 0;
   if (fwd)  fwd.disabled  = navHistory.idx >= navHistory.stack.length - 1;
-  if (up) {
-    const cur = navHistory.stack[navHistory.idx];
-    if (!cur) {
-      up.disabled = true;
-    } else {
-      // At sandbox root if stripping the last path segment returns the same string or empty
-      const parent = cur.replace(/[\\\/]+[^\\\/]+[\\\/]?$/, '');
-      up.disabled = !parent || parent === cur;
-    }
-  }
+  if (up)   up.disabled   = !browserState.path || browserState.isRoot || !browserState.parent;
 }
 
 function renderDirectory(data) {
   const listScroll = document.getElementById('list-scroll');
   if (!listScroll) return;
 
+  const truncatedHtml = data.truncated ? renderTruncatedBanner() : '';
+
   if (!data.entries || data.entries.length === 0) {
-    listScroll.innerHTML = renderEmptyFolder();
+    listScroll.innerHTML = truncatedHtml + renderEmptyFolder();
     return;
   }
 
-  listScroll.innerHTML = data.entries.map(entry => renderFsRow(entry, data.path)).join('');
+  listScroll.innerHTML = truncatedHtml + data.entries.map(entry => renderFsRow(entry, data.path)).join('');
+}
+
+function renderTruncatedBanner() {
+  return `<div class="fp-error-banner fp-error-banner--info" role="status">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+      <circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>
+    </svg>
+    <span class="fp-body" style="color: var(--text-primary)">Showing the first 10,000 entries</span>
+  </div>`;
 }
 
 function renderFsRow(entry, parentPath) {
   const childPath = parentPath.replace(/[\\\/]+$/, '') + '\\' + entry.name;
   const icon = entry.is_dir ? ICON_FOLDER : iconForExt(entry.ext);
   const sizeText = entry.is_dir ? '—' : formatSize(entry.size);
-  const modifiedText = formatModified(entry.modified * 1000);
-  return `<div class="fp-row${entry.is_dir ? ' fp-row--folder' : ''}" role="option"
+  const modifiedText = entry.error ? '—' : formatModified(entry.modified * 1000);
+  const rowClass = `fp-row${entry.is_dir ? ' fp-row--folder' : ''}${entry.error ? ' fp-row--disabled' : ''}`;
+  const titleAttr = entry.error ? ' title="Access denied"' : '';
+  return `<div class="${rowClass}" role="option"
             data-path="${escapeHtml(childPath)}"
-            data-type="${entry.is_dir ? 'folder' : 'file'}">
+            data-type="${entry.is_dir ? 'folder' : 'file'}"${titleAttr}>
     ${icon}
     <span class="fp-row__name">${escapeHtml(entry.name)}</span>
     <span class="fp-row__size mono">${sizeText}</span>
@@ -318,13 +322,17 @@ function updateBreadcrumb(path) {
   crumb.innerHTML = html;
 }
 
-function showErrorBanner(message) {
+function showErrorBanner(message, opts = {}) {
   const listScroll = document.getElementById('list-scroll');
   if (!listScroll) return;
+  const actionHtml = opts.actionLabel
+    ? `<button class="fp-error-banner__action fp-btn fp-btn--ghost" data-action="${escapeHtml(opts.actionName || 'nav-back')}">${escapeHtml(opts.actionLabel)}</button>`
+    : '';
   listScroll.innerHTML = `<div class="fp-error-banner" role="alert">
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
       <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
     </svg>
     <span class="fp-body" style="color: var(--text-primary)">${escapeHtml(message)}</span>
+    ${actionHtml}
   </div>`;
 }

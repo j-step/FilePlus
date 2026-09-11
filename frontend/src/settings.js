@@ -5,6 +5,19 @@
  * it directly.
  */
 
+// ── Config cache ─────────────────────────────────────────────────────────────
+// Loaded once at startup from GET /config into window.__fpConfig — read by
+// applyDownloadsPath() and the browserState.showHidden seed in app.js's init.
+// Left as {} (not populated) when the backend can't be reached; callers use
+// `config['key'] || fallback` so a missing/empty cache degrades gracefully.
+async function loadConfig() {
+  try {
+    window.__fpConfig = await API.get('/config');
+  } catch (err) {
+    window.__fpConfig = {};
+  }
+}
+
 // ── Settings: pane switching + persistence ────────────────────────────────────
 
 function switchSettingsPane(pane) {

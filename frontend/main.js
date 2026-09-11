@@ -84,6 +84,10 @@ app.whenReady().then(() => {
     event.returnValue = os.hostname();
   });
 
+  ipcMain.on('get-home-dir', (event) => {
+    event.returnValue = os.homedir();
+  });
+
   ipcMain.on('get-api-token', (event) => {
     event.returnValue = API_TOKEN;
   });

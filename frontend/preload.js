@@ -21,6 +21,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getZoom:     () => ipcRenderer.sendSync('win-zoom-get'),
   // Host info
   hostname:    () => ipcRenderer.sendSync('get-hostname'),
+  homeDir:     () => ipcRenderer.sendSync('get-home-dir'),
   micaAvailable: () => ipcRenderer.sendSync('mica-available'),
   // API auth token (empty string when FILEPLUS_API_TOKEN is unset)
   apiToken:    () => ipcRenderer.sendSync('get-api-token'),

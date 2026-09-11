@@ -586,6 +586,8 @@ function openModal(type, config = {}) {
   const confirm = document.getElementById('modal-confirm');
   const confirmRow = document.getElementById('modal-confirm-input-row');
   const confirmWord = document.getElementById('modal-confirm-word');
+  const textInputRow = document.getElementById('modal-text-input-row');
+  const textInput = document.getElementById('modal-text-input');
   if (!scrim) return;
 
   // Icon: danger uses alert-octagon in bad, warn uses alert-triangle in warn
@@ -610,6 +612,16 @@ function openModal(type, config = {}) {
     confirmRow.style.display = '';
   } else if (confirmRow) {
     confirmRow.style.display = 'none';
+  }
+
+  // Free-text input (optional) — e.g. the sidebar-pin rename modal.
+  if (config.textInput && textInputRow && textInput) {
+    textInputRow.style.display = '';
+    textInput.value = config.textInput.value || '';
+    textInput.placeholder = config.textInput.placeholder || '';
+    requestAnimationFrame(() => textInput.focus());
+  } else if (textInputRow) {
+    textInputRow.style.display = 'none';
   }
 
   scrim.style.display = 'flex';
@@ -797,23 +809,29 @@ const CONTEXT_MENUS = {
     { label: 'Rename tab',         action: 'cm-rename-tab' },
   ],
 
-  // A.10.5 — Sidebar item context menu
+  // A.10.5 — Sidebar item context menu (pinned folders only — see getMenuTypeForTarget)
   'sidebar-item': [
     { label: 'Open in new tab',    action: 'cm-open-new-tab' },
     { label: 'Unpin',              action: 'cm-unpin-sidebar' },
-    { label: 'Pin to top',         action: 'cm-pin-top' },
     { label: 'Rename label',       action: 'cm-rename-sidebar-item' },
-    { label: 'Remove from sidebar', action: 'cm-remove-sidebar', danger: true },
   ],
 };
 
 function getMenuTypeForTarget(target) {
   if (target.closest('.fp-tab')) return 'tab';
-  if (target.closest('.fp-sidebar__item, .fp-sidebar__section')) return 'sidebar-item';
+  // Only user pins carry data-pin-id — Home/Downloads/drives are not pins
+  // and fall through to the empty-area menu instead.
+  if (target.closest('.fp-sidebar__item[data-pin-id]')) return 'sidebar-item';
   if (target.closest('.fp-row[data-type="folder"], .ef-row[data-type="folder"]')) return 'folder';
   if (target.closest('.fp-row, .ef-row, .rb-row, .home-row')) return 'file';
   return 'empty-area';
 }
+
+// The element + menu type the currently-open context menu was raised for —
+// set by the 'contextmenu' listener, read by the sidebar-item action handlers
+// (cm-open-new-tab / cm-unpin-sidebar / cm-rename-sidebar-item) below.
+let contextMenuTarget = null;
+let contextMenuType = null;
 
 const contextMenu = document.getElementById('context-menu');
 
@@ -951,7 +969,85 @@ async function checkBackend() {
   }
 }
 
-// ── Window controls (Electron IPC) ────────────────────────���───────────────────
+// ── Sidebar: real drives, pins, Downloads ─────────────────────────────────────
+// Called once at startup (after loadConfig() so applyDownloadsPath can read
+// the config cache) and safe to re-run any time the backend state changes
+// (e.g. after a pin is renamed/unpinned). All three degrade silently to a
+// no-op on failure — the sidebar keeps whatever it last rendered — since a
+// console.error here would fail the smoke test's "no renderer errors" gate.
+
+async function loadDrives() {
+  const container = document.getElementById('sb-drives');
+  if (!container) return;
+  let driveList;
+  try {
+    driveList = await API.get('/drives');
+  } catch (err) {
+    console.warn('[fp-drives] failed to load drives:', formatApiError(err));
+    return;
+  }
+  container.innerHTML = driveList.map(renderDriveItem).join('');
+}
+
+function renderDriveItem(d) {
+  const letter = d.letter || '';
+  const label = (d.label || '').trim();
+  const labelText = label ? `${letter} ${label}` : `${letter} Drive`;
+  const pct = d.total_bytes > 0 ? Math.round((d.used_bytes / d.total_bytes) * 100) : 0;
+  const usageTitle = `${formatSize(d.used_bytes)} / ${formatSize(d.total_bytes)} used`;
+  return `<div class="fp-sidebar__drive-item">
+    <button class="fp-sidebar__item" data-screen="browser" data-path="${escapeHtml(d.mount)}"
+            data-action="navigate-path" title="${escapeHtml(labelText)}">
+      <svg class="fp-sidebar__drive-icon" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <ellipse cx="8" cy="6" rx="6" ry="2.5" stroke="currentColor" stroke-width="1.2"/>
+        <path d="M2 6v4c0 1.4 2.7 2.5 6 2.5s6-1.1 6-2.5V6" stroke="currentColor" stroke-width="1.2"/>
+      </svg>
+      <span class="fp-sidebar__drive-letter" aria-hidden="true">${escapeHtml(letter)}</span>
+      <span class="fp-sidebar__item__label">${escapeHtml(labelText)}</span>
+    </button>
+    <div class="fp-sidebar__drive-bar" title="${escapeHtml(usageTitle)}">
+      <div class="fp-sidebar__drive-bar__fill" style="width:${pct}%"></div>
+    </div>
+  </div>`;
+}
+
+async function loadPins() {
+  const container = document.getElementById('sb-pinned-folders');
+  if (!container) return;
+  let pinList;
+  try {
+    pinList = await API.get('/pins');
+  } catch (err) {
+    console.warn('[fp-pins] failed to load pins:', formatApiError(err));
+    return;
+  }
+  container.innerHTML = pinList.map(renderPinItem).join('');
+}
+
+function renderPinItem(pin) {
+  const label = pin.label || pathBaseName(pin.path) || pin.path;
+  return `<button class="fp-sidebar__item" data-screen="browser" data-path="${escapeHtml(pin.path)}"
+          data-pin-id="${pin.id}" data-action="navigate-path" title="${escapeHtml(pin.path)}">
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <path d="M1 4a1 1 0 0 1 1-1h4l1.5 1.5H14a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V4z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
+    </svg>
+    <span class="fp-sidebar__item__label">${escapeHtml(label)}</span>
+  </button>`;
+}
+
+// Downloads' data-path is resolved once at startup: config['paths.downloads']
+// when the user configured one, else the real OS Downloads folder (main.js's
+// get-home-dir bridge), never the old hardcoded sandbox-relative guess.
+function applyDownloadsPath() {
+  const el = document.getElementById('nav-downloads');
+  if (!el) return;
+  const configured = window.__fpConfig && window.__fpConfig['paths.downloads'];
+  const home = window.electronAPI?.homeDir?.();
+  const path = configured || (home ? `${home}\\Downloads` : null);
+  if (path) el.dataset.path = path;
+}
+
+// ── Window controls (Electron IPC) ───────────────────────────────────────────
 function initWindowControls() {
   const api = window.electronAPI;
   if (!api) return;
@@ -1005,7 +1101,8 @@ const IN_SCOPE_ACTIONS = new Set([
   'toggle-sidebar', 'toggle-inspector', 'toggle-theme', 'set-view-mode',
   'focus-search', 'filter-by-tag', 'open-tag-canvas', 'close-tag-canvas',
   'tag-canvas-select',
-  'nav-back', 'nav-forward', 'nav-up', 'navigate-crumb',
+  'nav-back', 'nav-forward', 'nav-up', 'navigate-crumb', 'nav-retreat',
+  'cm-open-new-tab', 'cm-unpin-sidebar', 'cm-rename-sidebar-item',
   'open-review-bin',
   'switch-inspector-tab',
   'unfavorite-file', 'open-recent-file',
@@ -1063,6 +1160,9 @@ document.addEventListener('click', e => {
       break;
     case 'navigate-crumb':
       if (btn.dataset.path) loadDirectory(btn.dataset.path);
+      break;
+    case 'nav-retreat':
+      retreatFromError();
       break;
     case 'switch-tab':
       // User explicitly clicked a tab — activate THAT tab specifically.
@@ -1223,6 +1323,65 @@ document.addEventListener('click', e => {
       // data per backend-integration.md §A.2.1 item 2 (time-label formatter)
       // and §A.3 (file/info, file/preview, file/hash).
       updateInspector('single', { name, path });
+      break;
+    }
+    // Sidebar pinned-item context menu (A.10.5). These are only reachable
+    // through the 'sidebar-item' menu type (see getMenuTypeForTarget), which
+    // is raised solely for elements with data-pin-id — so any other menu
+    // (file/folder/tab/empty-area) still falls through to the stub below.
+    case 'cm-open-new-tab': {
+      if (contextMenuType === 'sidebar-item' && contextMenuTarget) {
+        const pinPath = contextMenuTarget.dataset.path;
+        if (pinPath) {
+          const labelEl = contextMenuTarget.querySelector('.fp-sidebar__item__label');
+          const label = (labelEl?.textContent || '').trim() || pathBaseName(pinPath) || undefined;
+          openNewTab();
+          switchScreen('browser', label);
+          loadDirectory(pinPath);
+        }
+      } else {
+        console.log(`[FilePlus] data-action stub: ${action}`, btn.dataset);
+        showToast(`Action "${action}" — not yet implemented`, 'action');
+      }
+      break;
+    }
+    case 'cm-unpin-sidebar': {
+      if (contextMenuType === 'sidebar-item' && contextMenuTarget) {
+        const pinId = contextMenuTarget.dataset.pinId;
+        if (pinId) {
+          API.del(`/pins/${pinId}`)
+            .then(loadPins)
+            .catch(err => showToast(`Failed to unpin: ${formatApiError(err)}`, 'error'));
+        }
+      } else {
+        console.log(`[FilePlus] data-action stub: ${action}`, btn.dataset);
+        showToast(`Action "${action}" — not yet implemented`, 'action');
+      }
+      break;
+    }
+    case 'cm-rename-sidebar-item': {
+      if (contextMenuType === 'sidebar-item' && contextMenuTarget) {
+        const pinId = contextMenuTarget.dataset.pinId;
+        const currentLabel = (contextMenuTarget.querySelector('.fp-sidebar__item__label')?.textContent || '').trim();
+        if (pinId) {
+          openModal('warn', {
+            title: 'Rename pin',
+            body: 'Enter a new label for this pinned folder.',
+            confirmLabel: 'Rename',
+            textInput: { value: currentLabel, placeholder: 'Label' },
+            onConfirm: () => {
+              const val = (document.getElementById('modal-text-input')?.value || '').trim();
+              if (!val) return;
+              API.patch(`/pins/${pinId}`, { label: val })
+                .then(loadPins)
+                .catch(err => showToast(`Failed to rename: ${formatApiError(err)}`, 'error'));
+            },
+          });
+        }
+      } else {
+        console.log(`[FilePlus] data-action stub: ${action}`, btn.dataset);
+        showToast(`Action "${action}" — not yet implemented`, 'action');
+      }
       break;
     }
     default:
@@ -1457,13 +1616,14 @@ document.addEventListener('keydown', e => {
 // ── Context menu event listener (A.10) ────────────────────────────────────────
 document.addEventListener('contextmenu', e => {
   e.preventDefault();
-  const type = getMenuTypeForTarget(e.target);
-  const items = CONTEXT_MENUS[type] || CONTEXT_MENUS.file;
+  contextMenuType = getMenuTypeForTarget(e.target);
+  contextMenuTarget = contextMenuType === 'sidebar-item' ? e.target.closest('.fp-sidebar__item[data-pin-id]') : e.target;
+  const items = CONTEXT_MENUS[contextMenuType] || CONTEXT_MENUS.file;
   showContextMenu(e.clientX, e.clientY, items);
 });
 
 // ── Init ───────────────────────────────────────────────────────────────────────
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
   // Restore theme from localStorage
   const savedTheme = localStorage.getItem('fp-theme');
   if (THEME_MODES.includes(savedTheme)) document.documentElement.dataset.theme = resolveTheme(savedTheme);
@@ -1536,6 +1696,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Restore persisted settings (theme, density, accent, font scale)
   restoreSettings();
+
+  // Load the config cache, then everything that reads from it — Downloads'
+  // real path and the show-hidden default — followed by the sidebar's live
+  // drives/pins. Sequenced (not Promise.all'd) per the plan's init order;
+  // each step degrades to a harmless no-op on backend failure.
+  await loadConfig();
+  browserState.showHidden = !!(window.__fpConfig && window.__fpConfig['ui.show_hidden']);
+  applyDownloadsPath();
+  await loadDrives();
+  await loadPins();
 
   // Always start on Home — the previous "restore last active screen"
   // behaviour landed users on whatever they last visited (often Browser),

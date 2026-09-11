@@ -39,9 +39,10 @@ function unfavoriteFile(el) {
     if (typeof pruneEmptyHomeSections === 'function') pruneEmptyHomeSections();
   }, 200);
 
-  // Script load order is actions.js → app.js (see index.html), so app.js's
-  // function showSnackbar(message, undoLabel, onUndo) wins the global binding
-  // and the wrapper above is unreachable. Call with the 3-arg signature.
+  // Script load order is api.js → fileops.js → browser.js → inspector.js →
+  // home.js → settings.js → app.js (see index.html), so app.js's
+  // function showSnackbar(message, undoLabel, onUndo) is already defined by
+  // the time this runs. Call with the 3-arg signature.
   showSnackbar(`Removed "${filename}" from favorites`, 'Undo', () => {
     clearTimeout(removeTimer);
     if (!row.parentElement) parent.insertBefore(row, nextSibling);

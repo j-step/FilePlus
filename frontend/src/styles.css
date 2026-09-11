@@ -4542,6 +4542,9 @@ button.fp-pill:hover {
 .fp-error-banner svg { width: 14px; height: 14px; color: var(--bad); flex-shrink: 0; }
 .fp-error-banner__action { margin-left: auto; flex-shrink: 0; color: var(--bad); font: 500 var(--t-compact) var(--font-ui); }
 .fp-error-banner__dismiss { width: 24px; height: 24px; display: inline-flex; align-items: center; justify-content: center; color: var(--text-tertiary); }
+/* Non-error informational banner (e.g. truncated listing) — same shape, accent tint */
+.fp-error-banner--info { background: var(--accent-wash); border-bottom-color: var(--accent-edge); }
+.fp-error-banner--info svg { color: var(--accent); }
 
 /* ── Empty state (A.15) ───────────────────────────────────────────────────── */
 .fp-empty-state {

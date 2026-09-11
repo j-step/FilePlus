@@ -122,56 +122,14 @@
         </button>
 
         <!-- User-pinned folders (drag to reorder) -->
-        <!-- INTEGRATION: pinned folders from localStorage / GET /pins -->
-        <div id="sb-pinned-folders">
-          <!-- Sample pinned folder -->
-          <button class="fp-sidebar__item" data-screen="browser" data-path="D:\Projects"
-                  data-action="navigate-path" title="D:\Projects">
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-              <path d="M1 4a1 1 0 0 1 1-1h4l1.5 1.5H14a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V4z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
-            </svg>
-            <span class="fp-sidebar__item__label">Projects</span>
-          </button>
-        </div>
+        <!-- Populated by loadPins() from GET /pins -->
+        <div id="sb-pinned-folders"></div>
 
         <!-- ── TREE ─────────────────────────────────────────────── -->
-        <!-- INTEGRATION: drives from GET /drives -->
+        <!-- Real fixed drives from GET /drives (Stage 3 will add the AI-organised dot) -->
         <div class="fp-sidebar__section-label">Tree</div>
 
-        <!-- Drive with usage bar -->
-        <div class="fp-sidebar__drive-item">
-          <button class="fp-sidebar__item" data-screen="browser" data-path="c:\Dev\FilePlus\FilePlusTestSandbox\C_Drive"
-                  data-action="navigate-path" title="C: Drive (sandbox)">
-            <svg class="fp-sidebar__drive-icon" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-              <ellipse cx="8" cy="6" rx="6" ry="2.5" stroke="currentColor" stroke-width="1.2"/>
-              <path d="M2 6v4c0 1.4 2.7 2.5 6 2.5s6-1.1 6-2.5V6" stroke="currentColor" stroke-width="1.2"/>
-            </svg>
-            <span class="fp-sidebar__drive-letter" aria-hidden="true">C:</span>
-            <span class="fp-sidebar__item__label">C: Drive</span>
-          </button>
-          <!-- Usage bar: bg-pressed track, accent fill -->
-          <div class="fp-sidebar__drive-bar" title="127 GB / 512 GB used">
-            <div class="fp-sidebar__drive-bar__fill" style="width:25%"></div>
-          </div>
-        </div>
-
-        <!-- AI-organised drive branch gets accent dot at right -->
-        <div class="fp-sidebar__drive-item">
-          <button class="fp-sidebar__item" data-screen="browser" data-path="c:\Dev\FilePlus\FilePlusTestSandbox\D_Drive"
-                  data-action="navigate-path" title="D: Drive (sandbox)">
-            <svg class="fp-sidebar__drive-icon" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-              <ellipse cx="8" cy="6" rx="6" ry="2.5" stroke="currentColor" stroke-width="1.2"/>
-              <path d="M2 6v4c0 1.4 2.7 2.5 6 2.5s6-1.1 6-2.5V6" stroke="currentColor" stroke-width="1.2"/>
-            </svg>
-            <span class="fp-sidebar__drive-letter" aria-hidden="true">D:</span>
-            <span class="fp-sidebar__item__label">D: Drive</span>
-            <!-- AI-organised indicator dot -->
-            <span class="fp-sidebar__drive-ai-dot"></span>
-          </button>
-          <div class="fp-sidebar__drive-bar" title="843 GB / 2 TB used">
-            <div class="fp-sidebar__drive-bar__fill" style="width:41%"></div>
-          </div>
-        </div>
+        <div id="sb-drives"></div>
 
         <!-- ── TAGS ─────────────────────────────────────────────── -->
         <!-- INTEGRATION: top tags from GET /tags?limit=8 -->
@@ -3519,6 +3477,13 @@
       <input type="text" id="modal-confirm-text" class="fp-input" placeholder="Type here…"
              style="width:100%;text-transform:uppercase"
              data-action="modal-confirm-type" />
+    </div>
+
+    <!-- Optional free-text input (hidden by default) — shown when openModal() is
+         called with config.textInput; used by e.g. the sidebar-pin rename modal. -->
+    <div class="fp-modal__confirm-input" id="modal-text-input-row" style="display:none;padding:0 var(--s-20) var(--s-12)">
+      <label for="modal-text-input" style="font:400 var(--t-compact) var(--font-ui);color:var(--text-secondary);display:block;margin-bottom:6px">Label</label>
+      <input type="text" id="modal-text-input" class="fp-input" placeholder="Enter a label…" style="width:100%" />
     </div>
 
     <!-- Footer -->
