@@ -16,8 +16,10 @@ Frontend Electron 41, plain HTML/CSS/JS, no framework, no build step. Tests: pyt
 
 - Nothing moves, renames or deletes without explicit user approval.
 - Every file operation is written to `operations_log` BEFORE it executes.
-- `path_guard()` gates every filesystem touch. Reads may span real drives; writes stay inside
-  `FILEPLUS_SANDBOX_PATH` until `WRITE_UNLOCKED=true` (decision D2; implemented in Stage 2).
+- `path_guard()` gates every filesystem touch. Today `SAFETY_MODE=true` (`backend/config.py`) confines
+  both reads and writes to `FILEPLUS_SANDBOX_PATH`.
+- Stage 2 introduces decision D2: reads may span real drives, writes stay sandboxed until
+  `WRITE_UNLOCKED=true`. Neither the read/write split nor `WRITE_UNLOCKED` exists yet.
 - Deletes go to the Recycle Bin or a staging area, never straight to gone.
 
 ## Verify before every commit

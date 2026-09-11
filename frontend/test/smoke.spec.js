@@ -34,22 +34,24 @@ test('every screen renders with no renderer errors', async () => {
   });
   const page = await app.firstWindow();
   const errors = [];
-  page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
-  page.on('console', (m) => { if (m.type() === 'error') errors.push(`console: ${m.text()}`); });
+  try {
+    page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
+    page.on('console', (m) => { if (m.type() === 'error') errors.push(`console: ${m.text()}`); });
 
-  await page.waitForSelector('#shell');
-  await page.waitForTimeout(1500); // fonts, first /health poll
+    await page.waitForSelector('#shell');
+    await page.waitForTimeout(1500); // fonts, first /health poll
 
-  for (const id of SCREENS) {
-    await page.evaluate((s) => switchScreen(s), id);
-    await expect(page.locator(`#screen-${id}`)).toBeVisible();
-    await page.screenshot({ path: path.join(SHOTS, `${id}.png`) });
+    for (const id of SCREENS) {
+      await page.evaluate((s) => switchScreen(s), id);
+      await expect(page.locator(`#screen-${id}`)).toBeVisible();
+      await page.screenshot({ path: path.join(SHOTS, `${id}.png`) });
+    }
+
+    await page.evaluate(() => openPalette());
+    await page.screenshot({ path: path.join(SHOTS, 'palette.png') });
+    await page.evaluate(() => closePalette());
+  } finally {
+    await app.close();
   }
-
-  await page.evaluate(() => openPalette());
-  await page.screenshot({ path: path.join(SHOTS, 'palette.png') });
-  await page.evaluate(() => closePalette());
-
-  await app.close();
   expect(errors, errors.join('\n')).toEqual([]);
 });

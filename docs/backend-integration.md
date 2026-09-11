@@ -9,7 +9,7 @@
 - API paths are proposals — confirm against [backend/api.py](../backend/api.py) before implementing.
 - Every file write goes through [`operations_log.log_operation()`](../backend/operations_log.py) BEFORE the action (see [CLAUDE.md](../CLAUDE.md)).
 - Frontend uses `fetch()` only; never direct Node fs APIs.
-- **API URL prefix decision (open):** the existing wired endpoints (`/health`, `/files`, `/scan`, `/fs/list`, `/tags`) use NO `/api/` prefix. The stub registry in [actions.js](../frontend/src/actions.js) and HTML INTEGRATION comments use `/api/`. Pick one and rewrite the other before implementing — see "Cross-cutting / 4. URL prefix consistency".
+- **API URL prefix decision — decided 2026-09-10 (Stage 0): NO `/api/` prefix.** All routes are registered bare (`/health`, `/files`, `/scan`, `/fs/list`, …); stub strings and INTEGRATION comments were aligned in Stage 0.
 
 ---
 
@@ -815,18 +815,7 @@ No backend. Pure UI.
 - `GET /session/last` on app launch — feeds the crash-recovery modal so reopened tabs come back with their last screens.
 
 ### 4. URL prefix consistency
-**What.** Frontend has two URL conventions:
-- Real fetch calls in [app.js](../frontend/src/app.js) use NO `/api/` prefix (`/scan`, `/fs/list`, `/health`).
-- Stub registry in [actions.js](../frontend/src/actions.js) and HTML INTEGRATION comments use `/api/`.
-- Backend [api.py](../backend/api.py) currently has NO prefix.
-
-**How.**
-- Decide once and rewrite the other. Recommend KEEPING the no-prefix convention since:
-  - It matches the real backend today.
-  - The Electron app talks only to localhost; there's no shared host with a non-API service that needs disambiguating.
-  - Less typing, smaller payloads in URL strings.
-- Mass-rewrite `actions.js` and the INTEGRATION comments from `/api/X` → `/X`. ~80 substitutions; a single `sed` sweep.
-- Update this doc — the section above already uses no-prefix paths.
+**Decided 2026-09-10 (Stage 0): NO `/api/` prefix.** All routes are registered bare; stub strings and INTEGRATION comments were aligned in Stage 0.
 
 ### 5. CORS hardening
 **What.** [api.py:34](../backend/api.py#L34) sets `allow_origins=["*"]`. Overly permissive for a localhost-only Electron app.

@@ -1676,7 +1676,7 @@ document.addEventListener('click', e => {
         title: 'Create baseline snapshot',
         body: 'FilePlus will take a snapshot of your current folder structure before scanning. This lets you restore to the current state at any time. The snapshot runs in the background and takes about 30 seconds.',
         confirmLabel: 'Create baseline & scan',
-        // INTEGRATION: onConfirm → POST /api/scan/start (after POST /api/snapshots/baseline)
+        // INTEGRATION: onConfirm → POST /scan/start (after POST /snapshots/baseline)
       });
       break;
     case 'ef-sort':
@@ -1895,7 +1895,7 @@ function initTabDrag(tab) {
       t.classList.remove('fp-tab--drag-over-before', 'fp-tab--drag-over-after');
     });
     showSnackbar('Tab order saved', null, null);
-    // INTEGRATION: POST /api/ui/tabs with new order for persistence
+    // INTEGRATION: POST /ui/tabs with new order for persistence
   });
   tab.addEventListener('dragover', e => {
     if (!_dragTab || _dragTab === tab) return;
@@ -2061,7 +2061,7 @@ document.addEventListener('DOMContentLoaded', () => {
   document.querySelectorAll('.fp-tabs').forEach(initUnderlineTabs);
 
   // Hide empty Recent home-sections — first non-empty group becomes the
-  // top header. INTEGRATION: re-run after /api/recent updates row markup.
+  // top header. INTEGRATION: re-run after /recent updates row markup.
   pruneEmptyHomeSections();
 
   // Restore persisted settings (theme, density, accent, font scale)
@@ -2075,20 +2075,20 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // ── A.17 Edge case INTEGRATION stubs ──────────────────────────────────────
   // #2  External folder missing on navigation → show fp-error-banner "This folder no longer exists"
-  //     INTEGRATION: catch 404/ENOENT from GET /api/ls?path=... → toggle .fp-error-banner in browser screen
+  //     INTEGRATION: catch 404/ENOENT from GET /ls?path=... → toggle .fp-error-banner in browser screen
   // #6  Files added to Everything Folder while tray is closed → update count badge on next open
-  //     INTEGRATION: GET /api/ef/count on tray show event → update #tray-rb-badge
-  // #8  Drop file onto sidebar folder → accept drag event, call POST /api/move (requires approval)
+  //     INTEGRATION: GET /ef/count on tray show event → update #tray-rb-badge
+  // #8  Drop file onto sidebar folder → accept drag event, call POST /move (requires approval)
   //     INTEGRATION: sidebar items need dragover + drop listeners → openModal('move', {src, dest})
   // #9  Inspector opened on a file that has been deleted externally → show preview fail state
-  //     INTEGRATION: GET /api/file/preview?path=... → on 404 show commented preview-fail HTML
+  //     INTEGRATION: GET /file/preview?path=... → on 404 show commented preview-fail HTML
   // #12 Scan starts while one is already running → show toast "Scan already in progress"
-  //     INTEGRATION: POST /api/scan/start → if 409 response → showToast('Scan already running', 'warn')
+  //     INTEGRATION: POST /scan/start → if 409 response → showToast('Scan already running', 'warn')
   // #13 Ollama model not downloaded when classification starts → show error banner with install CTA
-  //     INTEGRATION: GET /api/ai/status → if model_status !== 'ready' → show #banner-ai-offline
+  //     INTEGRATION: GET /ai/status → if model_status !== 'ready' → show #banner-ai-offline
 
   // Crash recovery check on startup
-  // INTEGRATION: on app init, call GET /api/crash-recovery → if crash_detected → uncomment + show #crash-modal-scrim
+  // INTEGRATION: on app init, call GET /crash-recovery → if crash_detected → uncomment + show #crash-modal-scrim
 
   // Delegated file row click — works for both static and dynamically rendered rows
   document.getElementById('list-scroll')?.addEventListener('click', e => {
