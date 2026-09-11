@@ -1014,8 +1014,6 @@ svg { flex-shrink: 0; }
 .fp-button--secondary:hover, .fp-btn--secondary:hover {
   background: var(--bg-pressed);
 }
-.fp-button--secondary:active, .fp-btn--secondary:active {
-}
 
 .fp-button--ghost, .fp-btn--ghost {
   background: transparent;
@@ -1542,8 +1540,6 @@ svg { flex-shrink: 0; }
   transform: translateX(14px);
   background: var(--text-on-accent);
 }
-.fp-toggle input:focus-visible ~ .fp-toggle__track {
-}
 .fp-toggle input:disabled ~ .fp-toggle__track,
 .fp-toggle input:disabled ~ .fp-toggle__thumb {
   opacity: 0.5;
@@ -1587,8 +1583,6 @@ svg { flex-shrink: 0; }
 .fp-checkbox--indeterminate svg {
   transform: scale(1);
 }
-.fp-checkbox:focus-visible {
-}
 
 /* Canonical sibling-combinator variant:
    <label class="fp-checkbox"><input type="checkbox"><span class="fp-checkbox__mark"></span></label> */
@@ -1625,8 +1619,6 @@ svg { flex-shrink: 0; }
 .fp-checkbox input:checked ~ .fp-checkbox__mark::after {
   transform: scale(1) rotate(45deg);
 }
-.fp-checkbox input:focus-visible ~ .fp-checkbox__mark {
-}
 
 /* === fp-radio === */
 /* Modifier-class variant: <span class="fp-radio [fp-radio--checked]"> (existing HTML) */
@@ -1658,8 +1650,6 @@ svg { flex-shrink: 0; }
 }
 .fp-radio--checked::after {
   transform: scale(1);
-}
-.fp-radio:focus-visible {
 }
 
 /* Canonical sibling-combinator variant:
@@ -1695,8 +1685,6 @@ svg { flex-shrink: 0; }
 }
 .fp-radio input:checked ~ .fp-radio__mark::after {
   transform: scale(1);
-}
-.fp-radio input:focus-visible ~ .fp-radio__mark {
 }
 
 .fp-slider {
