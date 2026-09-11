@@ -79,7 +79,7 @@ Wash/edge tokens move to `color-mix` on the base token so a custom accent recolo
 - `--font-data: var(--font-ui);` **new.** `code, kbd, pre, .mono` switch to `font-family: var(--font-data); font-variant-numeric: tabular-nums;`. `--font-mono` is **deleted**; every `var(--font-mono)` becomes `var(--font-data)`.
 - Body weight `400` (was 500). Headings and emphasised labels `600`. All `--track-*` become `0` except `--track-caps: 0.06em`. Size/line-height pairs unchanged.
 - Radii: `--r-chip: 3px; --r-icon-btn: 4px; --r-button: 4px; --r-card: 6px; --r-modal: 8px; --r-window: 8px; --r-tray: 8px; --r-pill: 999px; --r-sm: 3px`.
-- Elevation model, **flat**: `--highlight-top`, `--highlight-top-strong`, `--depth-bottom`, `--inset-recess`, `--inset-recess-strong`, `--pressed-shadow` all become `none`. `--shadow-raised` and `--shadow-card` become `0 0 0 1px var(--border-subtle)` (a border, not a shadow). Overlays keep one soft shadow each: `--shadow-popover: 0 8px 24px rgba(0,0,0,.30)` dark / `.14` light; `--shadow-modal: 0 16px 48px rgba(0,0,0,.40)` dark / `.20` light; `--shadow-window: none`.
+- Elevation model, **flat**: `--highlight-top`, `--highlight-top-strong`, `--depth-bottom`, `--inset-recess`, `--inset-recess-strong`, `--pressed-shadow` are deleted (no references remain after Tasks 3 and 8; a leftover `var()` would compute to `none`). `--shadow-raised` and `--shadow-card` become `0 0 0 1px var(--border-subtle)` (a border, not a shadow). Overlays keep one soft shadow each: `--shadow-popover: 0 8px 24px rgba(0,0,0,.30)` dark / `.14` light; `--shadow-modal: 0 16px 48px rgba(0,0,0,.40)` dark / `.20` light; `--shadow-window: none`.
 
 ### 3.5 Removals
 

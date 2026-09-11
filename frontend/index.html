@@ -908,7 +908,7 @@
                     <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="7" cy="7" r="5" stroke="currentColor" stroke-width="1.2"/><path d="M4.5 7h5M11 11l2.5 2.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
                   </button>
                   <span class="ftree-toolbar__zoom mono" id="ftree-zoom-pct"
-                        style="font:500 var(--t-small) var(--font-mono);color:var(--text-secondary);min-width:36px;text-align:center">100%</span>
+                        style="font:500 var(--t-small) var(--font-data);color:var(--text-secondary);min-width:36px;text-align:center">100%</span>
                   <button class="fp-icon-btn" data-action="ftree-zoom-in" title="Zoom in">
                     <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="7" cy="7" r="5" stroke="currentColor" stroke-width="1.2"/><path d="M7 4.5v5M4.5 7h5M11 11l2.5 2.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
                   </button>
@@ -1036,7 +1036,7 @@
                       <div style="display:flex;gap:8px;align-items:center">
                         <span class="ftree-snapshot__sub">Apr 19, 2026</span>
                         <!-- expires countdown -->
-                        <span class="mono" style="font:400 var(--t-small) var(--font-mono);color:var(--warn)">expires 30d</span>
+                        <span class="mono" style="font:400 var(--t-small) var(--font-data);color:var(--warn)">expires 30d</span>
                       </div>
                     </div>
                   </div>
@@ -1184,13 +1184,13 @@
                     <div id="scan-form-paths" style="display:flex;flex-direction:column;gap:4px">
                       <!-- Path picker row: folder path + remove button -->
                       <div class="scan-form-path-row" style="display:flex;align-items:center;gap:8px">
-                        <span class="mono" style="font:400 var(--t-compact) var(--font-mono);color:var(--text-primary);flex:1">D:\Projects</span>
+                        <span class="mono" style="font:400 var(--t-compact) var(--font-data);color:var(--text-primary);flex:1">D:\Projects</span>
                         <button class="fp-icon-btn fp-icon-btn--sm" data-action="scan-form-remove-path" data-path="D:\Projects" title="Remove">
                           <svg width="10" height="10" viewBox="0 0 10 10"><path d="M2 2l6 6M8 2l-6 6" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
                         </button>
                       </div>
                       <div class="scan-form-path-row" style="display:flex;align-items:center;gap:8px">
-                        <span class="mono" style="font:400 var(--t-compact) var(--font-mono);color:var(--text-primary);flex:1">C:\Users\Justin\Documents</span>
+                        <span class="mono" style="font:400 var(--t-compact) var(--font-data);color:var(--text-primary);flex:1">C:\Users\Justin\Documents</span>
                         <button class="fp-icon-btn fp-icon-btn--sm" data-action="scan-form-remove-path" data-path="C:\Users\Justin\Documents" title="Remove">
                           <svg width="10" height="10" viewBox="0 0 10 10"><path d="M2 2l6 6M8 2l-6 6" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
                         </button>
@@ -1206,15 +1206,15 @@
                       <span class="fp-checkbox fp-checkbox--checked" data-action="scan-form-toggle-drive" data-drive="C:\">
                         <svg viewBox="0 0 12 12" fill="none"><polyline points="2 6 5 9 10 3" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
                       </span>
-                      <span class="mono" style="font:400 var(--t-body) var(--font-mono)">C:\</span>
-                      <span class="mono" style="font:400 var(--t-small) var(--font-mono);color:var(--text-tertiary)">127 GB used</span>
+                      <span class="mono" style="font:400 var(--t-body) var(--font-data)">C:\</span>
+                      <span class="mono" style="font:400 var(--t-small) var(--font-data);color:var(--text-tertiary)">127 GB used</span>
                     </label>
                     <label style="display:flex;align-items:center;gap:8px;height:28px;cursor:default">
                       <span class="fp-checkbox fp-checkbox--checked" data-action="scan-form-toggle-drive" data-drive="D:\">
                         <svg viewBox="0 0 12 12" fill="none"><polyline points="2 6 5 9 10 3" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
                       </span>
-                      <span class="mono" style="font:400 var(--t-body) var(--font-mono)">D:\</span>
-                      <span class="mono" style="font:400 var(--t-small) var(--font-mono);color:var(--text-tertiary)">843 GB used</span>
+                      <span class="mono" style="font:400 var(--t-body) var(--font-data)">D:\</span>
+                      <span class="mono" style="font:400 var(--t-small) var(--font-data);color:var(--text-tertiary)">843 GB used</span>
                     </label>
                   </div>
                   <div>
@@ -1277,7 +1277,7 @@
                 <div>
                   <div style="font:500 var(--t-micro) var(--font-ui);letter-spacing:var(--track-caps);text-transform:uppercase;color:var(--text-tertiary);margin-bottom:4px">Estimated scan time</div>
                   <!-- INTEGRATION: estimate from GET /scan/estimate -->
-                  <div style="font:500 var(--t-display-sm) var(--font-mono);letter-spacing:var(--track-mono);color:var(--text-primary)">~12 min</div>
+                  <div style="font:500 var(--t-display-sm) var(--font-data);letter-spacing:var(--track-mono);color:var(--text-primary)">~12 min</div>
                 </div>
                 <div style="margin-left:auto">
                   <!-- Opens pre-scan baseline confirmation modal -->
@@ -1361,7 +1361,7 @@
             <div class="fp-card" style="padding:14px 16px">
               <div style="font:500 var(--t-micro) var(--font-ui);letter-spacing:var(--track-caps);text-transform:uppercase;color:var(--text-tertiary);margin-bottom:6px">Now working on</div>
               <div class="mono" id="scan-current-file"
-                   style="font:400 var(--t-body) var(--font-mono);color:var(--text-primary);word-break:break-all;line-height:1.4">
+                   style="font:400 var(--t-body) var(--font-data);color:var(--text-primary);word-break:break-all;line-height:1.4">
                 D:\Photos\vacation_2024\IMG_4821.jpg
               </div>
             </div>
@@ -1423,7 +1423,6 @@
               background:var(--good-wash);
               border:1px solid var(--good-edge);
               border-radius:var(--r-button);
-              box-shadow:var(--highlight-top);
               padding:10px 14px;
               display:flex;align-items:center;gap:10px
             ">
@@ -1509,7 +1508,7 @@
                   <svg width="14" height="14" viewBox="0 0 14 14" fill="none" style="color:var(--text-tertiary)" aria-hidden="true"><path d="M3 2l-2 4 2 4M11 2l2 4-2 4M6 11l2-8" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
                   <span class="fp-row__name" style="flex:1">IMG_4821.jpg</span>
                   <span class="fp-chip fp-chip--tinted" style="font-size:10px;height:18px;padding:0 6px">3 copies</span>
-                  <span style="font:400 var(--t-compact) var(--font-mono);color:var(--good);margin-left:8px">+4.2 MB</span>
+                  <span style="font:400 var(--t-compact) var(--font-data);color:var(--good);margin-left:8px">+4.2 MB</span>
                   <svg width="12" height="12" viewBox="0 0 12 12" fill="none" style="color:var(--text-tertiary);margin-left:4px" aria-hidden="true"><path d="M2 4l4 4 4-4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
                 </div>
 
@@ -1518,21 +1517,21 @@
                   <!-- Copy 1: AI's "keep" choice (radio checked) -->
                   <div class="scan-dupe-copy">
                     <span class="fp-radio fp-radio--checked" data-action="scan-dupe-keep" data-file="D:\Photos\vacation_2024\IMG_4821.jpg"></span>
-                    <span class="mono" style="font:400 var(--t-small) var(--font-mono);color:var(--text-primary);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">D:\Photos\vacation_2024\IMG_4821.jpg</span>
-                    <span class="mono" style="font:400 var(--t-small) var(--font-mono);color:var(--text-tertiary);flex-shrink:0">Apr 22</span>
+                    <span class="mono" style="font:400 var(--t-small) var(--font-data);color:var(--text-primary);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">D:\Photos\vacation_2024\IMG_4821.jpg</span>
+                    <span class="mono" style="font:400 var(--t-small) var(--font-data);color:var(--text-tertiary);flex-shrink:0">Apr 22</span>
                     <span style="font:400 var(--t-small) var(--font-ui);color:var(--good);font-size:10px;flex-shrink:0">AI choice</span>
                   </div>
                   <!-- Copy 2 -->
                   <div class="scan-dupe-copy">
                     <span class="fp-radio" data-action="scan-dupe-keep" data-file="D:\Downloads\IMG_4821.jpg"></span>
-                    <span class="mono" style="font:400 var(--t-small) var(--font-mono);color:var(--text-secondary);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">D:\Downloads\IMG_4821.jpg</span>
-                    <span class="mono" style="font:400 var(--t-small) var(--font-mono);color:var(--text-tertiary);flex-shrink:0">Jan 12</span>
+                    <span class="mono" style="font:400 var(--t-small) var(--font-data);color:var(--text-secondary);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">D:\Downloads\IMG_4821.jpg</span>
+                    <span class="mono" style="font:400 var(--t-small) var(--font-data);color:var(--text-tertiary);flex-shrink:0">Jan 12</span>
                   </div>
                   <!-- Copy 3 -->
                   <div class="scan-dupe-copy">
                     <span class="fp-radio" data-action="scan-dupe-keep" data-file="C:\Users\Justin\Desktop\IMG_4821.jpg"></span>
-                    <span class="mono" style="font:400 var(--t-small) var(--font-mono);color:var(--text-secondary);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">C:\Users\Justin\Desktop\IMG_4821.jpg</span>
-                    <span class="mono" style="font:400 var(--t-small) var(--font-mono);color:var(--text-tertiary);flex-shrink:0">Mar 5</span>
+                    <span class="mono" style="font:400 var(--t-small) var(--font-data);color:var(--text-secondary);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">C:\Users\Justin\Desktop\IMG_4821.jpg</span>
+                    <span class="mono" style="font:400 var(--t-small) var(--font-data);color:var(--text-tertiary);flex-shrink:0">Mar 5</span>
                   </div>
                 </div>
               </div>
@@ -1544,7 +1543,7 @@
                   <svg width="14" height="14" viewBox="0 0 14 14" fill="none" style="color:var(--text-tertiary)"><rect x="2" y="1" width="7" height="10" rx="1" stroke="currentColor" stroke-width="1.1"/><rect x="5" y="3" width="7" height="10" rx="1" stroke="currentColor" stroke-width="1.1"/></svg>
                   <span class="fp-row__name" style="flex:1">report_Q1_2026.pdf</span>
                   <span class="fp-chip fp-chip--tinted" style="font-size:10px;height:18px;padding:0 6px">2 copies</span>
-                  <span style="font:400 var(--t-compact) var(--font-mono);color:var(--good);margin-left:8px">+38.7 MB</span>
+                  <span style="font:400 var(--t-compact) var(--font-data);color:var(--good);margin-left:8px">+38.7 MB</span>
                   <svg width="12" height="12" viewBox="0 0 12 12" fill="none" style="color:var(--text-tertiary);margin-left:4px"><path d="M4 2l4 4-4 4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
                 </div>
                 <!-- Children hidden (collapsed) -->
@@ -1572,7 +1571,7 @@
             ">
               <!-- INTEGRATION: reclaimable from GET /scan/duplicates/summary -->
               <span>Reclaimable: </span>
-              <span style="font:500 var(--t-body) var(--font-mono);color:var(--good)" id="dupes-reclaimable">42.9 GB</span>
+              <span style="font:500 var(--t-body) var(--font-data);color:var(--good)" id="dupes-reclaimable">42.9 GB</span>
               <div style="margin-left:auto">
                 <button class="fp-btn fp-btn--primary" data-action="scan-dedup-confirm" id="btn-execute-dedup">
                   Execute deduplication
@@ -1586,7 +1585,7 @@
             <!-- Total selected banner -->
             <div style="padding:12px 16px;border-bottom:1px solid var(--border-hairline);flex-shrink:0">
               <!-- INTEGRATION: total selected from client-side checkbox state -->
-              <span style="font:700 var(--t-display) var(--font-mono);letter-spacing:var(--track-mono);color:var(--text-primary)" id="cleanup-total">3.8 GB</span>
+              <span style="font:700 var(--t-display) var(--font-data);letter-spacing:var(--track-mono);color:var(--text-primary)" id="cleanup-total">3.8 GB</span>
               <span style="font:400 var(--t-body) var(--font-ui);color:var(--text-secondary);margin-left:8px">selected for cleanup</span>
             </div>
 
@@ -1602,7 +1601,7 @@
                     </span>
                     <span style="font:600 var(--t-body) var(--font-ui);color:var(--text-primary)">Temporary files</span>
                   </label>
-                  <span style="font:400 var(--t-compact) var(--font-mono);color:var(--good)">1.4 GB</span>
+                  <span style="font:400 var(--t-compact) var(--font-data);color:var(--good)">1.4 GB</span>
                   <svg width="12" height="12" viewBox="0 0 12 12" fill="none" style="color:var(--text-tertiary)"><path d="M2 4l4 4 4-4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
                 </div>
                 <!-- Expanded file list -->
@@ -1615,13 +1614,13 @@
                   <div style="padding:0 16px 8px;display:flex;flex-direction:column;gap:4px">
                     <label style="display:flex;align-items:center;gap:10px;height:26px;cursor:default">
                       <span class="fp-checkbox fp-checkbox--checked" data-action="scan-cleanup-toggle-file" data-file="C:\Windows\Temp\setup.tmp"><svg viewBox="0 0 12 12" fill="none"><polyline points="2 6 5 9 10 3" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
-                      <span class="mono" style="font:400 var(--t-small) var(--font-mono);color:var(--text-secondary);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">C:\Windows\Temp\setup.tmp</span>
-                      <span class="mono" style="font:400 var(--t-small) var(--font-mono);color:var(--text-tertiary);flex-shrink:0">824 KB</span>
+                      <span class="mono" style="font:400 var(--t-small) var(--font-data);color:var(--text-secondary);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">C:\Windows\Temp\setup.tmp</span>
+                      <span class="mono" style="font:400 var(--t-small) var(--font-data);color:var(--text-tertiary);flex-shrink:0">824 KB</span>
                     </label>
                     <label style="display:flex;align-items:center;gap:10px;height:26px;cursor:default">
                       <span class="fp-checkbox fp-checkbox--checked" data-action="scan-cleanup-toggle-file" data-file="C:\Windows\Temp\etilqs_6B4.tmp"><svg viewBox="0 0 12 12" fill="none"><polyline points="2 6 5 9 10 3" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
-                      <span class="mono" style="font:400 var(--t-small) var(--font-mono);color:var(--text-secondary);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">C:\Windows\Temp\etilqs_6B4.tmp</span>
-                      <span class="mono" style="font:400 var(--t-small) var(--font-mono);color:var(--text-tertiary);flex-shrink:0">1.2 MB</span>
+                      <span class="mono" style="font:400 var(--t-small) var(--font-data);color:var(--text-secondary);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">C:\Windows\Temp\etilqs_6B4.tmp</span>
+                      <span class="mono" style="font:400 var(--t-small) var(--font-data);color:var(--text-tertiary);flex-shrink:0">1.2 MB</span>
                     </label>
                   </div>
                 </div>
@@ -1634,7 +1633,7 @@
                     <span class="fp-checkbox fp-checkbox--checked" data-action="scan-cleanup-select-all" data-cat="empty-folders"><svg viewBox="0 0 12 12" fill="none"><polyline points="2 6 5 9 10 3" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
                     <span style="font:600 var(--t-body) var(--font-ui);color:var(--text-primary)">Empty folders</span>
                   </label>
-                  <span style="font:400 var(--t-compact) var(--font-mono);color:var(--text-secondary)">23 folders</span>
+                  <span style="font:400 var(--t-compact) var(--font-data);color:var(--text-secondary)">23 folders</span>
                   <svg width="12" height="12" viewBox="0 0 12 12" fill="none" style="color:var(--text-tertiary)"><path d="M4 2l4 4-4 4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
                 </div>
                 <div class="scan-cleanup-cat-files" style="display:none" id="scan-cleanup-empty-folders"></div>
@@ -1651,9 +1650,9 @@
                     <label style="display:flex;align-items:center;gap:6px;cursor:default">
                       <span style="font:400 var(--t-compact) var(--font-ui);color:var(--text-tertiary)">Older than</span>
                       <input type="range" class="fp-slider" min="7" max="365" value="90" style="width:80px" data-action="scan-cleanup-age-threshold">
-                      <span class="mono" style="font:400 var(--t-compact) var(--font-mono);color:var(--text-secondary);min-width:30px">90d</span>
+                      <span class="mono" style="font:400 var(--t-compact) var(--font-data);color:var(--text-secondary);min-width:30px">90d</span>
                     </label>
-                    <span style="font:400 var(--t-compact) var(--font-mono);color:var(--good)">2.4 GB</span>
+                    <span style="font:400 var(--t-compact) var(--font-data);color:var(--good)">2.4 GB</span>
                   </div>
                   <svg width="12" height="12" viewBox="0 0 12 12" fill="none" style="color:var(--text-tertiary)"><path d="M4 2l4 4-4 4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
                 </div>
@@ -1667,7 +1666,7 @@
                     <span class="fp-checkbox" data-action="scan-cleanup-select-all" data-cat="large-unused"></span>
                     <span style="font:600 var(--t-body) var(--font-ui);color:var(--text-primary)">Large unused files</span>
                   </label>
-                  <span style="font:400 var(--t-compact) var(--font-mono);color:var(--text-secondary)">12 files</span>
+                  <span style="font:400 var(--t-compact) var(--font-data);color:var(--text-secondary)">12 files</span>
                   <svg width="12" height="12" viewBox="0 0 12 12" fill="none" style="color:var(--text-tertiary)"><path d="M4 2l4 4-4 4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
                 </div>
                 <div class="scan-cleanup-cat-files" style="display:none" id="scan-cleanup-large-unused"></div>
@@ -1728,7 +1727,7 @@
                 <h1 class="rb-list__title" style="font:600 var(--t-title) var(--font-ui);color:var(--text-primary);margin:0">
                   Review Bin
                   <!-- INTEGRATION: live count from GET /review-bin/count -->
-                  <span class="fp-mono" style="font:600 var(--t-title) var(--font-mono);color:var(--text-primary)">14</span>
+                  <span class="fp-mono" style="font:600 var(--t-title) var(--font-data);color:var(--text-primary)">14</span>
                   <span style="font:500 var(--t-title) var(--font-ui);color:var(--text-secondary)">files need a decision</span>
                 </h1>
               </div>
@@ -1745,7 +1744,7 @@
                       <path d="M2 4a1 1 0 0 1 1-1h3.5l1 1.5H13a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V4z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
                     </svg>
                     <span class="rb-group__dest" style="font:500 var(--t-body) var(--font-ui);color:var(--text-primary);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">→ /album-mix-2024</span>
-                    <span class="fp-mono rb-group__meta" style="font:400 var(--t-compact) var(--font-mono);color:var(--text-tertiary);flex-shrink:0;white-space:nowrap">3 files · avg 82%</span>
+                    <span class="fp-mono rb-group__meta" style="font:400 var(--t-compact) var(--font-data);color:var(--text-tertiary);flex-shrink:0;white-space:nowrap">3 files · avg 82%</span>
                     <div class="rb-group__actions">
                       <button class="fp-btn fp-btn--ghost fp-btn--sm" data-action="rb-group-review" data-group="album-mix-2024">Review each</button>
                       <button class="fp-btn fp-btn--secondary fp-btn--sm" data-action="rb-group-approve-all" data-group="album-mix-2024">Approve all</button>
@@ -1757,7 +1756,7 @@
                   <!-- Active row (selected state) -->
                   <div class="rb-row rb-row--selected" data-action="rb-select-file" data-file-id="f001" role="button" tabindex="0">
                     <span class="rb-row__name" style="font:500 var(--t-body) var(--font-ui);color:var(--text-primary);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">beach_holiday_2024.jpg</span>
-                    <span class="rb-row__route fp-mono" style="font:400 11px var(--font-mono);color:var(--text-tertiary);flex-shrink:0">
+                    <span class="rb-row__route fp-mono" style="font:400 11px var(--font-data);color:var(--text-tertiary);flex-shrink:0">
                       <span style="color:var(--bad);text-decoration:line-through">…\Downloads\beach_holiday…</span>
                       <span style="margin:0 4px;color:var(--text-tertiary)">→</span>
                       <span style="color:var(--good)">…\album-mix-2024\beach…</span>
@@ -1774,7 +1773,7 @@
 
                   <div class="rb-row" data-action="rb-select-file" data-file-id="f002" role="button" tabindex="0">
                     <span class="rb-row__name" style="font:500 var(--t-body) var(--font-ui);color:var(--text-primary);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">sunset_costa_rica.raw</span>
-                    <span class="rb-row__route fp-mono" style="font:400 11px var(--font-mono);color:var(--text-tertiary);flex-shrink:0">
+                    <span class="rb-row__route fp-mono" style="font:400 11px var(--font-data);color:var(--text-tertiary);flex-shrink:0">
                       <span style="color:var(--bad);text-decoration:line-through">…\Camera\sunset_costa…</span>
                       <span style="margin:0 4px;color:var(--text-tertiary)">→</span>
                       <span style="color:var(--good)">…\album-mix-2024\sunset…</span>
@@ -1790,7 +1789,7 @@
 
                   <div class="rb-row" data-action="rb-select-file" data-file-id="f003" role="button" tabindex="0">
                     <span class="rb-row__name" style="font:500 var(--t-body) var(--font-ui);color:var(--text-primary);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">weekend_trip_jan.mp4</span>
-                    <span class="rb-row__route fp-mono" style="font:400 11px var(--font-mono);color:var(--text-tertiary);flex-shrink:0">
+                    <span class="rb-row__route fp-mono" style="font:400 11px var(--font-data);color:var(--text-tertiary);flex-shrink:0">
                       <span style="color:var(--bad);text-decoration:line-through">…\Videos\weekend…</span>
                       <span style="margin:0 4px;color:var(--text-tertiary)">→</span>
                       <span style="color:var(--good)">…\album-mix-2024\weekend…</span>
@@ -1812,7 +1811,7 @@
                       <path d="M2 4a1 1 0 0 1 1-1h3.5l1 1.5H13a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V4z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
                     </svg>
                     <span class="rb-group__dest" style="font:500 var(--t-body) var(--font-ui);color:var(--text-primary);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">→ /work-invoices-2025</span>
-                    <span class="fp-mono rb-group__meta" style="font:400 var(--t-compact) var(--font-mono);color:var(--text-tertiary);flex-shrink:0;white-space:nowrap">5 files · avg 63%</span>
+                    <span class="fp-mono rb-group__meta" style="font:400 var(--t-compact) var(--font-data);color:var(--text-tertiary);flex-shrink:0;white-space:nowrap">5 files · avg 63%</span>
                     <div class="rb-group__actions">
                       <button class="fp-btn fp-btn--ghost fp-btn--sm" data-action="rb-group-review" data-group="work-invoices-2025">Review each</button>
                       <button class="fp-btn fp-btn--secondary fp-btn--sm" data-action="rb-group-approve-all" data-group="work-invoices-2025">Approve all</button>
@@ -1822,7 +1821,7 @@
 
                   <div class="rb-row" data-action="rb-select-file" data-file-id="f004" role="button" tabindex="0">
                     <span class="rb-row__name" style="font:500 var(--t-body) var(--font-ui);color:var(--text-primary);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">invoice_webflow_jan2025.pdf</span>
-                    <span class="rb-row__route fp-mono" style="font:400 11px var(--font-mono);color:var(--text-tertiary);flex-shrink:0">
+                    <span class="rb-row__route fp-mono" style="font:400 11px var(--font-data);color:var(--text-tertiary);flex-shrink:0">
                       <span style="color:var(--bad);text-decoration:line-through">…\Desktop\invoice_webflow…</span>
                       <span style="margin:0 4px;color:var(--text-tertiary)">→</span>
                       <span style="color:var(--good)">…\work-invoices-2025\jan…</span>
@@ -1839,7 +1838,7 @@
                   <!-- Rename action variant -->
                   <div class="rb-row" data-action="rb-select-file" data-file-id="f005" role="button" tabindex="0">
                     <span class="rb-row__name" style="font:500 var(--t-body) var(--font-ui);color:var(--text-primary);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">scan0047.pdf</span>
-                    <span class="rb-row__route fp-mono" style="font:400 11px var(--font-mono);color:var(--text-tertiary);flex-shrink:0">
+                    <span class="rb-row__route fp-mono" style="font:400 11px var(--font-data);color:var(--text-tertiary);flex-shrink:0">
                       <span style="color:var(--bad);text-decoration:line-through">scan0047.pdf</span>
                       <span style="margin:0 4px;color:var(--text-tertiary)">→</span>
                       <span style="color:var(--good)">invoice_vercel_feb2025.pdf</span>
@@ -1857,14 +1856,14 @@
 
                 <!-- ─── Uncertain group (confidence < 0.5) — A.8.2 special group ─── -->
                 <div class="rb-group rb-group--uncertain" data-group="uncertain">
-                  <div class="rb-group__header" style="background:var(--warn-wash);border:1px solid var(--warn-edge);box-shadow:var(--highlight-top);border-radius:var(--r-card) var(--r-card) 0 0;margin:0 -1px">
+                  <div class="rb-group__header" style="background:var(--warn-wash);border:1px solid var(--warn-edge);border-radius:var(--r-card) var(--r-card) 0 0;margin:0 -1px">
                     <!-- 14×14 alert-triangle in warn -->
                     <svg width="14" height="14" viewBox="0 0 14 14" fill="none" style="flex-shrink:0;color:var(--warn)">
                       <path d="M7 2L1.5 12h11L7 2z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>
                       <path d="M7 6v3M7 10.5v.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
                     </svg>
                     <span class="rb-group__dest" style="font:500 var(--t-body) var(--font-ui);color:var(--text-primary);flex:1;min-width:0">Uncertain — individual review</span>
-                    <span class="fp-mono rb-group__meta" style="font:400 var(--t-compact) var(--font-mono);color:var(--text-tertiary);flex-shrink:0;white-space:nowrap">6 files · avg 38%</span>
+                    <span class="fp-mono rb-group__meta" style="font:400 var(--t-compact) var(--font-data);color:var(--text-tertiary);flex-shrink:0;white-space:nowrap">6 files · avg 38%</span>
                     <div class="rb-group__actions">
                       <button class="fp-btn fp-btn--ghost fp-btn--sm" data-action="rb-group-review" data-group="uncertain">Review each</button>
                       <button class="rb-btn-danger-ghost" data-action="rb-group-reject-all" data-group="uncertain">Reject all</button>
@@ -1874,7 +1873,7 @@
                   <!-- flag action variant -->
                   <div class="rb-row" data-action="rb-select-file" data-file-id="f010" role="button" tabindex="0">
                     <span class="rb-row__name" style="font:500 var(--t-body) var(--font-ui);color:var(--text-primary);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">doc_untitled_final_v3.docx</span>
-                    <span class="rb-row__route fp-mono" style="font:400 11px var(--font-mono);color:var(--text-tertiary);flex-shrink:0">
+                    <span class="rb-row__route fp-mono" style="font:400 11px var(--font-data);color:var(--text-tertiary);flex-shrink:0">
                       <span style="color:var(--bad);text-decoration:line-through">…\Desktop\doc_untitled…</span>
                       <span style="margin:0 4px;color:var(--text-tertiary)">→</span>
                       <span style="color:var(--good)">…\work-docs\contracts\…</span>
@@ -1891,7 +1890,7 @@
 
                   <div class="rb-row" data-action="rb-select-file" data-file-id="f011" role="button" tabindex="0">
                     <span class="rb-row__name" style="font:500 var(--t-body) var(--font-ui);color:var(--text-primary);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">screenshot_2024-11-07.png</span>
-                    <span class="rb-row__route fp-mono" style="font:400 11px var(--font-mono);color:var(--text-tertiary);flex-shrink:0">
+                    <span class="rb-row__route fp-mono" style="font:400 11px var(--font-data);color:var(--text-tertiary);flex-shrink:0">
                       <span style="color:var(--bad);text-decoration:line-through">…\Screenshots\screenshot…</span>
                       <span style="margin:0 4px;color:var(--text-tertiary)">→</span>
                       <span style="color:var(--good)">…\archive\screenshots\…</span>
@@ -1931,14 +1930,14 @@
                 </div>
 
                 <!-- Proposed route: − bad strikethrough / + good -->
-                <div class="rb-detail__route" style="display:flex;flex-direction:column;gap:6px;margin-bottom:var(--s-20);padding:var(--s-12);background:var(--bg-content);border:1px solid var(--border-subtle);border-radius:var(--r-card);box-shadow:var(--inset-recess)">
+                <div class="rb-detail__route" style="display:flex;flex-direction:column;gap:6px;margin-bottom:var(--s-20);padding:var(--s-12);background:var(--bg-content);border:1px solid var(--border-subtle);border-radius:var(--r-card)">
                   <div style="display:flex;align-items:baseline;gap:8px">
-                    <span style="font:600 13px var(--font-mono);color:var(--bad);flex-shrink:0;width:12px">−</span>
-                    <span class="fp-mono" style="font:400 11px var(--font-mono);color:var(--bad);text-decoration:line-through;word-break:break-all;line-height:1.5">C:\Downloads\beach_holiday_2024.jpg</span>
+                    <span style="font:600 13px var(--font-data);color:var(--bad);flex-shrink:0;width:12px">−</span>
+                    <span class="fp-mono" style="font:400 11px var(--font-data);color:var(--bad);text-decoration:line-through;word-break:break-all;line-height:1.5">C:\Downloads\beach_holiday_2024.jpg</span>
                   </div>
                   <div style="display:flex;align-items:baseline;gap:8px">
-                    <span style="font:600 13px var(--font-mono);color:var(--good);flex-shrink:0;width:12px">+</span>
-                    <span class="fp-mono" style="font:400 11px var(--font-mono);color:var(--good);word-break:break-all;line-height:1.5">D:\Photos\album-mix-2024\beach_holiday_2024.jpg</span>
+                    <span style="font:600 13px var(--font-data);color:var(--good);flex-shrink:0;width:12px">+</span>
+                    <span class="fp-mono" style="font:400 11px var(--font-data);color:var(--good);word-break:break-all;line-height:1.5">D:\Photos\album-mix-2024\beach_holiday_2024.jpg</span>
                   </div>
                 </div>
 
@@ -1951,7 +1950,7 @@
 
                 <!-- Confidence + tags -->
                 <div style="display:flex;align-items:center;gap:var(--s-12);margin-bottom:var(--s-20);flex-wrap:wrap">
-                  <span class="fp-mono" style="font:600 var(--t-body) var(--font-mono);color:var(--good)">82%</span>
+                  <span class="fp-mono" style="font:600 var(--t-body) var(--font-data);color:var(--good)">82%</span>
                   <span style="font:400 var(--t-small) var(--font-ui);color:var(--text-tertiary)">confidence</span>
                   <div style="display:flex;gap:6px;flex-wrap:wrap">
                     <span class="fp-chip">photography</span>
@@ -1969,20 +1968,20 @@
                     <div style="display:flex;align-items:center;gap:8px;height:26px">
                       <svg width="14" height="14" viewBox="0 0 14 14" fill="none" style="flex-shrink:0;color:var(--good)"><path d="M2 7l4 4 6-7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
                       <span style="font:400 var(--t-body) var(--font-ui);color:var(--text-primary);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">costa_rica_2024_01.jpg → album-mix-2024</span>
-                      <span class="fp-mono" style="font:400 var(--t-small) var(--font-mono);color:var(--text-tertiary);flex-shrink:0">2 days ago</span>
+                      <span class="fp-mono" style="font:400 var(--t-small) var(--font-data);color:var(--text-tertiary);flex-shrink:0">2 days ago</span>
                     </div>
 
                     <div style="display:flex;align-items:center;gap:8px;height:26px">
                       <svg width="14" height="14" viewBox="0 0 14 14" fill="none" style="flex-shrink:0;color:var(--good)"><path d="M2 7l4 4 6-7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
                       <span style="font:400 var(--t-body) var(--font-ui);color:var(--text-primary);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">trip_jan_photos_bulk.zip → album-mix-2024</span>
-                      <span class="fp-mono" style="font:400 var(--t-small) var(--font-mono);color:var(--text-tertiary);flex-shrink:0">5 days ago</span>
+                      <span class="fp-mono" style="font:400 var(--t-small) var(--font-data);color:var(--text-tertiary);flex-shrink:0">5 days ago</span>
                     </div>
 
                     <div style="display:flex;align-items:center;gap:8px;height:26px">
                       <!-- Rejected past decision -->
                       <svg width="14" height="14" viewBox="0 0 14 14" fill="none" style="flex-shrink:0;color:var(--bad)"><path d="M2 2l10 10M12 2L2 12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
                       <span style="font:400 var(--t-body) var(--font-ui);color:var(--text-secondary);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">scan0022.jpg → album-mix-2024 (rejected)</span>
-                      <span class="fp-mono" style="font:400 var(--t-small) var(--font-mono);color:var(--text-tertiary);flex-shrink:0">1 wk ago</span>
+                      <span class="fp-mono" style="font:400 var(--t-small) var(--font-data);color:var(--text-tertiary);flex-shrink:0">1 wk ago</span>
                     </div>
 
                   </div>
@@ -2033,7 +2032,7 @@
             <div class="ef-header__left">
               <h1 style="font:600 var(--t-title) var(--font-ui);color:var(--text-primary);margin:0">Everything Folder</h1>
               <!-- INTEGRATION: actual path from GET /settings/everything-folder -->
-              <span class="fp-mono" style="font:400 var(--t-compact) var(--font-mono);color:var(--text-tertiary)">C:\EverythingFolder</span>
+              <span class="fp-mono" style="font:400 var(--t-compact) var(--font-data);color:var(--text-tertiary)">C:\EverythingFolder</span>
             </div>
             <div class="ef-header__right">
               <!-- Pause AI toggle: 32×18 track, inset-recess off, accent on, 14×14 thumb -->
@@ -2081,10 +2080,10 @@
                 <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2" y="1" width="9" height="13" rx="1.5" fill="var(--bg-raised)" stroke="var(--border-subtle)" stroke-width="1"/><path d="M11 1v4h3" stroke="var(--border-subtle)" stroke-width="1" stroke-linejoin="round"/><path d="M4 7h7M4 9.5h7M4 12h4" stroke="var(--text-tertiary)" stroke-width="1" stroke-linecap="round"/></svg>
               </div>
               <span class="ef-row__name" style="font:500 var(--t-body) var(--font-ui);color:var(--text-primary)">project_proposal_final.pdf</span>
-              <span class="ef-row__landed fp-mono" style="font:400 var(--t-compact) var(--font-mono);color:var(--text-secondary)">3 hr ago</span>
+              <span class="ef-row__landed fp-mono" style="font:400 var(--t-compact) var(--font-data);color:var(--text-secondary)">3 hr ago</span>
               <!-- Settled: no dot -->
               <span class="ef-row__state"></span>
-              <span class="ef-row__dest fp-mono" style="font:400 var(--t-compact) var(--font-mono);color:var(--text-tertiary)">—</span>
+              <span class="ef-row__dest fp-mono" style="font:400 var(--t-compact) var(--font-data);color:var(--text-tertiary)">—</span>
             </div>
 
             <!-- Row state: unprocessed (grey dot) -->
@@ -2093,12 +2092,12 @@
                 <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="1" y="3" width="14" height="11" rx="1.5" fill="var(--bg-raised)" stroke="var(--border-subtle)" stroke-width="1"/><circle cx="6" cy="7.5" r="2" stroke="var(--text-tertiary)" stroke-width="1"/><path d="M1 10l4-3.5 4 3.5 2-2 4 2" stroke="var(--text-tertiary)" stroke-width="1" stroke-linejoin="round"/></svg>
               </div>
               <span class="ef-row__name" style="font:500 var(--t-body) var(--font-ui);color:var(--text-primary)">screenshot_2026-04-24.png</span>
-              <span class="ef-row__landed fp-mono" style="font:400 var(--t-compact) var(--font-mono);color:var(--text-secondary)">12 min ago</span>
+              <span class="ef-row__landed fp-mono" style="font:400 var(--t-compact) var(--font-data);color:var(--text-secondary)">12 min ago</span>
               <!-- Unprocessed: text-tertiary grey dot -->
               <span class="ef-row__state">
                 <span class="ef-state-dot" style="background:var(--text-tertiary)" title="Unprocessed — queued for AI classification"></span>
               </span>
-              <span class="ef-row__dest fp-mono" style="font:400 var(--t-compact) var(--font-mono);color:var(--text-tertiary)">Pending</span>
+              <span class="ef-row__dest fp-mono" style="font:400 var(--t-compact) var(--font-data);color:var(--text-tertiary)">Pending</span>
             </div>
 
             <!-- Row state: needs review (warn dot) -->
@@ -2107,12 +2106,12 @@
                 <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2" y="1" width="9" height="13" rx="1.5" fill="var(--bg-raised)" stroke="var(--border-subtle)" stroke-width="1"/><path d="M11 1v4h3" stroke="var(--border-subtle)" stroke-width="1" stroke-linejoin="round"/><path d="M4 7h7M4 9.5h7M4 12h4" stroke="var(--text-tertiary)" stroke-width="1" stroke-linecap="round"/></svg>
               </div>
               <span class="ef-row__name" style="font:500 var(--t-body) var(--font-ui);color:var(--text-primary)">doc_untitled_final_v3.docx</span>
-              <span class="ef-row__landed fp-mono" style="font:400 var(--t-compact) var(--font-mono);color:var(--text-secondary)">Yesterday</span>
+              <span class="ef-row__landed fp-mono" style="font:400 var(--t-compact) var(--font-data);color:var(--text-secondary)">Yesterday</span>
               <!-- Needs review: warn dot -->
               <span class="ef-row__state">
                 <span class="ef-state-dot" style="background:var(--warn)" title="Needs review — low confidence classification"></span>
               </span>
-              <span class="ef-row__dest fp-mono" style="font:400 var(--t-compact) var(--font-mono);color:var(--text-tertiary)">\work-docs\contracts</span>
+              <span class="ef-row__dest fp-mono" style="font:400 var(--t-compact) var(--font-data);color:var(--text-tertiary)">\work-docs\contracts</span>
             </div>
 
             <!-- Row state: moving / in progress (accent dot) -->
@@ -2121,12 +2120,12 @@
                 <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="1" y="3" width="14" height="11" rx="1.5" fill="var(--bg-raised)" stroke="var(--border-subtle)" stroke-width="1"/><circle cx="6" cy="7.5" r="2" stroke="var(--text-tertiary)" stroke-width="1"/><path d="M1 10l4-3.5 4 3.5 2-2 4 2" stroke="var(--text-tertiary)" stroke-width="1" stroke-linejoin="round"/></svg>
               </div>
               <span class="ef-row__name" style="font:500 var(--t-body) var(--font-ui);color:var(--text-primary)">beach_holiday_2024.jpg</span>
-              <span class="ef-row__landed fp-mono" style="font:400 var(--t-compact) var(--font-mono);color:var(--text-secondary)">2 days ago</span>
+              <span class="ef-row__landed fp-mono" style="font:400 var(--t-compact) var(--font-data);color:var(--text-secondary)">2 days ago</span>
               <!-- Moving: accent dot -->
               <span class="ef-row__state">
                 <span class="ef-state-dot" style="background:var(--accent)" title="Moving — transfer in progress"></span>
               </span>
-              <span class="ef-row__dest fp-mono" style="font:400 var(--t-compact) var(--font-mono);color:var(--text-tertiary)">\Photos\album-mix-2024</span>
+              <span class="ef-row__dest fp-mono" style="font:400 var(--t-compact) var(--font-data);color:var(--text-tertiary)">\Photos\album-mix-2024</span>
             </div>
 
             <!-- Row state: error (bad dot) + hover tooltip placeholder -->
@@ -2135,7 +2134,7 @@
                 <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2" y="1" width="9" height="13" rx="1.5" fill="var(--bg-raised)" stroke="var(--border-subtle)" stroke-width="1"/><path d="M11 1v4h3" stroke="var(--border-subtle)" stroke-width="1" stroke-linejoin="round"/><path d="M4 7h7M4 9.5h7M4 12h4" stroke="var(--text-tertiary)" stroke-width="1" stroke-linecap="round"/></svg>
               </div>
               <span class="ef-row__name" style="font:500 var(--t-body) var(--font-ui);color:var(--text-primary)">budget_final_LOCKED.xlsx</span>
-              <span class="ef-row__landed fp-mono" style="font:400 var(--t-compact) var(--font-mono);color:var(--text-secondary)">3 days ago</span>
+              <span class="ef-row__landed fp-mono" style="font:400 var(--t-compact) var(--font-data);color:var(--text-secondary)">3 days ago</span>
               <!-- Error: bad dot — hover for tooltip (A.9.4) -->
               <span class="ef-row__state" style="position:relative">
                 <!-- INTEGRATION: tooltip text from error log entry -->
@@ -2143,7 +2142,7 @@
                 <!-- Tooltip shell (shown on dot hover via JS or CSS :hover) -->
                 <div class="ef-error-tooltip" role="tooltip">File locked by another process</div>
               </span>
-              <span class="ef-row__dest fp-mono" style="font:400 var(--t-compact) var(--font-mono);color:var(--text-tertiary)">\Finance\2025</span>
+              <span class="ef-row__dest fp-mono" style="font:400 var(--t-compact) var(--font-data);color:var(--text-tertiary)">\Finance\2025</span>
             </div>
 
             <div class="ef-row" data-action="ef-select-file" data-file-id="ef006" role="listitem" tabindex="0">
@@ -2151,11 +2150,11 @@
                 <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2" y="1" width="9" height="13" rx="1.5" fill="var(--bg-raised)" stroke="var(--border-subtle)" stroke-width="1"/><path d="M11 1v4h3" stroke="var(--border-subtle)" stroke-width="1" stroke-linejoin="round"/><path d="M4 7h7M4 9.5h7M4 12h4" stroke="var(--text-tertiary)" stroke-width="1" stroke-linecap="round"/></svg>
               </div>
               <span class="ef-row__name" style="font:500 var(--t-body) var(--font-ui);color:var(--text-primary)">invoice_stripe_march.pdf</span>
-              <span class="ef-row__landed fp-mono" style="font:400 var(--t-compact) var(--font-mono);color:var(--text-secondary)">1 hr ago</span>
+              <span class="ef-row__landed fp-mono" style="font:400 var(--t-compact) var(--font-data);color:var(--text-secondary)">1 hr ago</span>
               <span class="ef-row__state">
                 <span class="ef-state-dot" style="background:var(--text-tertiary)" title="Unprocessed"></span>
               </span>
-              <span class="ef-row__dest fp-mono" style="font:400 var(--t-compact) var(--font-mono);color:var(--text-tertiary)">Pending</span>
+              <span class="ef-row__dest fp-mono" style="font:400 var(--t-compact) var(--font-data);color:var(--text-tertiary)">Pending</span>
             </div>
 
             <!-- Empty state (A.9) — shown when folder is empty or filter returns zero rows -->
@@ -2176,9 +2175,9 @@
               <span style="font:600 var(--t-title-sm) var(--font-ui);color:var(--text-primary)">
                 Moving
                 <!-- INTEGRATION: live counter from file mover queue -->
-                <span class="fp-mono" style="font:600 var(--t-title-sm) var(--font-mono)">1</span>
+                <span class="fp-mono" style="font:600 var(--t-title-sm) var(--font-data)">1</span>
                 of
-                <span class="fp-mono" style="font:600 var(--t-title-sm) var(--font-mono)">3</span>
+                <span class="fp-mono" style="font:600 var(--t-title-sm) var(--font-data)">3</span>
                 files
               </span>
               <button class="fp-icon-btn fp-icon-btn--sm" data-action="ef-toggle-moving-card" title="Collapse">
@@ -2192,7 +2191,7 @@
             </div>
             <!-- Current filename in t-compact JetBrains Mono -->
             <!-- INTEGRATION: current file being transferred -->
-            <span class="fp-mono" style="font:400 var(--t-compact) var(--font-mono);color:var(--text-primary);display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">beach_holiday_2024.jpg → D:\Photos\album-mix-2024\</span>
+            <span class="fp-mono" style="font:400 var(--t-compact) var(--font-data);color:var(--text-primary);display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">beach_holiday_2024.jpg → D:\Photos\album-mix-2024\</span>
           </div><!-- /.ef-moving-card -->
 
           <!-- Collapsed state of the moving card (swap via JS) -->
@@ -2258,11 +2257,11 @@
                     <div class="settings-row__label">Accent color</div>
                     <div class="settings-accent-control" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
                       <span class="settings-accent-swatch" id="settings-accent-swatch" aria-hidden="true"
-                            style="width:24px;height:24px;border-radius:var(--r-button);background:var(--accent);border:1px solid var(--border-subtle);box-shadow:var(--highlight-top), var(--shadow-raised);flex-shrink:0"></span>
+                            style="width:24px;height:24px;border-radius:var(--r-button);background:var(--accent);border:1px solid var(--border-subtle);box-shadow:var(--shadow-raised);flex-shrink:0"></span>
                       <input type="text" class="fp-input" id="settings-accent-hex"
                              placeholder="#4CC2FF" maxlength="7" autocomplete="off" spellcheck="false"
                              data-action="settings-set-accent-hex"
-                             style="width:120px;text-align:center;font:500 13px/20px var(--font-mono);letter-spacing:0;text-transform:uppercase"/>
+                             style="width:120px;text-align:center;font:500 13px/20px var(--font-data);letter-spacing:0;text-transform:uppercase"/>
                       <button class="fp-btn fp-btn--ghost" data-action="settings-reset-accent" type="button">Reset to default</button>
                     </div>
                     <div class="fp-field-error" id="settings-accent-error" role="alert" aria-live="polite" hidden style="margin-top:6px"></div>
@@ -2702,11 +2701,11 @@
                   <div style="display:flex;gap:var(--s-24);margin-bottom:var(--s-12)">
                     <div>
                       <div style="font:400 var(--t-micro) var(--font-ui);color:var(--text-tertiary);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px">Tokens used</div>
-                      <div class="fp-mono" style="font:600 var(--t-display-sm) var(--font-mono);color:var(--text-primary)">247,312</div>
+                      <div class="fp-mono" style="font:600 var(--t-display-sm) var(--font-data);color:var(--text-primary)">247,312</div>
                     </div>
                     <div>
                       <div style="font:400 var(--t-micro) var(--font-ui);color:var(--text-tertiary);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px">Est. cost</div>
-                      <div class="fp-mono" style="font:600 var(--t-display-sm) var(--font-mono);color:var(--text-primary)">$0.74</div>
+                      <div class="fp-mono" style="font:600 var(--t-display-sm) var(--font-data);color:var(--text-primary)">$0.74</div>
                     </div>
                   </div>
                   <!-- Local vs cloud stacked bar -->
@@ -2889,13 +2888,13 @@
                   <!-- INTEGRATION: sizes from GET /data/stats -->
                   <div class="settings-row">
                     <div class="settings-row__label">Index size</div>
-                    <span class="fp-mono" style="font:600 var(--t-display-sm) var(--font-mono);color:var(--text-primary)">142 MB</span>
+                    <span class="fp-mono" style="font:600 var(--t-display-sm) var(--font-data);color:var(--text-primary)">142 MB</span>
                   </div>
                   <div class="settings-sep"></div>
                   <div class="settings-row">
                     <div class="settings-row__label">Snapshot storage</div>
                     <div style="display:flex;align-items:center;gap:var(--s-8)">
-                      <span class="fp-mono" style="font:600 var(--t-display-sm) var(--font-mono);color:var(--text-primary)">2.4 GB</span>
+                      <span class="fp-mono" style="font:600 var(--t-display-sm) var(--font-data);color:var(--text-primary)">2.4 GB</span>
                       <button class="fp-btn fp-btn--secondary fp-btn--sm" data-action="settings-cleanup-snapshots">Cleanup snapshots</button>
                     </div>
                   </div>
@@ -2981,27 +2980,27 @@
                   <!-- INTEGRATION: version from app manifest, file count from DB -->
                   <div class="settings-row">
                     <span style="font:400 var(--t-body) var(--font-ui);color:var(--text-secondary)">Version</span>
-                    <span class="fp-mono" style="font:400 var(--t-compact) var(--font-mono);color:var(--text-primary)">0.1.0-dev</span>
+                    <span class="fp-mono" style="font:400 var(--t-compact) var(--font-data);color:var(--text-primary)">0.1.0-dev</span>
                   </div>
                   <div class="settings-sep"></div>
                   <div class="settings-row">
                     <span style="font:400 var(--t-body) var(--font-ui);color:var(--text-secondary)">Build</span>
-                    <span class="fp-mono" style="font:400 var(--t-compact) var(--font-mono);color:var(--text-primary)">2026-04-24 · main@77b006d</span>
+                    <span class="fp-mono" style="font:400 var(--t-compact) var(--font-data);color:var(--text-primary)">2026-04-24 · main@77b006d</span>
                   </div>
                   <div class="settings-sep"></div>
                   <div class="settings-row">
                     <span style="font:400 var(--t-body) var(--font-ui);color:var(--text-secondary)">Index size</span>
-                    <span class="fp-mono" style="font:400 var(--t-compact) var(--font-mono);color:var(--text-primary)">142 MB</span>
+                    <span class="fp-mono" style="font:400 var(--t-compact) var(--font-data);color:var(--text-primary)">142 MB</span>
                   </div>
                   <div class="settings-sep"></div>
                   <div class="settings-row">
                     <span style="font:400 var(--t-body) var(--font-ui);color:var(--text-secondary)">Files indexed</span>
-                    <span class="fp-mono" style="font:400 var(--t-compact) var(--font-mono);color:var(--text-primary)">214,823</span>
+                    <span class="fp-mono" style="font:400 var(--t-compact) var(--font-data);color:var(--text-primary)">214,823</span>
                   </div>
                   <div class="settings-sep"></div>
                   <div class="settings-row">
                     <span style="font:400 var(--t-body) var(--font-ui);color:var(--text-secondary)">Local LLM</span>
-                    <span class="fp-mono" style="font:400 var(--t-compact) var(--font-mono);color:var(--text-primary)">llama3.1:8b · Ollama 0.6.3</span>
+                    <span class="fp-mono" style="font:400 var(--t-compact) var(--font-data);color:var(--text-primary)">llama3.1:8b · Ollama 0.6.3</span>
                   </div>
                   <div class="settings-sep"></div>
                   <div class="settings-row" style="flex-wrap:wrap;gap:var(--s-8)">
@@ -3031,7 +3030,6 @@
                background:var(--bg-raised);
                border:1px solid var(--border-hairline);
                border-radius:var(--r-card);
-               box-shadow:var(--highlight-top);
                aspect-ratio:16/10;
                display:flex;align-items:center;justify-content:center;
                flex-shrink:0;overflow:hidden;
@@ -3048,7 +3046,7 @@
 
         <!-- Filename + path -->
         <h3 class="inspector__filename" id="inspector-filename">design-brief.md</h3>
-        <p class="inspector__filepath mono" id="inspector-filepath" style="font:400 var(--t-compact) var(--font-mono);color:var(--text-tertiary);word-break:break-all;line-height:1.4;margin:0 0 8px">D:\design-brief.md</p>
+        <p class="inspector__filepath mono" id="inspector-filepath" style="font:400 var(--t-compact) var(--font-data);color:var(--text-tertiary);word-break:break-all;line-height:1.4;margin:0 0 8px">D:\design-brief.md</p>
 
         <!-- Inspector tabs: Preview / Tags / History (underline style) -->
         <div class="fp-tabs fp-inspector__tabs" style="border-bottom:1px solid var(--border-hairline);margin:0 -16px;padding:0 16px">
@@ -3112,7 +3110,7 @@
             <div style="font:500 var(--t-title-sm) var(--font-ui);color:var(--text-primary);margin-bottom:4px">
               <span id="inspector-multi-count">3</span> items selected
             </div>
-            <div style="font:400 var(--t-compact) var(--font-mono);color:var(--text-secondary);margin-bottom:12px">
+            <div style="font:400 var(--t-compact) var(--font-data);color:var(--text-secondary);margin-bottom:12px">
               Total: <span id="inspector-multi-size">42.1 KB</span>
               <!-- INTEGRATION: sum of sizes from GET /file/info for each selected path -->
             </div>

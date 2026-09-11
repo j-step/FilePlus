@@ -45,6 +45,10 @@ test('every screen renders with no renderer errors', async () => {
     await page.reload();
     await page.waitForSelector('#shell');
 
+    // Capture the solid fallback chrome: Mica is a live desktop material that
+    // screenshots as transparent pixels under the harness.
+    await page.evaluate(() => { delete document.documentElement.dataset.mica; });
+
     // Screenshot passes must be deterministic: force dark for the base pass
     // (Playwright emulates prefers-color-scheme: light by default).
     await page.evaluate(() => applyTheme('dark'));
