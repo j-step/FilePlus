@@ -67,3 +67,40 @@ def test_post_route_also_gated(client, monkeypatch, sandbox):
     r = client.post("/fs/mkdir", json={"dir": str(sandbox), "name": "New"},
                      headers={"X-FilePlus-Token": "t"})
     assert r.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# Fix round -- CORSMiddleware must be outermost so a 401 (returned by our
+# middleware without calling call_next) still carries Access-Control-Allow-
+# Origin; otherwise Electron's fetch() sees a CORS failure instead of a 401.
+# ---------------------------------------------------------------------------
+
+def test_401_response_still_carries_cors_header(client, monkeypatch):
+    monkeypatch.setattr(_config, "FILEPLUS_API_TOKEN", "t")
+    r = client.get("/files", headers={"Origin": "null"})
+    assert r.status_code == 401
+    assert r.headers.get("access-control-allow-origin") == "*"
+
+
+def test_200_response_also_carries_cors_header(client, monkeypatch):
+    # Same-shape check on the success path, so a future middleware reorder
+    # that broke only the happy path wouldn't slip through unnoticed.
+    monkeypatch.setattr(_config, "FILEPLUS_API_TOKEN", "t")
+    r = client.get("/files", headers={"Origin": "null", "X-FilePlus-Token": "t"})
+    assert r.status_code == 200
+    assert r.headers.get("access-control-allow-origin") == "*"
+
+
+# ---------------------------------------------------------------------------
+# Fix round -- compare_digest on UTF-8 bytes: a non-ASCII header value must
+# 401, not crash the middleware with an unhandled 500.
+# ---------------------------------------------------------------------------
+
+def test_non_ascii_token_header_is_401_not_500(client, monkeypatch):
+    monkeypatch.setattr(_config, "FILEPLUS_API_TOKEN", "t")
+    # httpx's TestClient rejects a non-ASCII *str* header value client-side
+    # (it insists on ascii-encoding str values before sending); passing raw
+    # UTF-8 bytes bypasses that client-side check and actually exercises the
+    # server's decoding + compare_digest path, which is what this guards.
+    r = client.get("/files", headers={"X-FilePlus-Token": "tökén-ñ".encode("utf-8")})
+    assert r.status_code == 401

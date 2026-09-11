@@ -43,18 +43,21 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="FilePlus API", version="0.1.0", lifespan=lifespan)
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # Electron file:// pages have origin "null"; the token gates writes instead
-    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Content-Type", "X-FilePlus-Token"],
-)
-
 
 # ---------------------------------------------------------------------------
 # Request auth — X-FilePlus-Token gates every route except /health when
 # FILEPLUS_API_TOKEN is set. Read at request time (not import time) so tests
 # can monkeypatch it and so a future packaged build can set it per-launch.
+#
+# Registered (via add_middleware, below CORSMiddleware in this file) *before*
+# CORSMiddleware so that CORSMiddleware ends up outermost in the resulting
+# stack (Starlette wraps outward in add_middleware call order — the last
+# middleware added is outermost). That matters because a 401 short-circuits
+# here without calling call_next: if CORS were inner of this middleware, its
+# response-header logic would never run for a rejected request, and a 401
+# would arrive at the Electron renderer with no Access-Control-Allow-Origin
+# header — the fetch() would then fail as a CORS error instead of surfacing
+# the real 401.
 # ---------------------------------------------------------------------------
 
 @app.middleware("http")
@@ -64,9 +67,22 @@ async def _require_token(request, call_next):
     token = _config.FILEPLUS_API_TOKEN
     if token:
         supplied = request.headers.get("x-fileplus-token", "")
-        if not secrets.compare_digest(supplied, token):
+        # Compare as UTF-8 bytes: secrets.compare_digest raises TypeError on
+        # a str argument containing non-ASCII characters (a header value a
+        # client can send). Encoding both sides to bytes first — which
+        # compare_digest always accepts — turns a bogus non-ASCII header into
+        # a 401 instead of an unhandled 500.
+        if not secrets.compare_digest(supplied.encode("utf-8"), token.encode("utf-8")):
             return JSONResponse(status_code=401, content={"detail": "missing or invalid API token"})
     return await call_next(request)
+
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Electron file:// pages have origin "null"; the token gates writes instead
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "X-FilePlus-Token"],
+)
 
 
 # ---------------------------------------------------------------------------

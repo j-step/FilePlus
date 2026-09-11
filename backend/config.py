@@ -12,9 +12,14 @@ other PROTECTED_WRITE_ROOTS entry (the app dir, or a test-injected root) ->
 ProtectedPathError; (4) WRITE_UNLOCKED -> allowed, else OutOfSandboxError.
 """
 from dotenv import load_dotenv
+import ipaddress
 import os
 import re
+import socket
+import threading
 from pathlib import Path
+
+import psutil
 
 load_dotenv()
 
@@ -80,33 +85,118 @@ def is_under(path: Path, root: Path) -> bool:
     return p == r or p.startswith(r.rstrip("\\/") + os.sep)
 
 
-_LOOPBACK_ADMIN_SHARE_RE = re.compile(r"^\\\\(?P<host>[^\\]+)\\(?P<share>[A-Za-z])\$(?P<rest>.*)$")
+_ADMIN_SHARE_RE = re.compile(
+    r"^\\\\(?P<host>[^\\]+)\\(?P<share>[A-Za-z]\$|ADMIN\$)(?P<rest>.*)$", re.IGNORECASE
+)
+
+_local_addrs_cache: set[str] | None = None
+
+
+def _local_interface_addresses() -> set[str]:
+    """This machine's own interface addresses (IPv4 and IPv6), lower-cased.
+
+    Computed once per process (network interfaces don't change mid-run) and
+    reused by _is_local_host.
+    """
+    global _local_addrs_cache
+    if _local_addrs_cache is None:
+        addrs: set[str] = set()
+        try:
+            for iface_addrs in psutil.net_if_addrs().values():
+                for a in iface_addrs:
+                    if a.address:
+                        addrs.add(a.address.split("%")[0].lower())  # strip IPv6 zone id
+        except Exception:
+            pass  # best effort -- an empty set just means no LAN-IP match, not a crash
+        _local_addrs_cache = addrs
+    return _local_addrs_cache
+
+
+def _resolve_host_addrs(host: str, timeout: float = 2.0) -> list[str]:
+    """socket.getaddrinfo(host, None), bounded to *timeout* seconds.
+
+    getaddrinfo has no native timeout on Windows, so this runs it on a
+    daemon thread and gives up (returning []) if it hasn't finished by the
+    deadline -- a hung DNS lookup for a hostile hostname must not hang
+    path_guard, and a daemon thread never blocks process exit even if the
+    lookup itself never returns.
+    """
+    out: list[str] = []
+
+    def _do() -> None:
+        try:
+            out.extend(info[4][0] for info in socket.getaddrinfo(host, None))
+        except OSError:
+            pass
+
+    t = threading.Thread(target=_do, daemon=True)
+    t.start()
+    t.join(timeout)
+    return out
+
+
+def _is_local_host(host: str) -> bool:
+    """True when *host* (a UNC hostname) names this machine.
+
+    Checked, cheapest first: the classic loopback names/our own
+    COMPUTERNAME/hostname; the ``.ipv6-literal.net`` encoding Windows accepts
+    for IPv6 UNC hosts (e.g. ``0--1.ipv6-literal.net`` for ``::1``); and
+    finally whether *host* resolves (bounded lookup) to a loopback address or
+    one of our own interface addresses -- catching a bare LAN IP or any other
+    hostname for this same box.
+    """
+    h = host.lower()
+    named = {
+        "localhost", "127.0.0.1", "::1",
+        os.environ.get("COMPUTERNAME", "").lower(),
+        socket.gethostname().lower(),
+    }
+    named.discard("")
+    if h in named:
+        return True
+    if h.endswith(".ipv6-literal.net"):
+        return True
+    local_addrs = _local_interface_addresses()
+    for addr in _resolve_host_addrs(host):
+        addr = addr.split("%")[0].lower()
+        try:
+            if ipaddress.ip_address(addr).is_loopback:
+                return True
+        except ValueError:
+            pass
+        if addr in local_addrs:
+            return True
+    return False
 
 
 def _map_loopback_admin_share(resolved: Path) -> Path:
-    """Map a loopback admin-share UNC spelling back to its local drive form.
+    """Map a local admin-share UNC spelling back to its local drive form.
 
-    ``\\\\localhost\\C$\\Windows\\x`` and friends (``127.0.0.1``, ``::1``, the
-    machine's own COMPUTERNAME) are just ``C:\\Windows\\x`` reached over the
-    loopback network stack. Left as UNC, is_under's string containment check
-    against SYSTEM_WRITE_ROOTS (local-drive paths) never matches, so this
-    spelling would otherwise bypass write protection entirely when unlocked.
-    Any other UNC host is a real remote share and passes through unchanged.
+    ``\\\\localhost\\C$\\Windows\\x``, ``\\\\<own LAN IP>\\C$\\...``,
+    ``\\\\0--1.ipv6-literal.net\\C$\\...`` and ``\\\\<host>\\ADMIN$\\...`` are
+    all just a local drive (or, for ADMIN$, %SystemRoot%) reached over the
+    loopback network stack under a different name. Left as UNC, is_under's
+    string containment check against SYSTEM_WRITE_ROOTS (local-drive paths)
+    never matches, so any of these spellings would otherwise bypass write
+    protection entirely when unlocked. A UNC host that isn't this machine is
+    a real remote share and passes through unchanged.
     """
     s = str(resolved)
     if not s.startswith("\\\\"):
         return resolved
-    m = _LOOPBACK_ADMIN_SHARE_RE.match(s)
+    m = _ADMIN_SHARE_RE.match(s)
     if not m:
         return resolved
-    host = m.group("host").lower()
-    loopback_hosts = {"localhost", "127.0.0.1", "::1", os.environ.get("COMPUTERNAME", "").lower()}
-    loopback_hosts.discard("")
-    if host not in loopback_hosts:
+    if not _is_local_host(m.group("host")):
         return resolved
     share = m.group("share")
     rest = m.group("rest").lstrip("\\")
-    return Path(f"{share}:\\{rest}").resolve()
+    if share.upper() == "ADMIN$":
+        root = os.environ.get("SystemRoot", r"C:\Windows")
+        mapped = f"{root}\\{rest}" if rest else root
+    else:
+        mapped = f"{share[0]}:\\{rest}"
+    return Path(mapped).resolve()
 
 
 def _canonicalize(path: Path | str) -> Path:
@@ -127,9 +217,18 @@ def _canonicalize(path: Path | str) -> Path:
     resolved = p.resolve()
     s = str(resolved)
     if s.startswith("\\\\?\\UNC\\"):
-        resolved = Path("\\\\" + s[len("\\\\?\\UNC\\"):]).resolve()
+        stripped = Path("\\\\" + s[len("\\\\?\\UNC\\"):])
+        if not (stripped.drive and stripped.root):
+            raise BadPathError(f"Extended-length UNC path does not resolve to a UNC root: {s!r}")
+        resolved = stripped.resolve()
     elif s.startswith("\\\\?\\"):
-        resolved = Path(s[len("\\\\?\\"):]).resolve()
+        stripped = Path(s[len("\\\\?\\"):])
+        # A bogus non-drive spelling (e.g. \\?\Volume{guid}\...) strips down to
+        # a relative-looking string; resolving that would silently reinterpret
+        # it against the process's cwd instead of failing, so check first.
+        if not (stripped.drive and stripped.root):
+            raise BadPathError(f"Extended-length path does not resolve to a drive-rooted location: {s!r}")
+        resolved = stripped.resolve()
     resolved = _map_loopback_admin_share(resolved)
     if not (resolved.drive and resolved.root):
         raise BadPathError(f"Path must be absolute with a drive: {path!r}")
