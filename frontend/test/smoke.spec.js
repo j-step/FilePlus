@@ -45,6 +45,10 @@ test('every screen renders with no renderer errors', async () => {
     await page.reload();
     await page.waitForSelector('#shell');
 
+    // Screenshot passes must be deterministic: force dark for the base pass
+    // (Playwright emulates prefers-color-scheme: light by default).
+    await page.evaluate(() => applyTheme('dark'));
+
     await page.waitForTimeout(1500); // fonts, first /health poll
 
     for (const id of SCREENS) {
