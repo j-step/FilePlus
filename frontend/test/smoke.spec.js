@@ -39,6 +39,12 @@ test('every screen renders with no renderer errors', async () => {
     page.on('console', (m) => { if (m.type() === 'error') errors.push(`console: ${m.text()}`); });
 
     await page.waitForSelector('#shell');
+
+    // Screenshots must show default settings, not whatever this machine's profile persisted.
+    await page.evaluate(() => localStorage.clear());
+    await page.reload();
+    await page.waitForSelector('#shell');
+
     await page.waitForTimeout(1500); // fonts, first /health poll
 
     for (const id of SCREENS) {

@@ -829,7 +829,7 @@ function applyDensity(density) {
 }
 
 const HEX_RE = /^#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$/;
-const DEFAULT_ACCENT = '#E8965E';
+const DEFAULT_ACCENT = '#4CC2FF';
 
 function isValidHex(s) {
   return typeof s === 'string' && HEX_RE.test(s.trim());
@@ -840,7 +840,7 @@ function applyAccentHex(rawHex) {
   const errorEl = document.getElementById('settings-accent-error');
   if (!isValidHex(hex)) {
     if (errorEl) {
-      errorEl.textContent = 'Enter a valid hex color (e.g. #E8965E or #abc).';
+      errorEl.textContent = 'Enter a valid hex color (e.g. #4CC2FF or #abc).';
       errorEl.hidden = false;
     }
     return false;
@@ -871,23 +871,19 @@ function applyAccent(value) {
   if (isValidHex(value)) applyAccentHex(value);
 }
 
-function applyAccentGlow(enabled) {
-  if (enabled) {
-    document.documentElement.setAttribute('data-accent-glow', 'on');
-    localStorage.setItem('fp-accent-glow', 'on');
-  } else {
-    document.documentElement.removeAttribute('data-accent-glow');
-    localStorage.setItem('fp-accent-glow', 'off');
-  }
-  const checkbox = document.getElementById('settings-accent-glow');
-  if (checkbox) checkbox.checked = !!enabled;
-}
-
 function restoreSettings() {
   const theme = localStorage.getItem('fp-theme');
   if (theme) applyTheme(theme);
   const density = localStorage.getItem('fp-density');
   if (density) applyDensity(density);
+  // One-time migration: drop the retired amber default (#E8965E) that older
+  // sessions re-saved to localStorage, so the new blue accent takes over.
+  const RETIRED_AMBER_ACCENT = '#E8965E';
+  const persistedAccent = localStorage.getItem('fp-accent');
+  if (persistedAccent && persistedAccent.toLowerCase() === RETIRED_AMBER_ACCENT.toLowerCase()) {
+    localStorage.removeItem('fp-accent');
+    console.info('[fp-accent] Dropped retired amber default; using the new blue accent.');
+  }
   const savedAccent = localStorage.getItem('fp-accent');
   if (savedAccent) {
     if (isValidHex(savedAccent)) {
@@ -905,8 +901,8 @@ function restoreSettings() {
   }
   // Zoom is now handled by Electron webContents.setZoomFactor (no CSS zoom persistence needed).
   // Legacy fp-zoom in localStorage is intentionally ignored — Electron persists zoom separately.
-  const savedGlow = localStorage.getItem('fp-accent-glow');
-  if (savedGlow === 'on') applyAccentGlow(true);
+  // Stage 1: glow feature removed
+  localStorage.removeItem('fp-accent-glow');
   // Notifications setting — defaults to OFF if unset
   const checkbox = document.getElementById('settings-show-notifications');
   if (checkbox) checkbox.checked = notificationsEnabled();
@@ -1540,7 +1536,7 @@ const IN_SCOPE_ACTIONS = new Set([
   'ef-filter', 'ef-sort', 'ef-toggle-pause-ai', 'ef-toggle-moving-card',
   'scan-config-switch-mode', 'scan-baseline-confirm',
   'settings-nav', 'settings-set-theme', 'settings-set-density', 'settings-set-accent',
-  'settings-set-accent-hex', 'settings-reset-accent', 'settings-set-accent-glow',
+  'settings-set-accent-hex', 'settings-reset-accent',
   'settings-set-show-notifications',
   'settings-set-font-scale', 'settings-reset-shortcuts',
   'zoom-reset',
@@ -1768,12 +1764,8 @@ document.addEventListener('input', e => {
   }
 });
 
-// Accent glow toggle (change event, not click)
 document.addEventListener('change', e => {
   const t = e.target;
-  if (t && t.dataset && t.dataset.action === 'settings-set-accent-glow') {
-    applyAccentGlow(t.checked);
-  }
   if (t && t.dataset && t.dataset.action === 'settings-set-show-notifications') {
     setNotificationsEnabled(t.checked);
   }

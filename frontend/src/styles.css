@@ -251,9 +251,7 @@ svg { flex-shrink: 0; }
 *:focus { outline: none; }
 *:focus-visible {
   outline: none;
-  box-shadow:
-    0 0 0 2px var(--bg-content),
-    0 0 0 4px var(--accent-glow);
+  box-shadow: 0 0 0 2px var(--bg-content);
 }
 
 /* -----------------------------------------------------------------------------
@@ -503,7 +501,6 @@ svg { flex-shrink: 0; }
 
 .fp-sidebar__item:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 3px var(--accent-glow);
 }
 
 .fp-sidebar__item__label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -748,7 +745,7 @@ svg { flex-shrink: 0; }
 .fp-search:hover { border-color: var(--border-mid); }
 .fp-search:focus-within {
   border-color: var(--accent-edge);
-  box-shadow: var(--inset-recess-strong), 0 0 0 3px var(--accent-glow);
+  box-shadow: var(--inset-recess-strong);
 }
 .fp-search__icon { width: 14px; height: 14px; color: var(--text-tertiary); flex-shrink: 0; }
 .fp-search__input {
@@ -983,7 +980,6 @@ svg { flex-shrink: 0; }
 }
 .fp-button:focus-visible, .fp-btn:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 3px var(--accent-glow);
 }
 .fp-button:disabled,
 .fp-button[disabled],
@@ -1067,7 +1063,6 @@ svg { flex-shrink: 0; }
 .fp-btn--icon:focus-visible,
 .fp-icon-btn:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 3px var(--accent-glow);
 }
 
 .fp-icon-btn:disabled,
@@ -1335,7 +1330,6 @@ svg { flex-shrink: 0; }
 .fp-segmented__option:focus-visible,
 .fp-segmented__opt:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 3px var(--accent-glow);
 }
 
 /* -----------------------------------------------------------------------------
@@ -1378,7 +1372,6 @@ svg { flex-shrink: 0; }
 }
 .fp-tabs__item:focus-visible {
   outline: none;
-  box-shadow: inset 0 0 0 3px var(--accent-glow);
 }
 .fp-tabs__indicator {
   position: absolute;
@@ -1444,7 +1437,7 @@ svg { flex-shrink: 0; }
 .fp-select:hover, .fp-textarea:hover { border-color: var(--border-mid); }
 .fp-select:focus, .fp-textarea:focus {
   border-color: var(--accent-edge);
-  box-shadow: var(--inset-recess-strong), 0 0 0 3px var(--accent-glow);
+  box-shadow: var(--inset-recess-strong);
 }
 .fp-select:disabled, .fp-textarea:disabled { opacity: 0.5; }
 
@@ -1470,8 +1463,7 @@ svg { flex-shrink: 0; }
 .fp-input:focus-visible {
   outline: none;
   border-color: var(--accent-edge);
-  box-shadow: var(--inset-recess-strong),
-              0 0 0 3px var(--accent-glow);
+  box-shadow: var(--inset-recess-strong);
 }
 .fp-input:disabled,
 .fp-input[disabled] {
@@ -1560,7 +1552,7 @@ svg { flex-shrink: 0; }
   background: var(--text-on-accent);
 }
 .fp-toggle input:focus-visible ~ .fp-toggle__track {
-  box-shadow: var(--inset-recess), 0 0 0 3px var(--accent-glow);
+  box-shadow: var(--inset-recess);
 }
 .fp-toggle input:disabled ~ .fp-toggle__track,
 .fp-toggle input:disabled ~ .fp-toggle__thumb {
@@ -1607,7 +1599,7 @@ svg { flex-shrink: 0; }
   transform: scale(1);
 }
 .fp-checkbox:focus-visible {
-  box-shadow: var(--inset-recess), 0 0 0 3px var(--accent-glow);
+  box-shadow: var(--inset-recess);
 }
 
 /* Canonical sibling-combinator variant:
@@ -1647,7 +1639,7 @@ svg { flex-shrink: 0; }
   transform: scale(1) rotate(45deg);
 }
 .fp-checkbox input:focus-visible ~ .fp-checkbox__mark {
-  box-shadow: var(--inset-recess), 0 0 0 3px var(--accent-glow);
+  box-shadow: var(--inset-recess);
 }
 
 /* === fp-radio === */
@@ -1683,7 +1675,7 @@ svg { flex-shrink: 0; }
   transform: scale(1);
 }
 .fp-radio:focus-visible {
-  box-shadow: var(--inset-recess), 0 0 0 3px var(--accent-glow);
+  box-shadow: var(--inset-recess);
 }
 
 /* Canonical sibling-combinator variant:
@@ -1722,7 +1714,7 @@ svg { flex-shrink: 0; }
   transform: scale(1);
 }
 .fp-radio input:focus-visible ~ .fp-radio__mark {
-  box-shadow: var(--inset-recess), 0 0 0 3px var(--accent-glow);
+  box-shadow: var(--inset-recess);
 }
 
 .fp-slider {
@@ -1767,10 +1759,10 @@ svg { flex-shrink: 0; }
   cursor: pointer;
 }
 .fp-slider:focus-visible::-webkit-slider-thumb {
-  box-shadow: var(--shadow-raised), 0 0 0 3px var(--accent-glow);
+  box-shadow: var(--shadow-raised);
 }
 .fp-slider:focus-visible::-moz-range-thumb {
-  box-shadow: var(--shadow-raised), 0 0 0 3px var(--accent-glow);
+  box-shadow: var(--shadow-raised);
 }
 .fp-slider:disabled {
   opacity: 0.5;
@@ -2900,7 +2892,7 @@ svg { flex-shrink: 0; }
 }
 .search:focus-within {
   border-color: var(--accent-edge);
-  box-shadow: var(--inset-recess), 0 0 0 2px var(--accent-glow);
+  box-shadow: var(--inset-recess);
 }
 .search__icon { flex-shrink: 0; color: var(--text-tertiary); }
 .search__input {
@@ -3183,7 +3175,6 @@ svg { flex-shrink: 0; }
 .rb-btn-danger-ghost:active { transform: translateY(1px); }
 .rb-btn-danger-ghost:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 3px var(--accent-glow);
 }
 
 .rb-row {
@@ -3320,7 +3311,6 @@ svg { flex-shrink: 0; }
 .ef-col--sortable:hover { color: var(--text-secondary); }
 .ef-col--sortable:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 3px var(--accent-glow);
   border-radius: var(--r-sm);
 }
 .ef-col--sorted-asc,
@@ -4291,7 +4281,6 @@ svg { flex-shrink: 0; }
 }
 .fp-sidebar--collapsed .fp-sidebar__tags-collapsed:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 3px var(--accent-glow);
 }
 
 /* ── Statusbar subcomponents ─────────────────────────────────────────────── */
@@ -4805,7 +4794,6 @@ button.fp-pill:hover {
 .settings-nav__item:active { transform: translateY(1px); }
 .settings-nav__item:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 3px var(--accent-glow);
 }
 .settings-nav__item--active {
   background: var(--bg-pressed);
@@ -5076,221 +5064,6 @@ button.fp-pill:hover {
 
 /* ── Reduced motion: see canonical block appended below (UI-SPEC §A.0) ─────── */
 
-/* =============================================================================
-   Accent glow — TRUE LIGHTSABER MODE — toggled via Settings → Personalization
-   =============================================================================
-   Design model: every accent-colored element in glow mode is treated as a
-   lightsaber blade — pure WHITE in the core, accent-colored halo around it.
-
-   Three transformations are applied in coordination:
-
-     1. Solid accent FILLS  → background swapped to white (or white→accent
-        gradient for the slight gradient look on bars). Box-shadow halo added.
-
-     2. Accent SVG STROKES/FILLS → `brightness(0) invert(1)` flips the path's
-        rendered color to pure white (alpha is preserved, so transparent SVG
-        areas stay transparent). Drop-shadow chain adds the colored halo.
-
-     3. Accent TEXT → color swapped to white. Text-shadow halo added.
-
-   All three feed off the same --accent-glow / --accent-glow-strong tokens,
-   which auto-track --accent (so a custom hex glows in its own hue).
-
-   The :where() selectors keep specificity at zero so element-specific tweaks
-   below can override the broad rules without !important.
-============================================================================= */
-
-/* ── BROAD CATCH-ALL: every accent SVG path becomes white + glows ─────────── */
-
-/* Targets icons whose stroke or fill is set DIRECTLY to the accent variable.
-   `:where()` keeps specificity at 0,1 so individual element overrides win. */
-[data-accent-glow="on"] :where([stroke="var(--accent)"], [fill="var(--accent)"]) {
-  filter: var(--glow-blade-md);
-}
-
-/* SVGs that take their color from a parent's CSS `color: var(--accent)` rule
-   (stroke/fill="currentColor"). We can't detect this generically in CSS, so
-   we enumerate the parent classes that set color to accent. Each rule below
-   is the actual lightsaber treatment for that icon family. */
-[data-accent-glow="on"] :where(
-  .fp-row--selected .fp-row__icon,
-  .fp-list-header__col--active svg,
-  .fp-list-header__col--active .icon,
-  .fp-sortable.active .list-col__caret,
-  .fp-node__icon,
-  .fp-tray__active-icon,
-  .fp-onboarding__hero,
-  .fp-toast--accent .fp-toast__icon,
-  .fp-menu__item:hover svg,
-  .fp-menu__item:hover .icon,
-  .fp-context-menu__item:hover svg,
-  .fp-context-menu__item:hover .icon,
-  .ftree-node__expand-badge[aria-expanded="true"] svg,
-  .inspector__tab.active svg
-) {
-  filter: var(--glow-blade-md);
-}
-
-/* ── BROAD CATCH-ALL: every accent text instance becomes white + glows ────── */
-
-[data-accent-glow="on"] :where(
-  .txt-accent,
-  .fp-stage--current .fp-stage__meta,
-  .inspector__tab.active,
-  .fp-sidebar__item--active .fp-sidebar__drive-letter,
-  .fp-toast--accent,
-  .fp-menu__item:hover,
-  .fp-context-menu__item:hover,
-  .fp-mode-banner--accent
-) {
-  color: #fff;
-  text-shadow: 0 0 6px var(--accent-glow-strong),
-               0 0 14px var(--accent-glow);
-}
-
-/* ── HEADLINE ELEMENTS — sidebar bar, tabs, brand, primary buttons ────────── */
-
-/* Sidebar active-item bar — pure white blade, large halo. */
-[data-accent-glow="on"] .fp-sidebar__item--active::before {
-  background: #fff;
-  box-shadow: var(--glow-lg);
-  overflow: visible;
-}
-
-/* Tab underline + legacy underline-tabs indicator */
-[data-accent-glow="on"] .fp-tab--active::after,
-[data-accent-glow="on"] .fp-tabs__indicator,
-[data-accent-glow="on"] .fp-tab-underline {
-  background: #fff;
-  box-shadow: var(--glow-lg);
-}
-
-/* Brand mark — keep the brand's INNER colors (the dark cross is text-on-accent
-   and must stay readable against the now-white rect background that the
-   broad SVG rule above gives the rect). Add a halo around the whole mark
-   via drop-shadow on the SVG container. */
-[data-accent-glow="on"] .fp-titlebar__brand,
-[data-accent-glow="on"] .fp-titlebar__brand-name {
-  overflow: visible;
-}
-[data-accent-glow="on"] .fp-brand,
-[data-accent-glow="on"] .fp-sidebar__brand-mark {
-  filter: var(--glow-filter-lg);
-  overflow: visible;
-}
-
-/* Primary buttons keep their accent fill (a "white button" reads wrong) but
-   get the strongest halo. */
-[data-accent-glow="on"] .fp-button--primary,
-[data-accent-glow="on"] .fp-btn--primary {
-  box-shadow: var(--highlight-top), var(--shadow-raised), var(--glow-lg);
-}
-
-/* ── DOTS, BADGES, PILLS — anything with a solid accent fill ─────────────── */
-
-/* Round dots become white at the center, accent at the edge (radial gradient),
-   plus a halo. This is the cleanest lightsaber look on small circles. */
-[data-accent-glow="on"] :where(
-  .fp-state-dot--accent,
-  .fp-pill__dot--accent,
-  .fp-onboarding__step-dot--active
-) {
-  background: radial-gradient(circle at 35% 35%, #fff 0%, #fff 30%, var(--accent) 90%);
-  box-shadow: var(--glow-md);
-  filter: none;
-}
-
-/* Generic pill dots inside live pills */
-[data-accent-glow="on"] .fp-pill__dot {
-  background: radial-gradient(circle at 35% 35%, #fff 0%, var(--accent) 90%);
-  box-shadow: var(--glow-sm);
-}
-
-/* Accent badges — white-to-accent gradient, halo around the shape */
-[data-accent-glow="on"] .fp-badge--accent {
-  background: linear-gradient(to bottom, #fff 0%, var(--accent) 100%);
-  color: var(--text-on-accent);
-  box-shadow: var(--glow-md);
-}
-
-/* Live pill chassis (e.g. "Indexing 12%" status pill) */
-[data-accent-glow="on"] .fp-pill--live {
-  box-shadow: var(--glow-md);
-}
-
-/* ── BARS & FILLS — anything with a solid accent background ──────────────── */
-
-[data-accent-glow="on"] :where(
-  .fp-progress-bar__fill,
-  .fp-sidebar__drive-bar__fill,
-  .fp-snackbar__progress
-) {
-  background: linear-gradient(to right, #fff 0%, var(--accent) 80%);
-  box-shadow: var(--glow-md);
-}
-
-/* ── ROW SELECTION ──────────────────────────────────────────────────────── */
-
-[data-accent-glow="on"] .fp-row--selected {
-  box-shadow: inset 0 0 0 1px var(--accent), var(--glow-md);
-}
-[data-accent-glow="on"] .fp-row--selected::before {
-  background: #fff;
-  box-shadow: var(--glow-md);
-}
-[data-accent-glow="on"] .rb-row--selected {
-  border-left-color: #fff;
-  box-shadow: var(--glow-sm);
-}
-
-/* ── FORM CONTROLS ───────────────────────────────────────────────────────── */
-
-[data-accent-glow="on"] .fp-toggle input:checked ~ .fp-toggle__track {
-  background: linear-gradient(to right, #fff 0%, var(--accent) 80%);
-  box-shadow: var(--glow-md);
-}
-[data-accent-glow="on"] .fp-segmented__opt--active,
-[data-accent-glow="on"] .fp-segmented__opt.active {
-  box-shadow: var(--glow-sm);
-}
-[data-accent-glow="on"] .fp-chip--active,
-[data-accent-glow="on"] .fp-chip.active {
-  box-shadow: var(--glow-md);
-}
-
-/* Focus rings */
-[data-accent-glow="on"] .fp-input:focus,
-[data-accent-glow="on"] .fp-input:focus-visible {
-  box-shadow: var(--inset-recess-strong), var(--glow-md);
-}
-[data-accent-glow="on"] .fp-button:focus-visible,
-[data-accent-glow="on"] .fp-btn:focus-visible,
-[data-accent-glow="on"] .fp-icon-btn:focus-visible {
-  box-shadow: var(--glow-md);
-}
-
-/* ── NOTIFICATIONS & BANNERS ─────────────────────────────────────────────── */
-
-[data-accent-glow="on"] .fp-toast--accent,
-[data-accent-glow="on"] .fp-toast--action {
-  box-shadow: var(--shadow-popover), var(--glow-md);
-  border-color: #fff;
-}
-[data-accent-glow="on"] .fp-snackbar {
-  /* snackbars don't have an accent variant by default, but the progress
-     fill inside is already covered by the bars rule above */
-}
-[data-accent-glow="on"] .fp-mode-banner--accent {
-  box-shadow: inset 0 -1px 0 #fff, var(--glow-md);
-}
-
-/* ── ACCENT-WASH BACKGROUNDS — subtle ambient glow ───────────────────────── */
-
-[data-accent-glow="on"] [style*="background:var(--accent-wash"],
-[data-accent-glow="on"] [style*="background: var(--accent-wash"] {
-  box-shadow: var(--glow-sm);
-}
-
 /* === prefers-reduced-motion: strict policy per UI-SPEC §A.0 === */
 @media (prefers-reduced-motion: reduce) {
   *,
@@ -5306,21 +5079,5 @@ button.fp-pill:hover {
   .fp-sparkline * {
     animation-duration: revert !important;
     transition-duration: revert !important;
-  }
-  /* Disable accent glow under reduced-motion by neutering the glow tokens.
-     Safer than `* { box-shadow: revert; filter: revert }`, which stripped
-     every shadow in the app. Only the glow tokens go inert; non-glow
-     shadows (inset recesses, raised buttons, modal depth, etc.) survive. */
-  [data-accent-glow="on"] {
-    --accent-glow:        transparent;
-    --accent-glow-strong: transparent;
-    --glow-sm:            none;
-    --glow-md:            none;
-    --glow-lg:            none;
-    --glow-filter-sm:     none;
-    --glow-filter-md:     none;
-    --glow-filter-lg:     none;
-    --glow-blade-sm:      none;
-    --glow-blade-md:      none;
   }
 }
