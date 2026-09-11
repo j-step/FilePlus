@@ -172,6 +172,17 @@ function initMarqueeSelection() {
     if (!dragging) return;
     dragging = false;
     marqueeRect.style.display = 'none';
+    // A plain click on the empty background (mousedown+mouseup with no drag
+    // distance) never fires mousemove, so the rows still carry whatever
+    // `.fp-row--selected` classes they had BEFORE this click — reading them
+    // back here would silently re-adopt the old selection instead of
+    // clearing it. Treat a near-zero-size marquee as a plain click.
+    const w = parseFloat(marqueeRect.style.width) || 0;
+    const h = parseFloat(marqueeRect.style.height) || 0;
+    if (w < 2 && h < 2 && !ctrlDrag) {
+      clearSelection();
+      return;
+    }
     const paths = [...listScroll.querySelectorAll('.fp-row--selected')]
       .map(r => r.dataset.path)
       .filter(Boolean);
@@ -238,6 +249,15 @@ function joinPath(parentPath, name) {
   return parentPath.replace(/[\\\/]+$/, '') + '\\' + name;
 }
 
+/** Returns the parent folder of an absolute path (string-only; no filesystem
+ * lookup) — used by "Open in new tab" on a file row, which may belong to a
+ * directory that isn't the currently loaded one (e.g. a Home/Recent row). */
+function parentOfPath(p) {
+  const norm = String(p || '').replace(/[\\\/]+$/, '');
+  const idx = Math.max(norm.lastIndexOf('\\'), norm.lastIndexOf('/'));
+  return idx > 0 ? norm.slice(0, idx) : norm;
+}
+
 async function loadDirectory(absPath, opts = {}) {
   const { addToHistory = true, preserveSelection = false } = opts;
   let data;
@@ -281,10 +301,12 @@ async function loadDirectory(absPath, opts = {}) {
   onSelectionChanged();
 }
 
-/** Re-fetches the current directory, keeping selection/anchor/focus where the paths still exist. */
+/** Re-fetches the current directory, keeping selection/anchor/focus where the paths still exist.
+ * Returns loadDirectory's promise so callers (fileops.run(), inline rename) can await the
+ * re-render actually landing before touching the DOM again. */
 function refreshDirectory() {
   if (!browserState.path) return;
-  loadDirectory(browserState.path, { addToHistory: false, preserveSelection: true });
+  return loadDirectory(browserState.path, { addToHistory: false, preserveSelection: true });
 }
 
 function handleLoadError(err, absPath) {
@@ -386,7 +408,7 @@ function renderFsRow(entry, parentPath) {
   const modifiedText = entry.error ? '—' : formatModified(entry.modified * 1000);
   const rowClass = `fp-row${entry.is_dir ? ' fp-row--folder' : ''}${entry.error ? ' fp-row--disabled' : ''}`;
   const titleAttr = entry.error ? ' title="Access denied"' : '';
-  return `<div class="${rowClass}" role="option"
+  return `<div class="${rowClass}" role="option" draggable="true"
             data-path="${escapeHtml(childPath)}"
             data-type="${entry.is_dir ? 'folder' : 'file'}" tabindex="-1"${titleAttr}>
     ${icon}
@@ -609,6 +631,185 @@ function ensureRowSelected(path) {
   if (!browserState.selection.has(path)) selectRow(path, {});
 }
 
+// ── Inline rename (Task 4) ────────────────────────────────────────────────────
+// Client-side mirror of backend.mover.validate_name — the backend remains the
+// authority (a race, or a rule we've missed, still comes back as a 409), but
+// catching the obvious cases here avoids a round-trip for typos.
+const _RESERVED_STEMS = new Set([
+  'CON', 'PRN', 'AUX', 'NUL',
+  ...Array.from({ length: 9 }, (_, i) => `COM${i + 1}`),
+  ...Array.from({ length: 9 }, (_, i) => `LPT${i + 1}`),
+]);
+const _BAD_NAME_CHARS = /[\\/:*?"<>|\x00-\x1f]/;
+
+/** Returns an error message if `name` is invalid, or null if it's fine. */
+function validateEntryName(name) {
+  if (!name || name === '.' || name === '..') return 'Name is empty or reserved.';
+  if (_BAD_NAME_CHARS.test(name)) return 'Name contains a character that Windows does not allow: \\ / : * ? " < > |';
+  if (/[. ]$/.test(name)) return 'Name may not end with a dot or a space.';
+  if (_RESERVED_STEMS.has(name.split('.')[0].toUpperCase())) return `'${name}' is a reserved device name.`;
+  return null;
+}
+
+/**
+ * Swaps a row's `.fp-row__name` span for an editable input. For a file with
+ * an extension, only the stem is preselected (folders and extension-less
+ * files select the whole name) — matches Explorer's rename UX. Enter commits
+ * via fileops.rename, Escape cancels, blur commits, and a no-change commit is
+ * silently ignored.
+ */
+function startInlineRename(path) {
+  const row = findRowByPath(path);
+  if (!row) return;
+  const nameEl = row.querySelector('.fp-row__name');
+  if (!nameEl) return;
+  const entry = entryForPath(path);
+  const currentName = entry ? entry.name : (nameEl.textContent || '').trim();
+  const isDir = row.dataset.type === 'folder';
+
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'fp-input fp-row__rename';
+  input.value = currentName;
+  input.setAttribute('aria-label', 'Rename');
+  nameEl.replaceWith(input);
+  input.focus();
+
+  const dot = currentName.lastIndexOf('.');
+  if (!isDir && dot > 0) input.setSelectionRange(0, dot);
+  else input.select();
+
+  let settled = false;
+  const restore = () => {
+    if (settled) return;
+    settled = true;
+    input.replaceWith(nameEl);
+  };
+  const commit = () => {
+    if (settled) return;
+    const newName = input.value.trim();
+    if (!newName || newName === currentName) { restore(); return; }
+    const error = validateEntryName(newName);
+    if (error) { showToast(error, 'error'); input.focus(); return; }
+    settled = true;
+    // fileops.rename()'s own run() re-fetches the directory and re-renders
+    // every row (including this one) on success; on failure the row stays
+    // as-is under the (now orphaned) input — restore the static name span.
+    fileops.rename(path, newName).catch(() => { if (input.isConnected) input.replaceWith(nameEl); });
+  };
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); commit(); }
+    else if (e.key === 'Escape') { e.preventDefault(); restore(); }
+    e.stopPropagation();
+  });
+  input.addEventListener('blur', commit);
+  input.addEventListener('click', e => e.stopPropagation());
+}
+
+// ── Drag and drop (Task 4) ─────────────────────────────────────────────────────
+// Rows are drag SOURCES (dragstart, set in renderFsRow via draggable="true");
+// folder rows, sidebar drives/pins/Downloads, and breadcrumb crumbs are drop
+// TARGETS. The MIME type carries the whole selection as JSON so a drag of a
+// multi-selection moves/copies every selected item, not just the row that
+// was physically dragged.
+const FP_DRAG_MIME = 'application/x-fileplus-paths';
+
+/** Shared drop handler for every drop target (folder rows, sidebar items,
+ * breadcrumb crumbs). No-ops when the target IS the source (dropping a
+ * folder onto itself) or resolves to the directory already open. */
+function handleFsDrop(e, destDir) {
+  let paths;
+  try { paths = JSON.parse(e.dataTransfer.getData(FP_DRAG_MIME) || '[]'); }
+  catch (_) { paths = []; }
+  if (!Array.isArray(paths) || !paths.length || !destDir) return;
+  if (paths.includes(destDir)) return; // dropped onto one of the dragged items
+  const norm = p => String(p).replace(/[\\\/]+$/, '').toLowerCase();
+  if (norm(destDir) === norm(browserState.path || '')) return; // dropped onto the current folder
+  fileops.moveTo(paths, destDir, e.ctrlKey);
+}
+
+function initRowDragDrop() {
+  const listScroll = document.getElementById('list-scroll');
+  if (!listScroll) return;
+
+  listScroll.addEventListener('dragstart', e => {
+    const row = e.target.closest('.fp-row[data-path]');
+    if (!row) { e.preventDefault(); return; }
+    if (!browserState.selection.has(row.dataset.path)) selectRow(row.dataset.path, {});
+    const paths = getSelectedPaths();
+    e.dataTransfer.effectAllowed = 'copyMove';
+    e.dataTransfer.setData(FP_DRAG_MIME, JSON.stringify(paths));
+    e.dataTransfer.setData('text/plain', paths.join('\n'));
+  });
+
+  listScroll.addEventListener('dragover', e => {
+    const row = e.target.closest('.fp-row[data-type="folder"][data-path]');
+    if (!row) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = e.ctrlKey ? 'copy' : 'move';
+    row.classList.add('fp-row--drag-target');
+  });
+  listScroll.addEventListener('dragleave', e => {
+    const row = e.target.closest('.fp-row[data-type="folder"][data-path]');
+    if (row && !row.contains(e.relatedTarget)) row.classList.remove('fp-row--drag-target');
+  });
+  listScroll.addEventListener('drop', e => {
+    const row = e.target.closest('.fp-row[data-type="folder"][data-path]');
+    if (!row) return;
+    e.preventDefault();
+    row.classList.remove('fp-row--drag-target');
+    handleFsDrop(e, row.dataset.path);
+  });
+}
+
+function initSidebarDragDrop() {
+  const sidebarEl = document.getElementById('sidebar');
+  if (!sidebarEl) return;
+
+  sidebarEl.addEventListener('dragover', e => {
+    const item = e.target.closest('.fp-sidebar__item[data-path]');
+    if (!item) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = e.ctrlKey ? 'copy' : 'move';
+    item.classList.add('fp-sidebar__item--drag-target');
+  });
+  sidebarEl.addEventListener('dragleave', e => {
+    const item = e.target.closest('.fp-sidebar__item[data-path]');
+    if (item && !item.contains(e.relatedTarget)) item.classList.remove('fp-sidebar__item--drag-target');
+  });
+  sidebarEl.addEventListener('drop', e => {
+    const item = e.target.closest('.fp-sidebar__item[data-path]');
+    if (!item) return;
+    e.preventDefault();
+    item.classList.remove('fp-sidebar__item--drag-target');
+    handleFsDrop(e, item.dataset.path);
+  });
+}
+
+function initBreadcrumbDragDrop() {
+  const crumb = document.getElementById('breadcrumb');
+  if (!crumb) return;
+
+  crumb.addEventListener('dragover', e => {
+    const btn = e.target.closest('.fp-breadcrumb__crumb[data-path]');
+    if (!btn) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = e.ctrlKey ? 'copy' : 'move';
+    btn.classList.add('fp-breadcrumb__crumb--drag-target');
+  });
+  crumb.addEventListener('dragleave', e => {
+    const btn = e.target.closest('.fp-breadcrumb__crumb[data-path]');
+    if (btn && !btn.contains(e.relatedTarget)) btn.classList.remove('fp-breadcrumb__crumb--drag-target');
+  });
+  crumb.addEventListener('drop', e => {
+    const btn = e.target.closest('.fp-breadcrumb__crumb[data-path]');
+    if (!btn) return;
+    e.preventDefault();
+    btn.classList.remove('fp-breadcrumb__crumb--drag-target');
+    handleFsDrop(e, btn.dataset.path);
+  });
+}
+
 /**
  * Hook called whenever the selection changes. Task 3 wires it to the status
  * bar and a minimal inspector call; Task 5 replaces the inspector calls with
@@ -688,6 +889,7 @@ function initRowInteractions() {
  */
 function browserKeydown(e) {
   const key = e.key;
+  const ctrl = e.ctrlKey || e.metaKey;
 
   if (e.altKey) {
     if (key === 'ArrowUp')         { e.preventDefault(); navUp(); }
@@ -696,11 +898,23 @@ function browserKeydown(e) {
     return;
   }
 
-  if ((e.ctrlKey || e.metaKey) && key.toLowerCase() === 'a') {
+  if (ctrl && key.toLowerCase() === 'a') {
     e.preventDefault();
     selectAll();
     return;
   }
+
+  // Undo/redo work even with nothing selected — checked before any
+  // selection-dependent shortcut below.
+  if (ctrl && !e.shiftKey && key.toLowerCase() === 'z') { e.preventDefault(); fileops.undoLast(); return; }
+  if (ctrl && ((key.toLowerCase() === 'y' && !e.shiftKey) || (key.toLowerCase() === 'z' && e.shiftKey))) {
+    e.preventDefault(); fileops.redoLast(); return;
+  }
+  if (ctrl && key.toLowerCase() === 'x') { e.preventDefault(); fileops.cutSelection(); return; }
+  if (ctrl && key.toLowerCase() === 'c') { e.preventDefault(); fileops.copySelection(); return; }
+  if (ctrl && key.toLowerCase() === 'v') { e.preventDefault(); if (browserState.path) fileops.pasteInto(browserState.path); return; }
+  if (key === 'F2') { e.preventDefault(); if (browserState.focus) startInlineRename(browserState.focus); return; }
+  if (key === 'Delete') { e.preventDefault(); fileops.trashSelection(); return; }
 
   switch (key) {
     case 'ArrowDown': e.preventDefault(); moveFocus(1, { shift: e.shiftKey }); break;

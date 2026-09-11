@@ -517,6 +517,15 @@ svg { flex-shrink: 0; }
 .fp-sidebar__item.active > svg,
 .fp-sidebar__item.active > .icon { color: var(--accent); }
 
+/* Drag-and-drop target (Task 4) — a file/folder drag is hovering this item
+   (a drive, pin, or Downloads). Reuses the same accent-wash/edge tokens as
+   .fp-row--drag-target for visual consistency between drop-target types. */
+.fp-sidebar__item--drag-target {
+  background: var(--accent-wash-strong);
+  color: var(--text-primary);
+  box-shadow: inset 0 0 0 1px var(--accent-edge);
+}
+
 .fp-sidebar__item:focus-visible {
   outline: none;
 }
@@ -731,6 +740,11 @@ svg { flex-shrink: 0; }
 .fp-breadcrumb__crumb--current {
   color: var(--text-primary);
   font-weight: 500;
+}
+.fp-breadcrumb__crumb--drag-target {
+  background: var(--accent-wash-strong);
+  color: var(--text-primary);
+  box-shadow: inset 0 0 0 1px var(--accent-edge);
 }
 .fp-breadcrumb__sep,
 .fp-breadcrumb-sep {
@@ -2069,6 +2083,15 @@ svg { flex-shrink: 0; }
 }
 .fp-row__size { width: 96px; min-width: 96px; }
 .fp-row__modified, .fp-row__mod { width: 120px; min-width: 120px; }
+
+/* Inline rename input (Task 4) — replaces .fp-row__name in place; sized to
+   fit inside the 26px row without changing row height. */
+.fp-row__rename {
+  flex: 1;
+  height: 20px;
+  padding: 0 6px;
+  font: 500 var(--t-body) var(--font-ui);
+}
 /* Legacy alias — keeps existing markup using __mod working */
 .fp-row__mod {
   flex-shrink: 0;

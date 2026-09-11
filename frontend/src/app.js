@@ -639,6 +639,27 @@ function openModal(type, config = {}) {
     textInputRow.style.display = 'none';
   }
 
+  // Extra action buttons (optional) — e.g. the paste-conflict modal's
+  // Replace / Skip / Keep both. Replaces the default Confirm button; Cancel
+  // (wired separately, outside openModal()) stays available either way.
+  const extraRow = document.getElementById('modal-extra-actions');
+  if (config.extraActions && config.extraActions.length && extraRow) {
+    extraRow.innerHTML = '';
+    config.extraActions.forEach(a => {
+      const b = document.createElement('button');
+      b.className = `fp-btn fp-btn--sm ${a.variant ? `fp-btn--${a.variant}` : 'fp-btn--secondary'}`;
+      b.style.cssText = 'width:100%;justify-content:flex-start';
+      b.textContent = a.label;
+      b.addEventListener('click', () => { a.onClick(); closeModal(); });
+      extraRow.appendChild(b);
+    });
+    extraRow.style.display = 'flex';
+    if (confirm) confirm.style.display = 'none';
+  } else {
+    if (extraRow) extraRow.style.display = 'none';
+    if (confirm) confirm.style.display = '';
+  }
+
   scrim.style.display = 'flex';
   scrim.removeAttribute('aria-hidden');
 }
@@ -755,7 +776,6 @@ const CONTEXT_MENUS = {
     { label: 'Open',            action: 'cm-open',            icon: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="1" y="1" width="12" height="12" rx="2" stroke="currentColor" stroke-width="1.2"/><path d="M5 5l4 2-4 2V5z" fill="currentColor"/></svg>' },
     { label: 'Open with…',      action: 'cm-open-with' },
     { label: 'Open in new tab', action: 'cm-open-new-tab',    icon: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="1" y="3" width="12" height="10" rx="1.5" stroke="currentColor" stroke-width="1.2"/><path d="M1 6h12" stroke="currentColor" stroke-width="1.2"/></svg>' },
-    { label: 'Reveal in Browser', action: 'cm-reveal-browser' },
     'sep',
     { label: 'Cut',    action: 'cm-cut',    kbd: 'Ctrl+X' },
     { label: 'Copy',   action: 'cm-copy',   kbd: 'Ctrl+C' },
@@ -764,10 +784,8 @@ const CONTEXT_MENUS = {
     { label: 'Delete', action: 'cm-delete', kbd: 'Del', danger: true, icon: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M2 4h10M5 4V2.5h4V4M5.5 6v5M8.5 6v5M3 4l.8 8h6.4L11 4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>' },
     'sep',
     { label: 'Add tag…',         action: 'cm-add-tag',     icon: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M2 8.5L7.5 3l3.5 3.5L5.5 12 2 8.5z" stroke="currentColor" stroke-width="1.2"/><circle cx="5" cy="5" r="1" fill="currentColor"/></svg>' },
-    { label: 'Reclassify',       action: 'cm-reclassify' },
     { label: 'Add to Favorites', action: 'cm-favorite' },
     'sep',
-    { label: 'Compress to .zip',       action: 'cm-compress' },
     { label: 'Properties',             action: 'cm-properties' },
     { label: 'Show in Windows Explorer', action: 'cm-reveal-explorer' },
   ],
@@ -776,7 +794,6 @@ const CONTEXT_MENUS = {
   folder: [
     { label: 'Open',             action: 'cm-open', icon: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M1 3.5a1 1 0 0 1 1-1h3l1 1.5H12a1 1 0 0 1 1 1V11a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V3.5z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>' },
     { label: 'Open in new tab',  action: 'cm-open-new-tab' },
-    { label: 'Open in new window', action: 'cm-open-new-window' },
     'sep',
     { label: 'Cut',    action: 'cm-cut',    kbd: 'Ctrl+X' },
     { label: 'Copy',   action: 'cm-copy',   kbd: 'Ctrl+C' },
@@ -789,7 +806,7 @@ const CONTEXT_MENUS = {
     'sep',
     { label: 'Add to Favorites',   action: 'cm-favorite' },
     { label: 'Pin to sidebar',     action: 'cm-pin-sidebar' },
-    { label: 'Reclassify contents', action: 'cm-reclassify-folder' },
+    { label: 'Index for search',   action: 'cm-index-folder' },
     'sep',
     { label: 'Properties',              action: 'cm-properties' },
     { label: 'Show in Windows Explorer', action: 'cm-reveal-explorer' },
@@ -806,8 +823,6 @@ const CONTEXT_MENUS = {
     { label: 'View → Grid',       action: 'cm-view-grid' },
     { label: 'Sort by → name',    action: 'cm-sort-name' },
     { label: 'Sort by → modified', action: 'cm-sort-modified' },
-    { label: 'Group by → type',   action: 'cm-group-type' },
-    { label: 'Group by → none',   action: 'cm-group-none' },
     'sep',
     { label: 'Show hidden files', action: 'cm-toggle-hidden' },
     { label: 'Properties',        action: 'cm-properties' },
@@ -847,6 +862,27 @@ function getMenuTypeForTarget(target) {
 // (cm-open-new-tab / cm-unpin-sidebar / cm-rename-sidebar-item) below.
 let contextMenuTarget = null;
 let contextMenuType = null;
+
+/** The path a single-target context-menu action (Open, Rename, Properties, …)
+ * should act on: the row that was right-clicked, falling back to the
+ * keyboard-focused row or the first selected path. */
+function contextTargetPath() {
+  const row = contextMenuTarget?.closest ? contextMenuTarget.closest('.fp-row[data-path]') : null;
+  if (row) return row.dataset.path;
+  return browserState.focus || getSelectedPaths()[0] || null;
+}
+
+/** The directory a "create/paste/index here" action should target: the
+ * right-clicked folder itself (folder menu — "New folder inside" etc.), or
+ * the currently open directory otherwise (empty-area menu, or a paste
+ * initiated from the file menu). */
+function contextTargetDir() {
+  if (contextMenuType === 'folder') {
+    const path = contextTargetPath();
+    if (path) return path;
+  }
+  return browserState.path;
+}
 
 const contextMenu = document.getElementById('context-menu');
 
@@ -928,7 +964,9 @@ function showToast(message, variant = '') {
   if (!container) return;
   const el = document.createElement('div');
   el.className = 'fp-toast' + (variant ? ` fp-toast--${variant}` : '');
-  el.innerHTML = `<span>${message}</span>`;
+  // message is frequently API error text (formatApiError()) now that fileops
+  // routes every failure through here — escape it before inserting.
+  el.innerHTML = `<span>${escapeHtml(message)}</span>`;
   if (variant === 'error') {
     const btn = document.createElement('button');
     btn.className = 'fp-btn fp-btn--ghost fp-btn--sm';
@@ -976,12 +1014,26 @@ async function checkBackend() {
     const res = await fetch(`${API_BASE}/health`, { headers: apiHeaders(), signal: AbortSignal.timeout(2000) });
     el.dataset.state = res.ok ? 'ok' : 'error';
     if (label) label.textContent = res.ok ? 'Backend' : 'Backend error';
+    if (res.ok) {
+      try {
+        const data = await res.json();
+        setWriteLockHint(data.write_unlocked === false);
+      } catch (_) { /* body already consumed or not JSON — leave the hint as-is */ }
+    }
     return res.ok;
   } catch (_) {
     el.dataset.state = 'offline';
     if (label) label.textContent = 'Backend offline';
     return false;
   }
+}
+
+/** Shows/hides the "writes: sandbox" status-bar hint (health.write_unlocked === false). */
+function setWriteLockHint(locked) {
+  const hint = document.getElementById('status-write-lock');
+  const sep  = document.getElementById('status-lock-sep');
+  if (hint) hint.style.display = locked ? '' : 'none';
+  if (sep)  sep.style.display  = locked ? '' : 'none';
 }
 
 // ── Sidebar: real drives, pins, Downloads ─────────────────────────────────────
@@ -1136,6 +1188,12 @@ const IN_SCOPE_ACTIONS = new Set([
   'settings-set-show-notifications',
   'settings-set-font-scale', 'settings-reset-shortcuts',
   'zoom-reset',
+  // File operations (Task 4) — context-menu actions wired in the switch below.
+  'cm-open', 'cm-open-with', 'cm-reveal-explorer',
+  'cm-cut', 'cm-copy', 'cm-paste', 'cm-paste-here', 'cm-rename', 'cm-delete',
+  'cm-new-folder', 'cm-new-file', 'cm-refresh',
+  'cm-favorite', 'cm-pin-sidebar', 'cm-index-folder', 'cm-properties', 'cm-toggle-hidden',
+  'cm-view-list', 'cm-view-grid', 'cm-sort-name', 'cm-sort-modified',
 ]);
 
 document.addEventListener('click', e => {
@@ -1356,6 +1414,14 @@ document.addEventListener('click', e => {
           openNewTab();
           openBrowserAt(pinPath, label);
         }
+      } else if (contextMenuType === 'file' || contextMenuType === 'folder') {
+        // Folder → open that folder; file → open its parent folder.
+        const path = contextTargetPath();
+        if (path) {
+          const targetDir = contextMenuType === 'folder' ? path : parentOfPath(path);
+          openNewTab();
+          openBrowserAt(targetDir, pathBaseName(targetDir) || undefined);
+        }
       } else {
         console.log(`[FilePlus] data-action stub: ${action}`, btn.dataset);
         showToast(`Action "${action}" — not yet implemented`, 'action');
@@ -1406,6 +1472,123 @@ document.addEventListener('click', e => {
       }
       break;
     }
+    // ── File operations context-menu wiring (Task 4) ─────────────────────────
+    case 'cm-open': {
+      const path = contextTargetPath();
+      if (!path) break;
+      if (contextMenuType === 'folder') { loadDirectory(path); break; }
+      const openPath = window.electronAPI?.openPath;
+      if (openPath) {
+        Promise.resolve(openPath(path)).then(result => { if (result) showToast(result, 'error'); })
+          .catch(err => showToast(formatApiError(err), 'error'));
+      }
+      break;
+    }
+    case 'cm-open-with': {
+      const path = contextTargetPath();
+      if (path) window.electronAPI?.openWith?.(path);
+      break;
+    }
+    case 'cm-reveal-explorer': {
+      const path = contextTargetPath();
+      if (path) window.electronAPI?.showItemInFolder?.(path);
+      break;
+    }
+    case 'cm-cut':
+      fileops.cutSelection();
+      break;
+    case 'cm-copy':
+      fileops.copySelection();
+      break;
+    case 'cm-paste':
+    case 'cm-paste-here':
+      fileops.pasteInto(contextTargetDir());
+      break;
+    case 'cm-rename': {
+      const path = contextTargetPath();
+      if (path && typeof startInlineRename === 'function') startInlineRename(path);
+      break;
+    }
+    case 'cm-delete':
+      fileops.trashSelection();
+      break;
+    case 'cm-new-folder':
+      fileops.newFolder(contextTargetDir());
+      break;
+    case 'cm-new-file':
+      fileops.newFile(contextTargetDir());
+      break;
+    case 'cm-refresh':
+      refreshDirectory();
+      break;
+    case 'cm-favorite': {
+      const path = contextTargetPath();
+      if (!path) break;
+      API.post('/favorites', { path })
+        .then(() => showToast('Added to Favorites', 'default'))
+        .catch(err => showToast(`Failed to favorite: ${formatApiError(err)}`, 'error'));
+      break;
+    }
+    case 'cm-pin-sidebar': {
+      const path = contextTargetPath();
+      if (!path) break;
+      API.post('/pins', { path })
+        .then(loadPins)
+        .catch(err => showToast(`Failed to pin: ${formatApiError(err)}`, 'error'));
+      break;
+    }
+    case 'cm-index-folder': {
+      const path = contextTargetPath();
+      if (!path) break;
+      const name = pathBaseName(path) || path;
+      API.post('/index', { path })
+        .then(() => showToast(`Indexing ${name}…`, 'default'))
+        .catch(err => showToast(`Failed to index: ${formatApiError(err)}`, 'error'));
+      break;
+    }
+    case 'cm-properties': {
+      const path = contextMenuType === 'empty-area' ? browserState.path : contextTargetPath();
+      if (!path) break;
+      API.get('/file', { path })
+        .then(data => {
+          const rows = [
+            ['Kind', data.kind || '—'],
+            ['Size', data.size != null ? formatSize(data.size) : '—'],
+            ['Modified', data.modified ? formatModified(data.modified) : '—'],
+            ['Created', data.created ? formatModified(data.created) : '—'],
+            ['Hash', data.hash || '—'],
+            ['Path', data.path || path],
+          ];
+          openModal('warn', {
+            title: pathBaseName(path) || 'Properties',
+            body: rows.map(([k, v]) => `${k}: ${v}`).join('\n'),
+            confirmLabel: 'Close',
+          });
+        })
+        .catch(err => showToast(`Failed to load properties: ${formatApiError(err)}`, 'error'));
+      break;
+    }
+    case 'cm-toggle-hidden': {
+      browserState.showHidden = !browserState.showHidden;
+      if (window.__fpConfig) window.__fpConfig['ui.show_hidden'] = browserState.showHidden;
+      API.post('/config', { key: 'ui.show_hidden', value: browserState.showHidden })
+        .catch(err => showToast(`Failed to save setting: ${formatApiError(err)}`, 'error'));
+      refreshDirectory();
+      break;
+    }
+    case 'cm-view-list':
+      setViewMode('list');
+      break;
+    case 'cm-view-grid':
+      setViewMode('grid');
+      break;
+    case 'cm-sort-name':
+      applySort('name', (browserState.sort.key === 'name' && browserState.sort.dir === 'asc') ? 'desc' : 'asc');
+      break;
+    case 'cm-sort-modified':
+      applySort('modified', (browserState.sort.key === 'modified' && browserState.sort.dir === 'asc') ? 'desc' : 'asc');
+      break;
+
     default:
       if (!IN_SCOPE_ACTIONS.has(action)) {
         // Stub: log and show toast for out-of-scope actions
@@ -1654,7 +1837,24 @@ document.addEventListener('contextmenu', e => {
     const row = e.target.closest('.fp-row[data-path]');
     if (row && typeof ensureRowSelected === 'function') ensureRowSelected(row.dataset.path);
   }
-  const items = CONTEXT_MENUS[contextMenuType] || CONTEXT_MENUS.file;
+  let items = CONTEXT_MENUS[contextMenuType] || CONTEXT_MENUS.file;
+
+  // Home's Recent/Favorites rows share the Browser 'file' menu type, but the
+  // Browser file menu dropped "Reveal in Browser" (redundant with Open there)
+  // — Home rows still need it, so splice it back in for that source only.
+  if (contextMenuType === 'file' && e.target.closest('.home-pane')) {
+    const revealItem = { label: 'Reveal in Browser', action: 'cm-reveal-browser' };
+    const sepIdx = items.findIndex(i => i === 'sep');
+    items = sepIdx === -1 ? [...items, revealItem] : [...items.slice(0, sepIdx), revealItem, ...items.slice(sepIdx)];
+  }
+
+  // Empty-area menu's "Show hidden files" reflects current state.
+  if (contextMenuType === 'empty-area') {
+    items = items.map(i => (i !== 'sep' && i.action === 'cm-toggle-hidden')
+      ? { ...i, label: browserState.showHidden ? 'Hide hidden files' : 'Show hidden files' }
+      : i);
+  }
+
   showContextMenu(e.clientX, e.clientY, items);
 });
 
@@ -1720,6 +1920,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   initMarqueeSelection();
   initRowInteractions();
 
+  // Drag and drop: rows onto folder rows / sidebar items / breadcrumb crumbs (Task 4)
+  initRowDragDrop();
+  initSidebarDragDrop();
+  initBreadcrumbDragDrop();
+
   // Restore saved view mode
   const savedView = sessionStorage.getItem('fp-view-mode');
   if (savedView) setViewMode(savedView);
@@ -1743,6 +1948,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   applyDownloadsPath();
   await loadDrives();
   await loadPins();
+  await checkCrashRecovery();
 
   // Always start on Home — the previous "restore last active screen"
   // behaviour landed users on whatever they last visited (often Browser),
@@ -1763,7 +1969,19 @@ document.addEventListener('DOMContentLoaded', async () => {
   //     INTEGRATION: POST /scan/start → if 409 response → showToast('Scan already running', 'warn')
   // #13 Ollama model not downloaded when classification starts → show error banner with install CTA
   //     INTEGRATION: GET /ai/status → if model_status !== 'ready' → show #banner-ai-offline
-
-  // Crash recovery check on startup
-  // INTEGRATION: on app init, call GET /crash-recovery → if crash_detected → uncomment + show #crash-modal-scrim
 });
+
+/**
+ * Crash recovery (Task 4): GET /operations/pending returns whatever the
+ * backend's startup reconciliation classified as left mid-flight by an
+ * abnormal shutdown ([] once reconciliation has run with nothing pending —
+ * always [] until Task 9 wires reconcile_pending() into the API's lifespan).
+ * Non-empty → one line per row: op type, source → dest, resolution.
+ */
+async function checkCrashRecovery() {
+  let rows;
+  try { rows = await API.get('/operations/pending'); } catch (_) { return; }
+  if (!rows || !rows.length) return;
+  const body = rows.map(r => `${r.op_type}: ${r.source_path || '—'} → ${r.dest_path || '—'} (${r.resolution || 'unresolved'})`).join('\n');
+  openModal('warn', { title: 'Recovered operations', body, confirmLabel: 'OK' });
+}

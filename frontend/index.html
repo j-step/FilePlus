@@ -3172,6 +3172,13 @@
         <kbd class="fp-kbd-pill">Ctrl+,</kbd>
         <span style="font:400 var(--t-small) var(--font-ui);color:var(--text-tertiary)">Settings</span>
       </span>
+      <!-- Write-lock hint — shown while GET /health returns write_unlocked:false
+           (writes restricted to the sandbox). Toggled by checkBackend() in app.js. -->
+      <span class="fp-statusbar__sep" id="status-lock-sep" style="display:none">·</span>
+      <span class="fp-statusbar__kbd-hints" id="status-write-lock" style="display:none"
+            title="Writes are limited to the sandbox until WRITE_UNLOCKED=true in .env">
+        <span style="font:400 var(--t-small) var(--font-ui);color:var(--text-tertiary)">writes: sandbox</span>
+      </span>
       <!-- Backend connection indicator -->
       <span class="fp-statusbar__backend" id="status-backend" data-state="unknown"
             title="Backend connection" style="display:flex;align-items:center;gap:4px">
@@ -3464,7 +3471,7 @@
     </div>
 
     <!-- Body -->
-    <div class="fp-modal__body" id="modal-body" style="padding:var(--s-16) var(--s-20);font:400 var(--t-body) var(--font-ui);color:var(--text-secondary);line-height:1.6">
+    <div class="fp-modal__body" id="modal-body" style="padding:var(--s-16) var(--s-20);font:400 var(--t-body) var(--font-ui);color:var(--text-secondary);line-height:1.6;white-space:pre-line">
       <!-- INTEGRATION: body text set by openModal() -->
       This action cannot be undone. Please confirm you want to proceed.
     </div>
@@ -3485,6 +3492,12 @@
       <label for="modal-text-input" style="font:400 var(--t-compact) var(--font-ui);color:var(--text-secondary);display:block;margin-bottom:6px">Label</label>
       <input type="text" id="modal-text-input" class="fp-input" placeholder="Enter a label…" style="width:100%" />
     </div>
+
+    <!-- Optional extra action buttons (hidden by default) — shown when openModal()
+         is called with config.extraActions (e.g. the paste-conflict modal's
+         Replace / Skip / Keep both choices). Replaces the default Confirm button;
+         Cancel remains available. Populated dynamically by openModal(). -->
+    <div class="fp-modal__extra-actions" id="modal-extra-actions" style="display:none;flex-direction:column;gap:8px;padding:0 var(--s-20) var(--s-12)"></div>
 
     <!-- Footer -->
     <div class="fp-modal__footer" style="display:flex;justify-content:flex-end;gap:var(--s-8);padding:var(--s-12) var(--s-20) var(--s-20)">
