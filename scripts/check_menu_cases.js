@@ -8,11 +8,26 @@ const path = require('path');
 const appJs = fs.readFileSync(path.join(__dirname, '..', 'frontend', 'src', 'app.js'), 'utf8');
 
 const menuStart = appJs.indexOf('const CONTEXT_MENUS = {');
-const menuEnd = appJs.indexOf('\n};', menuStart);
+const menuEnd = menuStart === -1 ? -1 : appJs.indexOf('\n};', menuStart);
+if (menuStart === -1 || menuEnd === -1) {
+  console.error('check_menu_cases: could not locate the CONTEXT_MENUS block in app.js (file reshaped?)');
+  process.exit(1);
+}
 const menuBlock = appJs.slice(menuStart, menuEnd);
 
 const menuActions = new Set([...menuBlock.matchAll(/action:\s*'(cm-[\w-]+)'/g)].map(m => m[1]));
 const switchCases = new Set([...appJs.matchAll(/case '(cm-[\w-]+)':/g)].map(m => m[1]));
+
+// A reformat that breaks either regex (e.g. action written as "..." instead
+// of '...') must fail loudly rather than pass on two empty sets.
+if (menuActions.size === 0) {
+  console.error('check_menu_cases: found 0 cm-* actions in CONTEXT_MENUS — regex or markup broke');
+  process.exit(1);
+}
+if (switchCases.size === 0) {
+  console.error('check_menu_cases: found 0 cm-* switch cases in app.js — regex or markup broke');
+  process.exit(1);
+}
 
 // Known, accepted gaps (Stage 2B Task 8b) — update alongside
 // docs/superpowers/runs/2026-09-11-stage-2b.md if this set changes. Anything

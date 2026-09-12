@@ -103,6 +103,20 @@ test('every screen renders with no renderer errors', async () => {
     await page.screenshot({ path: path.join(SHOTS, 'context-menu.png') });
     await page.keyboard.press('Escape');
 
+    // "Add tag…" must switch the Inspector to the Tags tab (it's display:none
+    // under the default Preview tab) before focusing the tag input, or the
+    // focus() call is a silent no-op — see Task 8b fix round 1.
+    await rowByName('doc-00.txt').click({ button: 'right' });
+    await page.locator('#context-menu [data-action="cm-add-tag"]').click();
+    await expect(page.locator('#inspector-tag-input')).toBeVisible();
+    await expect(page.locator('#inspector-tag-input')).toBeFocused();
+    // inspector-tag-input's own keydown handler stops propagation on every
+    // key (including Escape) so browser.js's shortcuts never see keys typed
+    // here — so Escape does not blur it. Re-click the row instead, which
+    // both moves focus back to #list-scroll (required for F2 below to reach
+    // browserKeydown) and leaves selection/state exactly as before this step.
+    await rowByName('doc-00.txt').click();
+
     try {
       await page.keyboard.press('F2');
       // startInlineRename() preselects only the stem for a file with an

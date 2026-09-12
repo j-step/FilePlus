@@ -1360,6 +1360,22 @@ const IN_SCOPE_ACTIONS = new Set([
   'cm-view-list', 'cm-view-grid', 'cm-sort-name', 'cm-sort-modified',
 ]);
 
+/** Activates the Inspector tab named `name` ('preview' | 'tags' | 'history') —
+ * the same tab-button/pane toggle the 'switch-inspector-tab' click case
+ * performs, extracted so a non-click caller (e.g. cm-add-tag) can jump to a
+ * specific tab without synthesizing a click on the tab button. */
+function switchInspectorTab(name) {
+  const inspector = document.getElementById('inspector');
+  if (!inspector) return;
+  const targetTab = inspector.querySelector(`.fp-inspector__tab[data-tab="${name}"]`);
+  inspector.querySelectorAll('.fp-inspector__tab').forEach(t => {
+    t.classList.toggle('fp-tabs__item--active', t === targetTab);
+  });
+  inspector.querySelectorAll('.fp-inspector__pane').forEach(p => {
+    p.style.display = p.dataset.pane === name ? '' : 'none';
+  });
+}
+
 document.addEventListener('click', e => {
   const btn = e.target.closest('[data-action]');
   if (!btn) return;
@@ -1572,16 +1588,9 @@ document.addEventListener('click', e => {
     case 'settings-reset-shortcuts':
       // INTEGRATION: reset to default keybindings
       break;
-    case 'switch-inspector-tab': {
-      const inspector = document.getElementById('inspector');
-      inspector?.querySelectorAll('.fp-inspector__tab').forEach(t => {
-        t.classList.toggle('fp-tabs__item--active', t === btn);
-      });
-      inspector?.querySelectorAll('.fp-inspector__pane').forEach(p => {
-        p.style.display = p.dataset.pane === btn.dataset.tab ? '' : 'none';
-      });
+    case 'switch-inspector-tab':
+      switchInspectorTab(btn.dataset.tab);
       break;
-    }
     case 'inspector-open':
       inspectorOpenSelected();
       break;
@@ -1801,9 +1810,12 @@ document.addEventListener('click', e => {
     case 'cm-add-tag': {
       // The row was already selected by the 'contextmenu' listener
       // (ensureRowSelected) before this menu item could be clicked — just
-      // surface the Inspector's existing tag-add input for it.
+      // surface the Inspector's existing tag-add input for it. The Tags pane
+      // is display:none unless it's the active tab (Preview is the default),
+      // so switch to it first or .focus() below is a silent no-op.
       const inspectorEl = document.getElementById('inspector');
       if (inspectorEl && !inspectorEl.classList.contains('inspector--open')) toggleInspector();
+      switchInspectorTab('tags');
       document.getElementById('inspector-tag-input')?.focus();
       break;
     }
