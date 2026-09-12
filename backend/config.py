@@ -86,7 +86,7 @@ def is_under(path: Path, root: Path) -> bool:
 
 
 _ADMIN_SHARE_RE = re.compile(
-    r"^\\\\(?P<host>[^\\]+)\\(?P<share>[A-Za-z]\$|ADMIN\$)(?P<rest>.*)$", re.IGNORECASE
+    r"^\\\\(?P<host>[^\\]+)\\(?P<share>[A-Za-z]\$|ADMIN\$)(?P<rest>$|[\\/].*)$", re.IGNORECASE
 )
 
 _local_addrs_cache: set[str] | None = None
@@ -188,6 +188,27 @@ def _is_local_host(host: str) -> bool:
     return False
 
 
+def _normalize_unc_separators(s: str) -> str:
+    r"""Collapse duplicated path separators in *s*, preserving a UNC prefix.
+
+    Windows treats "/" interchangeably with "\" and silently collapses a run
+    of separators into one when it actually resolves a path -- so
+    "//localhost//C$//Windows", "\\localhost\\C$\Windows" (a duplicated
+    separator before the share) and "\\localhost\C$\Windows" are all exactly
+    as much a loopback admin share as each other. _ADMIN_SHARE_RE only
+    matches the canonical single-backslash form, so without this
+    normalisation any of the duplicated-separator spellings would fail to
+    match -- staying UNC straight through to is_under's string containment
+    check against SYSTEM_WRITE_ROOTS (which never matches a UNC string
+    against a local-drive root), bypassing write protection entirely.
+    """
+    starts_unc = bool(re.match(r"^[\\/]{2,}", s))
+    collapsed = re.sub(r"[\\/]+", "\\\\", s)
+    if starts_unc and not collapsed.startswith("\\\\"):
+        collapsed = "\\" + collapsed
+    return collapsed
+
+
 def _map_loopback_admin_share(raw: str) -> str | None:
     """Map a local admin-share UNC spelling back to its local drive form.
 
@@ -208,9 +229,10 @@ def _map_loopback_admin_share(raw: str) -> str | None:
     address if SMB is blocked. Detecting "this is actually me" first lets
     the caller resolve only the (fast, local) mapped drive path instead.
     """
-    if not raw.startswith("\\\\"):
+    if not raw.startswith(("\\\\", "//")):
         return None
-    m = _ADMIN_SHARE_RE.match(raw)
+    normalized = _normalize_unc_separators(raw)
+    m = _ADMIN_SHARE_RE.match(normalized)
     if not m:
         return None
     if not _is_local_host(m.group("host")):
@@ -233,13 +255,15 @@ def _strip_extended_length_prefix(s: str) -> str:
     relative-looking string that Path.resolve() would silently reinterpret
     against the process's cwd instead of failing.
     """
-    if s.startswith("\\\\?\\UNC\\"):
-        stripped = "\\\\" + s[len("\\\\?\\UNC\\"):]
+    unc_prefix = "\\\\?\\UNC\\"
+    ext_prefix = "\\\\?\\"
+    if s[:len(unc_prefix)].upper() == unc_prefix.upper():
+        stripped = "\\\\" + s[len(unc_prefix):]
         if not (Path(stripped).drive and Path(stripped).root):
             raise BadPathError(f"Extended-length UNC path does not resolve to a UNC root: {s!r}")
         return stripped
-    if s.startswith("\\\\?\\"):
-        stripped = s[len("\\\\?\\"):]
+    if s.startswith(ext_prefix):
+        stripped = s[len(ext_prefix):]
         if not (Path(stripped).drive and Path(stripped).root):
             raise BadPathError(f"Extended-length path does not resolve to a drive-rooted location: {s!r}")
         return stripped
@@ -258,10 +282,12 @@ def _strip_resolved_extended_length_prefix(s: str) -> Path:
     reopen the door to the same slow-UNC-resolve problem this whole
     reordering exists to avoid).
     """
-    if s.startswith("\\\\?\\UNC\\"):
-        return Path("\\\\" + s[len("\\\\?\\UNC\\"):])
-    if s.startswith("\\\\?\\"):
-        return Path(s[len("\\\\?\\"):])
+    unc_prefix = "\\\\?\\UNC\\"
+    ext_prefix = "\\\\?\\"
+    if s[:len(unc_prefix)].upper() == unc_prefix.upper():
+        return Path("\\\\" + s[len(unc_prefix):])
+    if s.startswith(ext_prefix):
+        return Path(s[len(ext_prefix):])
     return Path(s)
 
 
@@ -297,6 +323,8 @@ def _canonicalize(path: Path | str) -> Path:
         s = mapped
 
     for part in Path(s).parts[1:]:
+        if part in (".", ".."):
+            continue  # a legitimate navigation component, not an evasive spelling
         if part.endswith(" ") or part.endswith("."):
             raise BadPathError(
                 f"Path component {part!r} ends with a space or a dot; Windows accepts "
@@ -307,6 +335,20 @@ def _canonicalize(path: Path | str) -> Path:
     resolved = _strip_resolved_extended_length_prefix(str(Path(s).resolve()))
     if not (resolved.drive and resolved.root):
         raise BadPathError(f"Path must be absolute with a drive: {path!r}")
+
+    # Defence in depth: if the input didn't parse as a loopback admin share
+    # pre-resolve (e.g. some other separator pathology not anticipated
+    # above), but resolve() nonetheless produced a UNC string, try the
+    # admin-share mapping once more against the now-canonical form. Only the
+    # (local, fast) mapped path is ever resolved again here -- never a
+    # second resolve() of a UNC string, which is the whole slow-SMB problem
+    # this function exists to avoid.
+    rs = str(resolved)
+    if rs.startswith("\\\\"):
+        remapped = _map_loopback_admin_share(rs)
+        if remapped is not None:
+            resolved = Path(remapped).resolve()
+
     return resolved
 
 
