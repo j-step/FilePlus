@@ -76,10 +76,16 @@ function formatRecentTime(actionAt, bucketKey) {
 function renderRecentRow(entry, bucketKey) {
   const timeLabel = formatRecentTime(entry.action_at, bucketKey);
   const parentDisplay = parentOfPath(entry.path) + '\\';
+  // Same show_extensions handling as browser.js's renderFsRow: folders (ext
+  // === '', see homeIconFor's note above) never hide anything; files hide the
+  // extension in the rendered label only, with the full name kept as a tooltip.
+  const hideExt = entry.ext !== '' && browserState.showExtensions === false;
+  const displayName = hideExt ? stemOf(entry.name) : entry.name;
+  const nameTitleAttr = hideExt ? ` title="${escapeHtml(entry.name)}"` : '';
   return `<div class="fp-row fp-row--recent" role="option" tabindex="0"
        data-path="${escapeHtml(entry.path)}" data-ext="${escapeHtml(entry.ext)}" data-action="open-recent-file">
     ${homeIconFor(entry.ext)}
-    <span class="fp-row__name">${escapeHtml(entry.name)}</span>
+    <span class="fp-row__name"${nameTitleAttr}>${escapeHtml(displayName)}</span>
     <span class="fp-row__recent-path mono">${escapeHtml(parentDisplay)}</span>
     <span class="fp-row__recent-time mono">${escapeHtml(entry.action)} ${escapeHtml(timeLabel)}</span>
     <div class="fp-row__tags"></div>
@@ -102,10 +108,13 @@ function renderRecentSection(group) {
 function renderFavoriteRow(entry) {
   const parentDisplay = parentOfPath(entry.path) + '\\';
   const addedLabel = entry.created ? `Added ${formatModified(entry.created)}` : '';
+  const hideExt = entry.ext !== '' && browserState.showExtensions === false;
+  const displayName = hideExt ? stemOf(entry.name) : entry.name;
+  const nameTitleAttr = hideExt ? ` title="${escapeHtml(entry.name)}"` : '';
   return `<div class="fp-row fp-row--recent" role="option" tabindex="0" draggable="true"
        data-path="${escapeHtml(entry.path)}" data-ext="${escapeHtml(entry.ext)}" data-action="open-recent-file">
     ${homeIconFor(entry.ext)}
-    <span class="fp-row__name">${escapeHtml(entry.name)}</span>
+    <span class="fp-row__name"${nameTitleAttr}>${escapeHtml(displayName)}</span>
     <span class="fp-row__recent-path mono">${escapeHtml(parentDisplay)}</span>
     <span class="fp-row__recent-time mono">${escapeHtml(addedLabel)}</span>
     <button class="fp-icon-btn fp-icon-btn--sm fp-row__fav-star" data-action="unfavorite-file"

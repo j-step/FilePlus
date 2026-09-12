@@ -1829,16 +1829,8 @@ document.addEventListener('click', e => {
     case 'cm-toggle-hidden': {
       const next = !browserState.showHidden;
       browserState.showHidden = next;
-      if (window.__fpConfig) window.__fpConfig['ui.show_hidden'] = next;
       refreshDirectory();
-      API.post('/config', { key: 'ui.show_hidden', value: next }).catch(err => {
-        // Persisting the setting failed — revert the (already-applied) local
-        // state and re-refresh so the listing matches what's actually saved.
-        browserState.showHidden = !next;
-        if (window.__fpConfig) window.__fpConfig['ui.show_hidden'] = !next;
-        showToast(`Failed to save setting: ${formatApiError(err)}`, 'error');
-        refreshDirectory();
-      });
+      saveSetting('ui.show_hidden', next);
       break;
     }
     case 'cm-view-list':
