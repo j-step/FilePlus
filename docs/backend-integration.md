@@ -254,13 +254,13 @@ v2 only. Tab is permanently `disabled`. No backend integration in v1.
 - Rendered as a vertical timeline. Each entry has an "Undo" button that fires `POST /operations/{id}/undo` (requires Phase 10 mover work).
 
 ### 6. Inspector — multi-select aggregate
-**Done (Stage 2B, 2026-09-11).** Client-side count/size sum in `browser.js`'s `showInspectorMulti()`; tag union not built.
+**Done (Stage 2B, 2026-09-11).** Client-side count/size sum and tag union both built in `inspector.js`'s `showInspectorMulti()`.
 
 **What.** Multi-select shows count + total size + union of tags. Currently `data.totalSize || '—'` per the comment at [app.js:648](../frontend/src/app.js#L648) — never computed.
 
 **How.**
 - Pure client-side computation from already-loaded row data: sum of `size` across selected rows, formatted via `formatSize()`. No backend call needed for total size.
-- For tag union: `POST /files/tags/union { ids: [1,2,3] }` → `[{ name, color, tag_group, count }]` where `count` is the number of selected files that carry that tag. Tags shared by all selected files render at full opacity; partial-coverage tags render at 0.5 opacity.
+- Tag union: `GET /file?path=` per selected path (capped at 50), unioned client-side into a shared/partial-coverage count. Tags shared by all consulted files render at full opacity; partial-coverage tags render at 0.5 opacity.
 
 ### 7. List/grid sorting
 **Done (Stage 2B, 2026-09-11).** Client-side `applySort()`/`initColumnSort()` in `browser.js`; deep-tree `order_by` not needed (no search-results tree yet).

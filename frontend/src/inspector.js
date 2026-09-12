@@ -52,13 +52,19 @@ function updateInspector(mode, data = {}) {
     }
     if (!inspector.classList.contains('inspector--open')) toggleInspector();
   } else if (mode === 'single') {
-    // Restore single-file UI
-    singlePanes.forEach(p => { p.style.display = ''; });
+    // Restore single-file UI. Panes are shown one at a time by tab (Preview/
+    // Tags/History) — never un-hide every pane here (that stacks Preview
+    // meta + tag chips + History rows regardless of the active tab). Re-apply
+    // whichever tab is currently active (default Preview) via the shared
+    // switchInspectorTab helper (app.js, canonical — loaded after this file
+    // so it wins), which also re-hides the multi pane.
     if (multiPane) multiPane.style.display = 'none';
     if (tabBar)    tabBar.style.display = '';
     if (preview)   preview.style.display = '';
     if (data.name && filenameEl) filenameEl.textContent = data.name;
     if (data.path && filepathEl) filepathEl.textContent = data.path;
+    const activeTab = inspector.querySelector('.fp-inspector__tab.fp-tabs__item--active')?.dataset.tab || 'preview';
+    switchInspectorTab(activeTab);
     if (!inspector.classList.contains('inspector--open')) toggleInspector();
   } else {
     // Empty selection — collapse inspector. Also revoke any preview blob:
@@ -304,7 +310,7 @@ function renderHistoryRow(row) {
 
   const canUndo = !!row.executed && !row.undone && !row.error && !String(row.op_type || '').endsWith(':final');
   const undoBtn = canUndo
-    ? `<button class="fp-btn fp-btn--ghost fp-btn--sm" data-action="inspector-undo-op" data-op-id="${row.id}">Undo</button>`
+    ? `<button class="fp-btn fp-btn--ghost fp-btn--sm" data-action="inspector-undo-op" data-op-id="${row.id}" data-batch-id="${escapeHtml(row.batch_id || '')}">Undo</button>`
     : '';
   const reasonHtml = row.reason
     ? `<div class="mono" style="font-size:10px;color:var(--text-tertiary)">${escapeHtml(row.reason)}</div>`
@@ -350,7 +356,7 @@ async function reloadInspectorHistoryFor(path) {
   } catch (_) { /* history refresh is best-effort */ }
 }
 
-async function inspectorUndoOp(opId) {
+async function inspectorUndoOp(opId, batchId) {
   // POST /operations/{id}/undo returns the INVERSE operation's own result —
   // {op_id, op_type, status, src, dest, batch_id} — so res.dest is where the
   // undo actually left the item (the restored/original path for a
@@ -362,6 +368,13 @@ async function inspectorUndoOp(opId) {
   } catch (err) {
     showToast(formatApiError(err), 'error');
     return;
+  }
+  // Keep fileops's undo/redo stacks consistent with this per-op undo: drop
+  // the row's own batch id from undoStack (so a following Ctrl+Z can't post
+  // a batch undo that finds nothing left to do and still reports "Undone"),
+  // and push the inverse's batch id onto redoStack so Ctrl+Y can redo it.
+  if (typeof fileops !== 'undefined' && fileops.noteExternalUndo) {
+    fileops.noteExternalUndo(batchId, res && res.batch_id);
   }
   if (typeof refreshDirectory === 'function') await refreshDirectory();
 
@@ -445,14 +458,9 @@ function inspectorRevealSelected() {
 }
 
 // ── Inspector tabs ────────────────────────────────────────────────────────────
-function switchInspectorTab(name) {
-  document.querySelectorAll('.fp-inspector__tab, .inspector__tab').forEach(tab => {
-    tab.classList.toggle('active', (tab.dataset.tab || tab.dataset.pane) === name);
-  });
-  document.querySelectorAll('.fp-inspector__pane, .inspector__pane').forEach(pane => {
-    pane.classList.toggle('active', pane.dataset.pane === name);
-  });
-}
+// switchInspectorTab itself lives in app.js (toggles fp-tabs__item--active +
+// inline pane display) — that's the version loaded last and the one every
+// click and updateInspector('single') actually runs; no divergent copy here.
 
 // ── Inspector toggle ───────────────────────────────────────────────────────────
 function toggleInspector() {

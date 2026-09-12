@@ -436,12 +436,17 @@ async def fs_list(
 
 
 @app.get("/fs/list/root")
-async def fs_list_root():
-    """Return the sandbox root listing without requiring a path argument."""
+async def fs_list_root(show_hidden: bool = False):
+    """Return the sandbox root listing without requiring a path argument.
+
+    Accepts the same show_hidden filter as /fs/list so the first Browser
+    open (which calls this route with no path) honours ui.show_hidden the
+    same as every later /fs/list call.
+    """
     root = _config.FILEPLUS_SANDBOX_PATH.resolve()
     if not root.is_dir():
         raise HTTPException(status_code=404, detail=f"Sandbox root missing: {root}")
-    entries, truncated = await asyncio.to_thread(_scandir_entries, root, False)
+    entries, truncated = await asyncio.to_thread(_scandir_entries, root, show_hidden)
     return _listing_response(root, entries, truncated)
 
 

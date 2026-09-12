@@ -69,9 +69,27 @@ const fileops = {
       const res = await API.post(`/operations/batch/${id}/undo`);
       this.undoStack = this.undoStack.filter(b => b !== id);
       if (res.batch_id) this.redoStack.push(res.batch_id);
-      if (res.errors.length) showToast(`Undo: ${res.errors[0].error}`, 'error'); else showSnackbar('Undone', null, null);
+      if (res.errors.length) showToast(`Undo: ${res.errors[0].error}`, 'error');
+      // Only announce "Undone" when something was actually undone — a batch
+      // id left stale on undoStack (e.g. its ops were already undone
+      // individually from Inspector History) comes back as {batch_id: null,
+      // ops: []} and must be a silent no-op, not a false "Undone".
+      else if (res.ops && res.ops.length) showSnackbar('Undone', null, null);
       await refreshDirectory();
     } catch (err) { showToast(`Undo failed: ${formatApiError(err)}`, 'error'); }
+  },
+
+  /** Called by inspector.js after a per-operation History undo (POST
+   * /operations/{id}/undo) so the batch undo/redo stacks stay consistent
+   * without inspector.js reaching into fileops's arrays directly:
+   * removes `batchId` (the undone op's own batch id, if it was still queued
+   * on undoStack) so a later Ctrl+Z can't post a batch undo that finds
+   * nothing left and still report "Undone", and pushes `inverseBatchId`
+   * (the History undo's own inverse batch id) onto redoStack so Ctrl+Y can
+   * redo it. */
+  noteExternalUndo(batchId, inverseBatchId) {
+    if (batchId) this.undoStack = this.undoStack.filter(b => b !== batchId);
+    if (inverseBatchId) this.redoStack.push(inverseBatchId);
   },
 
   async redoLast() {

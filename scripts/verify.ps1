@@ -68,6 +68,10 @@ try {
 } catch { }
 
 New-Item -ItemType Directory -Force (Join-Path $root 'artifacts') | Out-Null
+# Fresh DB every run -- otherwise state (tags/history/undo rows) from an
+# earlier run, including a failed one, leaks into this run's screenshots and
+# history assertions.
+Remove-Item (Join-Path $root 'artifacts\verify.db*') -ErrorAction SilentlyContinue
 # keep verify off the developer's real fileplus.db; load_dotenv does not override an existing env var
 $env:FILEPLUS_DB_PATH = Join-Path $root 'artifacts\verify.db'
 # belt and braces: the smoke run never unlocks writes outside the sandbox

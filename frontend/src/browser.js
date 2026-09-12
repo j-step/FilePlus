@@ -270,7 +270,7 @@ async function loadDirectory(absPath, opts = {}) {
   try {
     data = absPath
       ? await API.get('/fs/list', { path: absPath, show_hidden: browserState.showHidden })
-      : await API.get('/fs/list/root');
+      : await API.get('/fs/list/root', { show_hidden: browserState.showHidden });
   } catch (err) {
     handleLoadError(err, absPath);
     return;

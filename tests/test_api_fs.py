@@ -97,6 +97,18 @@ def test_fs_list_root_returns_sandbox_root(client, sandbox):
     assert any(e["name"] == "x.txt" for e in data["entries"])
 
 
+def test_fs_list_root_honours_show_hidden(client, sandbox, db):
+    """GET /fs/list/root must accept show_hidden, same filter as /fs/list --
+    the first Browser open (loadDirectory(null)) hits this route and must
+    honour ui.show_hidden the same as every later /fs/list call."""
+    (sandbox / "v.txt").write_text("v")
+    client.post("/fs/trash", json={"paths": [str(sandbox / "v.txt")]})
+    names = {e["name"] for e in client.get("/fs/list/root").json()["entries"]}
+    assert ".FilePlusTrash" not in names
+    names = {e["name"] for e in client.get("/fs/list/root", params={"show_hidden": "true"}).json()["entries"]}
+    assert ".FilePlusTrash" in names
+
+
 # ---------------------------------------------------------------------------
 # Task 8a item (4) -- an OSError raised while listing/statting a directory
 # (unreachable UNC host, "device not ready", a sharing violation) must never

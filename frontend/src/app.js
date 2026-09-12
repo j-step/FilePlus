@@ -1,5 +1,3 @@
-const API_BASE = 'http://127.0.0.1:9876';
-
 // ── DOM references ─────────────────────��────────────────────────────────────
 const shell              = document.getElementById('shell');
 const sidebar            = document.getElementById('sidebar');
@@ -1099,7 +1097,9 @@ function showSnackbar(message, undoLabel, onUndo) {
   if (!container) return;
   const el = document.createElement('div');
   el.className = 'fp-snackbar';
-  el.innerHTML = `<span>${message}</span>`;
+  // message can be a filename (e.g. home.js's `Removed "${filename}" …`) —
+  // escape it the same way showToast does before inserting via innerHTML.
+  el.innerHTML = `<span>${escapeHtml(message)}</span>`;
   if (undoLabel) {
     const btn = document.createElement('button');
     btn.className = 'fp-snackbar__undo fp-btn fp-btn--ghost fp-btn--sm';
@@ -1143,22 +1143,14 @@ function showToast(message, variant = '') {
 const navHistory = { stack: [], idx: -1 };
 
 async function triggerScan(path) {
-  const body = path ? JSON.stringify({ path }) : '{}';
   showToast('Scanning…', 'default');
   try {
-    const res = await fetch(`${API_BASE}/scan`, {
-      method: 'POST',
-      headers: apiHeaders({ 'Content-Type': 'application/json' }),
-      body,
-      signal: AbortSignal.timeout(60000),
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
+    const data = await API.post('/scan', path ? { path } : {}, { signal: AbortSignal.timeout(60000) });
     showSnackbar(`Scan complete — ${data.count} file${data.count !== 1 ? 's' : ''} indexed`);
     switchScreen('browser', pathBaseName(data.path) || undefined);
     await loadDirectory(data.path);
   } catch (err) {
-    showToast(`Scan failed: ${err.message}`, 'error');
+    showToast(`Scan failed: ${formatApiError(err)}`, 'error');
   }
 }
 
@@ -1169,21 +1161,24 @@ async function checkBackend() {
   const dot = el.querySelector('.fp-statusbar__backend-dot');
   const label = el.querySelector('.fp-statusbar__backend-label');
   try {
-    const res = await fetch(`${API_BASE}/health`, { headers: apiHeaders(), signal: AbortSignal.timeout(2000) });
-    el.dataset.state = res.ok ? 'ok' : 'error';
-    if (label) label.textContent = res.ok ? 'Backend' : 'Backend error';
-    if (res.ok) {
-      try {
-        const data = await res.json();
-        window.__fpHealth = data; // read by settings.js's Data-pane "Writes" line
-        setWriteLockHint(data.write_unlocked === false);
-        if (typeof updateWritesStatusLine === 'function') updateWritesStatusLine();
-      } catch (_) { /* body already consumed or not JSON — leave the hint as-is */ }
+    const data = await API.get('/health', null, { signal: AbortSignal.timeout(2000) });
+    el.dataset.state = 'ok';
+    if (label) label.textContent = 'Backend';
+    window.__fpHealth = data; // read by settings.js's Data-pane "Writes" line
+    setWriteLockHint(data.write_unlocked === false);
+    if (typeof updateWritesStatusLine === 'function') updateWritesStatusLine();
+    return true;
+  } catch (err) {
+    // ApiError means the backend answered but with a non-2xx status; any
+    // other rejection (network error, the 2s AbortSignal firing) means it
+    // didn't answer at all.
+    if (err instanceof ApiError) {
+      el.dataset.state = 'error';
+      if (label) label.textContent = 'Backend error';
+    } else {
+      el.dataset.state = 'offline';
+      if (label) label.textContent = 'Backend offline';
     }
-    return res.ok;
-  } catch (_) {
-    el.dataset.state = 'offline';
-    if (label) label.textContent = 'Backend offline';
     return false;
   }
 }
@@ -1604,7 +1599,7 @@ document.addEventListener('click', e => {
     }
     case 'inspector-undo-op': {
       const opId = btn.dataset.opId;
-      if (opId) inspectorUndoOp(opId);
+      if (opId) inspectorUndoOp(opId, btn.dataset.batchId || null);
       break;
     }
     case 'unfavorite-file':
