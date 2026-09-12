@@ -8,8 +8,18 @@ const { app, BrowserWindow, globalShortcut, ipcMain, nativeTheme, shell, dialog,
 const path = require('path');
 const os   = require('os');
 const { spawn } = require('child_process');
+const { readEnvFileToken } = require('./envToken');
 
 let mainWindow;
+
+// ── API token ────────────────────────────────────────────────────────────
+// FILEPLUS_API_TOKEN from our own process environment, else parsed from
+// <repo>/.env (see envToken.js — mirrors python-dotenv's value parsing, the
+// same file backend/config.py loads via load_dotenv()). Stage 5 packaging
+// will instead generate this at startup and pass it to the spawned backend
+// process's environment; for now (dev flow) both the backend and this
+// process read the same source so they agree without any IPC between them.
+const API_TOKEN = process.env.FILEPLUS_API_TOKEN || readEnvFileToken(path.join(__dirname, '..'));
 
 // Mica needs Windows 11 22H2 (build 22621). Elsewhere Electron ignores the option
 // and the renderer paints solid --bg-chrome.
@@ -72,6 +82,14 @@ app.whenReady().then(() => {
 
   ipcMain.on('get-hostname', (event) => {
     event.returnValue = os.hostname();
+  });
+
+  ipcMain.on('get-home-dir', (event) => {
+    event.returnValue = os.homedir();
+  });
+
+  ipcMain.on('get-api-token', (event) => {
+    event.returnValue = API_TOKEN;
   });
 
   ipcMain.on('mica-available', (event) => { event.returnValue = MICA_AVAILABLE; });

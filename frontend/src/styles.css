@@ -517,6 +517,15 @@ svg { flex-shrink: 0; }
 .fp-sidebar__item.active > svg,
 .fp-sidebar__item.active > .icon { color: var(--accent); }
 
+/* Drag-and-drop target (Task 4) — a file/folder drag is hovering this item
+   (a drive, pin, or Downloads). Reuses the same accent-wash/edge tokens as
+   .fp-row--drag-target for visual consistency between drop-target types. */
+.fp-sidebar__item--drag-target {
+  background: var(--accent-wash-strong);
+  color: var(--text-primary);
+  box-shadow: inset 0 0 0 1px var(--accent-edge);
+}
+
 .fp-sidebar__item:focus-visible {
   outline: none;
 }
@@ -731,6 +740,11 @@ svg { flex-shrink: 0; }
 .fp-breadcrumb__crumb--current {
   color: var(--text-primary);
   font-weight: 500;
+}
+.fp-breadcrumb__crumb--drag-target {
+  background: var(--accent-wash-strong);
+  color: var(--text-primary);
+  box-shadow: inset 0 0 0 1px var(--accent-edge);
 }
 .fp-breadcrumb__sep,
 .fp-breadcrumb-sep {
@@ -1308,6 +1322,25 @@ svg { flex-shrink: 0; }
 }
 
 .fp-chip-group { display: inline-flex; gap: var(--s-6); flex-wrap: wrap; }
+
+/* Trailing "x" remove button inside a chip (Inspector tags tab). */
+.fp-chip__remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  height: 12px;
+  margin-left: 2px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  opacity: .6;
+  cursor: pointer;
+  font-size: 11px;
+  line-height: 1;
+}
+.fp-chip__remove:hover { opacity: 1; }
 
 /* -----------------------------------------------------------------------------
    15. SEGMENTED CONTROL (Section 20)
@@ -2013,6 +2046,11 @@ svg { flex-shrink: 0; }
 }
 .fp-row--selected .fp-row__icon { color: var(--accent); }
 
+.fp-row--focused {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
 .fp-row--active {
   background: var(--bg-pressed);
 }
@@ -2064,6 +2102,15 @@ svg { flex-shrink: 0; }
 }
 .fp-row__size { width: 96px; min-width: 96px; }
 .fp-row__modified, .fp-row__mod { width: 120px; min-width: 120px; }
+
+/* Inline rename input (Task 4) — replaces .fp-row__name in place; sized to
+   fit inside the 26px row without changing row height. */
+.fp-row__rename {
+  flex: 1;
+  height: 20px;
+  padding: 0 6px;
+  font: 500 var(--t-body) var(--font-ui);
+}
 /* Legacy alias — keeps existing markup using __mod working */
 .fp-row__mod {
   flex-shrink: 0;
@@ -3565,6 +3612,7 @@ svg { flex-shrink: 0; }
 .fp-sortable .list-col__caret { opacity: 0; }
 .fp-sortable.active .list-col__caret { opacity: 1; }
 .fp-sortable.active.asc .list-col__caret { transform: rotate(180deg); }
+.fp-sortable.active.desc .list-col__caret { transform: rotate(0deg); }
 
 .list-empty-state {
   display: flex;
@@ -4540,8 +4588,39 @@ button.fp-pill:hover {
   color: var(--text-primary);
 }
 .fp-error-banner svg { width: 14px; height: 14px; color: var(--bad); flex-shrink: 0; }
-.fp-error-banner__action { margin-left: auto; flex-shrink: 0; color: var(--bad); font: 500 var(--t-compact) var(--font-ui); }
+/* The action-button group (e.g. "Go back" + "Retry") is pushed to the right
+ * as one unit — margin-left:auto lives on the group, not each button, so two
+ * buttons sit side by side with a normal gap instead of splitting the free
+ * space between them. */
+.fp-error-banner__actions { margin-left: auto; display: flex; align-items: center; gap: var(--s-8); flex-shrink: 0; }
+.fp-error-banner__action { flex-shrink: 0; color: var(--bad); font: 500 var(--t-compact) var(--font-ui); }
 .fp-error-banner__dismiss { width: 24px; height: 24px; display: inline-flex; align-items: center; justify-content: center; color: var(--text-tertiary); }
+/* Non-error informational banner (e.g. truncated listing) — same shape, accent tint */
+.fp-error-banner--info { background: var(--accent-wash); border-bottom-color: var(--accent-edge); }
+.fp-error-banner--info svg { color: var(--accent); }
+
+/* ── Placeholder-screen banner (A.17 / Task 7) ─────────────────────────────
+ * Shown at the top of screens whose backend isn't wired yet (File Tree, Scan,
+ * Review Bin, Everything Folder). Same shape as .fp-error-banner but a
+ * neutral, non-alarming tone since nothing has gone wrong — it's just not
+ * built yet. */
+.fp-banner {
+  flex-shrink: 0;
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+  gap: var(--s-8);
+  padding: 0 var(--s-12);
+  font: 500 var(--t-body) var(--font-ui);
+}
+.fp-banner--planned {
+  background: var(--bg-raised);
+  border-bottom: 1px solid var(--border-hairline);
+  color: var(--text-secondary);
+}
+/* Dims and disables interaction on the placeholder content below the banner
+ * — the banner itself is a sibling, so it stays fully visible/interactive. */
+.fp-planned-dim { opacity: .5; pointer-events: none; }
 
 /* ── Empty state (A.15) ───────────────────────────────────────────────────── */
 .fp-empty-state {
@@ -4733,6 +4812,19 @@ button.fp-pill:hover {
   pointer-events: none;
   transition: opacity var(--dur-slide) var(--ease-out);
 }
+/* Favorites drag-reorder insertion indicator (JS toggles these on dragover) */
+.fp-row--drop-before::after,
+.fp-row--drop-after::after {
+  content: '';
+  position: absolute;
+  left: var(--s-8);
+  right: var(--s-8);
+  height: 2px;
+  background: var(--accent);
+  border-radius: 999px;
+}
+.fp-row--drop-before::after { top: -1px; }
+.fp-row--drop-after::after { bottom: -1px; }
 
 /* ── Home grid view (toolbar's segmented control flips data-view) ─────────── */
 .home-pane[data-view="grid"] .home-section {

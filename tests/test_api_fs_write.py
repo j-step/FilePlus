@@ -21,6 +21,18 @@ def test_mkdir_touch_rename(client, sandbox):
     r = client.post("/fs/mkdir", json={"dir": str(sandbox), "name": "New"}); assert r.status_code == 409
 
 
+def test_rename_gets_a_batch_id_and_is_undoable(client, sandbox):
+    (sandbox / "orig.txt").write_text("hi")
+    r = client.post("/fs/rename", json={"path": str(sandbox / "orig.txt"), "new_name": "renamed.txt"})
+    assert r.status_code == 200
+    batch_id = r.json()["batch_id"]
+    assert batch_id
+    assert (sandbox / "renamed.txt").exists() and not (sandbox / "orig.txt").exists()
+    r2 = client.post(f"/operations/batch/{batch_id}/undo")
+    assert r2.status_code == 200 and r2.json()["ops"] and not r2.json()["errors"]
+    assert (sandbox / "orig.txt").exists() and not (sandbox / "renamed.txt").exists()
+
+
 def test_move_copy_trash_with_conflicts(client, sandbox):
     (sandbox / "s").mkdir(); (sandbox / "d").mkdir()
     (sandbox / "s" / "f.txt").write_text("1"); (sandbox / "d" / "f.txt").write_text("2")

@@ -1,5 +1,3 @@
-const API_BASE = 'http://127.0.0.1:9876';
-
 // ── DOM references ─────────────────────��────────────────────────────────────
 const shell              = document.getElementById('shell');
 const sidebar            = document.getElementById('sidebar');
@@ -9,15 +7,17 @@ const paletteInput       = document.getElementById('palette-input');
 const searchInput        = document.getElementById('search-input');
 
 // ── Screen switching ────────────────────────────────────────────────────────
-// Screens whose backend wiring is not yet complete — fire a stub toast on entry.
+// Screens whose backend wiring is not yet complete. Each screen's HTML carries
+// its own static "Not built yet — planned for Stage N" banner (see index.html)
+// — this map is now just the stage-number reference for those banners; entry
+// no longer fires a stub toast (showScreenDom below).
 const STUB_SCREENS = {
-  'review-bin':     'Review Bin: showing placeholder data — backend not wired yet.',
-  'ftree':          'File Tree canvas: showing placeholder — snapshots backend not wired yet.',
-  'scan-config':    'Scan: showing placeholder — scan pipeline not wired yet.',
-  'scan-progress':  'Scan progress: showing placeholder.',
-  'scan-results':   'Scan results: showing placeholder.',
-  'everything':     'Everything Folder: showing placeholder — watcher not wired yet.',
-  'settings':       'Settings: most settings persist locally only — backend wiring TODO.',
+  'review-bin':     3,
+  everything:       3,
+  ftree:            4,
+  'scan-config':    4,
+  'scan-progress':  4,
+  'scan-results':   4,
 };
 
 // Per-tab UI state model
@@ -96,11 +96,12 @@ function showScreenDom(id) {
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
   const target = document.getElementById(`screen-${id}`);
   if (target) target.classList.add('active');
-  if (STUB_SCREENS[id] && typeof showToast === 'function') {
-    showToast(STUB_SCREENS[id], 'accent');
-  }
   if (id === 'browser' && navHistory.stack.length === 0) {
     loadDirectory(null);
+  }
+  if (id === 'home') {
+    loadRecent();
+    loadFavorites();
   }
   sessionStorage.setItem('fp-active-screen', id);
   updateSidebarActive();
@@ -116,6 +117,18 @@ function switchScreen(id, labelOverride) {
     updateTabAppearance(active, id, labelOverride);
   }
   showScreenDom(id);
+}
+
+// Shared by the 'navigate-path' dispatch case and the sidebar pin's "Open in
+// new tab" context-menu action: pre-seed navHistory before switching to the
+// browser screen, so showScreenDom's automatic loadDirectory(null) (sandbox
+// root, fired when navHistory.stack is still empty) can never race this
+// call's own explicit loadDirectory(path) for a real target path. Extracted
+// so the guard can't be forgotten by a future third caller.
+function openBrowserAt(path, label) {
+  if (path && navHistory.stack.length === 0) navHistory.stack.push(null);
+  switchScreen('browser', label);
+  if (path) return loadDirectory(path);
 }
 
 function switchToTab(tab) {
@@ -522,185 +535,133 @@ function initToolbarResponsive() {
   actualRecalc();
 }
 
-// ── View modes ────────────────────────────────────────────────────────────────
-function setViewMode(mode) {
-  // v2 segmented opts
-  document.querySelectorAll('.fp-segmented__opt[data-view]').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.view === mode);
-  });
-  // legacy buttons
-  document.querySelectorAll('.tool-group__btn[data-view]').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.view === mode);
-  });
-  const listScroll = document.getElementById('list-scroll');
-  const listHead   = document.getElementById('list-head');
-  if (listScroll) {
-    // Suppress layout flicker by hiding briefly during the layout swap
-    listScroll.style.opacity = '0';
-    listScroll.dataset.view = mode;
-    // Show/hide column header in grid mode (A.3.1)
-    if (listHead) listHead.classList.toggle('list-head--grid-hidden', mode === 'grid');
-    // Restore opacity on next paint — batches DOM updates before repaint
-    requestAnimationFrame(() => {
-      listScroll.style.opacity = '';
-    });
-  }
-  // Home — Recent and Favorites panes share the same view-mode toggle
-  document.querySelectorAll('.home-pane').forEach(pane => {
-    pane.dataset.view = mode;
-  });
-  sessionStorage.setItem('fp-view-mode', mode);
-}
-
-// ── Column sort cycling (A.3.1) ───────────────────────────────────────────────
-function initColumnSort() {
-  document.querySelectorAll('.fp-sortable[data-sort]').forEach(col => {
-    col.style.cursor = 'pointer';
-    col.addEventListener('click', () => {
-      const currentSort = col.dataset.sort;
-      const wasActive = col.classList.contains('active');
-      const wasAsc = col.classList.contains('asc');
-      // Cycle: inactive → asc → desc → inactive
-      document.querySelectorAll('.fp-sortable').forEach(c => {
-        c.classList.remove('active', 'asc');
-      });
-      if (!wasActive) {
-        col.classList.add('active', 'asc');
-      } else if (wasAsc) {
-        col.classList.add('active'); // desc (no asc class)
-      }
-      // else was desc → now inactive (neither class)
-      // INTEGRATION: sort file list by col.dataset.sort direction
-    });
-  });
-}
-
-// ── Marquee selection (A.3.1) ─────────────────────────────────────────────────
-function initMarqueeSelection() {
-  const listScroll = document.getElementById('list-scroll');
-  const marqueeRect = document.getElementById('marquee-rect');
-  if (!listScroll || !marqueeRect) return;
-  let dragging = false, startX = 0, startY = 0;
-
-  listScroll.addEventListener('mousedown', e => {
-    if (e.target.closest('.fp-row, .fp-row__icon, .fp-row__name')) return;
-    if (e.button !== 0) return;
-    dragging = true;
-    startX = e.clientX; startY = e.clientY;
-    marqueeRect.style.display = 'block';
-    marqueeRect.style.left = startX + 'px';
-    marqueeRect.style.top  = startY + 'px';
-    marqueeRect.style.width = '0px';
-    marqueeRect.style.height = '0px';
-    e.preventDefault();
-  });
-
-  document.addEventListener('mousemove', e => {
-    if (!dragging) return;
-    const x = Math.min(e.clientX, startX);
-    const y = Math.min(e.clientY, startY);
-    const w = Math.abs(e.clientX - startX);
-    const h = Math.abs(e.clientY - startY);
-    marqueeRect.style.left   = x + 'px';
-    marqueeRect.style.top    = y + 'px';
-    marqueeRect.style.width  = w + 'px';
-    marqueeRect.style.height = h + 'px';
-    // Highlight intersecting rows
-    const mr = { left: x, right: x + w, top: y, bottom: y + h };
-    listScroll.querySelectorAll('.fp-row').forEach(row => {
-      const rr = row.getBoundingClientRect();
-      const hit = rr.left < mr.right && rr.right > mr.left &&
-                  rr.top  < mr.bottom && rr.bottom > mr.top;
-      row.classList.toggle('fp-row--selected', hit);
-    });
-  });
-
-  document.addEventListener('mouseup', () => {
-    if (!dragging) return;
-    dragging = false;
-    marqueeRect.style.display = 'none';
-    // INTEGRATION: selected set drives inspector aggregate view
-    const selected = listScroll.querySelectorAll('.fp-row--selected');
-    if (selected.length > 1) updateInspector('multi', { count: selected.length });
-  });
-}
-
-// ── Inspector update (A.3.2) ─────────────────────────────────────────────────
-function updateInspector(mode, data = {}) {
-  const inspector = document.getElementById('inspector');
-  if (!inspector) return;
-
-  const singlePanes = inspector.querySelectorAll('.fp-inspector__pane:not([data-pane="multi"])');
-  const multiPane   = inspector.querySelector('.fp-inspector__pane[data-pane="multi"]');
-  const tabBar      = inspector.querySelector('.fp-tabs.fp-inspector__tabs');
-  const preview     = document.getElementById('inspector-preview');
-  const filenameEl  = document.getElementById('inspector-filename');
-  const filepathEl  = document.getElementById('inspector-filepath');
-
-  if (mode === 'multi') {
-    // Show multi-select aggregate; hide single-file UI
-    singlePanes.forEach(p => { p.style.display = 'none'; });
-    if (tabBar)   tabBar.style.display = 'none';
-    if (preview)  preview.style.display = 'none';
-    if (filenameEl) filenameEl.textContent = `${data.count} items selected`;
-    if (filepathEl) filepathEl.textContent = '';
-    if (multiPane) {
-      multiPane.style.display = '';
-      const countEl = multiPane.querySelector('#inspector-multi-count');
-      const sizeEl  = multiPane.querySelector('#inspector-multi-size');
-      if (countEl) countEl.textContent = data.count || 0;
-      if (sizeEl)  sizeEl.textContent  = data.totalSize || '—'; // INTEGRATION: real sum
-    }
-    if (!inspector.classList.contains('inspector--open')) toggleInspector();
-  } else if (mode === 'single') {
-    // Restore single-file UI
-    singlePanes.forEach(p => { p.style.display = ''; });
-    if (multiPane) multiPane.style.display = 'none';
-    if (tabBar)    tabBar.style.display = '';
-    if (preview)   preview.style.display = '';
-    if (data.name && filenameEl) filenameEl.textContent = data.name;
-    if (data.path && filepathEl) filepathEl.textContent = data.path;
-    if (!inspector.classList.contains('inspector--open')) toggleInspector();
-  } else {
-    // Empty selection — collapse inspector
-    if (inspector.classList.contains('inspector--open')) toggleInspector();
-  }
-}
-
-// ── Inspector tabs ────────────────────────────────────────────────────────────
-function switchInspectorTab(name) {
-  document.querySelectorAll('.fp-inspector__tab, .inspector__tab').forEach(tab => {
-    tab.classList.toggle('active', (tab.dataset.tab || tab.dataset.pane) === name);
-  });
-  document.querySelectorAll('.fp-inspector__pane, .inspector__pane').forEach(pane => {
-    pane.classList.toggle('active', pane.dataset.pane === name);
-  });
-}
-
-// ── Inspector toggle ───────────────────────────────��───────────────────────��──
-function toggleInspector() {
-  const inspector = document.getElementById('inspector');
-  const toggleBtn = document.getElementById('btn-inspector-toggle');
-  if (!inspector) return;
-  const isOpen = inspector.classList.toggle('inspector--open');
-  toggleBtn?.classList.toggle('fp-icon-btn--active', isOpen);
-  // Notify: used by Browser screen to compact columns
-  document.dispatchEvent(new CustomEvent('fp:inspector-toggle', { detail: { open: isOpen } }));
-}
-
 // ── Command palette ───────────────────────────────���──────────────────────��─────
 function openPalette() {
   if (!paletteScrim) return;
   paletteScrim.style.display = 'flex';
   paletteScrim.removeAttribute('aria-hidden');
   if (paletteInput) { paletteInput.value = ''; paletteInput.focus(); }
+  paletteResetToCommands();
 }
 
 function closePalette() {
   if (!paletteScrim) return;
   paletteScrim.style.display = 'none';
   paletteScrim.setAttribute('aria-hidden', 'true');
+  clearTimeout(_paletteSearchTimer);
+  _paletteSearchSeq++; // invalidate any in-flight search response
 }
+
+// ── Palette search mode (A.11.1 / Task 6) ─────────────────────────────────
+// Below the 2-char threshold (including empty), the static Commands group is
+// shown and search results are cleared. At 2+ chars, input is debounced
+// 150ms then GET /search?q=&limit=30 fires; results replace the Commands
+// group until the query drops back below the threshold.
+const PALETTE_FILE_ICON = `<svg width="14" height="14" viewBox="0 0 14 14" fill="none" style="flex-shrink:0;color:var(--text-secondary)"><rect x="2" y="1" width="8" height="11" rx="1" fill="var(--bg-raised)" stroke="currentColor" stroke-width="1.1"/><path d="M10 1v3h3" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round"/><path d="M4 6h6M4 8h4" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/></svg>`;
+const PALETTE_FOLDER_ICON = `<svg width="14" height="14" viewBox="0 0 14 14" fill="none" style="flex-shrink:0;color:var(--text-secondary)"><path d="M1 3.5a1 1 0 0 1 1-1h3l1 1.5H12a1 1 0 0 1 1 1V10a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V3.5z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>`;
+const PALETTE_MIN_CHARS = 2;
+const PALETTE_DEBOUNCE_MS = 150;
+let _paletteSearchTimer = null;
+let _paletteSearchSeq = 0;
+
+/** Every visible (not display:none-ancestor'd), non-disabled palette item —
+ * whichever group (Commands or search results) is currently shown. */
+function paletteVisibleItems() {
+  return [...document.querySelectorAll('#palette-search-pane .fp-palette__item:not([disabled])')]
+    .filter(el => el.offsetParent !== null);
+}
+
+function paletteSelectFirst() {
+  const items = paletteVisibleItems();
+  items.forEach(i => i.classList.remove('fp-palette__item--selected'));
+  if (items[0]) items[0].classList.add('fp-palette__item--selected');
+}
+
+function paletteResetToCommands() {
+  clearTimeout(_paletteSearchTimer);
+  _paletteSearchSeq++; // invalidate any in-flight search response
+  const resultsEl = document.getElementById('palette-search-results');
+  const commandsEl = document.getElementById('palette-commands');
+  if (resultsEl) resultsEl.innerHTML = '';
+  if (commandsEl) commandsEl.style.display = '';
+  paletteSelectFirst();
+}
+
+async function runPaletteSearch(q) {
+  const seq = ++_paletteSearchSeq;
+  const resultsEl = document.getElementById('palette-search-results');
+  if (!resultsEl) return;
+  let hits = [];
+  try {
+    hits = await API.get('/search', { q, limit: 30 });
+  } catch (err) {
+    hits = [];
+  }
+  if (seq !== _paletteSearchSeq) return; // a newer query has since superseded this response
+
+  if (!hits || hits.length === 0) {
+    resultsEl.innerHTML = `<button class="fp-palette__item" role="option" disabled aria-disabled="true">
+      <span>No matches in the index — index folders from the sidebar (right-click a folder → Index for search)</span>
+    </button>`;
+    return;
+  }
+
+  const fileItems = hits.map(hit => `
+    <button class="fp-palette__item" role="option" data-action="palette-open-file" data-path="${escapeHtml(hit.path)}">
+      ${PALETTE_FILE_ICON}
+      <span>${escapeHtml(hit.filename)}</span>
+      <span class="fp-palette__item-meta fp-mono">${escapeHtml(parentOfPath(hit.path))}</span>
+    </button>`).join('');
+
+  // One folder item per distinct parent of the first 5 hits.
+  const seenParents = new Set();
+  const folderItems = [];
+  for (const hit of hits.slice(0, 5)) {
+    const parent = parentOfPath(hit.path);
+    if (seenParents.has(parent)) continue;
+    seenParents.add(parent);
+    folderItems.push(`
+      <button class="fp-palette__item" role="option" data-action="palette-open-folder" data-path="${escapeHtml(parent)}">
+        ${PALETTE_FOLDER_ICON}
+        <span>Open folder ${escapeHtml(pathBaseName(parent))}</span>
+        <span class="fp-palette__item-meta fp-mono">${escapeHtml(parent)}</span>
+      </button>`);
+  }
+
+  resultsEl.innerHTML = `<div class="fp-palette__section">Files</div>${fileItems}`
+    + (folderItems.length ? `<div class="fp-palette__section">Folders</div>${folderItems.join('')}` : '');
+  paletteSelectFirst();
+}
+
+paletteInput?.addEventListener('input', () => {
+  const q = paletteInput.value.trim();
+  clearTimeout(_paletteSearchTimer);
+  if (q.length < PALETTE_MIN_CHARS) {
+    paletteResetToCommands();
+    return;
+  }
+  const commandsEl = document.getElementById('palette-commands');
+  if (commandsEl) commandsEl.style.display = 'none';
+  _paletteSearchTimer = setTimeout(() => runPaletteSearch(q), PALETTE_DEBOUNCE_MS);
+});
+
+paletteInput?.addEventListener('keydown', e => {
+  if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp' && e.key !== 'Enter') return;
+  const items = paletteVisibleItems();
+  if (!items.length) return;
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    const sel = items.find(i => i.classList.contains('fp-palette__item--selected'));
+    if (sel) sel.click();
+    return;
+  }
+  e.preventDefault();
+  let idx = items.findIndex(i => i.classList.contains('fp-palette__item--selected'));
+  idx = e.key === 'ArrowDown' ? (idx + 1) % items.length : (idx - 1 + items.length) % items.length;
+  items.forEach(i => i.classList.remove('fp-palette__item--selected'));
+  items[idx].classList.add('fp-palette__item--selected');
+  items[idx].scrollIntoView({ block: 'nearest' });
+});
 
 function handlePaletteAction(btn) {
   const { action, screen: screenTarget } = btn.dataset;
@@ -744,6 +705,15 @@ function closeTagCanvas() {
 }
 
 // ── Confirmation modal (A.11.3) ───────────────────────────────────────────────
+// The modal can close via several independent paths — the Cancel button, a
+// backdrop click, Escape, an extraActions button, or the default Confirm
+// button — and a caller that needs to know "the modal closed, however that
+// happened" (fileops.resolveConflicts, to settle its promise and avoid a
+// leaked handler) registers config.onClose. closeModal() invokes it exactly
+// once per open() and clears it, so it fires regardless of which path closed
+// the modal and never double-fires or leaks into the next modal.
+let _modalOnClose = null;
+
 function openModal(type, config = {}) {
   const scrim   = document.getElementById('modal-scrim');
   const icon    = document.getElementById('modal-icon');
@@ -752,6 +722,8 @@ function openModal(type, config = {}) {
   const confirm = document.getElementById('modal-confirm');
   const confirmRow = document.getElementById('modal-confirm-input-row');
   const confirmWord = document.getElementById('modal-confirm-word');
+  const textInputRow = document.getElementById('modal-text-input-row');
+  const textInput = document.getElementById('modal-text-input');
   if (!scrim) return;
 
   // Icon: danger uses alert-octagon in bad, warn uses alert-triangle in warn
@@ -767,16 +739,64 @@ function openModal(type, config = {}) {
   if (confirm) {
     confirm.textContent = config.confirmLabel || (isDanger ? 'Delete' : 'Confirm');
     confirm.className = `fp-btn fp-btn--sm ${isDanger ? 'fp-btn--danger' : 'fp-btn--primary'}`;
-    if (config.onConfirm) confirm.onclick = () => { config.onConfirm(); closeModal(); };
-    else confirm.onclick = closeModal;
+    // onConfirm may return false to veto the close (e.g. client-side
+    // validation failure) — any other return value (including undefined,
+    // the common case) closes the modal as before.
+    confirm.onclick = () => {
+      if (config.confirmWord) {
+        const typed = (document.getElementById('modal-confirm-text')?.value || '').trim();
+        if (typed.toUpperCase() !== config.confirmWord.toUpperCase()) {
+          showToast(`Type ${config.confirmWord} to confirm`, 'error');
+          document.getElementById('modal-confirm-text')?.focus();
+          return;
+        }
+      }
+      if (config.onConfirm && config.onConfirm() === false) return;
+      closeModal();
+    };
   }
   // Typed confirmation (optional)
   if (config.confirmWord && confirmRow && confirmWord) {
     confirmWord.textContent = config.confirmWord;
     confirmRow.style.display = '';
+    const confirmText = document.getElementById('modal-confirm-text');
+    if (confirmText) confirmText.value = ''; // never carry over a previous modal's typed word
   } else if (confirmRow) {
     confirmRow.style.display = 'none';
   }
+
+  // Free-text input (optional) — e.g. the sidebar-pin rename modal.
+  if (config.textInput && textInputRow && textInput) {
+    textInputRow.style.display = '';
+    textInput.value = config.textInput.value || '';
+    textInput.placeholder = config.textInput.placeholder || '';
+    requestAnimationFrame(() => textInput.focus());
+  } else if (textInputRow) {
+    textInputRow.style.display = 'none';
+  }
+
+  // Extra action buttons (optional) — e.g. the paste-conflict modal's
+  // Replace / Skip / Keep both. Replaces the default Confirm button; Cancel
+  // (wired separately, outside openModal()) stays available either way.
+  const extraRow = document.getElementById('modal-extra-actions');
+  if (config.extraActions && config.extraActions.length && extraRow) {
+    extraRow.innerHTML = '';
+    config.extraActions.forEach(a => {
+      const b = document.createElement('button');
+      b.className = `fp-btn fp-btn--sm ${a.variant ? `fp-btn--${a.variant}` : 'fp-btn--secondary'}`;
+      b.style.cssText = 'width:100%;justify-content:flex-start';
+      b.textContent = a.label;
+      b.addEventListener('click', () => { a.onClick(); closeModal(); });
+      extraRow.appendChild(b);
+    });
+    extraRow.style.display = 'flex';
+    if (confirm) confirm.style.display = 'none';
+  } else {
+    if (extraRow) extraRow.style.display = 'none';
+    if (confirm) confirm.style.display = '';
+  }
+
+  _modalOnClose = typeof config.onClose === 'function' ? config.onClose : null;
 
   scrim.style.display = 'flex';
   scrim.removeAttribute('aria-hidden');
@@ -784,9 +804,13 @@ function openModal(type, config = {}) {
 
 function closeModal() {
   const scrim = document.getElementById('modal-scrim');
-  if (!scrim) return;
-  scrim.style.display = 'none';
-  scrim.setAttribute('aria-hidden', 'true');
+  const onClose = _modalOnClose;
+  _modalOnClose = null;
+  if (scrim) {
+    scrim.style.display = 'none';
+    scrim.setAttribute('aria-hidden', 'true');
+  }
+  if (onClose) onClose();
 }
 
 // ── Theme toggle ─────────��─────────────────────────────────────────────────────
@@ -802,19 +826,6 @@ function toggleTheme() {
   const current = localStorage.getItem('fp-theme') || 'system';
   const next = THEME_MODES[(THEME_MODES.indexOf(current) + 1) % THEME_MODES.length];
   applyTheme(next);
-}
-
-// ── Settings: pane switching + persistence ────────────────────────────────────
-
-function switchSettingsPane(pane) {
-  if (!pane) return;
-  document.querySelectorAll('.settings-nav__item').forEach(btn => {
-    btn.classList.toggle('settings-nav__item--active', btn.dataset.pane === pane);
-  });
-  document.querySelectorAll('.settings-pane').forEach(p => {
-    p.style.display = p.dataset.pane === pane ? '' : 'none';
-  });
-  sessionStorage.setItem('fp-settings-pane', pane);
 }
 
 function applyTheme(mode) {
@@ -834,95 +845,6 @@ function applyTheme(mode) {
     const v = btn.dataset.theme || btn.dataset.val;
     btn.classList.toggle('active', v === mode);
   });
-}
-
-function applyDensity(density) {
-  document.documentElement.dataset.density = density;
-  localStorage.setItem('fp-density', density);
-  document.querySelectorAll('[data-action="settings-set-density"]').forEach(btn => {
-    const v = btn.dataset.density || btn.dataset.val;
-    btn.classList.toggle('active', v === density);
-  });
-}
-
-const HEX_RE = /^#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$/;
-const DEFAULT_ACCENT = '#4CC2FF';
-
-function isValidHex(s) {
-  return typeof s === 'string' && HEX_RE.test(s.trim());
-}
-
-function applyAccentHex(rawHex) {
-  const hex = (rawHex || '').trim();
-  const errorEl = document.getElementById('settings-accent-error');
-  if (!isValidHex(hex)) {
-    if (errorEl) {
-      errorEl.textContent = 'Enter a valid hex color (e.g. #4CC2FF or #abc).';
-      errorEl.hidden = false;
-    }
-    return false;
-  }
-  if (errorEl) { errorEl.hidden = true; errorEl.textContent = ''; }
-  // Write to --accent-custom so the canonical cascade picks it up
-  document.documentElement.style.setProperty('--accent-custom', hex);
-  // Update swatch
-  const swatch = document.getElementById('settings-accent-swatch');
-  if (swatch) swatch.style.background = hex;
-  localStorage.setItem('fp-accent', hex);
-  return true;
-}
-
-function resetAccentToDefault() {
-  document.documentElement.style.removeProperty('--accent-custom');
-  const swatch = document.getElementById('settings-accent-swatch');
-  if (swatch) swatch.style.background = `var(--accent)`;
-  const input = document.getElementById('settings-accent-hex');
-  if (input) input.value = '';
-  const errorEl = document.getElementById('settings-accent-error');
-  if (errorEl) { errorEl.hidden = true; errorEl.textContent = ''; }
-  localStorage.removeItem('fp-accent');
-}
-
-// Legacy compatibility — accept hex through old name too
-function applyAccent(value) {
-  if (isValidHex(value)) applyAccentHex(value);
-}
-
-function restoreSettings() {
-  if (window.electronAPI?.micaAvailable?.()) document.documentElement.dataset.mica = 'on';
-  applyTheme(localStorage.getItem('fp-theme') || 'system');
-  const density = localStorage.getItem('fp-density');
-  if (density) applyDensity(density);
-  // One-time migration: drop the retired amber default (#E8965E) that older
-  // sessions re-saved to localStorage, so the new blue accent takes over.
-  const RETIRED_AMBER_ACCENT = '#E8965E';
-  const persistedAccent = localStorage.getItem('fp-accent');
-  if (persistedAccent && persistedAccent.toLowerCase() === RETIRED_AMBER_ACCENT.toLowerCase()) {
-    localStorage.removeItem('fp-accent');
-    console.info('[fp-accent] Dropped retired amber default; using the new blue accent.');
-  }
-  const savedAccent = localStorage.getItem('fp-accent');
-  if (savedAccent) {
-    if (isValidHex(savedAccent)) {
-      // Valid hex — apply via --accent-custom hook
-      document.documentElement.style.setProperty('--accent-custom', savedAccent);
-      const input = document.getElementById('settings-accent-hex');
-      if (input) input.value = savedAccent;
-      const swatch = document.getElementById('settings-accent-swatch');
-      if (swatch) swatch.style.background = savedAccent;
-    } else {
-      // Invalid (e.g., 'lavender' from pre-A4 sessions) — purge so the default accent wins
-      console.warn(`[fp-accent] Discarding invalid persisted value: ${savedAccent}`);
-      localStorage.removeItem('fp-accent');
-    }
-  }
-  // Zoom is now handled by Electron webContents.setZoomFactor (no CSS zoom persistence needed).
-  // Legacy fp-zoom in localStorage is intentionally ignored — Electron persists zoom separately.
-  // Stage 1: glow feature removed
-  localStorage.removeItem('fp-accent-glow');
-  // Notifications setting — defaults to OFF if unset
-  const checkbox = document.getElementById('settings-show-notifications');
-  if (checkbox) checkbox.checked = notificationsEnabled();
 }
 
 // ── Zoom — uses Electron webContents.setZoomFactor when in Electron (no layout cut-off),
@@ -996,7 +918,6 @@ const CONTEXT_MENUS = {
     { label: 'Open',            action: 'cm-open',            icon: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="1" y="1" width="12" height="12" rx="2" stroke="currentColor" stroke-width="1.2"/><path d="M5 5l4 2-4 2V5z" fill="currentColor"/></svg>' },
     { label: 'Open with…',      action: 'cm-open-with' },
     { label: 'Open in new tab', action: 'cm-open-new-tab',    icon: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="1" y="3" width="12" height="10" rx="1.5" stroke="currentColor" stroke-width="1.2"/><path d="M1 6h12" stroke="currentColor" stroke-width="1.2"/></svg>' },
-    { label: 'Reveal in Browser', action: 'cm-reveal-browser' },
     'sep',
     { label: 'Cut',    action: 'cm-cut',    kbd: 'Ctrl+X' },
     { label: 'Copy',   action: 'cm-copy',   kbd: 'Ctrl+C' },
@@ -1005,10 +926,8 @@ const CONTEXT_MENUS = {
     { label: 'Delete', action: 'cm-delete', kbd: 'Del', danger: true, icon: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M2 4h10M5 4V2.5h4V4M5.5 6v5M8.5 6v5M3 4l.8 8h6.4L11 4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>' },
     'sep',
     { label: 'Add tag…',         action: 'cm-add-tag',     icon: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M2 8.5L7.5 3l3.5 3.5L5.5 12 2 8.5z" stroke="currentColor" stroke-width="1.2"/><circle cx="5" cy="5" r="1" fill="currentColor"/></svg>' },
-    { label: 'Reclassify',       action: 'cm-reclassify' },
     { label: 'Add to Favorites', action: 'cm-favorite' },
     'sep',
-    { label: 'Compress to .zip',       action: 'cm-compress' },
     { label: 'Properties',             action: 'cm-properties' },
     { label: 'Show in Windows Explorer', action: 'cm-reveal-explorer' },
   ],
@@ -1017,7 +936,6 @@ const CONTEXT_MENUS = {
   folder: [
     { label: 'Open',             action: 'cm-open', icon: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M1 3.5a1 1 0 0 1 1-1h3l1 1.5H12a1 1 0 0 1 1 1V11a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V3.5z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>' },
     { label: 'Open in new tab',  action: 'cm-open-new-tab' },
-    { label: 'Open in new window', action: 'cm-open-new-window' },
     'sep',
     { label: 'Cut',    action: 'cm-cut',    kbd: 'Ctrl+X' },
     { label: 'Copy',   action: 'cm-copy',   kbd: 'Ctrl+C' },
@@ -1030,7 +948,7 @@ const CONTEXT_MENUS = {
     'sep',
     { label: 'Add to Favorites',   action: 'cm-favorite' },
     { label: 'Pin to sidebar',     action: 'cm-pin-sidebar' },
-    { label: 'Reclassify contents', action: 'cm-reclassify-folder' },
+    { label: 'Index for search',   action: 'cm-index-folder' },
     'sep',
     { label: 'Properties',              action: 'cm-properties' },
     { label: 'Show in Windows Explorer', action: 'cm-reveal-explorer' },
@@ -1047,8 +965,6 @@ const CONTEXT_MENUS = {
     { label: 'View → Grid',       action: 'cm-view-grid' },
     { label: 'Sort by → name',    action: 'cm-sort-name' },
     { label: 'Sort by → modified', action: 'cm-sort-modified' },
-    { label: 'Group by → type',   action: 'cm-group-type' },
-    { label: 'Group by → none',   action: 'cm-group-none' },
     'sep',
     { label: 'Show hidden files', action: 'cm-toggle-hidden' },
     { label: 'Properties',        action: 'cm-properties' },
@@ -1065,22 +981,63 @@ const CONTEXT_MENUS = {
     { label: 'Rename tab',         action: 'cm-rename-tab' },
   ],
 
-  // A.10.5 — Sidebar item context menu
+  // A.10.5 — Sidebar item context menu (pinned folders only — see getMenuTypeForTarget)
   'sidebar-item': [
     { label: 'Open in new tab',    action: 'cm-open-new-tab' },
     { label: 'Unpin',              action: 'cm-unpin-sidebar' },
-    { label: 'Pin to top',         action: 'cm-pin-top' },
     { label: 'Rename label',       action: 'cm-rename-sidebar-item' },
-    { label: 'Remove from sidebar', action: 'cm-remove-sidebar', danger: true },
+  ],
+
+  // A.10.6 — Home row context menu (Recent + Favorites rows). "Add/Remove
+  // from Favorites" label is set dynamically at contextmenu time (see the
+  // listener below) based on home.js's favoritesSet.
+  'home-row': [
+    { label: 'Open',               action: 'open-file' },
+    { label: 'Reveal in Browser',  action: 'reveal-file' },
+    { label: 'Copy path',          action: 'copy-path' },
+    'sep',
+    { label: 'Add to Favorites',   action: 'home-toggle-favorite' },
   ],
 };
 
 function getMenuTypeForTarget(target) {
   if (target.closest('.fp-tab')) return 'tab';
-  if (target.closest('.fp-sidebar__item, .fp-sidebar__section')) return 'sidebar-item';
+  // Only user pins carry data-pin-id — Home/Downloads/drives are not pins
+  // and fall through to the empty-area menu instead.
+  if (target.closest('.fp-sidebar__item[data-pin-id]')) return 'sidebar-item';
+  // Home's Recent/Favorites rows get their own menu — checked before the
+  // generic folder/file checks below so a Home row never falls into those.
+  if (target.closest('.fp-row--recent')) return 'home-row';
   if (target.closest('.fp-row[data-type="folder"], .ef-row[data-type="folder"]')) return 'folder';
-  if (target.closest('.fp-row, .ef-row, .rb-row, .home-row')) return 'file';
+  if (target.closest('.fp-row, .ef-row, .rb-row')) return 'file';
   return 'empty-area';
+}
+
+// The element + menu type the currently-open context menu was raised for —
+// set by the 'contextmenu' listener, read by the sidebar-item action handlers
+// (cm-open-new-tab / cm-unpin-sidebar / cm-rename-sidebar-item) below.
+let contextMenuTarget = null;
+let contextMenuType = null;
+
+/** The path a single-target context-menu action (Open, Rename, Properties, …)
+ * should act on: the row that was right-clicked, falling back to the
+ * keyboard-focused row or the first selected path. */
+function contextTargetPath() {
+  const row = contextMenuTarget?.closest ? contextMenuTarget.closest('.fp-row[data-path]') : null;
+  if (row) return row.dataset.path;
+  return browserState.focus || getSelectedPaths()[0] || null;
+}
+
+/** The directory a "create/paste/index here" action should target: the
+ * right-clicked folder itself (folder menu — "New folder inside" etc.), or
+ * the currently open directory otherwise (empty-area menu, or a paste
+ * initiated from the file menu). */
+function contextTargetDir() {
+  if (contextMenuType === 'folder') {
+    const path = contextTargetPath();
+    if (path) return path;
+  }
+  return browserState.path;
 }
 
 const contextMenu = document.getElementById('context-menu');
@@ -1140,7 +1097,9 @@ function showSnackbar(message, undoLabel, onUndo) {
   if (!container) return;
   const el = document.createElement('div');
   el.className = 'fp-snackbar';
-  el.innerHTML = `<span>${message}</span>`;
+  // message can be a filename (e.g. home.js's `Removed "${filename}" …`) —
+  // escape it the same way showToast does before inserting via innerHTML.
+  el.innerHTML = `<span>${escapeHtml(message)}</span>`;
   if (undoLabel) {
     const btn = document.createElement('button');
     btn.className = 'fp-snackbar__undo fp-btn fp-btn--ghost fp-btn--sm';
@@ -1163,7 +1122,9 @@ function showToast(message, variant = '') {
   if (!container) return;
   const el = document.createElement('div');
   el.className = 'fp-toast' + (variant ? ` fp-toast--${variant}` : '');
-  el.innerHTML = `<span>${message}</span>`;
+  // message is frequently API error text (formatApiError()) now that fileops
+  // routes every failure through here — escape it before inserting.
+  el.innerHTML = `<span>${escapeHtml(message)}</span>`;
   if (variant === 'error') {
     const btn = document.createElement('button');
     btn.className = 'fp-btn fp-btn--ghost fp-btn--sm';
@@ -1177,250 +1138,19 @@ function showToast(message, variant = '') {
   container.appendChild(el);
 }
 
-// Expose for actions.js
-window.__appShowSnackbar = showSnackbar;
-window.__appShowToast    = showToast;
-
-// ── File list loading ─────────────────────────────────────────────────────────
-
-const ICON_FILE = `<svg class="fp-row__icon" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="2" y="1" width="9" height="13" rx="1.5" fill="var(--bg-raised)" stroke="var(--border-subtle)" stroke-width="0.8"/><path d="M11 1v4h3" stroke="var(--border-subtle)" stroke-width="0.8" stroke-linejoin="round"/></svg>`;
-const ICON_IMG  = `<svg class="fp-row__icon" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="1" y="2" width="14" height="12" rx="1.5" fill="var(--bg-raised)" stroke="var(--border-subtle)" stroke-width="0.8"/><circle cx="5.5" cy="7" r="1.5" stroke="var(--text-tertiary)" stroke-width="0.8"/><path d="M1 12l4-4 4 4 2-2 4 2" stroke="var(--text-tertiary)" stroke-width="0.8" stroke-linejoin="round"/></svg>`;
-const ICON_TXT  = `<svg class="fp-row__icon" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="2" y="1" width="9" height="13" rx="1.5" fill="var(--bg-raised)" stroke="var(--border-subtle)" stroke-width="0.8"/><path d="M11 1v4h3" stroke="var(--border-subtle)" stroke-width="0.8" stroke-linejoin="round"/><path d="M5 6h6M5 8.5h6M5 11h4" stroke="var(--text-tertiary)" stroke-width="0.8" stroke-linecap="round"/></svg>`;
-const ICON_FOLDER = `<svg class="fp-row__icon" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M1 4a1 1 0 0 1 1-1h4l1.5 1.5H14a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V4z" fill="var(--accent)" opacity=".75" stroke="var(--accent-edge)" stroke-width="0.8"/></svg>`;
-
-const EXT_IMG   = new Set(['.jpg','.jpeg','.png','.gif','.bmp','.webp','.heic','.svg','.tiff']);
-const EXT_TXT   = new Set(['.txt','.md','.csv','.log','.json','.xml','.yaml','.yml','.toml','.ini','.cfg','.html','.css','.js','.ts','.py','.rs','.go','.java','.c','.cpp','.h']);
-
-function iconForExt(ext) {
-  if (EXT_IMG.has(ext)) return ICON_IMG;
-  if (EXT_TXT.has(ext)) return ICON_TXT;
-  return ICON_FILE;
-}
-
-function formatSize(bytes) {
-  if (bytes == null) return '—';
-  if (bytes < 1024) return bytes + ' B';
-  if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
-  if (bytes < 1073741824) return (bytes / 1048576).toFixed(1) + ' MB';
-  return (bytes / 1073741824).toFixed(2) + ' GB';
-}
-
-function formatModified(isoStr) {
-  if (!isoStr) return '—';
-  const d = new Date(isoStr);
-  if (isNaN(d)) return isoStr;
-  const now = new Date();
-  const diff = now - d;
-  const sameDay = d.toDateString() === now.toDateString();
-  if (sameDay) return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  if (diff < 86400000 * 2) return 'Yesterday';
-  if (diff < 86400000 * 7) return d.toLocaleDateString([], { weekday: 'short' });
-  return d.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
-}
-
-function escapeHtml(str) {
-  return String(str)
-    .replace(/&/g, '&amp;').replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-}
-
 // ── Folder navigation via /fs/list (read-only) ────────────────────────────────
 // Maintains a client-side history stack for back/forward.
 const navHistory = { stack: [], idx: -1 };
 
-async function loadDirectory(absPath) {
-  const url = absPath
-    ? `${API_BASE}/fs/list?path=${encodeURIComponent(absPath)}`
-    : `${API_BASE}/fs/list/root`;
-
-  let data;
-  try {
-    const r = await fetch(url);
-    if (r.status === 403) {
-      showErrorBanner(`Path is outside the sandbox: ${absPath}`);
-      return;
-    }
-    if (r.status === 404) {
-      showErrorBanner(`Folder not found: ${absPath}`);
-      return;
-    }
-    if (!r.ok) {
-      showErrorBanner(`Failed to load folder (HTTP ${r.status}).`);
-      return;
-    }
-    data = await r.json();
-  } catch (err) {
-    showErrorBanner(`Couldn't reach backend: ${err.message}`);
-    return;
-  }
-
-  renderDirectory(data);
-  pushHistory(data.path);
-  updateBreadcrumb(data.path);
-  updateAddressBar(data.path);
-  updateSidebarActive();
-  syncActiveTabPath(data.path);
-}
-
-function pushHistory(path) {
-  // If we navigated forward from a non-tail position, drop the forward stack.
-  if (navHistory.idx < navHistory.stack.length - 1) {
-    navHistory.stack = navHistory.stack.slice(0, navHistory.idx + 1);
-  }
-  if (navHistory.stack[navHistory.idx] !== path) {
-    navHistory.stack.push(path);
-    navHistory.idx = navHistory.stack.length - 1;
-  }
-  refreshNavButtons();
-}
-
-function navBack() {
-  if (navHistory.idx <= 0) return;
-  navHistory.idx -= 1;
-  const path = navHistory.stack[navHistory.idx];
-  fetchAndRender(path);
-}
-
-function navForward() {
-  if (navHistory.idx >= navHistory.stack.length - 1) return;
-  navHistory.idx += 1;
-  const path = navHistory.stack[navHistory.idx];
-  fetchAndRender(path);
-}
-
-function navUp() {
-  const cur = navHistory.stack[navHistory.idx];
-  if (!cur) return;
-  // Compute parent: strip last path segment. Keep the drive-letter root intact.
-  const parent = cur.replace(/[\\\/]+[^\\\/]+[\\\/]?$/, '') || cur;
-  if (parent === cur) return; // Already at root.
-  loadDirectory(parent);
-}
-
-async function fetchAndRender(path) {
-  try {
-    const r = await fetch(`${API_BASE}/fs/list?path=${encodeURIComponent(path)}`);
-    if (!r.ok) {
-      showErrorBanner(`Failed to load folder (HTTP ${r.status}).`);
-      refreshNavButtons();
-      return;
-    }
-    const data = await r.json();
-    renderDirectory(data);
-    updateBreadcrumb(data.path);
-    updateAddressBar(data.path);
-    updateSidebarActive();
-    syncActiveTabPath(data.path);
-  } catch (err) {
-    showErrorBanner(`Couldn't reach backend: ${err.message}`);
-  }
-  refreshNavButtons();
-}
-
-function refreshNavButtons() {
-  const back = document.querySelector('[data-action="nav-back"]');
-  const fwd  = document.querySelector('[data-action="nav-forward"]');
-  const up   = document.querySelector('[data-action="nav-up"]');
-  if (back) back.disabled = navHistory.idx <= 0;
-  if (fwd)  fwd.disabled  = navHistory.idx >= navHistory.stack.length - 1;
-  if (up) {
-    const cur = navHistory.stack[navHistory.idx];
-    if (!cur) {
-      up.disabled = true;
-    } else {
-      // At sandbox root if stripping the last path segment returns the same string or empty
-      const parent = cur.replace(/[\\\/]+[^\\\/]+[\\\/]?$/, '');
-      up.disabled = !parent || parent === cur;
-    }
-  }
-}
-
-function renderDirectory(data) {
-  const listScroll = document.getElementById('list-scroll');
-  if (!listScroll) return;
-
-  if (!data.entries || data.entries.length === 0) {
-    listScroll.innerHTML = renderEmptyFolder();
-    return;
-  }
-
-  listScroll.innerHTML = data.entries.map(entry => renderFsRow(entry, data.path)).join('');
-}
-
-function renderFsRow(entry, parentPath) {
-  const childPath = parentPath.replace(/[\\\/]+$/, '') + '\\' + entry.name;
-  const icon = entry.is_dir ? ICON_FOLDER : iconForExt(entry.ext);
-  const sizeText = entry.is_dir ? '—' : formatSize(entry.size);
-  const modifiedText = formatModified(entry.modified * 1000);
-  return `<div class="fp-row${entry.is_dir ? ' fp-row--folder' : ''}" role="option"
-            data-path="${escapeHtml(childPath)}"
-            data-type="${entry.is_dir ? 'folder' : 'file'}">
-    ${icon}
-    <span class="fp-row__name">${escapeHtml(entry.name)}</span>
-    <span class="fp-row__size mono">${sizeText}</span>
-    <span class="fp-row__modified mono">${modifiedText}</span>
-    <div class="fp-row__tags"></div>
-  </div>`;
-}
-
-function renderEmptyFolder() {
-  return `<div class="fp-empty-state" role="status" aria-live="polite">
-    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-      <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/>
-    </svg>
-    <h3 class="t-title-sm">This folder is empty</h3>
-    <p class="t-body" style="color: var(--text-secondary)">Drop files here or right-click to create new ones.</p>
-  </div>`;
-}
-
-function updateAddressBar(path) {
-  const addressEl = document.getElementById('address-bar-text') || document.querySelector('.fp-address-bar__text');
-  if (addressEl) addressEl.textContent = path;
-}
-
-function updateBreadcrumb(path) {
-  const crumb = document.getElementById('breadcrumb');
-  if (!crumb) return;
-  // Split on \ or /, drop empties. First part is drive letter (e.g. "C:") — keep with backslash for nav.
-  const parts = path.split(/[\\\/]+/).filter(Boolean);
-  let cumulative = '';
-  const html = parts.map((part, i) => {
-    cumulative = i === 0 ? part + '\\' : cumulative + part + '\\';
-    const isLast = i === parts.length - 1;
-    const cls = isLast ? 'fp-breadcrumb__crumb fp-breadcrumb__crumb--current' : 'fp-breadcrumb__crumb';
-    return `<button class="${cls}" data-action="navigate-crumb" data-path="${escapeHtml(cumulative)}">${escapeHtml(part)}</button>`;
-  }).join('<span class="fp-breadcrumb__sep">·</span>');
-  crumb.innerHTML = html;
-}
-
-function showErrorBanner(message) {
-  const listScroll = document.getElementById('list-scroll');
-  if (!listScroll) return;
-  listScroll.innerHTML = `<div class="fp-error-banner" role="alert">
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-      <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
-    </svg>
-    <span class="fp-body" style="color: var(--text-primary)">${escapeHtml(message)}</span>
-  </div>`;
-}
-
 async function triggerScan(path) {
-  const body = path ? JSON.stringify({ path }) : '{}';
   showToast('Scanning…', 'default');
   try {
-    const res = await fetch(`${API_BASE}/scan`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body,
-      signal: AbortSignal.timeout(60000),
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
+    const data = await API.post('/scan', path ? { path } : {}, { signal: AbortSignal.timeout(60000) });
     showSnackbar(`Scan complete — ${data.count} file${data.count !== 1 ? 's' : ''} indexed`);
     switchScreen('browser', pathBaseName(data.path) || undefined);
     await loadDirectory(data.path);
   } catch (err) {
-    showToast(`Scan failed: ${err.message}`, 'error');
+    showToast(`Scan failed: ${formatApiError(err)}`, 'error');
   }
 }
 
@@ -1431,72 +1161,121 @@ async function checkBackend() {
   const dot = el.querySelector('.fp-statusbar__backend-dot');
   const label = el.querySelector('.fp-statusbar__backend-label');
   try {
-    const res = await fetch(`${API_BASE}/health`, { signal: AbortSignal.timeout(2000) });
-    el.dataset.state = res.ok ? 'ok' : 'error';
-    if (label) label.textContent = res.ok ? 'Backend' : 'Backend error';
-    return res.ok;
-  } catch (_) {
-    el.dataset.state = 'offline';
-    if (label) label.textContent = 'Backend offline';
+    const data = await API.get('/health', null, { signal: AbortSignal.timeout(2000) });
+    el.dataset.state = 'ok';
+    if (label) label.textContent = 'Backend';
+    window.__fpHealth = data; // read by settings.js's Data-pane "Writes" line
+    setWriteLockHint(data.write_unlocked === false);
+    if (typeof updateWritesStatusLine === 'function') updateWritesStatusLine();
+    return true;
+  } catch (err) {
+    // ApiError means the backend answered but with a non-2xx status; any
+    // other rejection (network error, the 2s AbortSignal firing) means it
+    // didn't answer at all.
+    if (err instanceof ApiError) {
+      el.dataset.state = 'error';
+      if (label) label.textContent = 'Backend error';
+    } else {
+      el.dataset.state = 'offline';
+      if (label) label.textContent = 'Backend offline';
+    }
     return false;
   }
 }
 
-// ── Resizer (inspector drag handle) ────────────────────��───────────────────────
-function initResizer() {
-  const resizer   = document.getElementById('resizer');
-  const listPane  = document.getElementById('list-pane');
-  const inspector = document.getElementById('inspector');
-  if (!resizer || !listPane || !inspector) return;
-
-  let startX, startW;
-  resizer.addEventListener('mousedown', e => {
-    startX = e.clientX;
-    startW = inspector.getBoundingClientRect().width;
-    document.body.style.cursor = 'col-resize';
-    document.body.style.userSelect = 'none';
-    const onMove = ev => {
-      const delta = startX - ev.clientX;
-      const newW  = Math.max(280, Math.min(520, startW + delta));
-      inspector.style.width = `${newW}px`;
-    };
-    const onUp = () => {
-      document.body.style.cursor = '';
-      document.body.style.userSelect = '';
-      document.removeEventListener('mousemove', onMove);
-      document.removeEventListener('mouseup', onUp);
-    };
-    document.addEventListener('mousemove', onMove);
-    document.addEventListener('mouseup', onUp);
-    e.preventDefault();
-  });
+/** Shows/hides the "writes: sandbox" status-bar hint (health.write_unlocked === false). */
+function setWriteLockHint(locked) {
+  const hint = document.getElementById('status-write-lock');
+  const sep  = document.getElementById('status-lock-sep');
+  if (hint) hint.style.display = locked ? '' : 'none';
+  if (sep)  sep.style.display  = locked ? '' : 'none';
 }
 
-// ── Window controls (Electron IPC) ────────────────────────���───────────────────
+// ── Sidebar: real drives, pins, Downloads ─────────────────────────────────────
+// Called once at startup (after loadConfig() so applyDownloadsPath can read
+// the config cache) and safe to re-run any time the backend state changes
+// (e.g. after a pin is renamed/unpinned). All three degrade silently to a
+// no-op on failure — the sidebar keeps whatever it last rendered — since a
+// console.error here would fail the smoke test's "no renderer errors" gate.
+
+async function loadDrives() {
+  const container = document.getElementById('sb-drives');
+  if (!container) return;
+  let driveList;
+  try {
+    driveList = await API.get('/drives');
+  } catch (err) {
+    console.warn('[fp-drives] failed to load drives:', formatApiError(err));
+    return;
+  }
+  container.innerHTML = driveList.map(renderDriveItem).join('');
+}
+
+function renderDriveItem(d) {
+  const letter = d.letter || '';
+  const label = (d.label || '').trim();
+  const labelText = label ? `${letter} ${label}` : `${letter} Drive`;
+  const pct = d.total_bytes > 0 ? Math.round((d.used_bytes / d.total_bytes) * 100) : 0;
+  const usageTitle = `${formatSize(d.used_bytes)} / ${formatSize(d.total_bytes)} used`;
+  return `<div class="fp-sidebar__drive-item">
+    <button class="fp-sidebar__item" data-screen="browser" data-path="${escapeHtml(d.mount)}"
+            data-action="navigate-path" title="${escapeHtml(labelText)}">
+      <svg class="fp-sidebar__drive-icon" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <ellipse cx="8" cy="6" rx="6" ry="2.5" stroke="currentColor" stroke-width="1.2"/>
+        <path d="M2 6v4c0 1.4 2.7 2.5 6 2.5s6-1.1 6-2.5V6" stroke="currentColor" stroke-width="1.2"/>
+      </svg>
+      <span class="fp-sidebar__drive-letter" aria-hidden="true">${escapeHtml(letter)}</span>
+      <span class="fp-sidebar__item__label">${escapeHtml(labelText)}</span>
+    </button>
+    <div class="fp-sidebar__drive-bar" title="${escapeHtml(usageTitle)}">
+      <div class="fp-sidebar__drive-bar__fill" style="width:${pct}%"></div>
+    </div>
+  </div>`;
+}
+
+async function loadPins() {
+  const container = document.getElementById('sb-pinned-folders');
+  if (!container) return;
+  let pinList;
+  try {
+    pinList = await API.get('/pins');
+  } catch (err) {
+    console.warn('[fp-pins] failed to load pins:', formatApiError(err));
+    return;
+  }
+  container.innerHTML = pinList.map(renderPinItem).join('');
+}
+
+function renderPinItem(pin) {
+  const label = pin.label || pathBaseName(pin.path) || pin.path;
+  return `<button class="fp-sidebar__item" data-screen="browser" data-path="${escapeHtml(pin.path)}"
+          data-pin-id="${pin.id}" data-action="navigate-path" title="${escapeHtml(pin.path)}">
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <path d="M1 4a1 1 0 0 1 1-1h4l1.5 1.5H14a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V4z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
+    </svg>
+    <span class="fp-sidebar__item__label">${escapeHtml(label)}</span>
+  </button>`;
+}
+
+// Downloads' data-path is resolved once at startup: config['paths.downloads']
+// when the user configured one, else the real OS Downloads folder (main.js's
+// get-home-dir bridge), never the old hardcoded sandbox-relative guess.
+function applyDownloadsPath() {
+  const el = document.getElementById('nav-downloads');
+  if (!el) return;
+  const configured = window.__fpConfig && window.__fpConfig['paths.downloads'];
+  const home = window.electronAPI?.homeDir?.();
+  const path = configured || (home ? `${home}\\Downloads` : null);
+  if (path) el.dataset.path = path;
+}
+
+// ── Window controls (Electron IPC) ───────────────────────────────────────────
 function initWindowControls() {
   const api = window.electronAPI;
   if (!api) return;
   document.getElementById('btn-minimize')?.addEventListener('click', () => api.minimize?.());
   document.getElementById('btn-maximize')?.addEventListener('click', () => api.maximize?.());
   document.getElementById('btn-close')?.addEventListener('click', () => api.close?.());
-}
-
-// ── Home > Recent/Favorites: prune empty sections + toggle empty states ───────
-// Each .home-section in Recent renders only when it has at least one
-// .fp-row--recent. Order is preserved (Today → Yesterday → This week →
-// Earlier this month → Older); the first non-empty group naturally lands at
-// the top. Additionally, .fp-empty-state[data-empty-for="recent"|"favorites"]
-// elements toggle visible iff their pane has zero .fp-row--recent rows.
-function pruneEmptyHomeSections() {
-  document.querySelectorAll('.home-pane[data-pane="recent"] .home-section').forEach(s => {
-    s.style.display = s.querySelector('.fp-row--recent') ? '' : 'none';
-  });
-  document.querySelectorAll('.fp-empty-state.home-pane__empty[data-empty-for]').forEach(es => {
-    const key  = es.dataset.emptyFor;
-    const pane = document.querySelector(`.home-pane[data-pane="${key}"]`);
-    const empty = !!pane && !pane.querySelector('.fp-row--recent');
-    es.style.display = empty ? '' : 'none';
-  });
 }
 
 // ── Underline tab indicator (sub-tabs within screens) ─────────────��──────────
@@ -1544,20 +1323,53 @@ const IN_SCOPE_ACTIONS = new Set([
   'toggle-sidebar', 'toggle-inspector', 'toggle-theme', 'set-view-mode',
   'focus-search', 'filter-by-tag', 'open-tag-canvas', 'close-tag-canvas',
   'tag-canvas-select',
-  'nav-back', 'nav-forward', 'nav-up', 'navigate-crumb',
+  'nav-back', 'nav-forward', 'nav-up', 'navigate-crumb', 'nav-retry',
+  // 'sort-by' is handled by initColumnSort()'s own listener (browser.js);
+  // 'select-file' only appears on the static placeholder rows in index.html,
+  // superseded by browser.js's delegated row click handler. Both are listed
+  // here purely so the data-action bubble to the global switch is a silent
+  // no-op instead of a "not yet implemented" toast.
+  'sort-by', 'select-file',
+  'cm-open-new-tab', 'cm-unpin-sidebar', 'cm-rename-sidebar-item',
   'open-review-bin',
   'switch-inspector-tab',
+  'inspector-open', 'inspector-reveal', 'inspector-remove-tag', 'inspector-undo-op',
   'unfavorite-file', 'open-recent-file',
+  'open-file', 'reveal-file', 'copy-path', 'home-toggle-favorite',
+  'palette-open-file', 'palette-open-folder',
   'open-palette', 'close-palette', 'palette-set-mode',
   'modal-cancel', 'modal-confirm', 'modal-confirm-type',
   'ef-filter', 'ef-sort', 'ef-toggle-pause-ai', 'ef-toggle-moving-card',
   'scan-config-switch-mode', 'scan-baseline-confirm',
   'settings-nav', 'settings-set-theme', 'settings-set-density', 'settings-set-accent',
   'settings-set-accent-hex', 'settings-reset-accent',
-  'settings-set-show-notifications',
+  'settings-set-show-notifications', 'settings-toggle', 'settings-set-click-mode',
+  'settings-empty-trash',
   'settings-set-font-scale', 'settings-reset-shortcuts',
   'zoom-reset',
+  // File operations (Task 4) — context-menu actions wired in the switch below.
+  'cm-open', 'cm-open-with', 'cm-reveal-explorer',
+  'cm-cut', 'cm-copy', 'cm-paste', 'cm-paste-here', 'cm-rename', 'cm-delete',
+  'cm-new-folder', 'cm-new-file', 'cm-refresh',
+  'cm-favorite', 'cm-pin-sidebar', 'cm-index-folder', 'cm-properties', 'cm-toggle-hidden',
+  'cm-view-list', 'cm-view-grid', 'cm-sort-name', 'cm-sort-modified',
 ]);
+
+/** Activates the Inspector tab named `name` ('preview' | 'tags' | 'history') —
+ * the same tab-button/pane toggle the 'switch-inspector-tab' click case
+ * performs, extracted so a non-click caller (e.g. cm-add-tag) can jump to a
+ * specific tab without synthesizing a click on the tab button. */
+function switchInspectorTab(name) {
+  const inspector = document.getElementById('inspector');
+  if (!inspector) return;
+  const targetTab = inspector.querySelector(`.fp-inspector__tab[data-tab="${name}"]`);
+  inspector.querySelectorAll('.fp-inspector__tab').forEach(t => {
+    t.classList.toggle('fp-tabs__item--active', t === targetTab);
+  });
+  inspector.querySelectorAll('.fp-inspector__pane').forEach(p => {
+    p.style.display = p.dataset.pane === name ? '' : 'none';
+  });
+}
 
 document.addEventListener('click', e => {
   const btn = e.target.closest('[data-action]');
@@ -1578,8 +1390,6 @@ document.addEventListener('click', e => {
       });
       btn.classList.add('fp-sidebar__item--active');
       btn.setAttribute('data-manual-active', 'true');
-      // Pre-seed history stack to prevent switchScreen's auto-load from racing with our explicit load.
-      if (navPath && navHistory.stack.length === 0) navHistory.stack.push(null);
       // Pre-set the tab label to the sidebar item's text (e.g. "Downloads",
       // "Projects") or the path's basename — so the tab never flashes "Files"
       // before the async loadDirectory() call lands.
@@ -1587,8 +1397,7 @@ document.addEventListener('click', e => {
       const initialLabel = (sidebarLabelEl?.textContent || '').trim()
                         || pathBaseName(navPath || '')
                         || undefined;
-      switchScreen('browser', initialLabel);
-      if (navPath) loadDirectory(navPath);
+      openBrowserAt(navPath, initialLabel);
       break;
     }
     case 'nav-back':
@@ -1602,6 +1411,9 @@ document.addEventListener('click', e => {
       break;
     case 'navigate-crumb':
       if (btn.dataset.path) loadDirectory(btn.dataset.path);
+      break;
+    case 'nav-retry':
+      retryLoad();
       break;
     case 'switch-tab':
       // User explicitly clicked a tab — activate THAT tab specifically.
@@ -1659,7 +1471,14 @@ document.addEventListener('click', e => {
       closeModal();
       break;
     case 'modal-confirm':
-      closeModal();
+      // No-op here by design: openModal() assigns #modal-confirm's own
+      // .onclick to the button directly (gating on a typed confirmWord,
+      // calling config.onConfirm(), and only then closeModal()). A second,
+      // unconditional closeModal() from this delegated switch would race
+      // ahead of that gating on every click — including a wrong typed word
+      // — and close the modal regardless of what onclick decided. 'modal-confirm'
+      // stays in IN_SCOPE_ACTIONS so this case is a deliberate silent no-op,
+      // not a missing handler.
       break;
     case 'scan-config-switch-mode': {
       const conv = document.querySelector('.scan-conv');
@@ -1708,12 +1527,15 @@ document.addEventListener('click', e => {
       break;
     case 'settings-nav':
       switchSettingsPane(btn.dataset.pane);
+      if (btn.dataset.pane === 'data') updateWritesStatusLine();
       break;
     case 'settings-set-theme':
       applyTheme(btn.dataset.theme || btn.dataset.val);
+      saveSetting('ui.theme', btn.dataset.theme || btn.dataset.val);
       break;
     case 'settings-set-density':
       applyDensity(btn.dataset.density || btn.dataset.val);
+      saveSetting('ui.density', btn.dataset.density || btn.dataset.val);
       break;
     case 'settings-set-accent':
       // Legacy: only applies if dataset.accent or dataset.val is a valid hex
@@ -1724,6 +1546,32 @@ document.addEventListener('click', e => {
       break;
     case 'settings-reset-accent':
       resetAccentToDefault();
+      deleteSetting('ui.accent_hex');
+      break;
+    case 'settings-set-click-mode': {
+      const mode = btn.dataset.val === 'single' ? 'single' : 'double';
+      document.querySelectorAll('[data-action="settings-set-click-mode"]').forEach(b => {
+        b.classList.toggle('active', b.dataset.val === mode);
+      });
+      saveSetting('ui.click_mode', mode);
+      break;
+    }
+    case 'settings-empty-trash':
+      openModal('danger', {
+        title: 'Empty FilePlus trash?',
+        body: 'Everything FilePlus has deleted is sent to the Windows Recycle Bin. Undo will no longer be possible for those items.',
+        confirmLabel: 'Empty',
+        confirmWord: 'EMPTY',
+        onConfirm: () => {
+          API.post('/fs/trash/empty').then(result => {
+            const n = result.batches || 0;
+            const skipped = result.skipped_roots && result.skipped_roots.length;
+            let msg = `Sent ${n} batch folder${n === 1 ? '' : 's'} to the Recycle Bin`;
+            if (skipped) msg += ` (${skipped} location${skipped === 1 ? '' : 's'} skipped)`;
+            showToast(msg, 'default');
+          }).catch(err => showToast(`Failed to empty trash: ${formatApiError(err)}`, 'error'));
+        },
+      });
       break;
     case 'settings-set-font-scale': {
       const scale = btn.dataset.scale;
@@ -1735,14 +1583,23 @@ document.addEventListener('click', e => {
     case 'settings-reset-shortcuts':
       // INTEGRATION: reset to default keybindings
       break;
-    case 'switch-inspector-tab': {
-      const inspector = document.getElementById('inspector');
-      inspector?.querySelectorAll('.fp-inspector__tab').forEach(t => {
-        t.classList.toggle('fp-tabs__item--active', t === btn);
-      });
-      inspector?.querySelectorAll('.fp-inspector__pane').forEach(p => {
-        p.style.display = p.dataset.pane === btn.dataset.tab ? '' : 'none';
-      });
+    case 'switch-inspector-tab':
+      switchInspectorTab(btn.dataset.tab);
+      break;
+    case 'inspector-open':
+      inspectorOpenSelected();
+      break;
+    case 'inspector-reveal':
+      inspectorRevealSelected();
+      break;
+    case 'inspector-remove-tag': {
+      const tagId = btn.dataset.tagId;
+      if (tagId) inspectorRemoveTag(tagId);
+      break;
+    }
+    case 'inspector-undo-op': {
+      const opId = btn.dataset.opId;
+      if (opId) inspectorUndoOp(opId, btn.dataset.batchId || null);
       break;
     }
     case 'unfavorite-file':
@@ -1764,6 +1621,258 @@ document.addEventListener('click', e => {
       updateInspector('single', { name, path });
       break;
     }
+    // Home hover actions (Recent + Favorites rows) and the home-row context
+    // menu's Open/Reveal/Copy path — resolveHomeRowTarget (home.js) resolves
+    // the acting row whether `btn` is the hover-action button itself (nested
+    // inside the row) or a context-menu popup button (rendered outside the
+    // row; falls back to contextMenuTarget, captured at right-click time).
+    case 'open-file': {
+      const target = resolveHomeRowTarget(btn);
+      if (target) homeOpenPath(target.path, target.ext);
+      break;
+    }
+    case 'reveal-file': {
+      const target = resolveHomeRowTarget(btn);
+      if (target) homeRevealInBrowser(target.path);
+      break;
+    }
+    case 'copy-path': {
+      const target = resolveHomeRowTarget(btn);
+      if (target) homeCopyPath(target.path);
+      break;
+    }
+    case 'home-toggle-favorite': {
+      const target = resolveHomeRowTarget(btn);
+      if (target) homeToggleFavorite(target.path);
+      break;
+    }
+    case 'palette-open-file': {
+      const path = btn.dataset.path;
+      if (!path) break;
+      closePalette();
+      const parent = parentOfPath(path);
+      const loaded = openBrowserAt(parent, pathBaseName(parent) || undefined);
+      Promise.resolve(loaded).then(() => selectRow(path));
+      break;
+    }
+    case 'palette-open-folder': {
+      const path = btn.dataset.path;
+      if (!path) break;
+      closePalette();
+      openBrowserAt(path, pathBaseName(path) || undefined);
+      break;
+    }
+    // Tab context menu (A.10.4) — only new-tab/close-tab are built; duplicate/
+    // pin/rename/close-other-tabs have no underlying tab-state support yet
+    // and fall through to the stub toast below (see scripts/check_menu_cases.js).
+    case 'cm-new-tab':
+      openNewTab();
+      break;
+    case 'cm-close-tab': {
+      const tab = contextMenuTarget?.closest ? contextMenuTarget.closest('.fp-tab') : null;
+      if (tab) closeTab(tab);
+      break;
+    }
+    // Sidebar pinned-item context menu (A.10.5). These are only reachable
+    // through the 'sidebar-item' menu type (see getMenuTypeForTarget), which
+    // is raised solely for elements with data-pin-id — so any other menu
+    // (file/folder/tab/empty-area) still falls through to the stub below.
+    case 'cm-open-new-tab': {
+      if (contextMenuType === 'sidebar-item' && contextMenuTarget) {
+        const pinPath = contextMenuTarget.dataset.path;
+        if (pinPath) {
+          const labelEl = contextMenuTarget.querySelector('.fp-sidebar__item__label');
+          const label = (labelEl?.textContent || '').trim() || pathBaseName(pinPath) || undefined;
+          openNewTab();
+          openBrowserAt(pinPath, label);
+        }
+      } else if (contextMenuType === 'file' || contextMenuType === 'folder') {
+        // Folder → open that folder; file → open its parent folder.
+        const path = contextTargetPath();
+        if (path) {
+          const targetDir = contextMenuType === 'folder' ? path : parentOfPath(path);
+          openNewTab();
+          openBrowserAt(targetDir, pathBaseName(targetDir) || undefined);
+        }
+      } else {
+        console.log(`[FilePlus] data-action stub: ${action}`, btn.dataset);
+        showToast(`Action "${action}" — not yet implemented`, 'action');
+      }
+      break;
+    }
+    case 'cm-unpin-sidebar': {
+      if (contextMenuType === 'sidebar-item' && contextMenuTarget) {
+        const pinId = contextMenuTarget.dataset.pinId;
+        if (pinId) {
+          API.del(`/pins/${pinId}`)
+            .then(loadPins)
+            .catch(err => showToast(`Failed to unpin: ${formatApiError(err)}`, 'error'));
+        }
+      } else {
+        console.log(`[FilePlus] data-action stub: ${action}`, btn.dataset);
+        showToast(`Action "${action}" — not yet implemented`, 'action');
+      }
+      break;
+    }
+    case 'cm-rename-sidebar-item': {
+      if (contextMenuType === 'sidebar-item' && contextMenuTarget) {
+        const pinId = contextMenuTarget.dataset.pinId;
+        const currentLabel = (contextMenuTarget.querySelector('.fp-sidebar__item__label')?.textContent || '').trim();
+        if (pinId) {
+          openModal('warn', {
+            title: 'Rename pin',
+            body: 'Enter a new label for this pinned folder.',
+            confirmLabel: 'Rename',
+            textInput: { value: currentLabel, placeholder: 'Label' },
+            onConfirm: () => {
+              const input = document.getElementById('modal-text-input');
+              const val = (input?.value || '').trim();
+              if (!val) {
+                showToast('Label cannot be empty', 'error');
+                input?.focus();
+                return false; // veto the close — keep the modal open
+              }
+              API.patch(`/pins/${pinId}`, { label: val })
+                .then(loadPins)
+                .catch(err => showToast(`Failed to rename: ${formatApiError(err)}`, 'error'));
+            },
+          });
+        }
+      } else {
+        console.log(`[FilePlus] data-action stub: ${action}`, btn.dataset);
+        showToast(`Action "${action}" — not yet implemented`, 'action');
+      }
+      break;
+    }
+    // ── File operations context-menu wiring (Task 4) ─────────────────────────
+    case 'cm-open': {
+      const path = contextTargetPath();
+      if (!path) break;
+      if (contextMenuType === 'folder') { loadDirectory(path); break; }
+      const openPath = window.electronAPI?.openPath;
+      if (openPath) {
+        Promise.resolve(openPath(path)).then(result => { if (result) showToast(result, 'error'); })
+          .catch(err => showToast(formatApiError(err), 'error'));
+      }
+      API.post('/recent', { path, action: 'opened' }).catch(() => { /* best-effort logging */ });
+      break;
+    }
+    case 'cm-open-with': {
+      const path = contextTargetPath();
+      if (path) window.electronAPI?.openWith?.(path);
+      break;
+    }
+    case 'cm-reveal-explorer': {
+      const path = contextTargetPath();
+      if (path) window.electronAPI?.showItemInFolder?.(path);
+      break;
+    }
+    case 'cm-cut':
+      fileops.cutSelection();
+      break;
+    case 'cm-copy':
+      fileops.copySelection();
+      break;
+    case 'cm-paste':
+    case 'cm-paste-here':
+      fileops.pasteInto(contextTargetDir());
+      break;
+    case 'cm-rename': {
+      const path = contextTargetPath();
+      if (path && typeof startInlineRename === 'function') startInlineRename(path);
+      break;
+    }
+    case 'cm-delete':
+      fileops.trashSelection();
+      break;
+    case 'cm-new-folder':
+      fileops.newFolder(contextTargetDir());
+      break;
+    case 'cm-new-file':
+      fileops.newFile(contextTargetDir());
+      break;
+    case 'cm-refresh':
+      refreshDirectory();
+      break;
+    case 'cm-favorite': {
+      const path = contextTargetPath();
+      if (!path) break;
+      API.post('/favorites', { path })
+        .then(() => showToast('Added to Favorites', 'default'))
+        .catch(err => showToast(`Failed to favorite: ${formatApiError(err)}`, 'error'));
+      break;
+    }
+    case 'cm-add-tag': {
+      // The row was already selected by the 'contextmenu' listener
+      // (ensureRowSelected) before this menu item could be clicked — just
+      // surface the Inspector's existing tag-add input for it. The Tags pane
+      // is display:none unless it's the active tab (Preview is the default),
+      // so switch to it first or .focus() below is a silent no-op.
+      const inspectorEl = document.getElementById('inspector');
+      if (inspectorEl && !inspectorEl.classList.contains('inspector--open')) toggleInspector();
+      switchInspectorTab('tags');
+      document.getElementById('inspector-tag-input')?.focus();
+      break;
+    }
+    case 'cm-pin-sidebar': {
+      const path = contextTargetPath();
+      if (!path) break;
+      API.post('/pins', { path })
+        .then(loadPins)
+        .catch(err => showToast(`Failed to pin: ${formatApiError(err)}`, 'error'));
+      break;
+    }
+    case 'cm-index-folder': {
+      const path = contextTargetPath();
+      if (!path) break;
+      const name = pathBaseName(path) || path;
+      API.post('/index', { path })
+        .then(() => showToast(`Indexing ${name}…`, 'default'))
+        .catch(err => showToast(`Failed to index: ${formatApiError(err)}`, 'error'));
+      break;
+    }
+    case 'cm-properties': {
+      const path = contextMenuType === 'empty-area' ? browserState.path : contextTargetPath();
+      if (!path) break;
+      API.get('/file', { path })
+        .then(data => {
+          const rows = [
+            ['Kind', data.kind || '—'],
+            ['Size', data.size != null ? formatSize(data.size) : '—'],
+            ['Modified', data.modified ? formatModified(data.modified) : '—'],
+            ['Created', data.created ? formatModified(data.created) : '—'],
+            ['Hash', data.hash || '—'],
+            ['Path', data.path || path],
+          ];
+          openModal('warn', {
+            title: pathBaseName(path) || 'Properties',
+            body: rows.map(([k, v]) => `${k}: ${v}`).join('\n'),
+            confirmLabel: 'Close',
+          });
+        })
+        .catch(err => showToast(`Failed to load properties: ${formatApiError(err)}`, 'error'));
+      break;
+    }
+    case 'cm-toggle-hidden': {
+      const next = !browserState.showHidden;
+      browserState.showHidden = next;
+      refreshDirectory();
+      saveSetting('ui.show_hidden', next);
+      break;
+    }
+    case 'cm-view-list':
+      setViewMode('list');
+      break;
+    case 'cm-view-grid':
+      setViewMode('grid');
+      break;
+    case 'cm-sort-name':
+      applySort('name', (browserState.sort.key === 'name' && browserState.sort.dir === 'asc') ? 'desc' : 'asc');
+      break;
+    case 'cm-sort-modified':
+      applySort('modified', (browserState.sort.key === 'modified' && browserState.sort.dir === 'asc') ? 'desc' : 'asc');
+      break;
+
     default:
       if (!IN_SCOPE_ACTIONS.has(action)) {
         // Stub: log and show toast for out-of-scope actions
@@ -1777,14 +1886,31 @@ document.addEventListener('click', e => {
 document.addEventListener('input', e => {
   const t = e.target;
   if (t && t.dataset && t.dataset.action === 'settings-set-accent-hex') {
-    applyAccentHex(t.value);
+    // Only persist once the value is actually a valid hex — a half-typed
+    // value ("#4C") shouldn't overwrite the last-good saved accent.
+    if (applyAccentHex(t.value)) saveSetting('ui.accent_hex', t.value.trim());
   }
 });
 
 document.addEventListener('change', e => {
   const t = e.target;
-  if (t && t.dataset && t.dataset.action === 'settings-set-show-notifications') {
+  if (!t || !t.dataset) return;
+  if (t.dataset.action === 'settings-set-show-notifications') {
     setNotificationsEnabled(t.checked);
+    saveSetting('ui.notifications', t.checked);
+    return;
+  }
+  if (t.dataset.action === 'settings-toggle' && t.dataset.setting === 'show-extensions') {
+    browserState.showExtensions = t.checked;
+    saveSetting('ui.show_extensions', t.checked);
+    renderDirectory(); // re-render cached entries locally — no re-fetch needed
+    return;
+  }
+  if (t.dataset.action === 'settings-toggle' && t.dataset.setting === 'show-hidden') {
+    browserState.showHidden = t.checked;
+    saveSetting('ui.show_hidden', t.checked);
+    refreshDirectory();
+    return;
   }
 });
 
@@ -1968,9 +2094,20 @@ document.addEventListener('keydown', e => {
     closeModal();
     closeTagCanvas();
   }
-  if (e.altKey && e.key === 'ArrowLeft')  { e.preventDefault(); /* nav back stub */ }
-  if (e.altKey && e.key === 'ArrowRight') { e.preventDefault(); /* nav forward stub */ }
-  if (e.altKey && e.key === 'ArrowUp')    { e.preventDefault(); /* nav up stub */ }
+  // Browser-screen keyboard nav (selection, sort-order arrows, Enter, F5,
+  // Ctrl+A, Alt+arrows) only applies when that screen is active and the
+  // user isn't typing into an input/textarea/contenteditable element.
+  const activeEl = document.activeElement;
+  const activeTag = activeEl && activeEl.tagName;
+  const isEditableTarget = activeTag === 'INPUT' || activeTag === 'TEXTAREA' || (activeEl && activeEl.isContentEditable);
+  const browserScreenActive = document.getElementById('screen-browser')?.classList.contains('active');
+  if (browserScreenActive && !isEditableTarget && typeof browserKeydown === 'function') {
+    browserKeydown(e);
+  }
+  const homeScreenActive = document.getElementById('screen-home')?.classList.contains('active');
+  if (homeScreenActive && !isEditableTarget && typeof homeKeydown === 'function') {
+    homeKeydown(e);
+  }
 });
 
 // Ctrl + scroll wheel — step through ZOOM_STEPS, one step per gesture.
@@ -1996,19 +2133,51 @@ document.addEventListener('keydown', e => {
 // ── Context menu event listener (A.10) ────────────────────────────────────────
 document.addEventListener('contextmenu', e => {
   e.preventDefault();
-  const type = getMenuTypeForTarget(e.target);
-  const items = CONTEXT_MENUS[type] || CONTEXT_MENUS.file;
+  contextMenuType = getMenuTypeForTarget(e.target);
+  contextMenuTarget = contextMenuType === 'sidebar-item' ? e.target.closest('.fp-sidebar__item[data-pin-id]') : e.target;
+  // Right-click on a row that isn't already selected selects it alone before
+  // the menu opens; right-click within an existing multi-selection leaves it
+  // untouched so batch actions (Task 4) apply to the whole selection.
+  if (contextMenuType === 'file' || contextMenuType === 'folder') {
+    const row = e.target.closest('.fp-row[data-path]');
+    if (row && typeof ensureRowSelected === 'function') ensureRowSelected(row.dataset.path);
+  }
+  let items = CONTEXT_MENUS[contextMenuType] || CONTEXT_MENUS.file;
+
+  // Home row menu: select the row (mirrors the plain-click select+inspect
+  // behavior) and relabel the favorite toggle to reflect current membership.
+  if (contextMenuType === 'home-row') {
+    const row = e.target.closest('.fp-row[data-path]');
+    if (row) {
+      const pane = row.closest('.home-pane');
+      pane?.querySelectorAll('.fp-row--selected').forEach(r => { if (r !== row) r.classList.remove('fp-row--selected'); });
+      row.classList.add('fp-row--selected');
+      const isFav = typeof favoritesSet !== 'undefined' && favoritesSet.has(row.dataset.path);
+      items = items.map(i => (i !== 'sep' && i.action === 'home-toggle-favorite')
+        ? { ...i, label: isFav ? 'Remove from Favorites' : 'Add to Favorites' }
+        : i);
+    }
+  }
+
+  // Empty-area menu's "Show hidden files" reflects current state.
+  if (contextMenuType === 'empty-area') {
+    items = items.map(i => (i !== 'sep' && i.action === 'cm-toggle-hidden')
+      ? { ...i, label: browserState.showHidden ? 'Hide hidden files' : 'Show hidden files' }
+      : i);
+  }
+
   showContextMenu(e.clientX, e.clientY, items);
 });
 
 // ── Init ───────────────────────────────────────────────────────────────────────
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
   // Restore theme from localStorage
   const savedTheme = localStorage.getItem('fp-theme');
   if (THEME_MODES.includes(savedTheme)) document.documentElement.dataset.theme = resolveTheme(savedTheme);
 
   initWindowControls();
   initResizer();
+  initInspectorTagInput();
   initSidebarResize();
   restoreSidebarState();
   initToolbarResponsive();
@@ -2058,9 +2227,19 @@ document.addEventListener('DOMContentLoaded', () => {
   // Sync the status-bar zoom pill with Electron's persisted zoom factor
   updateZoomPill();
 
-  // Init column sort cycling and marquee selection (A.3.1)
+  // Init column sort cycling, marquee selection, and row click/dblclick (A.3.1, Task 3)
   initColumnSort();
   initMarqueeSelection();
+  initRowInteractions();
+
+  // Drag and drop: rows onto folder rows / sidebar items / breadcrumb crumbs (Task 4)
+  initRowDragDrop();
+  initSidebarDragDrop();
+  initBreadcrumbDragDrop();
+
+  // Home: double-click to open (Task 6) + Favorites drag-to-reorder
+  initHomeRowInteractions();
+  initFavoritesDragDrop();
 
   // Restore saved view mode
   const savedView = sessionStorage.getItem('fp-view-mode');
@@ -2069,12 +2248,19 @@ document.addEventListener('DOMContentLoaded', () => {
   // Init underline tabs in any pre-existing tab containers
   document.querySelectorAll('.fp-tabs').forEach(initUnderlineTabs);
 
-  // Hide empty Recent home-sections — first non-empty group becomes the
-  // top header. INTEGRATION: re-run after /recent updates row markup.
-  pruneEmptyHomeSections();
-
   // Restore persisted settings (theme, density, accent, font scale)
   restoreSettings();
+
+  // Load the config cache, then everything that reads from it — Downloads'
+  // real path and the show-hidden default — followed by the sidebar's live
+  // drives/pins. Sequenced (not Promise.all'd) per the plan's init order;
+  // each step degrades to a harmless no-op on backend failure.
+  await loadConfig();
+  applySettingsFromConfig();
+  applyDownloadsPath();
+  await loadDrives();
+  await loadPins();
+  await checkCrashRecovery();
 
   // Always start on Home — the previous "restore last active screen"
   // behaviour landed users on whatever they last visited (often Browser),
@@ -2095,30 +2281,19 @@ document.addEventListener('DOMContentLoaded', () => {
   //     INTEGRATION: POST /scan/start → if 409 response → showToast('Scan already running', 'warn')
   // #13 Ollama model not downloaded when classification starts → show error banner with install CTA
   //     INTEGRATION: GET /ai/status → if model_status !== 'ready' → show #banner-ai-offline
-
-  // Crash recovery check on startup
-  // INTEGRATION: on app init, call GET /crash-recovery → if crash_detected → uncomment + show #crash-modal-scrim
-
-  // Delegated file row click — works for both static and dynamically rendered rows
-  document.getElementById('list-scroll')?.addEventListener('click', e => {
-    const row = e.target.closest('.fp-row');
-    if (!row) return;
-    // Folder click → navigate into it (read-only).
-    if (row.dataset.type === 'folder' && row.dataset.path) {
-      loadDirectory(row.dataset.path);
-      return;
-    }
-    const listScroll = document.getElementById('list-scroll');
-    listScroll?.querySelectorAll('.fp-row').forEach(r => {
-      r.classList.remove('fp-row--selected');
-      r.removeAttribute('aria-selected');
-    });
-    row.classList.add('fp-row--selected');
-    row.setAttribute('aria-selected', 'true');
-    const name = row.querySelector('.fp-row__name')?.textContent;
-    const path = row.dataset.path;
-    updateInspector('single', { name, path });
-    const statusSel = document.getElementById('status-selected');
-    if (statusSel) statusSel.textContent = name ? `"${name}" selected` : 'Nothing selected';
-  });
 });
+
+/**
+ * Crash recovery (Task 4): GET /operations/pending returns whatever the
+ * backend's startup reconciliation classified as left mid-flight by an
+ * abnormal shutdown ([] once reconciliation has run with nothing pending —
+ * always [] until Task 9 wires reconcile_pending() into the API's lifespan).
+ * Non-empty → one line per row: op type, source → dest, resolution.
+ */
+async function checkCrashRecovery() {
+  let rows;
+  try { rows = await API.get('/operations/pending'); } catch (_) { return; }
+  if (!rows || !rows.length) return;
+  const body = rows.map(r => `${r.op_type}: ${r.source_path || '—'} → ${r.dest_path || '—'} (${r.resolution || 'unresolved'})`).join('\n');
+  openModal('warn', { title: 'Recovered operations', body, confirmLabel: 'OK' });
+}

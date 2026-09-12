@@ -5,9 +5,11 @@ All business logic lives here; the renderer never touches the filesystem directl
 """
 import asyncio
 import ctypes
+import errno
 import logging
 import mimetypes
 import os
+import secrets
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -22,7 +24,7 @@ from pydantic import BaseModel
 from typing import Any
 
 import backend.config as _config
-from backend.config import OutOfSandboxError, ProtectedPathError, path_guard
+from backend.config import BadPathError, OutOfSandboxError, ProtectedPathError, path_guard
 from backend.database import init_db
 from backend.indexer import index_file, scan_directory, remove_stale_entries
 from backend import mover, operations_log as ol, stores, tagger
@@ -42,11 +44,45 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="FilePlus API", version="0.1.0", lifespan=lifespan)
 
+
+# ---------------------------------------------------------------------------
+# Request auth — X-FilePlus-Token gates every route except /health when
+# FILEPLUS_API_TOKEN is set. Read at request time (not import time) so tests
+# can monkeypatch it and so a future packaged build can set it per-launch.
+#
+# Registered (via add_middleware, below CORSMiddleware in this file) *before*
+# CORSMiddleware so that CORSMiddleware ends up outermost in the resulting
+# stack (Starlette wraps outward in add_middleware call order — the last
+# middleware added is outermost). That matters because a 401 short-circuits
+# here without calling call_next: if CORS were inner of this middleware, its
+# response-header logic would never run for a rejected request, and a 401
+# would arrive at the Electron renderer with no Access-Control-Allow-Origin
+# header — the fetch() would then fail as a CORS error instead of surfacing
+# the real 401.
+# ---------------------------------------------------------------------------
+
+@app.middleware("http")
+async def _require_token(request, call_next):
+    if request.method == "OPTIONS" or request.url.path == "/health":
+        return await call_next(request)
+    token = _config.FILEPLUS_API_TOKEN
+    if token:
+        supplied = request.headers.get("x-fileplus-token", "")
+        # Compare as UTF-8 bytes: secrets.compare_digest raises TypeError on
+        # a str argument containing non-ASCII characters (a header value a
+        # client can send). Encoding both sides to bytes first — which
+        # compare_digest always accepts — turns a bogus non-ASCII header into
+        # a 401 instead of an unhandled 500.
+        if not secrets.compare_digest(supplied.encode("utf-8"), token.encode("utf-8")):
+            return JSONResponse(status_code=401, content={"detail": "missing or invalid API token"})
+    return await call_next(request)
+
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=["*"],  # Electron file:// pages have origin "null"; the token gates writes instead
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "X-FilePlus-Token"],
 )
 
 
@@ -72,7 +108,8 @@ async def _missing(_r, exc):
     return JSONResponse(status_code=404, content={"detail": str(exc)})
 
 
-@app.exception_handler(ValueError)
+@app.exception_handler(BadPathError)
+@app.exception_handler(mover.InvalidPolicyError)
 async def _bad_request(_r, exc):
     return JSONResponse(status_code=400, content={"detail": str(exc)})
 
@@ -80,6 +117,25 @@ async def _bad_request(_r, exc):
 @app.exception_handler(PermissionError)
 async def _denied(_r, exc):
     return JSONResponse(status_code=403, content={"detail": f"Access denied: {exc}"})
+
+
+# _EINVAL_ERRNOS: "the path itself is malformed/invalid", not "the path is
+# unreachable" -- these get 400 (bad request) rather than 502. Everything
+# else an OSError can carry from a filesystem call this app never expects to
+# fail cleanly (unreachable UNC host, "device not ready", a sharing
+# violation) is treated as a network/IO failure and gets 502, never a bare
+# 500 traceback. PermissionError and FileNotFoundError are OSError
+# subclasses but keep their own handlers above -- Starlette resolves a
+# handler by walking the raised exception's actual MRO, so those two exact
+# classes are matched before this general OSError handler is ever considered.
+_EINVAL_ERRNOS = {errno.EINVAL}
+
+
+@app.exception_handler(OSError)
+async def _os_error(request, exc):
+    status = 400 if exc.errno in _EINVAL_ERRNOS else 502
+    path = getattr(exc, "filename", None) or request.query_params.get("path")
+    return JSONResponse(status_code=status, content={"detail": exc.strerror or str(exc), "path": path})
 
 
 def _db():
@@ -146,6 +202,7 @@ async def health() -> dict:
         "write_unlocked": _config.WRITE_UNLOCKED,
         "pending_ops": pending_ops,
         "index_running": app.state.index_state["running"],
+        "auth": bool(_config.FILEPLUS_API_TOKEN),
     }
 
 
@@ -371,10 +428,7 @@ async def fs_list(
     PermissionError on the directory itself is mapped to 403 by the
     exception handler above.
     """
-    candidate = Path(path)
-    if not (candidate.is_absolute() and candidate.drive):
-        raise ValueError(f"Path must be absolute with a drive: {path!r}")
-    resolved = path_guard(candidate, "read")
+    resolved = path_guard(Path(path), "read")  # _canonicalize refuses relative/driveless input -> BadPathError -> 400
     if not resolved.is_dir():
         raise HTTPException(status_code=404, detail=f"Not a directory: {path}")
     entries, truncated = await asyncio.to_thread(_scandir_entries, resolved, show_hidden)
@@ -382,12 +436,17 @@ async def fs_list(
 
 
 @app.get("/fs/list/root")
-async def fs_list_root():
-    """Return the sandbox root listing without requiring a path argument."""
+async def fs_list_root(show_hidden: bool = False):
+    """Return the sandbox root listing without requiring a path argument.
+
+    Accepts the same show_hidden filter as /fs/list so the first Browser
+    open (which calls this route with no path) honours ui.show_hidden the
+    same as every later /fs/list call.
+    """
     root = _config.FILEPLUS_SANDBOX_PATH.resolve()
     if not root.is_dir():
         raise HTTPException(status_code=404, detail=f"Sandbox root missing: {root}")
-    entries, truncated = await asyncio.to_thread(_scandir_entries, root, False)
+    entries, truncated = await asyncio.to_thread(_scandir_entries, root, show_hidden)
     return _listing_response(root, entries, truncated)
 
 
@@ -583,19 +642,19 @@ def _single(res: dict) -> dict:
 @app.post("/fs/mkdir")
 async def fs_mkdir(body: DirName):
     async with _db() as conn:
-        return _single(await mover.mkdir(conn, Path(body.dir), body.name))
+        return _single(await mover.mkdir(conn, Path(body.dir), body.name, batch_id=ol.new_batch_id()))
 
 
 @app.post("/fs/touch")
 async def fs_touch(body: DirName):
     async with _db() as conn:
-        return _single(await mover.touch(conn, Path(body.dir), body.name))
+        return _single(await mover.touch(conn, Path(body.dir), body.name, batch_id=ol.new_batch_id()))
 
 
 @app.post("/fs/rename")
 async def fs_rename(body: RenameReq):
     async with _db() as conn:
-        return _single(await mover.rename(conn, Path(body.path), body.new_name))
+        return _single(await mover.rename(conn, Path(body.path), body.new_name, batch_id=ol.new_batch_id()))
 
 
 @app.post("/fs/move")

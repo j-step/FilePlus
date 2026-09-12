@@ -22,13 +22,14 @@ from pathlib import Path
 from send2trash import send2trash as _send2trash_impl
 
 import backend.config as _config
-from backend import operations_log as ol
+from backend import operations_log as ol, stores, tagger
 from backend.hasher import hash_file
 
 logger = logging.getLogger(__name__)
 
 
 class InvalidNameError(ValueError): ...
+class InvalidPolicyError(ValueError): ...
 class ConflictError(Exception): ...
 class RefusedError(Exception): ...
 
@@ -45,7 +46,7 @@ _POLICIES = ("fail", "skip", "keep-both", "replace")
 
 def _validate_conflict_policy(on_conflict: str) -> None:
     if on_conflict not in _POLICIES:
-        raise ValueError(f"unknown on_conflict {on_conflict!r}")
+        raise InvalidPolicyError(f"unknown on_conflict {on_conflict!r}")
 
 
 def _send2trash(path: Path) -> None:  # indirection so tests can stub it
@@ -175,7 +176,7 @@ def _resolve_target(target: Path, on_conflict: str) -> tuple[Path | None, str]:
         return keep_both_name(target), "done"
     if on_conflict == "replace":
         return target, "replace"
-    raise ValueError(f"unknown on_conflict {on_conflict!r}")  # defence in depth; callers validate up front
+    raise InvalidPolicyError(f"unknown on_conflict {on_conflict!r}")  # defence in depth; callers validate up front
 
 
 def _result(op_id, op_type, status, src, dest, batch_id) -> dict:
@@ -409,6 +410,95 @@ async def empty_trash(conn) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Undo / redo -- DB-only ops (tags, favorites, pins)
+#
+# Same shape as the file-op inverses above: a fresh operations_log row with
+# undo_of=<original id>, the original then marked undone=1 by the caller.
+# Unlike move/rename/trash/etc. (backend.mover's own functions, which return
+# the op_id they minted), tagger.remove_tag/apply_tags and the stores
+# favorites/pins functions either don't return an op_id or are shared with
+# idempotent public routes that shouldn't always take undo-only kwargs in
+# their return shape -- so the freshly logged inverse row is looked up by
+# its undo_of back-reference (ol.get_operation_by_undo_of) instead.
+# ---------------------------------------------------------------------------
+
+async def _undo_tag_add(conn, op_id: int, file_path: str | None, tag_name: str | None, batch_id: str) -> dict:
+    """Inverse of tag-add: detach *tag_name* from the file at *file_path*.
+
+    Only that one (file, tag) pairing is removed -- any other tag already on
+    the file, added before or after, survives untouched (tagger.remove_tag
+    only deletes the single file_tags row).
+    """
+    if not file_path or not tag_name:
+        raise RefusedError("Malformed tag-add log entry; nothing to undo.")
+    file_id = await tagger.file_id_for_path(conn, file_path)
+    if file_id is None:
+        raise RefusedError("The tagged file is no longer indexed.")
+    tag_id = await tagger.tag_id_for_name(conn, tag_name)
+    if tag_id is None:
+        raise RefusedError("The tag no longer exists.")
+    await tagger.remove_tag(conn, file_id, tag_id, batch_id=batch_id, reason=f"undo of #{op_id}", undo_of=op_id)
+    inv = await ol.get_operation_by_undo_of(conn, op_id)
+    return _result(inv["id"], "tag-remove", "done", file_path, tag_name, batch_id)
+
+
+async def _undo_tag_remove(conn, op_id: int, file_path: str | None, tag_name: str | None, batch_id: str) -> dict:
+    """Inverse of tag-remove: re-attach *tag_name* to the file at *file_path*.
+
+    Recreates the tag definition if it no longer exists, matching
+    apply_tags' normal (non-undo) behaviour.
+    """
+    if not file_path or not tag_name:
+        raise RefusedError("Malformed tag-remove log entry; nothing to undo.")
+    file_id = await tagger.file_id_for_path(conn, file_path)
+    if file_id is None:
+        raise RefusedError("The tagged file is no longer indexed.")
+    await tagger.apply_tags(conn, file_id, [tag_name], batch_id=batch_id, reason=f"undo of #{op_id}", undo_of=op_id)
+    inv = await ol.get_operation_by_undo_of(conn, op_id)
+    return _result(inv["id"], "tag-add", "done", file_path, tag_name, batch_id)
+
+
+async def _undo_favorite_add(conn, op_id: int, path: str | None, batch_id: str) -> dict:
+    if not path:
+        raise RefusedError("Malformed favorite-add log entry; nothing to undo.")
+    await stores.favorites_remove(conn, path, batch_id=batch_id, reason=f"undo of #{op_id}", undo_of=op_id)
+    inv = await ol.get_operation_by_undo_of(conn, op_id)
+    return _result(inv["id"], "favorite-remove", "done", path, None, batch_id)
+
+
+async def _undo_favorite_remove(conn, op_id: int, path: str | None, batch_id: str) -> dict:
+    if not path:
+        raise RefusedError("Malformed favorite-remove log entry; nothing to undo.")
+    await stores.favorites_add(conn, path, batch_id=batch_id, reason=f"undo of #{op_id}", undo_of=op_id)
+    inv = await ol.get_operation_by_undo_of(conn, op_id)
+    if inv is None:
+        raise RefusedError("Already favorited; nothing to restore.")
+    return _result(inv["id"], "favorite-add", "done", path, None, batch_id)
+
+
+async def _undo_pin_add(conn, op_id: int, path: str | None, batch_id: str) -> dict:
+    if not path:
+        raise RefusedError("Malformed pin-add log entry; nothing to undo.")
+    cur = await conn.execute("SELECT id FROM pinned_folders WHERE path = ?", (path,))
+    row = await cur.fetchone()
+    if row is None:
+        raise RefusedError("The pin no longer exists.")
+    await stores.pins_remove(conn, row[0], batch_id=batch_id, reason=f"undo of #{op_id}", undo_of=op_id)
+    inv = await ol.get_operation_by_undo_of(conn, op_id)
+    return _result(inv["id"], "pin-remove", "done", path, None, batch_id)
+
+
+async def _undo_pin_remove(conn, op_id: int, path: str | None, batch_id: str) -> dict:
+    if not path:
+        raise RefusedError("Malformed pin-remove log entry; nothing to undo.")
+    await stores.pins_add(conn, path, batch_id=batch_id, reason=f"undo of #{op_id}", undo_of=op_id)
+    inv = await ol.get_operation_by_undo_of(conn, op_id)
+    if inv is None:
+        raise RefusedError("Already pinned; nothing to restore.")
+    return _result(inv["id"], "pin-add", "done", path, None, batch_id)
+
+
+# ---------------------------------------------------------------------------
 # Undo / redo
 # ---------------------------------------------------------------------------
 
@@ -456,6 +546,18 @@ async def undo_operation(conn, op_id: int, *, batch_id: str | None = None) -> di
         if not dest or not Path(dest).exists():
             raise RefusedError("The created item is no longer where the log left it.")
         result = await trash(conn, dest, batch_id=batch_id, reason=f"undo of #{op_id}", _undo_of=op_id)
+    elif t == "tag-add":
+        result = await _undo_tag_add(conn, op_id, src, dest, batch_id)
+    elif t == "tag-remove":
+        result = await _undo_tag_remove(conn, op_id, src, dest, batch_id)
+    elif t == "favorite-add":
+        result = await _undo_favorite_add(conn, op_id, src, batch_id)
+    elif t == "favorite-remove":
+        result = await _undo_favorite_remove(conn, op_id, src, batch_id)
+    elif t == "pin-add":
+        result = await _undo_pin_add(conn, op_id, src, batch_id)
+    elif t == "pin-remove":
+        result = await _undo_pin_remove(conn, op_id, src, batch_id)
     else:
         raise RefusedError(f"Operation type '{t}' has no inverse.")
     if result["status"] != "done":

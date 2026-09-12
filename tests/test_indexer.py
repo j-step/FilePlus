@@ -53,15 +53,15 @@ def test_path_guard_allows_path_inside_sandbox(sandbox):
     assert result == inside.resolve()
 
 
-def test_path_guard_blocks_write_outside_sandbox(sandbox):
-    outside = Path("C:/Windows/System32/ntdll.dll")
+def test_path_guard_blocks_write_outside_sandbox(sandbox, tmp_path):
+    outside = tmp_path / "elsewhere" / "ntdll.dll"
     with pytest.raises(OutOfSandboxError):
         _config.path_guard(outside, "write")
 
 
-def test_path_guard_write_allowed_outside_sandbox_when_unlocked(sandbox, monkeypatch):
+def test_path_guard_write_allowed_outside_sandbox_when_unlocked(sandbox, tmp_path, monkeypatch):
     monkeypatch.setattr(_config, "WRITE_UNLOCKED", True)
-    outside = Path("C:/Windows")
+    outside = tmp_path / "elsewhere"
     # Should not raise
     result = _config.path_guard(outside, "write")
     assert result == outside.resolve()

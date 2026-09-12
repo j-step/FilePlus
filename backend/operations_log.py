@@ -73,6 +73,22 @@ async def list_operations(conn, limit: int = 50, offset: int = 0, path: str | No
     return [_row(r) for r in await cur.fetchall()]
 
 
+async def get_operation_by_undo_of(conn, undo_of: int) -> dict | None:
+    """Return the most recently logged operation whose undo_of == *undo_of*.
+
+    Used by backend.mover's undo of a DB-only op (tag/favorite/pin): the
+    mutating function (backend.tagger / backend.stores) logs the fresh
+    inverse row itself and doesn't hand its id back up, so it's looked up
+    here by its undo_of back-reference instead. Each undo_operation call
+    passes a distinct original op id as undo_of, so this is unambiguous even
+    when several undos share one batch_id (undo_batch).
+    """
+    cur = await conn.execute(
+        f"SELECT {_COLS} FROM operations_log WHERE undo_of = ? ORDER BY id DESC LIMIT 1", (undo_of,))
+    r = await cur.fetchone()
+    return _row(r) if r else None
+
+
 async def list_batch(conn, batch_id: str) -> list[dict]:
     cur = await conn.execute(f"SELECT {_COLS} FROM operations_log WHERE batch_id = ? ORDER BY id DESC", (batch_id,))
     return [_row(r) for r in await cur.fetchall()]

@@ -189,7 +189,14 @@ async def favorites_list(conn: aiosqlite.Connection) -> dict:
     ]}
 
 
-async def favorites_add(conn: aiosqlite.Connection, path: str) -> dict:
+async def favorites_add(conn: aiosqlite.Connection, path: str, *,
+                        batch_id: str | None = None, reason: str | None = None,
+                        undo_of: int | None = None) -> dict:
+    """Add *path* to favorites (idempotent -- a path already favorited is
+    returned as-is, with no new operations_log row). *batch_id*/*reason*/
+    *undo_of* are for backend.mover's undo of 'favorite-remove'; ordinary
+    callers (POST /favorites) never pass them.
+    """
     conn.row_factory = aiosqlite.Row
     cur = await conn.execute("SELECT id, path, position, created FROM favorites WHERE path = ?", (path,))
     existing = await cur.fetchone()
@@ -201,7 +208,7 @@ async def favorites_add(conn: aiosqlite.Connection, path: str) -> dict:
     cur = await conn.execute("SELECT COALESCE(MAX(position), -1) + 1 FROM favorites")
     (next_pos,) = await cur.fetchone()
 
-    op_id = await ol.log_operation(conn, "favorite-add", path)
+    op_id = await ol.log_operation(conn, "favorite-add", path, batch_id=batch_id, reason=reason, undo_of=undo_of)
     created = _now()
     cur = await conn.execute(
         "INSERT INTO favorites (path, position, created) VALUES (?, ?, ?)",
@@ -212,8 +219,14 @@ async def favorites_add(conn: aiosqlite.Connection, path: str) -> dict:
     return _file_entry(path, {"id": cur.lastrowid, "position": next_pos, "created": created})
 
 
-async def favorites_remove(conn: aiosqlite.Connection, path: str) -> None:
-    op_id = await ol.log_operation(conn, "favorite-remove", path)
+async def favorites_remove(conn: aiosqlite.Connection, path: str, *,
+                           batch_id: str | None = None, reason: str | None = None,
+                           undo_of: int | None = None) -> None:
+    """Remove *path* from favorites. *batch_id*/*reason*/*undo_of* are for
+    backend.mover's undo of 'favorite-add'; ordinary callers (DELETE
+    /favorites) never pass them.
+    """
+    op_id = await ol.log_operation(conn, "favorite-remove", path, batch_id=batch_id, reason=reason, undo_of=undo_of)
     await conn.execute("DELETE FROM favorites WHERE path = ?", (path,))
     await conn.commit()
     await ol.mark_executed(conn, op_id)
@@ -250,7 +263,16 @@ async def pins_list(conn: aiosqlite.Connection) -> list[dict]:
     return [dict(r) for r in rows]
 
 
-async def pins_add(conn: aiosqlite.Connection, path: str, label: str | None = None) -> dict:
+async def pins_add(conn: aiosqlite.Connection, path: str, label: str | None = None, *,
+                   batch_id: str | None = None, reason: str | None = None,
+                   undo_of: int | None = None) -> dict:
+    """Pin *path* (idempotent -- an already-pinned path is returned as-is,
+    with no new operations_log row). *batch_id*/*reason*/*undo_of* are for
+    backend.mover's undo of 'pin-remove'; ordinary callers (POST /pins)
+    never pass them. Note: undoing a 'pin-remove' recreates the pin with a
+    default label (the folder name) since the original custom label, if
+    any, isn't recorded in the log.
+    """
     conn.row_factory = aiosqlite.Row
     cur = await conn.execute("SELECT id, path, label, position, created FROM pinned_folders WHERE path = ?", (path,))
     existing = await cur.fetchone()
@@ -263,7 +285,7 @@ async def pins_add(conn: aiosqlite.Connection, path: str, label: str | None = No
     cur = await conn.execute("SELECT COALESCE(MAX(position), -1) + 1 FROM pinned_folders")
     (next_pos,) = await cur.fetchone()
 
-    op_id = await ol.log_operation(conn, "pin-add", path)
+    op_id = await ol.log_operation(conn, "pin-add", path, batch_id=batch_id, reason=reason, undo_of=undo_of)
     created = _now()
     cur = await conn.execute(
         "INSERT INTO pinned_folders (path, label, position, created) VALUES (?, ?, ?, ?)",
@@ -281,8 +303,13 @@ async def pins_update(conn: aiosqlite.Connection, pin_id: int, label: str) -> bo
     return cur.rowcount > 0
 
 
-async def pins_remove(conn: aiosqlite.Connection, pin_id: int) -> bool:
-    """Return False when no row matched, so the route can answer 404."""
+async def pins_remove(conn: aiosqlite.Connection, pin_id: int, *,
+                      batch_id: str | None = None, reason: str | None = None,
+                      undo_of: int | None = None) -> bool:
+    """Return False when no row matched, so the route can answer 404.
+    *batch_id*/*reason*/*undo_of* are for backend.mover's undo of
+    'pin-add'; ordinary callers (DELETE /pins/{id}) never pass them.
+    """
     conn.row_factory = aiosqlite.Row
     cur = await conn.execute("SELECT path FROM pinned_folders WHERE id = ?", (pin_id,))
     row = await cur.fetchone()
@@ -290,7 +317,7 @@ async def pins_remove(conn: aiosqlite.Connection, pin_id: int) -> bool:
         return False
     source = row["path"]
 
-    op_id = await ol.log_operation(conn, "pin-remove", source)
+    op_id = await ol.log_operation(conn, "pin-remove", source, batch_id=batch_id, reason=reason, undo_of=undo_of)
     await conn.execute("DELETE FROM pinned_folders WHERE id = ?", (pin_id,))
     await conn.commit()
     await ol.mark_executed(conn, op_id)
