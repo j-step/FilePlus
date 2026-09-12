@@ -43,6 +43,34 @@ def test_trash_empty_endpoint(client, sandbox, monkeypatch):
     assert r.status_code == 200 and r.json()["batches"] == 1 and len(sent) == 1
 
 
+def test_tag_add_undo_via_operations_route(client, sandbox):
+    """Task 8a item (6): the Inspector's History Undo button posts to
+    /operations/{id}/undo and expects the inverse op's own result back —
+    {op_id, op_type, status, src, dest, batch_id} (see frontend/src/
+    inspector.js's inspectorUndoOp). This used to 409 ("has no inverse") for
+    a tag-add row; it must now succeed with that same shape.
+    """
+    (sandbox / "doc.txt").write_text("d")
+    file_id = client.get("/file", params={"path": str(sandbox / "doc.txt")}).json()["id"]
+    r = client.post(f"/files/{file_id}/tags", json={"name": "work"})
+    assert r.status_code == 200
+
+    ops = client.get("/operations", params={"limit": 5}).json()
+    tag_op = next(o for o in ops if o["op_type"] == "tag-add")
+
+    r = client.post(f"/operations/{tag_op['id']}/undo")
+    assert r.status_code == 200
+    body = r.json()
+    assert set(body.keys()) == {"op_id", "op_type", "status", "src", "dest", "batch_id"}
+    assert body["op_type"] == "tag-remove" and body["status"] == "done"
+
+    assert client.get(f"/files/{file_id}/tags").json() == []
+    # the original tag-add op is now undone -- a second undo attempt 409s,
+    # exactly like a file-op undo would.
+    r = client.post(f"/operations/{tag_op['id']}/undo")
+    assert r.status_code == 409
+
+
 async def test_startup_reconcile_marks_completed_move(sandbox, db):
     """A crash-left pending 'move' row whose dest exists and source is gone is
     classified 'completed' by the lifespan's reconcile_pending call, before any

@@ -119,14 +119,17 @@ def _resolve_host_addrs(host: str, timeout: float = 2.0) -> list[str]:
     daemon thread and gives up (returning []) if it hasn't finished by the
     deadline -- a hung DNS lookup for a hostile hostname must not hang
     path_guard, and a daemon thread never blocks process exit even if the
-    lookup itself never returns.
+    lookup itself never returns. Any exception from the lookup (not just
+    socket.gaierror -- a hostile or malformed host can trip other errors too)
+    is swallowed the same way: a failed or inconclusive lookup just means "no
+    addresses", never a crash.
     """
     out: list[str] = []
 
     def _do() -> None:
         try:
             out.extend(info[4][0] for info in socket.getaddrinfo(host, None))
-        except OSError:
+        except Exception:
             pass
 
     t = threading.Thread(target=_do, daemon=True)
@@ -135,15 +138,35 @@ def _resolve_host_addrs(host: str, timeout: float = 2.0) -> list[str]:
     return out
 
 
+def _addr_is_local(addr: str, local_addrs: set[str]) -> bool:
+    """True when *addr* (a literal IP string) is loopback or one of ours.
+
+    Shared by the ipv6-literal decode path and the resolved-hostname path in
+    _is_local_host. A malformed *addr* is never local -- it just fails to
+    parse and this returns False, no exception escapes.
+    """
+    addr = addr.split("%")[0]  # strip an IPv6 zone id, if any
+    try:
+        parsed = ipaddress.ip_address(addr)
+    except ValueError:
+        return False
+    if parsed.is_loopback:
+        return True
+    return addr.lower() in local_addrs or str(parsed).lower() in local_addrs
+
+
 def _is_local_host(host: str) -> bool:
     """True when *host* (a UNC hostname) names this machine.
 
     Checked, cheapest first: the classic loopback names/our own
     COMPUTERNAME/hostname; the ``.ipv6-literal.net`` encoding Windows accepts
-    for IPv6 UNC hosts (e.g. ``0--1.ipv6-literal.net`` for ``::1``); and
-    finally whether *host* resolves (bounded lookup) to a loopback address or
-    one of our own interface addresses -- catching a bare LAN IP or any other
-    hostname for this same box.
+    for IPv6 UNC hosts (e.g. ``0--1.ipv6-literal.net`` for ``::1``) -- decoded
+    (strip the suffix, ``-`` -> ``:``, ``s`` -> ``%`` for a zone id) and
+    classified the same way any other address is, so a *foreign*
+    ipv6-literal.net address (someone else's ``2001:db8::1``) is correctly
+    NOT treated as local; and finally whether *host* resolves (bounded
+    lookup) to a loopback address or one of our own interface addresses --
+    catching a bare LAN IP or any other hostname for this same box.
     """
     h = host.lower()
     named = {
@@ -154,22 +177,18 @@ def _is_local_host(host: str) -> bool:
     named.discard("")
     if h in named:
         return True
-    if h.endswith(".ipv6-literal.net"):
-        return True
     local_addrs = _local_interface_addresses()
+    if h.endswith(".ipv6-literal.net"):
+        stem = h[: -len(".ipv6-literal.net")]
+        decoded = stem.replace("-", ":").replace("s", "%")
+        return _addr_is_local(decoded, local_addrs)
     for addr in _resolve_host_addrs(host):
-        addr = addr.split("%")[0].lower()
-        try:
-            if ipaddress.ip_address(addr).is_loopback:
-                return True
-        except ValueError:
-            pass
-        if addr in local_addrs:
+        if _addr_is_local(addr, local_addrs):
             return True
     return False
 
 
-def _map_loopback_admin_share(resolved: Path) -> Path:
+def _map_loopback_admin_share(raw: str) -> str | None:
     """Map a local admin-share UNC spelling back to its local drive form.
 
     ``\\\\localhost\\C$\\Windows\\x``, ``\\\\<own LAN IP>\\C$\\...``,
@@ -179,66 +198,115 @@ def _map_loopback_admin_share(resolved: Path) -> Path:
     string containment check against SYSTEM_WRITE_ROOTS (local-drive paths)
     never matches, so any of these spellings would otherwise bypass write
     protection entirely when unlocked. A UNC host that isn't this machine is
-    a real remote share and passes through unchanged.
+    a real remote share and this returns None, unchanged.
+
+    Takes and returns a plain (not-yet-resolved) string, on purpose: this
+    check -- and thus the _is_local_host lookup it depends on -- must run
+    BEFORE Path.resolve() ever sees a UNC path. Resolving a UNC path opens an
+    SMB session, which can take on the order of 20s to fail against an
+    unroutable or firewalled host -- including this machine's own LAN
+    address if SMB is blocked. Detecting "this is actually me" first lets
+    the caller resolve only the (fast, local) mapped drive path instead.
     """
-    s = str(resolved)
-    if not s.startswith("\\\\"):
-        return resolved
-    m = _ADMIN_SHARE_RE.match(s)
+    if not raw.startswith("\\\\"):
+        return None
+    m = _ADMIN_SHARE_RE.match(raw)
     if not m:
-        return resolved
+        return None
     if not _is_local_host(m.group("host")):
-        return resolved
+        return None
     share = m.group("share")
     rest = m.group("rest").lstrip("\\")
     if share.upper() == "ADMIN$":
         root = os.environ.get("SystemRoot", r"C:\Windows")
-        mapped = f"{root}\\{rest}" if rest else root
-    else:
-        mapped = f"{share[0]}:\\{rest}"
-    return Path(mapped).resolve()
+        return f"{root}\\{rest}" if rest else root
+    return f"{share[0]}:\\{rest}"
+
+
+def _strip_extended_length_prefix(s: str) -> str:
+    r"""Strip a \\?\ or \\?\UNC\ extended-length prefix from *s*.
+
+    Runs on the raw string, ahead of any resolving -- see _canonicalize.
+    Raises BadPathError if what's left doesn't already look like a proper
+    drive- or UNC-rooted path: a bogus non-drive spelling (e.g.
+    ``\\?\Volume{guid}\...``) would otherwise strip down to a
+    relative-looking string that Path.resolve() would silently reinterpret
+    against the process's cwd instead of failing.
+    """
+    if s.startswith("\\\\?\\UNC\\"):
+        stripped = "\\\\" + s[len("\\\\?\\UNC\\"):]
+        if not (Path(stripped).drive and Path(stripped).root):
+            raise BadPathError(f"Extended-length UNC path does not resolve to a UNC root: {s!r}")
+        return stripped
+    if s.startswith("\\\\?\\"):
+        stripped = s[len("\\\\?\\"):]
+        if not (Path(stripped).drive and Path(stripped).root):
+            raise BadPathError(f"Extended-length path does not resolve to a drive-rooted location: {s!r}")
+        return stripped
+    return s
+
+
+def _strip_resolved_extended_length_prefix(s: str) -> Path:
+    r"""Undo the same \\?\ / \\?\UNC\ prefixes on an already-resolved string.
+
+    Path.resolve() reproduces a \\?\ prefix in its output whenever one was
+    present in its input (verified empirically; a plain drive or UNC
+    spelling resolves back to a plain drive or UNC spelling). Since the
+    prefix is already stripped from the string handed to resolve() in
+    _canonicalize, this is just cheap defence in depth -- a plain
+    Path(...) construction, never another resolve() call (which would
+    reopen the door to the same slow-UNC-resolve problem this whole
+    reordering exists to avoid).
+    """
+    if s.startswith("\\\\?\\UNC\\"):
+        return Path("\\\\" + s[len("\\\\?\\UNC\\"):])
+    if s.startswith("\\\\?\\"):
+        return Path(s[len("\\\\?\\"):])
+    return Path(s)
 
 
 def _canonicalize(path: Path | str) -> Path:
-    """Resolve *path* and reject spellings that would defeat containment checks.
+    r"""Resolve *path* and reject spellings that would defeat containment checks.
 
-    Win32 accepts (and silently normalises away) an extended-length \\\\?\\
+    Win32 accepts (and silently normalises away) an extended-length \\?\
     prefix, a drive-relative spelling, and path components with a trailing
     space or dot -- any of which could make a path that is really inside a
     protected or sandboxed location look like it isn't, or vice versa.
     Path.resolve() absolutises a drive-relative or relative spelling before
     it can be rejected, so the absolute-input check below runs on the raw
     *path* first, ahead of any resolving.
+
+    Everything else -- the \\?\ prefix strip, the loopback admin-share
+    mapping, and the trailing space/dot check -- also runs on the raw string
+    before any resolving, for the same reason: Path.resolve() on a UNC path
+    opens an SMB session, which can hang for ~20s against an unroutable host.
+    A loopback admin share (this machine, reached via \\localhost\C$\... or
+    similar) is mapped to its local drive form first so only that local path
+    is ever resolved; a genuine non-loopback UNC path still resolves here
+    exactly as before.
     """
     p = Path(path)
     s = str(p)
     if not (p.is_absolute() and (p.drive or s.startswith("\\\\"))):
         raise BadPathError(f"Path must be absolute with a drive or UNC root: {path!r}")
-    resolved = p.resolve()
-    s = str(resolved)
-    if s.startswith("\\\\?\\UNC\\"):
-        stripped = Path("\\\\" + s[len("\\\\?\\UNC\\"):])
-        if not (stripped.drive and stripped.root):
-            raise BadPathError(f"Extended-length UNC path does not resolve to a UNC root: {s!r}")
-        resolved = stripped.resolve()
-    elif s.startswith("\\\\?\\"):
-        stripped = Path(s[len("\\\\?\\"):])
-        # A bogus non-drive spelling (e.g. \\?\Volume{guid}\...) strips down to
-        # a relative-looking string; resolving that would silently reinterpret
-        # it against the process's cwd instead of failing, so check first.
-        if not (stripped.drive and stripped.root):
-            raise BadPathError(f"Extended-length path does not resolve to a drive-rooted location: {s!r}")
-        resolved = stripped.resolve()
-    resolved = _map_loopback_admin_share(resolved)
-    if not (resolved.drive and resolved.root):
-        raise BadPathError(f"Path must be absolute with a drive: {path!r}")
-    for part in resolved.parts[1:]:
+
+    s = _strip_extended_length_prefix(s)
+
+    mapped = _map_loopback_admin_share(s)
+    if mapped is not None:
+        s = mapped
+
+    for part in Path(s).parts[1:]:
         if part.endswith(" ") or part.endswith("."):
             raise BadPathError(
                 f"Path component {part!r} ends with a space or a dot; Windows accepts "
                 f"that spelling but normalises it away, which would defeat containment "
-                f"checks: {resolved}"
+                f"checks: {s}"
             )
+
+    resolved = _strip_resolved_extended_length_prefix(str(Path(s).resolve()))
+    if not (resolved.drive and resolved.root):
+        raise BadPathError(f"Path must be absolute with a drive: {path!r}")
     return resolved
 
 

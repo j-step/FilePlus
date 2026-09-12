@@ -27,7 +27,9 @@ async def _file_path(conn, file_id: int) -> str | None:
     return row[0] if row else None
 
 
-async def apply_tags(conn, file_id: int, names: list[str]) -> list[int]:
+async def apply_tags(conn, file_id: int, names: list[str], *,
+                     batch_id: str | None = None, reason: str | None = None,
+                     undo_of: int | None = None) -> list[int]:
     """Attach a list of tag names to a file, creating tags that don't exist.
 
     Names are de-duplicated within the call. Blank/whitespace-only names are
@@ -40,6 +42,16 @@ async def apply_tags(conn, file_id: int, names: list[str]) -> list[int]:
         conn: Active aiosqlite connection.
         file_id: Primary key of the file in the files table.
         names: List of tag name strings to apply.
+        batch_id: Optional batch id to log the operation(s) under (undo/redo
+            of a 'tag-remove' passes the undo's own minted batch_id here).
+        reason: Optional free-text reason to log against the operation(s).
+        undo_of: When this call is itself the inverse of a previous
+            'tag-remove' (an undo or redo), the id of the operation it
+            undoes — threaded straight to operations_log so the History
+            panel can show the undo chain. Only meaningful when *names* has
+            exactly one entry (backend.mover always calls it that way for
+            undo/redo; the normal multi-name path from POST
+            /files/{id}/tags never passes it).
 
     Returns:
         The ids of the tags that were applied (one per de-duplicated name).
@@ -52,7 +64,8 @@ async def apply_tags(conn, file_id: int, names: list[str]) -> list[int]:
         if not name or name in seen:
             continue
         seen.add(name)
-        op_id = await ol.log_operation(conn, "tag-add", file_path, name)
+        op_id = await ol.log_operation(conn, "tag-add", file_path, name,
+                                       batch_id=batch_id, reason=reason, undo_of=undo_of)
         try:
             await conn.execute("INSERT OR IGNORE INTO tags (name, tag_type) VALUES (?, 'user')", (name,))
             cur = await conn.execute("SELECT id FROM tags WHERE name = ?", (name,))
@@ -85,29 +98,70 @@ async def get_tags(conn, file_id: int) -> list[dict]:
     return [_tag_row(r) for r in await cur.fetchall()]
 
 
-async def remove_tag(conn, file_id: int, tag_id: int) -> None:
+async def remove_tag(conn, file_id: int, tag_id: int, *,
+                     batch_id: str | None = None, reason: str | None = None,
+                     undo_of: int | None = None) -> int:
     """Detach a tag from a file, logging the removal before acting.
 
     Follows the app-wide log-before-act protocol: log a 'tag-remove'
     operation, perform the delete, then mark_executed — or mark_error and
-    re-raise if the delete fails.
+    re-raise if the delete fails. Only the (file_id, tag_id) pairing is
+    removed — any other tag on the same file is untouched, and the tag
+    definition itself (the tags table row) survives even if this was its
+    last attachment, since other files may still use it.
 
     Args:
         conn: Active aiosqlite connection.
         file_id: Primary key of the file.
         tag_id: Primary key of the tag to detach.
+        batch_id: Optional batch id to log the operation under (undo/redo of
+            a 'tag-add' passes the undo's own minted batch_id here).
+        reason: Optional free-text reason to log against the operation.
+        undo_of: When this call is itself the inverse of a previous
+            'tag-add' (an undo or redo), the id of the operation it undoes.
+
+    Returns:
+        The id of the logged 'tag-remove' operation.
     """
     file_path = await _file_path(conn, file_id)
     cur = await conn.execute("SELECT name FROM tags WHERE id = ?", (tag_id,))
     trow = await cur.fetchone()
     tag_name = trow[0] if trow else None
-    op_id = await ol.log_operation(conn, "tag-remove", file_path, tag_name)
+    op_id = await ol.log_operation(conn, "tag-remove", file_path, tag_name,
+                                   batch_id=batch_id, reason=reason, undo_of=undo_of)
     try:
         await conn.execute("DELETE FROM file_tags WHERE file_id = ? AND tag_id = ?", (file_id, tag_id))
     except Exception as exc:
         await ol.mark_error(conn, op_id, f"{type(exc).__name__}: {exc}")
         raise
     await ol.mark_executed(conn, op_id)
+    return op_id
+
+
+async def tag_id_for_name(conn, name: str) -> int | None:
+    """Return the id of the tag named *name*, or None if no such tag exists.
+
+    Used by backend.mover's undo of 'tag-add': the operations_log row only
+    records the tag *name* (dest_path), so the id to detach has to be looked
+    up fresh -- the tag may have been renamed or deleted since, though this
+    module currently offers no way to do either.
+    """
+    cur = await conn.execute("SELECT id FROM tags WHERE name = ?", (name,))
+    row = await cur.fetchone()
+    return row[0] if row else None
+
+
+async def file_id_for_path(conn, path: str) -> int | None:
+    """Return the id of the files-table row at *path*, or None if unindexed.
+
+    Used by backend.mover's undo of tag-add/tag-remove: the operations_log
+    row only records the file's *path* (source_path), so the id to mutate
+    has to be looked up fresh -- the file may since have been removed from
+    the index (moved, deleted, or never re-scanned).
+    """
+    cur = await conn.execute("SELECT id FROM files WHERE path = ?", (path,))
+    row = await cur.fetchone()
+    return row[0] if row else None
 
 
 async def search_tags(conn, q: str, limit: int = 10) -> list[dict]:

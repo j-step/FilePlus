@@ -5,6 +5,7 @@ All business logic lives here; the renderer never touches the filesystem directl
 """
 import asyncio
 import ctypes
+import errno
 import logging
 import mimetypes
 import os
@@ -116,6 +117,25 @@ async def _bad_request(_r, exc):
 @app.exception_handler(PermissionError)
 async def _denied(_r, exc):
     return JSONResponse(status_code=403, content={"detail": f"Access denied: {exc}"})
+
+
+# _EINVAL_ERRNOS: "the path itself is malformed/invalid", not "the path is
+# unreachable" -- these get 400 (bad request) rather than 502. Everything
+# else an OSError can carry from a filesystem call this app never expects to
+# fail cleanly (unreachable UNC host, "device not ready", a sharing
+# violation) is treated as a network/IO failure and gets 502, never a bare
+# 500 traceback. PermissionError and FileNotFoundError are OSError
+# subclasses but keep their own handlers above -- Starlette resolves a
+# handler by walking the raised exception's actual MRO, so those two exact
+# classes are matched before this general OSError handler is ever considered.
+_EINVAL_ERRNOS = {errno.EINVAL}
+
+
+@app.exception_handler(OSError)
+async def _os_error(request, exc):
+    status = 400 if exc.errno in _EINVAL_ERRNOS else 502
+    path = getattr(exc, "filename", None) or request.query_params.get("path")
+    return JSONResponse(status_code=status, content={"detail": exc.strerror or str(exc), "path": path})
 
 
 def _db():
