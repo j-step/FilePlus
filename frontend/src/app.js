@@ -1658,6 +1658,17 @@ document.addEventListener('click', e => {
       openBrowserAt(path, pathBaseName(path) || undefined);
       break;
     }
+    // Tab context menu (A.10.4) — only new-tab/close-tab are built; duplicate/
+    // pin/rename/close-other-tabs have no underlying tab-state support yet
+    // and fall through to the stub toast below (see scripts/check_menu_cases.js).
+    case 'cm-new-tab':
+      openNewTab();
+      break;
+    case 'cm-close-tab': {
+      const tab = contextMenuTarget?.closest ? contextMenuTarget.closest('.fp-tab') : null;
+      if (tab) closeTab(tab);
+      break;
+    }
     // Sidebar pinned-item context menu (A.10.5). These are only reachable
     // through the 'sidebar-item' menu type (see getMenuTypeForTarget), which
     // is raised solely for elements with data-pin-id — so any other menu
@@ -1785,6 +1796,15 @@ document.addEventListener('click', e => {
       API.post('/favorites', { path })
         .then(() => showToast('Added to Favorites', 'default'))
         .catch(err => showToast(`Failed to favorite: ${formatApiError(err)}`, 'error'));
+      break;
+    }
+    case 'cm-add-tag': {
+      // The row was already selected by the 'contextmenu' listener
+      // (ensureRowSelected) before this menu item could be clicked — just
+      // surface the Inspector's existing tag-add input for it.
+      const inspectorEl = document.getElementById('inspector');
+      if (inspectorEl && !inspectorEl.classList.contains('inspector--open')) toggleInspector();
+      document.getElementById('inspector-tag-input')?.focus();
       break;
     }
     case 'cm-pin-sidebar': {

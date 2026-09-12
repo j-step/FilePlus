@@ -52,11 +52,14 @@ April "one fix at a time" rule is retired (D10).
 
 ## Frontend traps (load-bearing, learned the hard way)
 
-- Click dispatch is the `switch` in `frontend/src/app.js` (`document.addEventListener('click', …)`).
-  `actions.js` defines an `ACTIONS` registry that nothing iterates or dispatches through; helpers there are
-  fine, the registry itself is dead. Stage 2 decides its fate.
-- `index.html` loads `actions.js` before `app.js`; both define `showSnackbar`/`showToast` and the later
-  (app.js) binding wins. Use app.js's signature `showSnackbar(msg, 'Undo', fn)`.
+- Frontend modules (globals, no build step, no modules) load in this order —
+  `frontend/src/{api,fileops,browser,inspector,home,settings,app}.js` — each can call
+  anything defined earlier at its own top level; anything from a later file is only safe to
+  reference from inside a function that runs after `DOMContentLoaded`. `actions.js` is gone
+  (Stage 2B deleted it): click dispatch is the `switch` in `app.js`
+  (`document.addEventListener('click', …)`) plus the `IN_SCOPE_ACTIONS` set (marks an action as a
+  deliberate silent no-op instead of the "not yet implemented" stub toast) — there is no registry.
+- `showSnackbar`/`showToast` are defined once, in `app.js`. Signature: `showSnackbar(msg, 'Undo', fn)`.
 - Snackbars/toasts are gated by `localStorage['fp-notifications-enabled']` (default off). Only
   `showToast(msg, 'error')` bypasses. No other exceptions.
 - Tab close affordance is `<span role="button">`, never a nested `<button>`. Per-tab screen state lives
@@ -68,12 +71,13 @@ April "one fix at a time" rule is retired (D10).
 
 ## Current state
 
-Stage 2A backend core is landed — see `docs/superpowers/runs/2026-09-11-stage-2a.md` for the run
-summary (backend safety core, every API route, the Electron shell/dialog/clipboard bridge, startup
-crash reconciliation) and the roadmap spec §2 for the baseline inventory. Canonical docs: `PRODUCT.md`,
-`docs/UI-SPEC.md` (behaviour; style superseded), `docs/backend-integration.md` (wiring ledger),
-`docs/fileplus-feature-list.md` (backlog). Everything else is under `docs/archive/`.
+Stage 2B (frontend) is landed — see `docs/superpowers/runs/2026-09-11-stage-2b.md` for the run summary
+(every screen wired to the backend, file ops/undo/redo/conflicts, Inspector, Home, palette search,
+settings, Data pane, API token auth) and `docs/superpowers/runs/2026-09-11-stage-2a.md` for the backend
+core it builds on. Canonical docs: `PRODUCT.md`, `docs/UI-SPEC.md` (behaviour; style superseded),
+`docs/backend-integration.md` (wiring ledger), `docs/fileplus-feature-list.md` (backlog). Everything
+else is under `docs/archive/`.
 
-The sandbox default is now `FILEPLUS_APP_DIR/FilePlusTestSandbox` (`backend/config.py`), so each git
+The sandbox default is `FILEPLUS_APP_DIR/FilePlusTestSandbox` (`backend/config.py`), so each git
 worktree gets its own empty sandbox with no cross-worktree collisions; `.env` can override it via
 `FILEPLUS_SANDBOX_PATH`.

@@ -1,5 +1,6 @@
 # scripts/verify.ps1 — the single gate for every autonomous run.
-# Runs: fixtures -> pytest -> contrast -> start backend -> Electron smoke test -> stop backend.
+# Runs: fixtures -> pytest -> contrast -> frontend gates -> start backend ->
+# Electron smoke test -> stop backend.
 # Exit code is non-zero if any stage fails.
 $ErrorActionPreference = 'Continue'
 $root = Split-Path -Parent $PSScriptRoot
@@ -34,19 +35,31 @@ function Stop-Backend {
   }
 }
 
-Write-Host '== 1/5 fixtures ==' -ForegroundColor Cyan
+Write-Host '== 1/6 fixtures ==' -ForegroundColor Cyan
 py -3 scripts/gen_sandbox.py
 if ($LASTEXITCODE -ne 0) { Write-Host 'sandbox generation failed' -ForegroundColor Red; exit 1 }
 
-Write-Host '== 2/5 pytest ==' -ForegroundColor Cyan
+Write-Host '== 2/6 pytest ==' -ForegroundColor Cyan
 py -3 -m pytest -q
 if ($LASTEXITCODE -ne 0) { Write-Host 'pytest failed' -ForegroundColor Red; exit 1 }
 
-Write-Host '== 3/5 contrast ==' -ForegroundColor Cyan
+Write-Host '== 3/6 contrast ==' -ForegroundColor Cyan
 py -3 scripts/contrast_check.py frontend/src/styles.css
 if ($LASTEXITCODE -ne 0) { Write-Host 'contrast check failed' -ForegroundColor Red; exit 1 }
 
-Write-Host '== 4/5 backend ==' -ForegroundColor Cyan
+Write-Host '== 4/6 frontend gates ==' -ForegroundColor Cyan
+if (Test-Path frontend/src/actions.js) {
+  Write-Host 'frontend/src/actions.js must not exist (dead ACTIONS registry — see CLAUDE.md)' -ForegroundColor Red
+  exit 1
+}
+$stubCalls = Select-String -Path frontend/src/*.js -Pattern 'stub(' -SimpleMatch
+if ($stubCalls) { Write-Host 'stub( call left in frontend/src' -ForegroundColor Red; exit 1 }
+$stubScreens = (Select-String -Path frontend/src/app.js -Pattern 'showToast\(STUB_SCREENS' -SimpleMatch).Count
+if ($stubScreens -ne 0) { Write-Host 'showToast(STUB_SCREENS still referenced in app.js' -ForegroundColor Red; exit 1 }
+node scripts/check_menu_cases.js
+if ($LASTEXITCODE -ne 0) { Write-Host 'check_menu_cases failed' -ForegroundColor Red; exit 1 }
+
+Write-Host '== 5/6 backend ==' -ForegroundColor Cyan
 
 try {
   Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:9876/health' -TimeoutSec 1 | Out-Null
@@ -84,7 +97,7 @@ if (-not $healthy) {
   exit 1
 }
 
-Write-Host '== 5/5 electron smoke ==' -ForegroundColor Cyan
+Write-Host '== 6/6 electron smoke ==' -ForegroundColor Cyan
 $code = 1
 try {
   Push-Location (Join-Path $root 'frontend')

@@ -18,6 +18,8 @@
 _Polish complete; integration items pending._
 
 ### 1. Sidebar drive bar fill
+**Done (Stage 2B, 2026-09-11).** `GET /drives` + real `.fp-sidebar__drive-bar__fill` width in `app.js`.
+
 **What.** Drive cards in `#sb-tree` show a `.fp-sidebar__drive-bar__fill` with hardcoded `width: 25%` / `41%`. Should reflect actual disk usage.
 
 **How.**
@@ -38,6 +40,8 @@ _Polish complete; integration items pending._
 - Server-side, this is `SELECT t.id, t.name, t.color, COUNT(ft.tag_id) FROM tags t LEFT JOIN file_tags ft ON ft.tag_id = t.id GROUP BY t.id ORDER BY count DESC LIMIT ?`. Add an index on `file_tags(tag_id)` first (see Cross-cutting / Performance).
 
 ### 3. Backend status dot
+**Superseded (Stage 2A, 2026-09-11).** `GET /health` actually returns `{db_ok, write_unlocked, pending_ops, index_running}`, not the `scan_running`/`ai_status`/`watcher_running` shape proposed below; the dot maps against the real contract.
+
 **What.** The header dot reflects `checkBackend()` result (already wired); confirm endpoint contract.
 
 **How.**
@@ -46,6 +50,8 @@ _Polish complete; integration items pending._
 - Already polled every 30 s in [app.js:1975](../frontend/src/app.js#L1975).
 
 ### 4. Pinned folders (`GET /pins`)
+**Done (Stage 2A/2B, 2026-09-11).** `pinned_folders` table + `GET/POST/PATCH/DELETE /pins` + `/pins/reorder`, wired in the sidebar.
+
 **What.** Sidebar `#sb-pinned-folders` shows hardcoded entries (Downloads etc.).
 
 **How.**
@@ -75,6 +81,8 @@ _Polish complete; integration items pending._
 ### A.2.1 Recent
 
 #### 1. Time-bucket grouping (`GET /recent`)
+**Done (Stage 2B, 2026-09-11).** `recent_actions` table + `GET /recent`/`POST /recent`, grouped sections rendered in `home.js`.
+
 **What.** The Recent pane currently ships static placeholder rows in 10 hardcoded sections (Today, Yesterday, This week, Earlier this month, Last month, Earlier this year, 2025, 2024, 2023, A long time ago). Real data must drive the layout, including hiding empty groups and computing the year-section labels at runtime.
 
 **How.**
@@ -99,6 +107,8 @@ _Polish complete; integration items pending._
 - Cache the response in `sessionStorage['fp-recent']` (TTL 5 min) so re-entering the Home screen paints instantly.
 
 #### 2. Time labels in `.fp-row__recent-time`
+**Done (Stage 2B, 2026-09-11).** `formatRecentTime()` in `home.js` implements the bucket-dependent formats below.
+
 **What.** Each row shows a relative-time label like `opened 11:20`, `modified Apr 12`, `opened in 2019`. Format is bucket-dependent.
 
 **How.**
@@ -110,6 +120,8 @@ _Polish complete; integration items pending._
 - Frontend formats client-side from the file entry's `action` + `action_at` ISO timestamp; do not pre-format on the server.
 
 #### 3. Per-row hover actions
+**Done (Stage 2B, 2026-09-11).** Open/Reveal/Copy path wired in `home.js` via `electronAPI`/`switchScreen`/clipboard, through `IN_SCOPE_ACTIONS`.
+
 **What.** Each Recent row has three hover-revealed buttons: Open, Reveal in Browser, Copy path. All currently hit the default action stub.
 
 **How.**
@@ -118,6 +130,8 @@ _Polish complete; integration items pending._
 - `data-action="copy-path"` — already wired in [actions.js:115](../frontend/src/actions.js#L115). Confirm it picks up the closest `[data-path]` for Recent rows specifically (Recent rows DO have `data-path`, so it should — verify only).
 
 #### 4. Selected-row state
+**Done (Stage 2B, 2026-09-11).** Real click/keyboard selection in `home.js` (`homeKeydown` + row click handler), no hardcoded row.
+
 **What.** The first Today row is hardcoded with `fp-row--selected aria-selected="true"` to demonstrate the visual. Real selection is runtime.
 
 **How.**
@@ -137,6 +151,8 @@ _Polish complete; integration items pending._
 ### A.2.2 Favorites
 
 #### 1. Favorites list (`GET /favorites`)
+**Done (Stage 2A/2B, 2026-09-11).** `favorites` table + `GET/POST/DELETE /favorites` + `/favorites/reorder`, rendered in `home.js`.
+
 **What.** Favorites pane ships one static row. Real list comes from a user-curated collection.
 
 **How.**
@@ -147,6 +163,8 @@ _Polish complete; integration items pending._
 - Cache: `localStorage['fp-favorites']` so the pane paints last-known state instantly on cold start. Re-fetch on every Favorites tab activation, diff against cache, animate inserts/removes.
 
 #### 2. Unfavorite-star click — visual + undo wired; backend pending
+**Done (Stage 2B/Task 8a, 2026-09-11).** Implements the doc's own "alternative shape": `DELETE /favorites` fires on the 200ms removal timer in `home.js`'s `unfavoriteFile()`; Undo re-adds via a server-side inverse op (Task 8a) at the captured order snapshot.
+
 **What.** Click on the filled accent star: flips the star path to outline, fades the row over `var(--dur-slide)`, removes the row after 200ms, and surfaces an Undo snackbar that re-inserts the row at its original position with the filled star restored. Currently visual-only — no DELETE/POST is fired.
 
 **Status.** Visual + undo behavior live in `unfavoriteFile()` at [actions.js:57](../frontend/src/actions.js#L57), wired through the click switch in [app.js](../frontend/src/app.js) (case `'unfavorite-file'` calls `unfavoriteFile(btn)`; action is in `IN_SCOPE_ACTIONS`). CSS class `.fp-row--unfavoriting` lives in the Home block of `styles.css`. Snackbar respects the global notifications toggle — when notifications are off (default), the row removal still happens but the Undo affordance is silent. The integration pass should not bypass that gate.
@@ -158,6 +176,8 @@ _Polish complete; integration items pending._
 - The handler captures `parent`, `nextSibling`, and the original star-path attribute set at click time — re-use these in the error-recovery path.
 
 #### 3. Drag-to-reorder
+**Done (Stage 2B, 2026-09-11).** HTML5 drag + `POST /favorites/reorder`, wired in `home.js`.
+
 **What.** Spec calls for manual order with drag handles. Not yet wired.
 
 **How.**
@@ -173,6 +193,8 @@ v2 only. Tab is permanently `disabled`. No backend integration in v1.
 ## A.3 Browser
 
 ### 1. Directory listing (already wired — verify)
+**Done (Stage 2A/2B, 2026-09-11).** `show_hidden` query param, `asyncio.to_thread` scandir, and root/parent handling all landed.
+
 **What.** [app.js:1214](../frontend/src/app.js#L1214) `loadDirectory()` calls `GET /fs/list?path=<abs>` (or `/fs/list/root`). Implemented in [api.py:126](../backend/api.py#L126).
 
 **How.** No new backend work. Hardening:
@@ -181,6 +203,8 @@ v2 only. Tab is permanently `disabled`. No backend integration in v1.
 - Return `parent` (parent path) and `is_root` (true for sandbox root) so the renderer's nav-up logic doesn't have to compute it.
 
 ### 2. Inspector — single-file metadata (`GET /files/{id}/meta`)
+**Done (Stage 2B, 2026-09-11).** Landed as `GET /file?path=` (not a `/files/{id}/meta` route); `inspector.js`'s `showInspectorFor()` populates size/modified/created/hash/tags from it.
+
 **What.** Inspector shows hardcoded `18.7 KB`, `1 hr ago`, `Apr 22, 2026`, dash-for-hash. Real values must come from the backend.
 
 **How.**
@@ -190,6 +214,8 @@ v2 only. Tab is permanently `disabled`. No backend integration in v1.
 - Hash display formatting: render as `xxh64:<first-8-of-hex>…<last-4>` (truncated, monospace) — full hash on hover via `title` attribute.
 
 ### 3. Inspector — Preview tab (`GET /preview`)
+**Done for text/binary/too-large (Stage 2A/2B, 2026-09-11); image/pdf/audio/video/archive not built.** Bounded 4 KB text reads, `path_guard()` always.
+
 **What.** Preview tab is a placeholder showing markdown rendered from a fake `design-brief.md`.
 
 **How.**
@@ -206,6 +232,8 @@ v2 only. Tab is permanently `disabled`. No backend integration in v1.
 - Path safety: `path_guard()` always. `SAFETY_MODE` was replaced by `WRITE_UNLOCKED` + `path_guard(path, mode)` in Stage 2A (2026-09-11).
 
 ### 4. Inspector — Tags tab (read/write)
+**Done (Stage 2A/2B, 2026-09-11).** `GET/POST /files/{id}/tags`, `DELETE /files/{id}/tags/{tag_id}`, chip UI + autocomplete in `inspector.js`; add/remove undo inverses landed in Task 8a.
+
 **What.** Tag chip list and "Add tag" input — currently dummy.
 
 **How.**
@@ -216,6 +244,8 @@ v2 only. Tab is permanently `disabled`. No backend integration in v1.
 - "Add tag" input does autocomplete from `GET /tags?q=<prefix>&limit=10`; Enter commits.
 
 ### 5. Inspector — History tab (`GET /files/{id}/history`)
+**Done (Stage 2B, 2026-09-11).** Landed as `GET /files/history?path=`; rendered as a timeline with per-op Undo in `inspector.js`.
+
 **What.** History tab placeholder — should show the operations log entries for this file.
 
 **How.**
@@ -224,6 +254,8 @@ v2 only. Tab is permanently `disabled`. No backend integration in v1.
 - Rendered as a vertical timeline. Each entry has an "Undo" button that fires `POST /operations/{id}/undo` (requires Phase 10 mover work).
 
 ### 6. Inspector — multi-select aggregate
+**Done (Stage 2B, 2026-09-11).** Client-side count/size sum in `browser.js`'s `showInspectorMulti()`; tag union not built.
+
 **What.** Multi-select shows count + total size + union of tags. Currently `data.totalSize || '—'` per the comment at [app.js:648](../frontend/src/app.js#L648) — never computed.
 
 **How.**
@@ -231,6 +263,8 @@ v2 only. Tab is permanently `disabled`. No backend integration in v1.
 - For tag union: `POST /files/tags/union { ids: [1,2,3] }` → `[{ name, color, tag_group, count }]` where `count` is the number of selected files that carry that tag. Tags shared by all selected files render at full opacity; partial-coverage tags render at 0.5 opacity.
 
 ### 7. List/grid sorting
+**Done (Stage 2B, 2026-09-11).** Client-side `applySort()`/`initColumnSort()` in `browser.js`; deep-tree `order_by` not needed (no search-results tree yet).
+
 **What.** Column headers fire `data-action="sort-by"` but [app.js:569](../frontend/src/app.js#L569) is a stub.
 
 **How.**
@@ -238,6 +272,8 @@ v2 only. Tab is permanently `disabled`. No backend integration in v1.
 - For deep-tree sort (search results), add `?order_by=name|size|mtime&dir=asc|desc` to `GET /files`.
 
 ### 8. Drag-drop into folder (`POST /fs/move`)
+**Done (Stage 2B, 2026-09-11).** `handleFsDrop()`/`dropViolation()` in `browser.js`; conflicts route to the Replace/Skip/Keep-both modal; snackbar Undo posts `/operations/batch/{id}/undo`.
+
 **What.** Dropping files onto a folder row should move them.
 
 **How.**
@@ -246,6 +282,8 @@ v2 only. Tab is permanently `disabled`. No backend integration in v1.
 - Snackbar on success: `"Moved 4 files. Undo"` — Undo posts `POST /operations/batch/{batch_id}/undo`.
 
 ### 9. Right-click context menu actions
+**Done for the actions actually in v1's menus (Stage 2B/Task 8b, 2026-09-11).** `open/open-with/reveal-explorer/cut/copy/paste/rename/delete/new-file/new-folder/favorite/pin-sidebar/add-tag/properties` are wired in `app.js`'s switch (`scripts/check_menu_cases.js` gates regressions); `cm-permanent-delete`/`cm-reclassify`/`cm-compress` are not in any v1 menu — deferred. `actions.js` no longer exists (deleted this stage).
+
 **What.** All `cm-*` actions are stubs in [actions.js:121-148](../frontend/src/actions.js#L121).
 
 | Action | Endpoint | Notes |
@@ -272,6 +310,8 @@ v2 only. Tab is permanently `disabled`. No backend integration in v1.
 All file-touching ops above MUST call `operations_log.log_operation(executed=0)` first, perform the action, then `mark_executed(op_id)`. On failure, leave `executed=0` so crash recovery picks it up.
 
 ### 10. Marquee multi-select aggregate
+**Done (Stage 2B, 2026-09-11).** Client-side, same aggregate as A.3.6.
+
 **What.** Marquee drag selects rows; multi-select aggregate at [app.js:618](../frontend/src/app.js#L618) is a stub.
 
 **How.** Pure client-side aggregation from already-loaded rows. See A.3.6 for the inspector multi-select payload.
@@ -602,6 +642,11 @@ See A.4 above (the v1 design originally numbered this A.4; the doc reuses A.4 as
 
 ## A.10 Context menus
 
+**Status (Stage 2B, 2026-09-11).** File/folder/empty-area/sidebar-item menus done (see A.3.9); the Tab
+menu's new-tab/close-tab are wired but duplicate/close-others/pin/rename-tab are not (no client-side
+tab-state support built yet — `scripts/check_menu_cases.js` documents this as a known gap, not a
+regression); the Tag chip context menu doesn't exist (no Tag Canvas screen yet).
+
 Already covered in A.3.9 for browser context menus. Other variants:
 - **Sidebar item context menu**: pin/unpin, rename, remove from sidebar — `POST /pins`, `DELETE /pins/{id}`, `PATCH /pins/{id} { label }`.
 - **Tab context menu**: rename, move-left/right, close, close-others, close-right — purely client-side state, no backend.
@@ -654,6 +699,8 @@ No backend. Pure UI.
 ## A.12 Settings
 
 ### 0. Generic config endpoints (foundation)
+**Done (Stage 2A/2B, 2026-09-11).** `config` table + `GET/GET-by-key/POST/DELETE /config`, `window.__fpConfig` cache, `config-change` op-log audit trail; `secure.*` encryption-at-rest not built (no AI settings pane yet).
+
 **What.** The vast majority of Settings actions in [actions.js:252-310](../frontend/src/actions.js#L252) collapse into a single key/value config layer.
 
 **How.**
@@ -668,6 +715,8 @@ No backend. Pure UI.
 - Audit: every config write logs to `operations_log` with `op_type='config-change'`, source = key, dest = redacted-or-value, so undo can roll back a settings change.
 
 ### 1. Personalization pane
+**Done (Stage 2B/Task 7, 2026-09-11).** Theme/density/accent/show-notifications/show-extensions/show-hidden/click-mode persisted via `saveSetting()` -> `POST /config`; localStorage stays the fast-paint cache. Glow/inspector-width/tab-style config keys not built (no corresponding UI controls yet).
+
 - Theme / density / accent / glow / show-notifications / inspector-width / show-extensions / show-hidden / click-mode / tab-style — all single config keys (`ui.theme`, `ui.density`, etc.). Keep localStorage as fast-paint cache; canonical state in config table.
 - Reset accent button: `DELETE /config/ui.accent_hex`.
 
@@ -913,6 +962,14 @@ The following modules are referenced repeatedly in this doc but don't yet exist;
 - `backend/cost_tracker.py` — Anthropic call accounting (A.12.6).
 
 ### 17. Global undo / redo (Ctrl+Z / Ctrl+Shift+Z)
+
+**Done for Browser file ops + tag/favorite/pin (Stage 2A/2B/Task 8a, 2026-09-11); superseded design for
+the rest.** Move/rename/trash/copy/touch/mkdir undo via `POST /operations/batch/{batch_id}/undo`
+(single-op routes mint a batch id so Ctrl+Z always targets a batch, not the `payload`/`redo_of`/
+`undone_at` schema drafted below); tag add/remove and favorite/pin add/remove/reorder/rename got
+server-side inverses in Task 8a. Redo replays the same batch-undo route on the inverse batch. Review
+Bin / Tag canvas / File Tree canvas / Scan results / Everything Folder rows are all unbuilt (those
+screens don't exist yet) — not attempted this stage.
 
 **What.** Any action that affects a file or folder must be reversible via Ctrl+Z, and a reversed action must be replayable via Ctrl+Shift+Z. Scope is the full set of file/folder operations the app exposes — not just filesystem writes — so the user has one mental model: "if I just did something, I can take it back, and I can put it back."
 
