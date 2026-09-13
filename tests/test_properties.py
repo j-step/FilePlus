@@ -11,6 +11,7 @@ import aiosqlite
 import pytest
 from fastapi.testclient import TestClient
 
+import backend.config as _config
 from backend import mover, operations_log as ol, winshell
 
 
@@ -82,6 +83,25 @@ async def test_undo_attr_set_swaps_before_after_and_redo_restores(conn, sandbox)
     assert redo["op_id"] != add_op["id"], "redo must mint a fresh row, never replay the original id"
 
 
+async def test_undo_attr_set_is_path_guarded(conn, sandbox, monkeypatch):
+    """Fix round 1 [Critical]: _apply_attr_bits (the function undo_operation's
+    attr-set case calls directly, with a path taken straight from the
+    operations_log row) must re-run path_guard itself, exactly like
+    move/rename/trash's own undo paths do (by calling move()/rename()/
+    trash() again, which guard internally) -- otherwise a since-relocated
+    sandbox lets an undo write outside the currently-allowed area.
+    """
+    p = _mk(sandbox, "relocate.txt")
+    await mover.set_attributes(conn, p, read_only=True, hidden=None, archive=None, batch_id=ol.new_batch_id())
+    add_op = await _only(conn, "attr-set")
+
+    monkeypatch.setattr(_config, "FILEPLUS_SANDBOX_PATH", sandbox / "elsewhere")
+
+    with pytest.raises(_config.OutOfSandboxError):
+        await mover.undo_operation(conn, add_op["id"])
+    assert (await ol.get_operation(conn, add_op["id"]))["undone"] == 0
+
+
 # ---------------------------------------------------------------------------
 # backend.mover.set_folder_type / folder-type-set undo+redo
 # ---------------------------------------------------------------------------
@@ -127,6 +147,21 @@ async def test_undo_folder_type_set_removes_ini_and_redo_restores(conn, sandbox)
     assert redo["op_id"] != add_op["id"]
 
 
+async def test_undo_folder_type_set_is_path_guarded(conn, sandbox, monkeypatch):
+    """Fix round 1 [Critical]: same as attr-set's undo -- _undo_folder_type_set
+    must re-run path_guard itself before restore_desktop_ini touches disk.
+    """
+    d = sandbox / "Guarded"; d.mkdir()
+    await mover.set_folder_type(conn, d, "Pictures", batch_id=ol.new_batch_id())
+    add_op = await _only(conn, "folder-type-set")
+
+    monkeypatch.setattr(_config, "FILEPLUS_SANDBOX_PATH", sandbox / "elsewhere")
+
+    with pytest.raises(_config.OutOfSandboxError):
+        await mover.undo_operation(conn, add_op["id"])
+    assert (await ol.get_operation(conn, add_op["id"]))["undone"] == 0
+
+
 async def test_undo_folder_type_set_over_an_existing_customization_keeps_folder_readonly(conn, sandbox):
     """Changing Pictures -> Videos on an already-customized folder, then
     undoing, must restore the *previous* desktop.ini (Pictures) rather than
@@ -135,13 +170,17 @@ async def test_undo_folder_type_set_over_an_existing_customization_keeps_folder_
     """
     d = sandbox / "Multi"; d.mkdir()
     await mover.set_folder_type(conn, d, "Pictures", batch_id=ol.new_batch_id())
+    assert winshell.get_attributes(d)["read_only"] is True
     await mover.set_folder_type(conn, d, "Videos", batch_id=ol.new_batch_id())
+    assert winshell.get_attributes(d)["read_only"] is True
     rows = [r for r in await ol.list_operations(conn) if r["op_type"] == "folder-type-set"]
     latest = rows[0]  # list_operations orders id DESC -- rows[0] is the Videos change
 
     await mover.undo_operation(conn, latest["id"])
     assert winshell.read_folder_type(d) == "Pictures"
     assert (d / "desktop.ini").exists()
+    assert winshell.get_attributes(d)["read_only"] is True, \
+        "folder was already Explorer-customized before this change; undo must not un-customize it"
 
 
 # ---------------------------------------------------------------------------
@@ -210,9 +249,56 @@ def test_fs_properties_details_503_when_pywin32_missing(client, sandbox, monkeyp
     assert r.status_code == 503 and r.json()["detail"] == "pywin32 not installed"
 
 
+def test_fs_properties_details_502_on_other_failure(client, sandbox, monkeypatch):
+    """Fix round 1 [Minor]: RuntimeError -> 503 (pywin32 missing) as before;
+    any other exception from property_details (a COM failure on a weird
+    file, say) -> 502 with the exception's own text, not an unhandled 500.
+    """
+    from backend import api as api_module
+
+    def boom(path):
+        raise OSError("simulated COM property-store failure")
+
+    monkeypatch.setattr(api_module.winshell, "property_details", boom)
+    p = _mk(sandbox, "note3.txt", "hello")
+    r = client.get("/fs/properties/details", params={"path": str(p)})
+    assert r.status_code == 502 and "simulated COM property-store failure" in r.json()["detail"]
+
+
 # ---------------------------------------------------------------------------
 # POST /fs/attributes
 # ---------------------------------------------------------------------------
+
+def test_fs_attributes_all_null_is_422_with_no_log_row(client, sandbox):
+    p = _mk(sandbox, "untouched.txt")
+    r = client.post("/fs/attributes", json={"path": str(p)})
+    assert r.status_code == 422
+    ops = client.get("/operations", params={"path": str(p)}).json()
+    assert ops == [], "no operations_log row for a no-op request"
+
+
+def test_fs_attributes_undo_after_sandbox_relocated_is_403_and_row_stays_undone(client, sandbox, tmp_path, monkeypatch):
+    """Fix round 1 [Critical], route-level: forward op inside the sandbox,
+    then the sandbox is relocated elsewhere before the undo is attempted --
+    POST /operations/{id}/undo must 403, and the original row must stay
+    undone=0 (the undo never got far enough to log or apply anything).
+    """
+    p = _mk(sandbox, "relocate2.txt")
+    r = client.post("/fs/attributes", json={"path": str(p), "read_only": True})
+    assert r.status_code == 200
+    ops = client.get("/operations", params={"path": str(p)}).json()
+    attr_op = next(o for o in ops if o["op_type"] == "attr-set")
+    assert attr_op["undone"] == 0
+
+    monkeypatch.setattr(_config, "FILEPLUS_SANDBOX_PATH", tmp_path / "elsewhere")
+
+    r2 = client.post(f"/operations/{attr_op['id']}/undo")
+    assert r2.status_code == 403
+
+    ops2 = client.get("/operations", params={"path": str(p)}).json()
+    still = next(o for o in ops2 if o["op_type"] == "attr-set" and o["id"] == attr_op["id"])
+    assert still["undone"] == 0
+
 
 def test_fs_attributes_sets_and_is_undoable(client, sandbox):
     p = _mk(sandbox, "ro.txt")

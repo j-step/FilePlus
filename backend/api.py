@@ -666,6 +666,34 @@ def _immediate_child_names(directory: Path) -> list[tuple[str, bool]]:
         return []
 
 
+def _properties_blocking(resolved: Path, is_dir: bool) -> dict:
+    """Every blocking winshell/scandir call GET /fs/properties needs, gathered
+    under one asyncio.to_thread dispatch (get_attributes, assoc/size_on_disk
+    for a file; contains_counts/read_folder_type/detect_folder_type for a
+    directory) rather than several separate to_thread round trips.
+    """
+    attrs = winshell.get_attributes(resolved)
+    if is_dir:
+        assoc_info = {"type_description": "File folder", "opens_with": None, "opens_with_exe": None}
+        counts = winshell.contains_counts(resolved)
+        size = size_on_disk = counts["bytes"]
+        contains = {"files": counts["files"], "folders": counts["folders"], "truncated": counts["truncated"]}
+        folder_type = winshell.read_folder_type(resolved)
+        folder_type_detected = winshell.detect_folder_type(_immediate_child_names(resolved))
+    else:
+        ext = resolved.suffix.lstrip(".").lower()
+        assoc_info = winshell.assoc(ext)
+        size = resolved.stat().st_size
+        size_on_disk = winshell.size_on_disk(resolved)
+        contains = None
+        folder_type = None
+        folder_type_detected = None
+    return {
+        "attrs": attrs, "assoc_info": assoc_info, "size": size, "size_on_disk": size_on_disk,
+        "contains": contains, "folder_type": folder_type, "folder_type_detected": folder_type_detected,
+    }
+
+
 @app.get("/fs/properties")
 async def fs_properties(path: str = Query(..., description="Absolute path of the file or folder")):
     """Explorer-style Properties for a single file or folder.
@@ -673,31 +701,18 @@ async def fs_properties(path: str = Query(..., description="Absolute path of the
     Read-only (path_guard "read" — D2: browsing/inspecting any real path is
     allowed). `contains` is populated (and `folder_type`/`folder_type_detected`
     computed) only for a directory; a file gets `contains: null` and both
-    folder-type fields null. size_on_disk and, for a directory, the whole
-    `contains` walk are budgeted blocking I/O, so both run in a thread.
+    folder-type fields null. Every blocking call (attributes, association,
+    size-on-disk, the recursive folder summary) runs together in a single
+    asyncio.to_thread dispatch (_properties_blocking) instead of several.
     """
     resolved = path_guard(Path(path), "read")
     if not resolved.exists():
         raise HTTPException(status_code=404, detail=f"Not found: {path}")
     st = resolved.stat()
-    attrs = winshell.get_attributes(resolved)
     is_dir = resolved.is_dir()
-    if is_dir:
-        assoc_info = {"type_description": "File folder", "opens_with": None, "opens_with_exe": None}
-        counts = await asyncio.to_thread(winshell.contains_counts, resolved)
-        size = size_on_disk = counts["bytes"]
-        contains = {"files": counts["files"], "folders": counts["folders"], "truncated": counts["truncated"]}
-        folder_type = winshell.read_folder_type(resolved)
-        names = await asyncio.to_thread(_immediate_child_names, resolved)
-        folder_type_detected = winshell.detect_folder_type(names)
-    else:
-        ext = resolved.suffix.lstrip(".").lower()
-        assoc_info = winshell.assoc(ext)
-        size = st.st_size
-        size_on_disk = await asyncio.to_thread(winshell.size_on_disk, resolved)
-        contains = None
-        folder_type = None
-        folder_type_detected = None
+    data = await asyncio.to_thread(_properties_blocking, resolved, is_dir)
+    attrs = data["attrs"]
+    assoc_info = data["assoc_info"]
     return {
         "path": str(resolved),
         "name": resolved.name or str(resolved),
@@ -706,9 +721,9 @@ async def fs_properties(path: str = Query(..., description="Absolute path of the
         "opens_with": assoc_info["opens_with"],
         "opens_with_exe": assoc_info["opens_with_exe"],
         "location": str(resolved.parent),
-        "size": size,
-        "size_on_disk": size_on_disk,
-        "contains": contains,
+        "size": data["size"],
+        "size_on_disk": data["size_on_disk"],
+        "contains": data["contains"],
         "created": _created_time(st),
         "modified": st.st_mtime,
         "accessed": st.st_atime,
@@ -716,8 +731,8 @@ async def fs_properties(path: str = Query(..., description="Absolute path of the
             "read_only": attrs["read_only"], "hidden": attrs["hidden"],
             "archive": attrs["archive"], "system": attrs["system"],
         },
-        "folder_type": folder_type,
-        "folder_type_detected": folder_type_detected,
+        "folder_type": data["folder_type"],
+        "folder_type_detected": data["folder_type_detected"],
     }
 
 
@@ -726,7 +741,10 @@ async def fs_properties_details(path: str = Query(..., description="Absolute pat
     """Extended Windows property list (pywin32 propsys) for the Properties "Details" tab.
 
     503 (not 500) when pywin32 isn't installed -- backend.winshell.property_details
-    imports it lazily and raises RuntimeError for exactly that case.
+    imports it lazily and raises RuntimeError for exactly that case. Any
+    other failure (a COM error from a weird/locked file, say) is a 502
+    rather than an unhandled 500, since it's an external-API failure, not a
+    bug in the request itself.
     """
     resolved = path_guard(Path(path), "read")
     if not resolved.exists():
@@ -735,6 +753,8 @@ async def fs_properties_details(path: str = Query(..., description="Absolute pat
         details = await asyncio.to_thread(winshell.property_details, resolved)
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
     return {"details": details}
 
 
@@ -1010,8 +1030,12 @@ async def fs_attributes(body: AttributesReq):
     SetFileAttributesW is called once with the merged bitmask, so it never
     touches a bit the caller didn't ask about (a folder's contents are never
     touched either way — attr-set only ever calls SetFileAttributesW on
-    *path* itself).
+    *path* itself). All three null at once means "change nothing" -- 422,
+    with no operations_log row written, rather than a no-op attr-set that
+    would clutter the history and be undoable to no visible effect.
     """
+    if body.read_only is None and body.hidden is None and body.archive is None:
+        raise HTTPException(status_code=422, detail="At least one of read_only, hidden, or archive must be set.")
     async with _db() as conn:
         op = await mover.set_attributes(conn, Path(body.path), read_only=body.read_only, hidden=body.hidden,
                                         archive=body.archive, batch_id=ol.new_batch_id())

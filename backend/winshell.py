@@ -21,15 +21,17 @@ fails) so the module stays importable and testable anywhere.
 """
 from __future__ import annotations
 
+import codecs
 import configparser
 import ctypes
-import io
 import os
+import re
 import time
-from collections import deque
+from collections import OrderedDict, deque
 from pathlib import Path
 
 from backend import filetypes
+from backend.errors import RefusedError
 
 FILE_ATTRIBUTE_READONLY = 0x1
 FILE_ATTRIBUTE_HIDDEN = 0x2
@@ -44,6 +46,44 @@ _GROUP_BY_PROPERTY_PREFIX = {
     "Video": "Video", "Audio": "Audio", "Image": "Image",
     "Media": "Media", "Document": "Document", "Photo": "Photo",
 }
+
+# ---------------------------------------------------------------------------
+# ctypes DLL handles for the functions this module (beyond known_folders'
+# own SHGetKnownFolderPath machinery, unchanged from Task 1) calls directly:
+# GetFileAttributesW/SetFileAttributesW/GetDiskFreeSpaceW/GetCompressedFileSizeW
+# (kernel32) and AssocQueryStringW (shlwapi). Loaded with use_last_error=True
+# (a WinDLL instance separate from the shared, not-error-tracking
+# ctypes.windll.kernel32) so ctypes.get_last_error() right after a call
+# reliably reflects that call's own GetLastError(), and every argtypes/
+# restype pair is declared explicitly -- ctypes defaults an undeclared
+# restype to a *signed* 32-bit int, which silently corrupts a DWORD whose
+# top bit is set (see size_on_disk's GetCompressedFileSizeW use, where a low
+# 32 bits like 0x80000000 must compose as a large positive value, not a
+# negative one).
+# ---------------------------------------------------------------------------
+if os.name == "nt":
+    _kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    _kernel32.GetFileAttributesW.argtypes = [ctypes.c_wchar_p]
+    _kernel32.GetFileAttributesW.restype = ctypes.c_uint32
+    _kernel32.SetFileAttributesW.argtypes = [ctypes.c_wchar_p, ctypes.c_uint32]
+    _kernel32.SetFileAttributesW.restype = ctypes.c_int
+    _kernel32.GetDiskFreeSpaceW.argtypes = [
+        ctypes.c_wchar_p, ctypes.POINTER(ctypes.c_uint32), ctypes.POINTER(ctypes.c_uint32),
+        ctypes.POINTER(ctypes.c_uint32), ctypes.POINTER(ctypes.c_uint32),
+    ]
+    _kernel32.GetDiskFreeSpaceW.restype = ctypes.c_int
+    _kernel32.GetCompressedFileSizeW.argtypes = [ctypes.c_wchar_p, ctypes.POINTER(ctypes.c_uint32)]
+    _kernel32.GetCompressedFileSizeW.restype = ctypes.c_uint32
+
+    _shlwapi = ctypes.WinDLL("shlwapi", use_last_error=True)
+    _shlwapi.AssocQueryStringW.argtypes = [
+        ctypes.c_uint32, ctypes.c_int, ctypes.c_wchar_p, ctypes.c_wchar_p,
+        ctypes.c_wchar_p, ctypes.POINTER(ctypes.c_uint32),
+    ]
+    _shlwapi.AssocQueryStringW.restype = ctypes.c_long
+else:
+    _kernel32 = None
+    _shlwapi = None
 
 
 class _GUID(ctypes.Structure):
@@ -125,9 +165,10 @@ def get_attributes(path: Path) -> dict:
     """
     path = Path(path)
     if os.name == "nt":
-        attrs = ctypes.windll.kernel32.GetFileAttributesW(str(path))  # type: ignore[attr-defined]
-        if attrs in (-1, 0xFFFFFFFF):
-            raise OSError(f"GetFileAttributesW failed for {path}")
+        ctypes.set_last_error(0)
+        attrs = _kernel32.GetFileAttributesW(str(path))
+        if attrs == 0xFFFFFFFF:  # INVALID_FILE_ATTRIBUTES, restype is unsigned so never -1
+            raise ctypes.WinError(ctypes.get_last_error())
         bits = attrs
     else:
         bits = FILE_ATTRIBUTE_ARCHIVE
@@ -153,9 +194,10 @@ def set_attributes(path: Path, bits: int) -> None:
     """
     path = Path(path)
     if os.name == "nt":
-        ok = ctypes.windll.kernel32.SetFileAttributesW(str(path), bits)  # type: ignore[attr-defined]
+        ctypes.set_last_error(0)
+        ok = _kernel32.SetFileAttributesW(str(path), bits)
         if not ok:
-            raise OSError(f"SetFileAttributesW failed for {path} (bits={bits:#x})")
+            raise ctypes.WinError(ctypes.get_last_error())
         return
     mode = path.stat().st_mode
     mode = (mode & ~0o222) if (bits & FILE_ATTRIBUTE_READONLY) else (mode | 0o200)
@@ -172,12 +214,12 @@ def _cluster_size(path: Path) -> int:
     if not drive:
         return 0
     root = drive + "\\"
-    sectors_per_cluster = ctypes.c_ulong(0)
-    bytes_per_sector = ctypes.c_ulong(0)
-    free_clusters = ctypes.c_ulong(0)
-    total_clusters = ctypes.c_ulong(0)
-    ok = ctypes.windll.kernel32.GetDiskFreeSpaceW(  # type: ignore[attr-defined]
-        ctypes.c_wchar_p(root), ctypes.byref(sectors_per_cluster), ctypes.byref(bytes_per_sector),
+    sectors_per_cluster = ctypes.c_uint32(0)
+    bytes_per_sector = ctypes.c_uint32(0)
+    free_clusters = ctypes.c_uint32(0)
+    total_clusters = ctypes.c_uint32(0)
+    ok = _kernel32.GetDiskFreeSpaceW(
+        root, ctypes.byref(sectors_per_cluster), ctypes.byref(bytes_per_sector),
         ctypes.byref(free_clusters), ctypes.byref(total_clusters),
     )
     if not ok:
@@ -193,23 +235,38 @@ def size_on_disk(path: Path, budget_s: float = 3.0, clock=time.monotonic) -> int
     the budgeted recursive byte total from contains_counts (a true per-file
     on-disk walk would mean one GetCompressedFileSizeW call per file, which
     is far too slow for a folder with any real number of files). Falls back
-    to st_size rounded up to a 4096-byte cluster on a non-Windows OS, or if
-    the WinAPI call fails.
+    to st_size rounded up to a 4096-byte cluster on a non-Windows OS, when
+    the WinAPI call fails for a reason other than "path doesn't exist" (a
+    transient/permission failure shouldn't be fatal), or when GetLastError()
+    reports success despite an all-ones low DWORD (a file that is genuinely
+    exactly 0xFFFFFFFF bytes low-order -- GetCompressedFileSizeW's own
+    documented way to say "that's the real value, not an error").
+
+    A missing *path* raises FileNotFoundError (from either
+    GetCompressedFileSizeW's own GetLastError() or the st_size fallback's
+    own path.stat()) rather than silently returning a fabricated size --
+    GET /fs/properties already checks existence before calling this, so
+    that's a clean, expected 404 for any caller that doesn't.
     """
     path = Path(path)
     if path.is_dir():
         return contains_counts(path, budget_s=budget_s, clock=clock)["bytes"]
     if os.name == "nt":
         try:
-            high = ctypes.c_ulong(0)
-            low = ctypes.windll.kernel32.GetCompressedFileSizeW(str(path), ctypes.byref(high))  # type: ignore[attr-defined]
+            high = ctypes.c_uint32(0)
+            ctypes.set_last_error(0)
+            low = _kernel32.GetCompressedFileSizeW(str(path), ctypes.byref(high))
             if low == 0xFFFFFFFF:
-                raise OSError(f"GetCompressedFileSizeW failed for {path}")
-            actual = (high.value << 32) | low
+                err = ctypes.get_last_error()
+                if err != 0:
+                    raise ctypes.WinError(err)
+            actual = (high.value << 32) | low  # both unsigned (restype=c_uint32) -- safe to compose directly
             cluster = _cluster_size(path)
             if cluster:
                 actual = ((actual + cluster - 1) // cluster) * cluster
             return actual
+        except FileNotFoundError:
+            raise
         except OSError:
             pass
     return ((path.stat().st_size + 4095) // 4096) * 4096
@@ -237,13 +294,12 @@ def _assoc_query_string(assocstr: int, dotted_ext: str) -> str | None:
     Follows the documented two-call idiom: call once with a null buffer to
     learn the required size, then again with a buffer of that size.
     """
-    shlwapi = ctypes.windll.shlwapi  # type: ignore[attr-defined]
-    size = ctypes.c_uint(0)
-    shlwapi.AssocQueryStringW(0, assocstr, ctypes.c_wchar_p(dotted_ext), None, None, ctypes.byref(size))
+    size = ctypes.c_uint32(0)
+    _shlwapi.AssocQueryStringW(0, assocstr, dotted_ext, None, None, ctypes.byref(size))
     if size.value == 0:
         return None
     buf = ctypes.create_unicode_buffer(size.value)
-    hres = shlwapi.AssocQueryStringW(0, assocstr, ctypes.c_wchar_p(dotted_ext), None, buf, ctypes.byref(size))
+    hres = _shlwapi.AssocQueryStringW(0, assocstr, dotted_ext, None, buf, ctypes.byref(size))
     if hres != 0:  # S_OK
         return None
     return buf.value or None
@@ -330,8 +386,44 @@ def contains_counts(path: Path, budget_s: float = 3.0, clock=time.monotonic) -> 
 # behind "Customize -> Optimize this folder for: Pictures/Videos/Music/...".
 # ---------------------------------------------------------------------------
 
-def _read_ini(text: str) -> configparser.ConfigParser:
-    cp = configparser.ConfigParser()
+def _decode_ini_bytes(data: bytes) -> str:
+    """Decode desktop.ini bytes, honouring a BOM when one is present.
+
+    Explorer writes desktop.ini in whatever encoding the shell happened to
+    use for it -- an ANSI (system codepage) file with no BOM is the classic
+    case, but a UTF-8 or UTF-16 file (each with its own BOM) also shows up
+    in the wild (e.g. after being hand-edited in Notepad, which defaults to
+    UTF-8 today). A recognised BOM wins outright; with none, this tries the
+    Windows ANSI codepage ('mbcs' -- a no-op fallback to latin-1 on a
+    non-Windows OS, where 'mbcs' isn't a registered codec) and finally
+    latin-1, which never raises (every byte 0-255 is a valid codepoint) so
+    this function itself never raises either -- an unparseable *result* is
+    caught later, when the decoded text is actually parsed as INI syntax.
+    """
+    if data.startswith(codecs.BOM_UTF8):
+        return data.decode("utf-8-sig")
+    if data.startswith(codecs.BOM_UTF16_LE) or data.startswith(codecs.BOM_UTF16_BE):
+        return data.decode("utf-16")  # codec reads the BOM itself to pick LE vs BE
+    try:
+        return data.decode("mbcs")
+    except (LookupError, UnicodeDecodeError):
+        return data.decode("latin-1")
+
+
+def _read_ini(text: str) -> configparser.RawConfigParser:
+    """Parse *text* leniently -- for validation and value lookup only.
+
+    RawConfigParser (no %-interpolation, so a stray '%' in a comment or an
+    IconResource path never raises), strict=False (tolerates a duplicated
+    section/option, which a hand-edited or shell-corrupted desktop.ini can
+    have), allow_no_value=True (a bare key with no '=' is valid INI, if
+    unusual here). Raises configparser.Error for text that still doesn't
+    parse as INI at all (e.g. a value line before any section header) --
+    callers that need to refuse on that (write_folder_type) catch it
+    themselves; callers that just want a best-effort read (everything else
+    here) treat it as "no FolderType found".
+    """
+    cp = configparser.RawConfigParser(strict=False, allow_no_value=True)
     cp.optionxform = str  # preserve key case (desktop.ini keys are PascalCase)
     cp.read_string(text)
     return cp
@@ -357,7 +449,7 @@ def folder_type_from_ini_bytes(data: bytes | None) -> str | None:
     """
     if data is None:
         return None
-    return _folder_type_from_ini_text(data.decode("utf-8", errors="replace"))
+    return _folder_type_from_ini_text(_decode_ini_bytes(data))
 
 
 def read_folder_type(path: Path) -> str | None:
@@ -366,9 +458,10 @@ def read_folder_type(path: Path) -> str | None:
     if not ini_path.exists():
         return None
     try:
-        return _folder_type_from_ini_text(ini_path.read_text(encoding="utf-8", errors="replace"))
+        data = ini_path.read_bytes()
     except OSError:
         return None
+    return folder_type_from_ini_bytes(data)
 
 
 def detect_folder_type(names: list[tuple[str, bool]]) -> str:
@@ -392,15 +485,68 @@ def detect_folder_type(names: list[tuple[str, bool]]) -> str:
     return winner if counts[winner] > 0 else "Generic"
 
 
-def write_folder_type(path: Path, folder_type: str) -> bytes | None:
-    """Set *path*'s Explorer folder type; return the previous desktop.ini bytes (None if absent).
+_INI_SECTION_HEADER_RE = re.compile(r"^[ \t]*\[[ \t]*ViewState[ \t]*\][ \t]*\r?\n?$", re.IGNORECASE)
+_INI_ANY_HEADER_RE = re.compile(r"^[ \t]*\[.*\][ \t]*\r?\n?$")
+_INI_FOLDER_TYPE_LINE_RE = re.compile(r"^([ \t]*FolderType[ \t]*=)(.*?)(\r?\n?)$", re.IGNORECASE)
+
+
+def _set_ini_folder_type_text(text: str, folder_type: str) -> str:
+    """Return *text* with [ViewState] FolderType=*folder_type* inserted or replaced.
+
+    String surgery, not a configparser round-trip: every other line --
+    including comments and any section configparser itself would silently
+    drop on a re-serialised write -- is left byte-for-byte untouched. A
+    missing [ViewState] section is appended at the end; a missing FolderType
+    line inside an existing [ViewState] section is inserted right after the
+    header; an existing FolderType line has only its value replaced.
+    """
+    newline = "\r\n" if "\r\n" in text else ("\n" if "\n" in text else "\r\n")
+    lines = text.splitlines(keepends=True) if text else []
+
+    section_start = next((i for i, line in enumerate(lines) if _INI_SECTION_HEADER_RE.match(line)), None)
+    if section_start is None:
+        if lines and not lines[-1].endswith(("\n", "\r")):
+            lines[-1] += newline
+        lines.append(f"[ViewState]{newline}")
+        lines.append(f"FolderType={folder_type}{newline}")
+        return "".join(lines)
+
+    section_end = len(lines)
+    for j in range(section_start + 1, len(lines)):
+        if _INI_ANY_HEADER_RE.match(lines[j]):
+            section_end = j
+            break
+
+    for i in range(section_start + 1, section_end):
+        m = _INI_FOLDER_TYPE_LINE_RE.match(lines[i])
+        if m:
+            lines[i] = f"FolderType={folder_type}{m.group(3) or newline}"
+            return "".join(lines)
+
+    lines.insert(section_start + 1, f"FolderType={folder_type}{newline}")
+    return "".join(lines)
+
+
+def write_folder_type(path: Path, folder_type: str) -> tuple[bytes | None, int]:
+    """Set *path*'s Explorer folder type.
+
+    Returns (previous desktop.ini bytes or None, the folder's own attribute
+    bits exactly as they were before this call touched them) so
+    restore_desktop_ini can undo both precisely -- including the folder's
+    READONLY bit if something other than FilePlus had already set it before
+    this call, which a "clear READONLY unconditionally" undo would wrongly
+    strip.
 
     Merges FolderType into the [ViewState] section of any existing
-    desktop.ini, preserving every other section/key untouched. On Windows,
-    matches Explorer's own "Customize this folder" behaviour: the ini gets
-    hidden+system attributes and the folder itself gets the read-only
-    attribute (the marker Explorer uses to know a folder carries custom
-    metadata -- PathMakeSystemFolder's effect, done directly here since
+    desktop.ini via string surgery (_set_ini_folder_type_text), preserving
+    every other section/key/comment untouched -- reading it first,
+    BOM-aware (_decode_ini_bytes), and refusing (RefusedError, -> 409) to
+    overwrite a desktop.ini that doesn't parse as INI at all, rather than
+    silently clobbering unrecognised content. On Windows, matches Explorer's
+    own "Customize this folder" behaviour: the ini gets hidden+system
+    attributes and the folder itself gets the read-only attribute (the
+    marker Explorer uses to know a folder carries custom metadata --
+    PathMakeSystemFolder's effect, done directly here since
     PathMakeSystemFolder itself is not exposed to ctypes/pywin32 as a plain
     function export).
     """
@@ -409,22 +555,18 @@ def write_folder_type(path: Path, folder_type: str) -> bytes | None:
     folder = Path(path)
     ini_path = folder / _DESKTOP_INI
     previous = ini_path.read_bytes() if ini_path.exists() else None
+    folder_bits_before = get_attributes(folder)["bits"]
 
-    cp = configparser.ConfigParser()
-    cp.optionxform = str
     if previous is not None:
         try:
-            cp = _read_ini(previous.decode("utf-8", errors="replace"))
-        except configparser.Error:
-            cp = configparser.ConfigParser()
-            cp.optionxform = str
-    if not cp.has_section("ViewState"):
-        cp.add_section("ViewState")
-    cp.set("ViewState", "FolderType", folder_type)
+            text = _decode_ini_bytes(previous)
+            _read_ini(text)  # validate parseability only; the value (if any) is unused here
+        except (UnicodeDecodeError, configparser.Error) as exc:
+            raise RefusedError("desktop.ini could not be parsed; not overwriting") from exc
+    else:
+        text = ""
 
-    buf = io.StringIO()
-    cp.write(buf, space_around_delimiters=False)
-    data = buf.getvalue().replace("\r\n", "\n").replace("\n", "\r\n").encode("utf-8")
+    data = _set_ini_folder_type_text(text, folder_type).encode("utf-8")
 
     if os.name == "nt" and ini_path.exists():
         try:
@@ -434,20 +576,19 @@ def write_folder_type(path: Path, folder_type: str) -> bytes | None:
     ini_path.write_bytes(data)
     if os.name == "nt":
         set_attributes(ini_path, FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM)
-        folder_bits = get_attributes(folder)["bits"]
-        set_attributes(folder, folder_bits | FILE_ATTRIBUTE_READONLY)
-    return previous
+        set_attributes(folder, folder_bits_before | FILE_ATTRIBUTE_READONLY)
+    return previous, folder_bits_before
 
 
-def restore_desktop_ini(path: Path, previous: bytes | None) -> None:
-    """Undo write_folder_type: restore *previous* bytes, or remove the ini.
+def restore_desktop_ini(path: Path, previous: bytes | None, folder_bits_before: int) -> None:
+    """Undo write_folder_type: restore *previous* bytes (or remove the ini),
+    and restore the folder's own attribute bits to exactly *folder_bits_before*.
 
-    When *previous* is None the folder had no desktop.ini before -- removing
-    it and clearing the folder's read-only bit fully reverts it to an
-    un-customized folder. When *previous* holds bytes, the folder was
-    already customized before this change, so only the ini content is put
-    back; the folder's read-only bit (already set from that earlier
-    customization) is left alone.
+    *folder_bits_before* -- write_folder_type's second return value -- is
+    applied via set_attributes verbatim, so the folder's READONLY bit ends
+    up exactly as it was before write_folder_type ever ran: still set if
+    something other than FilePlus had already set it (rather than always
+    clearing it), still clear if it wasn't set.
     """
     folder = Path(path)
     ini_path = folder / _DESKTOP_INI
@@ -460,8 +601,7 @@ def restore_desktop_ini(path: Path, previous: bytes | None) -> None:
         ini_path.write_bytes(previous)
         if os.name == "nt":
             set_attributes(ini_path, FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM)
-        return
-    if ini_path.exists():
+    elif ini_path.exists():
         if os.name == "nt":
             try:
                 set_attributes(ini_path, 0)
@@ -469,13 +609,16 @@ def restore_desktop_ini(path: Path, previous: bytes | None) -> None:
                 pass
         ini_path.unlink()
     if os.name == "nt":
-        folder_bits = get_attributes(folder)["bits"]
-        set_attributes(folder, folder_bits & ~FILE_ATTRIBUTE_READONLY)
+        set_attributes(folder, folder_bits_before)
 
 
 # ---------------------------------------------------------------------------
 # Extended property list (pywin32 propsys) — backs GET /fs/properties/details
 # ---------------------------------------------------------------------------
+
+_PROPERTY_DETAILS_CACHE_MAX = 256
+_property_details_cache: "OrderedDict[tuple[str, float], list[dict]]" = OrderedDict()
+
 
 def property_details(path: Path) -> list[dict]:
     """[{"group", "name", "value"}, ...] via the Windows property system.
@@ -484,7 +627,25 @@ def property_details(path: Path) -> list[dict]:
     (pywin32 is Windows-only and only this one function needs it); raises
     RuntimeError("pywin32 not installed") if the import fails, which
     GET /fs/properties/details maps to a 503.
+
+    Cached by (str(path), mtime): SHGetPropertyStoreFromParsingName plus
+    per-property COM marshalling is comparatively expensive, and the
+    Properties panel can re-request the same file's details (switching
+    tabs, re-opening the dialog) without its mtime changing in between. The
+    cache is a bounded FIFO, not an LRU -- capped at
+    _PROPERTY_DETAILS_CACHE_MAX entries, oldest-inserted evicted first --
+    since this is a plain in-process dict with no per-entry access tracking.
+    A path whose mtime can't be read (already gone, or a permission error)
+    just skips caching rather than failing the call.
     """
+    cache_key = None
+    try:
+        cache_key = (str(path), Path(path).stat().st_mtime)
+    except OSError:
+        pass
+    if cache_key is not None and cache_key in _property_details_cache:
+        return _property_details_cache[cache_key]
+
     try:
         from win32com.propsys import propsys
     except ImportError as exc:
@@ -508,4 +669,9 @@ def property_details(path: Path) -> list[dict]:
         prefix = name.split(".")[1] if name.startswith("System.") else ""
         group = _GROUP_BY_PROPERTY_PREFIX.get(prefix, "General")
         out.append({"group": group, "name": name.replace("System.", "").split(".")[-1], "value": value})
+
+    if cache_key is not None:
+        _property_details_cache[cache_key] = out  # a fresh key (cache miss got us here) lands at the end
+        if len(_property_details_cache) > _PROPERTY_DETAILS_CACHE_MAX:
+            _property_details_cache.popitem(last=False)  # FIFO: oldest inserted evicted first
     return out
