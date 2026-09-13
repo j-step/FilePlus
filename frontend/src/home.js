@@ -4,10 +4,11 @@
  * unfavorite+undo flow, drag-to-reorder for Favorites, and the small helpers
  * app.js's dispatch switch and context-menu wiring call into.
  *
- * Script load order is api.js → fileops.js → browser.js → inspector.js →
- * home.js → settings.js → app.js (see index.html) — this file can call
- * anything defined in api.js/browser.js at parse time (iconForExt,
- * escapeHtml, parentOfPath, formatModified, ICON_FOLDER, ApiError,
+ * Script load order is api.js → filetypes.js → icons-sprite.js → icons.js →
+ * fileops.js → browser.js → dragdrop.js → search.js → inspector.js → home.js
+ * → settings.js → properties.js → app.js (see index.html) — this file can
+ * call anything defined in an earlier file at parse time (iconFor,
+ * escapeHtml, parentOfPath, formatModified, ApiError,
  * formatApiError), but anything defined later in app.js (showSnackbar,
  * showToast, openBrowserAt, pathBaseName, selectRow, contextMenuTarget) is
  * only safe to reference from inside functions that run after DOMContentLoaded,
@@ -17,37 +18,69 @@
 // ── Favorites membership ──────────────────────────────────────────────────
 // Kept in sync by loadFavorites() (full refresh) and the home-row context
 // menu's add/remove toggle (optimistic single-path update). Read by
-// getMenuTypeForTarget's context-menu label (Add vs Remove from Favorites).
+// app.js's context-menu label/enabled predicates (Add vs Remove from
+// Favorites) and by browser.js's renderFsRow (the row star).
+//
+// Both favoritesSet and favoritesPathToId are keyed by favoritesNormalize(p)
+// (lowercased) so a Browser row's exact-case path (Windows paths are
+// case-insensitive but not normalized on disk) still matches a favorite
+// stored with whatever case it was first added under. Callers that need the
+// exact-case path for an API call (DELETE /favorites?path=, POST /favorites)
+// keep using the row's own dataset.path / entry.path — never a normalized one.
 const favoritesSet = new Set();
+const favoritesPathToId = new Map(); // normalized path -> favorite row id (GET /favorites)
+
+function favoritesNormalize(path) { return String(path || '').toLowerCase(); }
+
+/** True if `path` (any case) is currently favorited. The one function every
+ * other module reuses (browser.js's row star, app.js's context-menu
+ * enabled/label predicates, and per the Task 11 brief, Task 12's drag badge
+ * and Task 14's search-result rows) instead of touching favoritesSet
+ * directly. */
+function favoritesHas(path) { return favoritesSet.has(favoritesNormalize(path)); }
+
+/** The favorite row's own id for `path`, if it is favorited — sourced from
+ * the same GET /favorites response that fills favoritesSet, so a caller
+ * never needs a second fetch just to resolve a path to its favorites-table
+ * row. (This app's DELETE /favorites route takes ?path=, not an id, so nothing
+ * in this pass actually calls this for a delete — it's exposed alongside
+ * favoritesHas for parity, and because callers that already have a path
+ * shouldn't need to guess whether an id lookup requires re-fetching.) */
+function favoritesIdFor(path) { return favoritesPathToId.get(favoritesNormalize(path)); }
+
+/** Re-fetches /favorites (favoritesSet/favoritesPathToId + the Favorites
+ * pane). Thin, named alias over loadFavorites() so callers outside this file
+ * (app.js's cm-favorite handler) go through the documented contract name
+ * rather than reaching for the loader function directly. */
+function favoritesReload() { return loadFavorites(); }
 
 // ── Icons (hover-action buttons + favorite star) ──────────────────────────
-const HOME_ICON_OPEN = `<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M11 8v3H2V2h3M8 1h4v4M5 9l5.5-5.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
-const HOME_ICON_REVEAL = `<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="1" y="3" width="12" height="9" rx="1" stroke="currentColor" stroke-width="1.2"/><path d="M1 6h12M4 3V1.5h6V3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>`;
-const HOME_ICON_COPY = `<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="4" y="4" width="8" height="9" rx="1" stroke="currentColor" stroke-width="1.2"/><path d="M2 10V2h8" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
-const HOME_ICON_STAR = `<svg width="14" height="14" viewBox="0 0 14 14" fill="var(--accent)" aria-hidden="true"><path d="M7 1l1.8 3.6L13 5.3l-3 2.9.7 4.1L7 10.4l-3.7 1.9.7-4.1-3-2.9 4.2-.7z"/></svg>`;
+const HOME_ICON_OPEN = icon('open', 'fp-icon--14');
+const HOME_ICON_REVEAL = icon('reveal', 'fp-icon--14');
+const HOME_ICON_COPY = icon('copy', 'fp-icon--14');
+// Filled star, tinted accent (favorited state) — unfavoriteFile() below swaps
+// this <use> to the outline 'star' symbol for its brief pre-removal animation.
+const HOME_ICON_STAR = `<svg class="fp-icon fp-icon--14 fp-row__fav-star-icon" aria-hidden="true" style="color:var(--accent)"><use href="#fp-star-filled"></use></svg>`;
 
 /** Recent/Favorites entries never carry an is_dir flag from the API (neither
  * /recent nor /favorites join the files table for it) — ext === '' is the
  * best available signal that a path is a folder rather than an
  * extension-less file, so it's used consistently for icon choice and for
- * deciding Open behavior (openPath vs loadDirectory). */
-function homeIconFor(ext) {
-  return ext === '' ? ICON_FOLDER : iconForExt(ext);
+ * deciding Open behavior (openPath vs loadDirectory). Everything past that
+ * is iconFor()'s job (icons.js): the file-type family sprite, the named
+ * folder variants, or a real Windows shell icon when ui.icon_source says so. */
+function homeIconFor(entry) {
+  return iconFor({ ...entry, is_dir: entry.ext === '' }, 16, 'fp-row__icon');
 }
 
 // ── Empty states (existing .fp-empty-state pattern) ───────────────────────
 const HOME_RECENT_EMPTY_HTML = `<div class="fp-empty-state" role="status" aria-live="polite">
-  <svg class="fp-empty-state__icon" viewBox="0 0 48 48" fill="none" aria-hidden="true">
-    <circle cx="24" cy="24" r="20" stroke="currentColor" stroke-width="2"/>
-    <path d="M24 14v10l6 4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-  </svg>
+  ${icon('history', 'fp-icon--48 fp-empty-state__icon')}
   <p class="fp-empty-state__title">No recent files yet</p>
 </div>`;
 
 const HOME_FAVORITES_EMPTY_HTML = `<div class="fp-empty-state" role="status" aria-live="polite">
-  <svg class="fp-empty-state__icon" viewBox="0 0 48 48" fill="none" aria-hidden="true">
-    <path d="M24 4l5.4 10.9L42 17l-9 8.7 2.1 12.3L24 32.4l-11.1 5.6L15 25.7 6 17l12.6-2.1z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
-  </svg>
+  ${icon('star', 'fp-icon--48 fp-empty-state__icon')}
   <p class="fp-empty-state__title">No favorites yet — right-click a file or folder and choose Add to Favorites</p>
 </div>`;
 
@@ -82,13 +115,20 @@ function renderRecentRow(entry, bucketKey) {
   const hideExt = entry.ext !== '' && browserState.showExtensions === false;
   const displayName = hideExt ? stemOf(entry.name) : entry.name;
   const nameTitleAttr = hideExt ? ` title="${escapeHtml(entry.name)}"` : '';
+  // Recent rows show the same favorite star as Browser rows (Task 11,
+  // playtest pass 1 §4.3) — rendered into .fp-row__tags (already an empty,
+  // flex-laid-out cell reserved for this row's own grid-template-columns)
+  // rather than as a new grid child, so no column count/width changes.
+  const starHtml = favoritesHas(entry.path)
+    ? `<span class="fp-row__star" title="In Favorites">${icon('star')}</span>`
+    : '';
   return `<div class="fp-row fp-row--recent" role="option" tabindex="0"
        data-path="${escapeHtml(entry.path)}" data-ext="${escapeHtml(entry.ext)}" data-action="open-recent-file">
-    ${homeIconFor(entry.ext)}
+    ${homeIconFor(entry)}
     <span class="fp-row__name"${nameTitleAttr}>${escapeHtml(displayName)}</span>
     <span class="fp-row__recent-path mono">${escapeHtml(parentDisplay)}</span>
     <span class="fp-row__recent-time mono">${escapeHtml(entry.action)} ${escapeHtml(timeLabel)}</span>
-    <div class="fp-row__tags"></div>
+    <div class="fp-row__tags">${starHtml}</div>
     <div class="fp-row__hover-actions">
       <button class="fp-icon-btn fp-icon-btn--sm" data-action="open-file" title="Open">${HOME_ICON_OPEN}</button>
       <button class="fp-icon-btn fp-icon-btn--sm" data-action="reveal-file" title="Reveal in Browser">${HOME_ICON_REVEAL}</button>
@@ -113,7 +153,7 @@ function renderFavoriteRow(entry) {
   const nameTitleAttr = hideExt ? ` title="${escapeHtml(entry.name)}"` : '';
   return `<div class="fp-row fp-row--recent" role="option" tabindex="0" draggable="true"
        data-path="${escapeHtml(entry.path)}" data-ext="${escapeHtml(entry.ext)}" data-action="open-recent-file">
-    ${homeIconFor(entry.ext)}
+    ${homeIconFor(entry)}
     <span class="fp-row__name"${nameTitleAttr}>${escapeHtml(displayName)}</span>
     <span class="fp-row__recent-path mono">${escapeHtml(parentDisplay)}</span>
     <span class="fp-row__recent-time mono">${escapeHtml(addedLabel)}</span>
@@ -154,12 +194,18 @@ async function loadFavorites() {
     data = await API.get('/favorites');
   } catch (err) {
     favoritesSet.clear();
+    favoritesPathToId.clear();
     container.innerHTML = HOME_FAVORITES_EMPTY_HTML;
     return;
   }
   const files = (data && data.files) || [];
   favoritesSet.clear();
-  files.forEach(f => favoritesSet.add(f.path));
+  favoritesPathToId.clear();
+  files.forEach(f => {
+    const norm = favoritesNormalize(f.path);
+    favoritesSet.add(norm);
+    favoritesPathToId.set(norm, f.id);
+  });
   container.innerHTML = files.length ? files.map(renderFavoriteRow).join('') : HOME_FAVORITES_EMPTY_HTML;
 }
 
@@ -184,7 +230,7 @@ function resolveHomeRowTarget(btn) {
 function homeOpenPath(path, ext) {
   if (!path) return;
   if (ext === '') {
-    openBrowserAt(path, pathBaseName(path) || undefined);
+    openBrowserAt(path);
     return;
   }
   const openPath = window.electronAPI?.openPath;
@@ -201,7 +247,7 @@ function homeOpenPath(path, ext) {
 function homeRevealInBrowser(path) {
   if (!path) return;
   const parent = parentOfPath(path);
-  const loaded = openBrowserAt(parent, pathBaseName(parent) || undefined);
+  const loaded = openBrowserAt(parent);
   Promise.resolve(loaded).then(() => selectRow(path));
 }
 
@@ -217,20 +263,21 @@ function homeCopyPath(path) {
  * item (label is set dynamically at contextmenu time — see app.js). */
 function homeToggleFavorite(path) {
   if (!path) return;
-  if (favoritesSet.has(path)) {
-    favoritesSet.delete(path);
+  const norm = favoritesNormalize(path);
+  if (favoritesSet.has(norm)) {
+    favoritesSet.delete(norm);
     API.del('/favorites', { path })
-      .then(() => { showToast('Removed from Favorites', 'default'); loadFavorites(); })
+      .then(() => { showToast('Removed from Favorites', 'default'); favoritesReload(); })
       .catch(err => {
-        favoritesSet.add(path);
+        favoritesSet.add(norm);
         showToast(`Failed to remove favorite: ${formatApiError(err)}`, 'error');
       });
   } else {
-    favoritesSet.add(path);
+    favoritesSet.add(norm);
     API.post('/favorites', { path })
-      .then(() => { showToast('Added to Favorites', 'default'); loadFavorites(); })
+      .then(() => { showToast('Added to Favorites', 'default'); favoritesReload(); })
       .catch(err => {
-        favoritesSet.delete(path);
+        favoritesSet.delete(norm);
         showToast(`Failed to favorite: ${formatApiError(err)}`, 'error');
       });
   }
@@ -253,33 +300,26 @@ function unfavoriteFile(el) {
   const parent = row.parentElement;
   const nextSibling = row.nextElementSibling;
   const filename = row.querySelector('.fp-row__name')?.textContent || 'File';
-  const starPath = el.querySelector('svg path');
-  const origFill = starPath?.getAttribute('fill');
-  const origStroke = starPath?.getAttribute('stroke');
-  const origStrokeWidth = starPath?.getAttribute('stroke-width');
+  // Filled -> outline star swap (the sprite's two-symbol favorited/not-favorited
+  // pair) stands in for the old fill/stroke-attribute animation on a single
+  // hand-drawn <path>.
+  const starUse = el.querySelector('svg.fp-icon use');
+  const norm = favoritesNormalize(path);
 
   // Capture the full favorites order (including this row) BEFORE removal so
   // Undo can restore this row's exact position via /favorites/reorder.
   const orderSnapshot = [...document.querySelectorAll('#home-favorites .fp-row[data-path]')]
     .map(r => r.dataset.path);
 
-  favoritesSet.delete(path);
+  favoritesSet.delete(norm);
 
-  if (starPath) {
-    starPath.setAttribute('fill', 'none');
-    starPath.setAttribute('stroke', 'var(--accent)');
-    starPath.setAttribute('stroke-width', '1.2');
-  }
+  if (starUse) starUse.setAttribute('href', '#fp-star');
   row.classList.add('fp-row--unfavoriting');
 
   function restoreRow() {
     if (!row.parentElement) parent.insertBefore(row, nextSibling);
     row.classList.remove('fp-row--unfavoriting');
-    if (starPath) {
-      origFill === null ? starPath.removeAttribute('fill') : starPath.setAttribute('fill', origFill);
-      origStroke === null ? starPath.removeAttribute('stroke') : starPath.setAttribute('stroke', origStroke);
-      origStrokeWidth === null ? starPath.removeAttribute('stroke-width') : starPath.setAttribute('stroke-width', origStrokeWidth);
-    }
+    if (starUse) starUse.setAttribute('href', '#fp-star-filled');
   }
 
   let deleted = false;
@@ -292,7 +332,7 @@ function unfavoriteFile(el) {
       // The server never dropped it — put it back and surface the failure
       // instead of silently leaving the UI out of sync with the backend.
       deleted = false;
-      favoritesSet.add(path);
+      favoritesSet.add(norm);
       restoreRow();
       showToast(`Failed to remove favorite: ${formatApiError(err)}`, 'error');
     });
@@ -304,7 +344,7 @@ function unfavoriteFile(el) {
   // the time this runs. Call with the 3-arg signature.
   showSnackbar(`Removed "${filename}" from favorites`, 'Undo', async () => {
     clearTimeout(removeTimer);
-    favoritesSet.add(path);
+    favoritesSet.add(norm);
     restoreRow();
     if (deleted) {
       // The DELETE may still be in flight (Undo clicked right after the
@@ -394,6 +434,18 @@ function initFavoritesDragDrop() {
     else container.insertBefore(draggedRow, row.nextElementSibling);
     persistFavoritesOrder();
   });
+}
+
+/** Clears the Home screen's row selection (Recent + Favorites panes both —
+ * only one row is ever selected at a time today, see the 'open-recent-file'
+ * click case in app.js) and collapses the inspector back to its "No file
+ * selected" state. Home has no selection Set of its own (a row's
+ * .fp-row--selected class IS its selection state), so this is a plain DOM
+ * sweep — the deselect-anywhere handler (app.js) calls it for the Home
+ * screen the same way browser.js's clearSelection() covers Browser. */
+function homeClearSelection() {
+  document.querySelectorAll('#screen-home .fp-row--selected').forEach(r => r.classList.remove('fp-row--selected'));
+  if (typeof updateInspector === 'function') updateInspector('none');
 }
 
 /** Double-click on any Home row (Recent or Favorites) opens it — delegated

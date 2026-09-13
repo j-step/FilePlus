@@ -1,0 +1,5 @@
+Placeholder so git tracks this directory. Stage 2C Task 6 fills it with one
+SVG per file-type family (frontend/src/filetypes.js FP_FILETYPES.families
+keys, e.g. pdf.svg, word.svg, image.svg) — scripts/build_icons.js inlines
+each as a `fp-ft-<family>` sprite symbol. Delete this file once real SVGs
+land.

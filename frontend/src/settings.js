@@ -7,8 +7,8 @@
 
 // ── Config cache ─────────────────────────────────────────────────────────────
 // Loaded once at startup from GET /config into window.__fpConfig — read by
-// applyDownloadsPath() and the browserState.showHidden seed in app.js's init.
-// Left as {} (not populated) when the backend can't be reached; callers use
+// the browserState.showHidden seed in app.js's init. Left as {} (not
+// populated) when the backend can't be reached; callers use
 // `config['key'] || fallback` so a missing/empty cache degrades gracefully.
 async function loadConfig() {
   try {
@@ -21,11 +21,12 @@ async function loadConfig() {
 /**
  * Persists one setting to POST /config, updating window.__fpConfig
  * optimistically so callers that read the cache synchronously (browserState
- * seeds, applyDownloadsPath, the click-mode check in browser.js's row click
- * handler) see the new value immediately. On failure, reverts the cache to
- * whatever it held before and toasts — the caller's own UI (checkbox/segmented
- * button) has already visually applied the change and is not rolled back here,
- * since each caller owns its own apply step and can re-apply if it wants to.
+ * seeds, the click-mode check in browser.js's row click handler, the
+ * Backspace-deletes check in browserKeydown) see the new value immediately.
+ * On failure, reverts the cache to whatever it held before and toasts — the
+ * caller's own UI (checkbox/segmented button) has already visually applied
+ * the change and is not rolled back here, since each caller owns its own
+ * apply step and can re-apply if it wants to.
  */
 async function saveSetting(key, value) {
   if (!window.__fpConfig) window.__fpConfig = {};
@@ -86,6 +87,14 @@ function applySettingsFromConfig() {
   }
   if (typeof cfg['ui.notifications'] === 'boolean') setNotificationsEnabled(cfg['ui.notifications']);
 
+  // Default true — the inspector starts open unless explicitly turned off.
+  // No localStorage fast-path (unlike theme/density/accent): config, or this
+  // documented default, is its only source (same pattern as show_extensions/
+  // show_hidden below). {persist: false} so re-applying the value we just
+  // read back never fires a redundant POST /config on startup.
+  const inspectorOpen = cfg['ui.inspector_open'] !== false;
+  if (typeof setInspectorOpen === 'function') setInspectorOpen(inspectorOpen, { persist: false });
+
   // Default true (matches the Personalization checkbox's static markup).
   const showExtensions = cfg['ui.show_extensions'] !== false;
   browserState.showExtensions = showExtensions;
@@ -105,6 +114,87 @@ function applySettingsFromConfig() {
   document.querySelectorAll('[data-action="settings-set-click-mode"]').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.val === clickMode);
   });
+
+  // Default 'fileplus' — matches fpIconSource() (icons.js), which treats
+  // anything other than the literal 'windows' as the FilePlus family sprite.
+  // No repaint here: this runs during init, before the first listing renders.
+  applyIconSource(cfg['ui.icon_source']);
+
+  // Default 'fileplus' — matches openProperties() (properties.js), which
+  // treats anything other than the literal 'windows' as "show our own panel".
+  applyPropertiesMode(cfg['ui.properties_mode']);
+
+  // Default true — "This PC" starts expanded unless the user previously
+  // collapsed it. {persist: false} so restoring the value we just read back
+  // never fires a redundant POST /config on startup (setThisPcOpen, app.js).
+  if (typeof setThisPcOpen === 'function') {
+    setThisPcOpen(cfg['ui.sidebar_thispc_open'] !== false, { persist: false });
+  }
+
+  // Default false — Backspace navigates up a folder unless the user opts
+  // into delete-on-backspace. browserKeydown (browser.js) reads
+  // window.__fpConfig directly on every press; this only syncs the checkbox.
+  const backspaceDeletes = !!cfg['ui.backspace_deletes'];
+  const backspaceToggle = document.getElementById('settings-backspace-deletes');
+  if (backspaceToggle) backspaceToggle.checked = backspaceDeletes;
+
+  // Sort / list-scale / dynamic media view (Task 10). ui.sort replaces the
+  // old sessionStorage['fp-sort'] entirely; ui.list_scale is re-applied to
+  // --list-scale with {persist: false} so reading it straight back never
+  // fires a redundant POST /config on startup (same pattern as
+  // ui.inspector_open/ui.sidebar_thispc_open above). ui.dynamic_media_view
+  // only syncs its Settings checkbox here — loadDirectory() (browser.js)
+  // reads the config key directly on every navigation.
+  const savedSort = cfg['ui.sort'];
+  if (savedSort && typeof savedSort === 'object'
+      && ['name', 'size', 'modified', 'type'].includes(savedSort.key)
+      && (savedSort.dir === 'asc' || savedSort.dir === 'desc')) {
+    browserState.sort = { key: savedSort.key, dir: savedSort.dir };
+    if (typeof updateSortHeaderUI === 'function') updateSortHeaderUI();
+  }
+  const savedScale = LIST_SCALE_STEPS.includes(cfg['ui.list_scale']) ? cfg['ui.list_scale'] : 1;
+  setListScale(savedScale, { persist: false });
+  const dmToggle = document.querySelector('[data-action="settings-toggle"][data-setting="dynamic-media-view"]');
+  if (dmToggle) dmToggle.checked = cfg['ui.dynamic_media_view'] !== false;
+}
+
+/** Syncs the Personalization "File icons" segmented control to `source` and
+ * returns the normalised value ('fileplus' | 'windows'). The value itself is
+ * read back out of window.__fpConfig by fpIconSource() (icons.js) on every
+ * icon render, so there is no other state to apply. */
+function applyIconSource(source) {
+  const v = source === 'windows' ? 'windows' : 'fileplus';
+  document.querySelectorAll('[data-action="settings-set-icon-source"]').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.val === v);
+  });
+  return v;
+}
+
+/** Syncs the Personalization "Properties panel" segmented control to `mode`
+ * and returns the normalised value ('fileplus' | 'windows'). Read back out of
+ * window.__fpConfig by openProperties() (properties.js) on every Properties
+ * request — there is no other state to apply here. */
+function applyPropertiesMode(mode) {
+  const v = mode === 'windows' ? 'windows' : 'fileplus';
+  document.querySelectorAll('[data-action="settings-set-properties-mode"]').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.val === v);
+  });
+  return v;
+}
+
+/** Repaints everything that renders a file icon, after ui.icon_source
+ * changed: the open directory listing, Home's Recent/Favorites rows, and the
+ * Inspector (whose "No preview" placeholder carries the selected file's
+ * icon). Palette results need nothing — they are rebuilt per query. */
+function refreshIconSurfaces() {
+  if (browserState.entries && browserState.entries.length) renderDirectory();
+  loadRecent();
+  loadFavorites();
+  // Only for a selection that is still in the current listing — re-fetching
+  // metadata for a path the user has since navigated away from would answer
+  // 404 and blank the panel that is showing something perfectly valid.
+  const selected = [...browserState.selection];
+  if (selected.length === 1 && entryForPath(selected[0])) showInspectorFor(selected[0]);
 }
 
 /** Updates the Data pane's read-only "Writes" line from the last /health
@@ -116,6 +206,106 @@ function updateWritesStatusLine() {
   el.textContent = window.__fpHealth.write_unlocked
     ? 'Unlocked — real-drive writes enabled'
     : 'Sandbox only — set WRITE_UNLOCKED=true in .env to enable real-drive writes';
+}
+
+// ── Settings › Scan & Index (Task 14, design §8.7) ──────────────────────
+// Real index state, not a placeholder: one row per root GET /index/status
+// reports, with its file count and last run, a Re-index (POST /index) and a
+// Remove (DELETE /index?root=) button each, plus "Index a folder…" through
+// the shell folder picker. The backend refuses both POST /index and
+// DELETE /index with 409 while a scan is running, so every button is disabled
+// for the duration and the running indicator says why.
+
+/** "2 minutes ago" / "14 Mar 2026" for an index_roots.last_run value (a naive
+ * local ISO string written by the indexer). */
+function formatIndexRunTime(value) {
+  if (!value) return 'never';
+  const d = new Date(value);
+  if (isNaN(d)) return String(value);
+  const mins = Math.round((Date.now() - d.getTime()) / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins} min ago`;
+  if (mins < 1440) return `${Math.round(mins / 60)} h ago`;
+  return d.toLocaleDateString([], { year: 'numeric', month: 'short', day: 'numeric' });
+}
+
+/** Fetches GET /index/status and repaints #settings-index-status. Called when
+ * the pane is opened and after every mutation it offers. */
+async function loadIndexStatus() {
+  const host = document.getElementById('settings-index-status');
+  const runningEl = document.getElementById('settings-index-running');
+  if (!host) return;
+  let status;
+  try {
+    status = await API.get('/index/status');
+  } catch (err) {
+    host.innerHTML = `<p class="settings-row__desc">Couldn’t read the index: ${escapeHtml(formatApiError(err))}</p>`;
+    return;
+  }
+  const running = !!status.running;
+  if (runningEl) runningEl.hidden = !running;
+  const roots = status.roots || [];
+  if (!roots.length) {
+    host.innerHTML = `<p class="settings-row__desc">Nothing is indexed yet. Index a folder to search it from “This PC”.</p>`;
+  } else {
+    // Two lines per root rather than four columns: the Settings pane shares
+    // its width with the Inspector, and a 4-column table squeezes the path
+    // (the one thing that must stay readable) down to nothing there.
+    host.innerHTML = `<div class="settings-index__table" role="list" aria-label="Indexed roots">
+      ${roots.map(r => `<div class="settings-index__row" role="listitem">
+        <span class="settings-index__main">
+          <span class="settings-index__root fp-mono" title="${escapeHtml(r.root)}">${escapeHtml(r.root)}</span>
+          <span class="settings-index__meta">${Number(r.file_count || 0).toLocaleString()} files · indexed ${escapeHtml(formatIndexRunTime(r.last_run))}</span>
+        </span>
+        <span class="settings-index__actions-cell">
+          <button class="fp-btn fp-btn--ghost fp-btn--sm" data-action="settings-index-reindex"
+                  data-root="${escapeHtml(r.root)}"${running ? ' disabled' : ''}>Re-index</button>
+          <button class="fp-btn fp-btn--ghost fp-btn--sm" data-action="settings-index-remove"
+                  data-root="${escapeHtml(r.root)}"${running ? ' disabled' : ''}>Remove</button>
+        </span>
+      </div>`).join('')}
+    </div>`;
+  }
+  const addBtn = document.querySelector('[data-action="settings-index-add"]');
+  if (addBtn) addBtn.disabled = running;
+}
+
+/** POST /index for `path`, then repaint the table. Shared by Re-index and
+ * "Index a folder…". */
+async function startIndexOf(path) {
+  if (!path) return;
+  try {
+    await API.post('/index', { path });
+    showToast(`Indexing ${pathBaseName(path) || path}…`, 'default');
+  } catch (err) {
+    showToast(`Failed to index: ${formatApiError(err)}`, 'error');
+  }
+  loadIndexStatus();
+}
+
+/** Shell folder picker → POST /index (the "Index a folder…" button). */
+async function pickFolderToIndex() {
+  const picked = await (window.electronAPI?.pickFolder?.() || Promise.resolve(null));
+  if (!picked) return;
+  await startIndexOf(picked);
+}
+
+/** DELETE /index?root= — drops the root’s rows and its bookkeeping. The
+ * files themselves are never touched (this is index bookkeeping, not a
+ * filesystem mutation), so it needs no operations_log entry or confirmation
+ * beyond the modal below. */
+function removeIndexRoot(root) {
+  if (!root) return;
+  openModal('warn', {
+    title: 'Remove from index?',
+    body: `${root} will stop appearing in This PC search results. No files are deleted, and you can index it again at any time.`,
+    confirmLabel: 'Remove',
+    onConfirm: () => {
+      API.del('/index', { root })
+        .then(() => { showToast(`Removed ${pathBaseName(root) || root} from the index`, 'default'); loadIndexStatus(); })
+        .catch(err => showToast(`Failed to remove: ${formatApiError(err)}`, 'error'));
+    },
+  });
 }
 
 // ── Settings: pane switching + persistence ────────────────────────────────────

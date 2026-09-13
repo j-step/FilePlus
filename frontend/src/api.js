@@ -14,8 +14,11 @@ function apiHeaders(extra = {}) {
 }
 
 class ApiError extends Error { constructor(status, detail) { super(detail || `HTTP ${status}`); this.status = status; this.detail = detail; } }
+// Base URL: the bridge's apiPort() (main.js's FILEPLUS_PORT, read synchronously
+// via contextBridge before this script runs) when available, else the 9876
+// default -- keeps a plain-browser dev load working the same as before.
 const API = {
-  base: 'http://127.0.0.1:9876',
+  base: `http://127.0.0.1:${window.electronAPI?.apiPort?.() || 9876}`,
   async request(method, path, { params, body, signal } = {}) {
     const url = new URL(this.base + path);
     if (params) Object.entries(params).forEach(([k, v]) => v !== undefined && v !== null && url.searchParams.set(k, v));

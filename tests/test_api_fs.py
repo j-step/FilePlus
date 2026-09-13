@@ -156,3 +156,76 @@ def test_fs_list_permission_error_still_returns_its_existing_status(client, sand
     monkeypatch.setattr(Path, "is_dir", flaky_is_dir)
     r = client.get(f"/fs/list?path={sandbox}")
     assert r.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# GET /fs/search -- budgeted live tree search (Stage 2C Task 2)
+# ---------------------------------------------------------------------------
+
+def test_fs_search_finds_matches_with_spans(client, sandbox):
+    (sandbox / "doc-01.txt").write_text("x")
+    (sandbox / "doc-02.txt").write_text("x")
+    (sandbox / "other.txt").write_text("x")
+
+    r = client.get("/fs/search", params={"root": str(sandbox), "q": "doc"})
+    assert r.status_code == 200
+    body = r.json()
+    names = {x["name"] for x in body["results"]}
+    assert names == {"doc-01.txt", "doc-02.txt"}
+    for item in body["results"]:
+        assert item["match"] == [[0, 3]]
+    assert body["truncated"] is False
+    assert isinstance(body["elapsed_ms"], int)
+
+
+def test_fs_search_relative_root_is_400(client):
+    r = client.get("/fs/search", params={"root": r"relative\path", "q": "doc"})
+    assert r.status_code == 400
+
+
+def test_fs_search_type_and_hidden_filters(client, sandbox):
+    (sandbox / "photo.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+    (sandbox / "notes.txt").write_text("x")
+    (sandbox / ".hidden.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+
+    body = client.get("/fs/search", params={"root": str(sandbox), "type": "image"}).json()
+    assert [x["name"] for x in body["results"]] == ["photo.png"]
+
+    body_hidden = client.get(
+        "/fs/search", params={"root": str(sandbox), "type": "image", "hidden": "true"}
+    ).json()
+    assert {x["name"] for x in body_hidden["results"]} == {"photo.png", ".hidden.png"}
+
+
+def test_fs_search_tag_filter(sandbox, db):
+    """tag= resolves through tagger.paths_for_tag before the walk starts, so
+    only paths carrying that tag come back -- exercised via its own
+    TestClient (with the lifespan's init_db) rather than the module `client`
+    fixture, since tagging needs the files/tags tables."""
+    from backend.api import app
+    with TestClient(app) as client:
+        tagged = sandbox / "tagged.txt"; tagged.write_text("x")
+        (sandbox / "untagged.txt").write_text("x")
+        fid = client.get("/file", params={"path": str(tagged)}).json()["id"]
+        client.post(f"/files/{fid}/tags", json={"name": "keep"})
+
+        r = client.get("/fs/search", params={"root": str(sandbox), "tag": "keep"})
+        assert [x["name"] for x in r.json()["results"]] == ["tagged.txt"]
+
+
+def test_fs_search_tag_filter_survives_case_only_rename(sandbox, db):
+    """Windows is case-preserving but case-insensitive: renaming a file to
+    change only its case doesn't update the files-table row (written once,
+    at whatever case existed when it was indexed). tag= must still find the
+    file during a live walk, which sees the *current* on-disk casing."""
+    from backend.api import app
+    with TestClient(app) as client:
+        original = sandbox / "Doc.txt"; original.write_text("x")
+        fid = client.get("/file", params={"path": str(original)}).json()["id"]
+        client.post(f"/files/{fid}/tags", json={"name": "keep"})
+
+        renamed = sandbox / "doc.txt"
+        os.rename(str(original), str(renamed))
+
+        r = client.get("/fs/search", params={"root": str(sandbox), "tag": "keep"})
+        assert [x["name"] for x in r.json()["results"]] == ["doc.txt"]

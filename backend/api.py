@@ -1,4 +1,5 @@
-"""FilePlus FastAPI backend — HTTP API served on localhost:9876.
+"""FilePlus FastAPI backend — HTTP API served on localhost:9876 by default
+(config.FILEPLUS_PORT overrides).
 
 The Electron frontend communicates exclusively through this API.
 All business logic lives here; the renderer never touches the filesystem directly.
@@ -27,7 +28,7 @@ import backend.config as _config
 from backend.config import BadPathError, OutOfSandboxError, ProtectedPathError, path_guard
 from backend.database import init_db
 from backend.indexer import index_file, scan_directory, remove_stale_entries
-from backend import mover, operations_log as ol, stores, tagger
+from backend import filetypes as ft, mover, operations_log as ol, searcher, stores, tagger, winshell
 
 logger = logging.getLogger(__name__)
 
@@ -318,16 +319,105 @@ async def files_history(path: str = Query(..., description="Absolute path to loo
 
 
 @app.get("/search")
-async def search_files(q: str = Query(..., description="Substring to match against filename or path"), limit: int = Query(50)):
+async def search_files(
+    q: str = Query("", description="Substring to match against filename or path"),
+    type_: Optional[str] = Query(None, alias="type", description="Search group or 'folder'"),
+    ext: Optional[str] = Query(None, description="Single extension, no dot"),
+    modified_after: Optional[float] = Query(None, description="Epoch seconds"),
+    modified_before: Optional[float] = Query(None),
+    created_after: Optional[float] = Query(None),
+    created_before: Optional[float] = Query(None),
+    min_size: Optional[int] = Query(None),
+    max_size: Optional[int] = Query(None),
+    tag: Optional[str] = Query(None),
+    hidden: bool = Query(False),
+    whole_word: bool = Query(False),
+    limit: int = Query(50),
+):
+    """Substring search over the index (the `files` table), plus filters.
+
+    `q`/`limit` keep their original behaviour (LIKE substring on filename or
+    path, row cap) for callers that pass only those two -- e.g. the command
+    palette's file search. `ext`/`min_size`/`max_size`/`modified_*`/
+    `created_*` have real columns on `files` and are applied in SQL;
+    `type` (a filetypes search group -- indexed rows are always files, so
+    'folder' never matches anything here) and `hidden` (no stored column;
+    approximated from the filename the same way the indexer already avoids
+    indexing dot-prefixed names) are applied in Python afterward, along
+    with `tag` (backend.tagger.paths_for_tag, path membership normalised via
+    backend.searcher.normalize_path so a file renamed to change only its
+    case still matches) and `whole_word` (backend.searcher.match_spans,
+    since SQL LIKE has no word-boundary concept). `indexed_roots` is always
+    included so the frontend's "This PC" search scope can flag drives that
+    aren't indexed yet.
+
+    The SQL query itself is capped at 5000 rows (`LIMIT 5000`), well above
+    the user-facing `limit` (default 50, capped at 1000 below) -- so a
+    broad `q` can't pull the entire index into memory before the
+    Python-side filters and the real `limit` slice run. `limit` is applied
+    last, as a Python slice after every filter, not as a SQL `LIMIT ?`: a
+    `type`/`hidden`/`tag`/`whole_word` filter can only narrow rows the SQL
+    query already returned, so slicing before filtering could silently
+    return fewer than the true first N matches.
+    """
+    limit = min(limit, 1000)
+    conditions = []
+    params: list = []
+    if q:
+        conditions.append("(filename LIKE ? OR path LIKE ?)")
+        params += [f"%{q}%", f"%{q}%"]
+    if ext:
+        conditions.append("extension = ?")
+        params.append("." + ext.lstrip(".").lower())
+    if min_size is not None:
+        conditions.append("size >= ?")
+        params.append(min_size)
+    if max_size is not None:
+        conditions.append("size <= ?")
+        params.append(max_size)
+    if modified_after is not None:
+        conditions.append("modified >= ?")
+        params.append(datetime.fromtimestamp(modified_after).isoformat())
+    if modified_before is not None:
+        conditions.append("modified <= ?")
+        params.append(datetime.fromtimestamp(modified_before).isoformat())
+    if created_after is not None:
+        conditions.append("created >= ?")
+        params.append(datetime.fromtimestamp(created_after).isoformat())
+    if created_before is not None:
+        conditions.append("created <= ?")
+        params.append(datetime.fromtimestamp(created_before).isoformat())
+
+    where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+    words = q.split() if (q and whole_word) else []
+
     async with _db() as conn:
         conn.row_factory = aiosqlite.Row
         cur = await conn.execute(
-            "SELECT id, path, filename, extension, size, modified, hash FROM files "
-            "WHERE filename LIKE ? OR path LIKE ? ORDER BY filename COLLATE NOCASE LIMIT ?",
-            (f"%{q}%", f"%{q}%", limit),
+            f"SELECT id, path, filename, extension, size, modified, created, hash FROM files "
+            f"{where} ORDER BY filename COLLATE NOCASE LIMIT 5000",
+            params,
         )
-        rows = await cur.fetchall()
-    return [dict(row) for row in rows]
+        rows = [dict(r) for r in await cur.fetchall()]
+        tag_paths = None
+        if tag:
+            tag_paths = {searcher.normalize_path(p) for p in await tagger.paths_for_tag(conn, tag)}
+        cur2 = await conn.execute("SELECT root FROM index_roots ORDER BY root")
+        indexed_roots = [r[0] for r in await cur2.fetchall()]
+
+    def _keep(row: dict) -> bool:
+        if not hidden and row["filename"].startswith("."):
+            return False
+        if type_ and ft.type_group_for(row["extension"] or "", is_dir=False) != type_:
+            return False
+        if tag_paths is not None and searcher.normalize_path(row["path"]) not in tag_paths:
+            return False
+        if words and searcher.match_spans(row["filename"], words, True) is None:
+            return False
+        return True
+
+    results = [r for r in rows if _keep(r)][:limit]
+    return {"results": results, "indexed_roots": indexed_roots}
 
 
 @app.get("/files/{file_id}")
@@ -450,6 +540,246 @@ async def fs_list_root(show_hidden: bool = False):
     return _listing_response(root, entries, truncated)
 
 
+_PEEK_SCAN_CAP = 2000
+
+
+def _peek_entries(directory: Path, n: int) -> list[dict]:
+    """First *n* non-hidden media files directly inside *directory*, by name.
+
+    Skips dot-prefixed and Windows-hidden entries, .FilePlusTrash, and
+    sub-directories; gives up after _PEEK_SCAN_CAP entries even if *n* media
+    hits were never reached (a huge non-media folder must not hang this).
+    Walks the scandir iterator lazily -- no eager `sorted(os.scandir(...))`
+    of the whole directory -- so a folder with thousands of entries costs
+    only the ones actually visited before either limit is hit; only the
+    (small) set of collected hits is sorted, at the end, by name.
+    """
+    items: list[dict] = []
+    try:
+        scandir_it = os.scandir(directory)
+    except OSError:
+        return items
+    scanned = 0
+    with scandir_it:
+        for de in scandir_it:
+            if len(items) >= n or scanned >= _PEEK_SCAN_CAP:
+                break
+            scanned += 1
+            if de.name.startswith(".") or de.name == _config.TRASH_DIRNAME:
+                continue
+            try:
+                if de.is_dir(follow_symlinks=False):
+                    continue
+                if os.name == "nt":
+                    attrs = de.stat(follow_symlinks=False).st_file_attributes  # type: ignore[attr-defined]
+                    if attrs & 0x2:  # FILE_ATTRIBUTE_HIDDEN
+                        continue
+            except OSError:
+                continue
+            ext = os.path.splitext(de.name)[1].lstrip(".").lower()
+            if not ft.is_media(ext):
+                continue
+            items.append({"name": de.name, "path": str(directory / de.name), "ext": ext})
+    items.sort(key=lambda item: item["name"].lower())
+    return items
+
+
+@app.get("/fs/peek")
+async def fs_peek(
+    path: str = Query(..., description="Absolute path of directory to peek into"),
+    n: int = Query(2, description="Max number of media items to return"),
+):
+    """Return up to *n* media files (images/videos) directly inside *path*.
+
+    Used for folder preview thumbnails (e.g. a fanned pair of images on a
+    folder tile). Read-only, so any real path is allowed (D2).
+
+    A path that is missing or is not a directory answers 200 with an empty
+    list, not 404: a preview is a decoration, and the caller (a grid tile
+    whose folder was deleted between the listing and the peek) has nothing to
+    do with a 404 except swallow it -- while the browser still logs the failed
+    request as a console error. Malformed input is still a hard error: a
+    relative/driveless path raises BadPathError (400) and a guarded path
+    raises ProtectedPathError (403) from path_guard above.
+    """
+    resolved = path_guard(Path(path), "read")  # relative/driveless -> BadPathError -> 400
+    if not resolved.is_dir():
+        return {"items": []}
+    items = await asyncio.to_thread(_peek_entries, resolved, n)
+    return {"items": items}
+
+
+@app.get("/fs/search")
+async def fs_search(
+    root: str = Query(..., description="Absolute path of the folder to search live"),
+    q: str = Query(""),
+    type_: Optional[str] = Query(None, alias="type", description="Search group or 'folder'"),
+    ext: Optional[str] = Query(None, description="Single extension, no dot"),
+    modified_after: Optional[float] = Query(None, description="Epoch seconds"),
+    modified_before: Optional[float] = Query(None),
+    created_after: Optional[float] = Query(None),
+    created_before: Optional[float] = Query(None),
+    min_size: Optional[int] = Query(None),
+    max_size: Optional[int] = Query(None),
+    tag: Optional[str] = Query(None),
+    hidden: bool = Query(False),
+    whole_word: bool = Query(False),
+    limit: int = Query(500),
+):
+    """Budgeted live search of the tree rooted at *root* -- see backend.searcher.
+
+    *root* must be absolute (path_guard's _canonicalize raises BadPathError
+    for a relative or driveless spelling -> 400 via the global handler) and
+    is read-guarded like every other read route (D2: reads are allowed
+    anywhere). `tag=` resolves to a path set up front via
+    tagger.paths_for_tag so the blocking tree walk itself never touches the
+    database; the set is normalised (searcher.normalize_path) so a file
+    renamed to change only its case (the files-table row keeps whatever
+    case existed when it was indexed) still matches during the live walk.
+    The walk runs in asyncio.to_thread since it's blocking I/O.
+    """
+    resolved = path_guard(Path(root), "read")
+    tag_paths = None
+    if tag:
+        async with _db() as conn:
+            tag_paths = {searcher.normalize_path(p) for p in await tagger.paths_for_tag(conn, tag)}
+    filters = searcher.SearchFilters(
+        q=q, type=type_, ext=ext,
+        modified_after=modified_after, modified_before=modified_before,
+        created_after=created_after, created_before=created_before,
+        min_size=min_size, max_size=max_size,
+        hidden=hidden, whole_word=whole_word, tag_paths=tag_paths,
+    )
+    capped_limit = min(limit, 1000)
+    return await asyncio.to_thread(searcher.search_tree, resolved, filters, limit=capped_limit)
+
+
+# ---------------------------------------------------------------------------
+# Properties — Explorer-style Properties dialog: file-type association, size
+# (logical and on-disk), a recursive folder summary, timestamps, Windows
+# attributes, and the desktop.ini-backed "folder type". Backed by
+# backend.winshell; consumed verbatim by the frontend Properties panel.
+# ---------------------------------------------------------------------------
+
+def _created_time(st) -> float:
+    """st_birthtime when the platform provides it (Python 3.12+ on Windows), else st_ctime."""
+    return getattr(st, "st_birthtime", None) or st.st_ctime
+
+
+def _immediate_child_names(directory: Path) -> list[tuple[str, bool]]:
+    try:
+        with os.scandir(directory) as entries:
+            return [(e.name, e.is_dir(follow_symlinks=False)) for e in entries]
+    except OSError:
+        return []
+
+
+def _properties_blocking(resolved: Path, is_dir: bool) -> dict:
+    """Every blocking winshell/scandir call GET /fs/properties needs, gathered
+    under one asyncio.to_thread dispatch (get_attributes, assoc/size_on_disk
+    for a file; contains_counts/read_folder_type/detect_folder_type for a
+    directory) rather than several separate to_thread round trips.
+    """
+    attrs = winshell.get_attributes(resolved)
+    if is_dir:
+        assoc_info = {"type_description": "File folder", "opens_with": None, "opens_with_exe": None}
+        counts = winshell.contains_counts(resolved)
+        size = size_on_disk = counts["bytes"]
+        contains = {"files": counts["files"], "folders": counts["folders"], "truncated": counts["truncated"]}
+        folder_type = winshell.read_folder_type(resolved)
+        folder_type_detected = winshell.detect_folder_type(_immediate_child_names(resolved))
+    else:
+        ext = resolved.suffix.lstrip(".").lower()
+        assoc_info = winshell.assoc(ext)
+        size = resolved.stat().st_size
+        size_on_disk = winshell.size_on_disk(resolved)
+        contains = None
+        folder_type = None
+        folder_type_detected = None
+    return {
+        "attrs": attrs, "assoc_info": assoc_info, "size": size, "size_on_disk": size_on_disk,
+        "contains": contains, "folder_type": folder_type, "folder_type_detected": folder_type_detected,
+    }
+
+
+@app.get("/fs/properties")
+async def fs_properties(path: str = Query(..., description="Absolute path of the file or folder")):
+    """Explorer-style Properties for a single file or folder.
+
+    Read-only (path_guard "read" — D2: browsing/inspecting any real path is
+    allowed). `contains` is populated (and `folder_type`/`folder_type_detected`
+    computed) only for a directory; a file gets `contains: null` and both
+    folder-type fields null. Every blocking call (attributes, association,
+    size-on-disk, the recursive folder summary) runs together in a single
+    asyncio.to_thread dispatch (_properties_blocking) instead of several.
+    """
+    resolved = path_guard(Path(path), "read")
+    if not resolved.exists():
+        raise HTTPException(status_code=404, detail=f"Not found: {path}")
+    st = resolved.stat()
+    is_dir = resolved.is_dir()
+    data = await asyncio.to_thread(_properties_blocking, resolved, is_dir)
+    attrs = data["attrs"]
+    assoc_info = data["assoc_info"]
+    return {
+        "path": str(resolved),
+        "name": resolved.name or str(resolved),
+        "is_dir": is_dir,
+        "type_description": assoc_info["type_description"],
+        "opens_with": assoc_info["opens_with"],
+        "opens_with_exe": assoc_info["opens_with_exe"],
+        "location": str(resolved.parent),
+        "size": data["size"],
+        "size_on_disk": data["size_on_disk"],
+        "contains": data["contains"],
+        "created": _created_time(st),
+        "modified": st.st_mtime,
+        "accessed": st.st_atime,
+        "attributes": {
+            "read_only": attrs["read_only"], "hidden": attrs["hidden"],
+            "archive": attrs["archive"], "system": attrs["system"],
+        },
+        "folder_type": data["folder_type"],
+        "folder_type_detected": data["folder_type_detected"],
+    }
+
+
+@app.get("/fs/properties/details")
+async def fs_properties_details(path: str = Query(..., description="Absolute path of the file or folder")):
+    """Extended Windows property list (pywin32 propsys) for the Properties "Details" tab.
+
+    503 (not 500) when pywin32 isn't installed -- backend.winshell.property_details
+    imports it lazily and raises RuntimeError for exactly that case. Any
+    other failure (a COM error from a weird/locked file, say) is a 502
+    rather than an unhandled 500, since it's an external-API failure, not a
+    bug in the request itself.
+    """
+    resolved = path_guard(Path(path), "read")
+    if not resolved.exists():
+        raise HTTPException(status_code=404, detail=f"Not found: {path}")
+    try:
+        details = await asyncio.to_thread(winshell.property_details, resolved)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+    return {"details": details}
+
+
+# ---------------------------------------------------------------------------
+# File-type taxonomy and Windows known folders
+# ---------------------------------------------------------------------------
+
+@app.get("/filetypes")
+async def filetypes():
+    return ft.as_json()
+
+
+@app.get("/known-folders")
+async def known_folders():
+    return {"folders": winshell.known_folders()}
+
+
 # ---------------------------------------------------------------------------
 # Drives
 # ---------------------------------------------------------------------------
@@ -550,7 +880,38 @@ async def start_index(body: IndexRequest):
 
 @app.get("/index/status")
 async def index_status():
-    return app.state.index_state
+    """Indexed roots (from index_roots, kept current by scan_directory) plus
+    whether a quick-index scan is running right now."""
+    async with _db() as conn:
+        conn.row_factory = aiosqlite.Row
+        cur = await conn.execute("SELECT root, file_count, last_run FROM index_roots ORDER BY root")
+        rows = await cur.fetchall()
+    return {"roots": [dict(row) for row in rows], "running": app.state.index_state["running"]}
+
+
+@app.delete("/index")
+async def delete_index_root(root: str = Query(..., description="Absolute path of a previously-indexed root to forget")):
+    """Forget an indexed root: drop its now-stale files rows and its
+    index_roots bookkeeping row. *root* need not still exist on disk --
+    this is how a removed/unmounted root gets cleaned out of the index.
+
+    Mirrors POST /index's guard checks: 403 for a protected system root, and
+    409 while any quick-index scan is running -- not just one scanning this
+    root, since a running scan of *any* root can re-insert an index_roots row
+    concurrently with this delete (scan_directory's upsert would otherwise
+    race the DELETE below and resurrect the very row this call means to
+    remove).
+    """
+    resolved = path_guard(Path(root), "read")
+    if _config.is_protected_read(resolved):
+        raise HTTPException(status_code=403, detail="system folders are not indexed")
+    if app.state.index_state["running"]:
+        raise HTTPException(status_code=409, detail="An index is already running")
+    removed = await remove_stale_entries(resolved)
+    async with _db() as conn:
+        await conn.execute("DELETE FROM index_roots WHERE root = ?", (str(resolved),))
+        await conn.commit()
+    return {"status": "ok", "removed": removed}
 
 
 # ---------------------------------------------------------------------------
@@ -559,11 +920,27 @@ async def index_status():
 
 @app.get("/tags")
 async def list_tags(q: Optional[str] = Query(None), limit: int = Query(10)):
+    """Every tag, with the number of files carrying it.
+
+    The full (no-`q`) listing joins `file_tags` so each row carries a
+    `count` -- the sidebar's Tags section ranks the top 8 tags by it, and a
+    tag nobody has applied (count 0) is hidden there rather than offered as
+    a search filter that can only ever return nothing. The prefix-search
+    branch (`q=`, used by the Inspector's tag autocomplete) keeps
+    tagger.search_tags' own shape untouched: it feeds a name picker, which
+    has no use for a count.
+    """
     async with _db() as conn:
         if q:
             return await tagger.search_tags(conn, q, limit)
         conn.row_factory = aiosqlite.Row
-        cur = await conn.execute("SELECT * FROM tags ORDER BY name COLLATE NOCASE")
+        cur = await conn.execute(
+            "SELECT t.id, t.name, t.color, t.tag_group, t.tag_type, "
+            "       COUNT(ft.file_id) AS count "
+            "FROM tags t LEFT JOIN file_tags ft ON ft.tag_id = t.id "
+            "GROUP BY t.id, t.name, t.color, t.tag_group, t.tag_type "
+            "ORDER BY t.name COLLATE NOCASE"
+        )
         rows = await cur.fetchall()
     return [dict(row) for row in rows]
 
@@ -628,6 +1005,18 @@ class PathsReq(BaseModel):
     paths: list[str]
 
 
+class AttributesReq(BaseModel):
+    path: str
+    read_only: Optional[bool] = None
+    hidden: Optional[bool] = None
+    archive: Optional[bool] = None
+
+
+class FolderTypeReq(BaseModel):
+    path: str
+    type: Literal["Generic", "Documents", "Pictures", "Videos", "Music"]
+
+
 def _single(res: dict) -> dict:
     """Wrap a single-item mover result in the same shape as the batch routes."""
     return {
@@ -655,6 +1044,38 @@ async def fs_touch(body: DirName):
 async def fs_rename(body: RenameReq):
     async with _db() as conn:
         return _single(await mover.rename(conn, Path(body.path), body.new_name, batch_id=ol.new_batch_id()))
+
+
+@app.post("/fs/attributes")
+async def fs_attributes(body: AttributesReq):
+    """Set read-only/hidden/archive on a file or folder (logged, undoable: op_type attr-set).
+
+    Any of the three flags left as null leaves that attribute unchanged;
+    SetFileAttributesW is called once with the merged bitmask, so it never
+    touches a bit the caller didn't ask about (a folder's contents are never
+    touched either way — attr-set only ever calls SetFileAttributesW on
+    *path* itself). All three null at once means "change nothing" -- 422,
+    with no operations_log row written, rather than a no-op attr-set that
+    would clutter the history and be undoable to no visible effect.
+    """
+    if body.read_only is None and body.hidden is None and body.archive is None:
+        raise HTTPException(status_code=422, detail="At least one of read_only, hidden, or archive must be set.")
+    async with _db() as conn:
+        op = await mover.set_attributes(conn, Path(body.path), read_only=body.read_only, hidden=body.hidden,
+                                        archive=body.archive, batch_id=ol.new_batch_id())
+    return {"batch_id": op["batch_id"], "op": op}
+
+
+@app.post("/fs/folder-type")
+async def fs_folder_type(body: FolderTypeReq):
+    """Set a folder's Explorer "optimize this folder for" type (logged, undoable: op_type folder-type-set).
+
+    *type* is one of the five Explorer folder types (Pydantic Literal ->
+    automatic 422 for anything else, before this ever reaches mover).
+    """
+    async with _db() as conn:
+        op = await mover.set_folder_type(conn, Path(body.path), body.type, batch_id=ol.new_batch_id())
+    return {"batch_id": op["batch_id"], "op": op}
 
 
 @app.post("/fs/move")
@@ -854,4 +1275,4 @@ async def post_pins_reorder(body: ReorderIds):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("backend.api:app", host="127.0.0.1", port=9876, reload=False)
+    uvicorn.run("backend.api:app", host="127.0.0.1", port=_config.FILEPLUS_PORT, reload=False)

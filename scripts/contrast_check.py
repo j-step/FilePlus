@@ -22,6 +22,9 @@ FLOORS = [
     ("--text-tertiary", "--bg-chrome", 3.0),
     ("--text-tertiary", "--bg-raised", 3.0),
     ("--text-on-accent", "--accent", 4.5),
+    # Inactive tab label (Stage 2C Task 7 — .fp-tab's default fill is now
+    # --bg-raised instead of transparent).
+    ("--text-secondary", "--bg-raised", 4.5),
 ]
 
 _HEX = re.compile(r"#([0-9a-fA-F]{6}|[0-9a-fA-F]{3})\b")

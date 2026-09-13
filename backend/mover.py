@@ -10,6 +10,7 @@ folder; empty_trash() hands those folders to the Windows Recycle Bin.
 from __future__ import annotations
 
 import asyncio
+import base64
 import ctypes
 import json
 import logging
@@ -22,7 +23,8 @@ from pathlib import Path
 from send2trash import send2trash as _send2trash_impl
 
 import backend.config as _config
-from backend import operations_log as ol, stores, tagger
+from backend import operations_log as ol, stores, tagger, winshell
+from backend.errors import RefusedError
 from backend.hasher import hash_file
 
 logger = logging.getLogger(__name__)
@@ -31,7 +33,10 @@ logger = logging.getLogger(__name__)
 class InvalidNameError(ValueError): ...
 class InvalidPolicyError(ValueError): ...
 class ConflictError(Exception): ...
-class RefusedError(Exception): ...
+# RefusedError lives in backend.errors (imported above) and is re-exported
+# here unchanged -- backend.winshell raises it too (an unparseable
+# desktop.ini), and importing backend.mover itself from backend.winshell
+# would be a cycle (mover already imports winshell).
 
 
 _RESERVED = {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)), *(f"LPT{i}" for i in range(1, 10))}
@@ -341,6 +346,105 @@ async def touch(conn, parent, name, *, batch_id=None, reason=None) -> dict:
     return await _perform(conn, "touch", None, target, batch_id, reason, lambda: target.touch(exist_ok=False))
 
 
+async def _apply_attr_bits(conn, path: Path, target_bits: int, current_bits: int, batch_id: str, undo_of: int | None = None) -> dict:
+    """Log+perform one attr-set: current_bits -> target_bits, in reason as {"before", "after"}.
+
+    Shared by set_attributes (forward, already guarded there) and
+    undo_operation's attr-set case (undo: called with before/after swapped,
+    undo_of=<original id> -- so a further undo of that row swaps them back
+    again, i.e. redo). path_guard runs here too -- not just in set_attributes
+    -- so an undo/redo (which reaches this function directly from
+    undo_operation with a path straight out of the operations_log row, never
+    re-validated by any caller) can't write outside the sandbox: a
+    since-relocated sandbox, or WRITE_UNLOCKED flipped off after the forward
+    op ran, must refuse the undo with ProtectedPathError/OutOfSandboxError
+    (-> 403) before anything is logged, exactly like move/rename/trash's own
+    undo paths (which re-guard by calling move()/rename()/trash() again,
+    every one of which guards internally).
+    """
+    path = _config.path_guard(path, "write")
+    reason = json.dumps({"before": current_bits, "after": target_bits})
+    return await _perform(conn, "attr-set", path, None, batch_id, reason,
+                          lambda: winshell.set_attributes(path, target_bits), undo_of=undo_of)
+
+
+async def set_attributes(conn, path: Path, *, read_only: bool | None = None, hidden: bool | None = None,
+                         archive: bool | None = None, batch_id: str) -> dict:
+    target = _config.path_guard(path, "write")
+    if not target.exists():
+        raise RefusedError(f"Source does not exist: {target}")
+    before_bits = winshell.get_attributes(target)["bits"]
+    after_bits = before_bits
+    if read_only is not None:
+        after_bits = (after_bits | winshell.FILE_ATTRIBUTE_READONLY) if read_only else (after_bits & ~winshell.FILE_ATTRIBUTE_READONLY)
+    if hidden is not None:
+        after_bits = (after_bits | winshell.FILE_ATTRIBUTE_HIDDEN) if hidden else (after_bits & ~winshell.FILE_ATTRIBUTE_HIDDEN)
+    if archive is not None:
+        after_bits = (after_bits | winshell.FILE_ATTRIBUTE_ARCHIVE) if archive else (after_bits & ~winshell.FILE_ATTRIBUTE_ARCHIVE)
+    return await _apply_attr_bits(conn, target, after_bits, before_bits, batch_id)
+
+
+async def _apply_folder_type(conn, target: Path, folder_type: str, batch_id: str, undo_of: int | None = None) -> dict:
+    """Log+perform one folder-type-set: write *folder_type*'s desktop.ini,
+    reason {"before_ini", "folder_bits_before", "after"}.
+
+    *before_ini* and *folder_bits_before* are read synchronously here (both
+    tiny/fast: a small file and one GetFileAttributesW call) so they can go
+    into the log row before the write itself runs in a thread -- the same
+    "read the current state up front" shape move/rename already use for
+    their own pre-act existence/conflict checks. *folder_bits_before* is
+    what restore_desktop_ini needs to undo write_folder_type's READONLY bit
+    exactly, rather than assuming FilePlus is the only thing that could ever
+    have set it.
+    """
+    ini_path = target / "desktop.ini"
+    before_bytes = ini_path.read_bytes() if ini_path.exists() else None
+    folder_bits_before = winshell.get_attributes(target)["bits"]
+    reason = json.dumps({
+        "before_ini": base64.b64encode(before_bytes).decode("ascii") if before_bytes is not None else None,
+        "folder_bits_before": folder_bits_before,
+        "after": folder_type,
+    })
+    return await _perform(conn, "folder-type-set", target, None, batch_id, reason,
+                          lambda: winshell.write_folder_type(target, folder_type), undo_of=undo_of)
+
+
+async def set_folder_type(conn, path: Path, folder_type: str, batch_id: str) -> dict:
+    if folder_type not in winshell.FOLDER_TYPES:
+        raise InvalidPolicyError(f"unknown folder type {folder_type!r}")
+    target = _config.path_guard(path, "write")
+    if not target.is_dir():
+        raise RefusedError(f"Not a folder: {target}")
+    return await _apply_folder_type(conn, target, folder_type, batch_id)
+
+
+async def _undo_folder_type_set(conn, op_id: int, target: Path, before_bytes: bytes | None,
+                                folder_bits_before: int, batch_id: str) -> dict:
+    """Inverse of folder-type-set: restore *before_bytes*/*folder_bits_before*.
+
+    path_guard here for the same reason _apply_attr_bits guards: this is
+    reached directly from undo_operation with a path out of the
+    operations_log row, never re-validated by any caller.
+
+    Logged as a fresh folder-type-set row whose OWN before_ini/
+    folder_bits_before are the *current* state (read here, before the
+    restore runs) -- so a further undo of this row (redo) restores back to
+    what this undo is about to replace, exactly like attr-set's before/after
+    swap.
+    """
+    target = _config.path_guard(target, "write")
+    ini_path = target / "desktop.ini"
+    current_bytes = ini_path.read_bytes() if ini_path.exists() else None
+    current_folder_bits = winshell.get_attributes(target)["bits"]
+    reason = json.dumps({
+        "before_ini": base64.b64encode(current_bytes).decode("ascii") if current_bytes is not None else None,
+        "folder_bits_before": current_folder_bits,
+        "after": winshell.folder_type_from_ini_bytes(before_bytes),
+    })
+    return await _perform(conn, "folder-type-set", target, None, batch_id, reason,
+                          lambda: winshell.restore_desktop_ini(target, before_bytes, folder_bits_before), undo_of=op_id)
+
+
 async def _batch(conn, items, fn) -> dict:
     batch_id = ol.new_batch_id()
     out = {"batch_id": batch_id, "ops": [], "conflicts": [], "skipped": [], "errors": []}
@@ -558,6 +662,24 @@ async def undo_operation(conn, op_id: int, *, batch_id: str | None = None) -> di
         result = await _undo_pin_add(conn, op_id, src, batch_id)
     elif t == "pin-remove":
         result = await _undo_pin_remove(conn, op_id, src, batch_id)
+    elif t == "attr-set":
+        if not src or not Path(src).exists():
+            raise RefusedError("The file is no longer where the log left it.")
+        data = json.loads(row["reason"] or "{}")
+        before_bits, after_bits = data.get("before"), data.get("after")
+        if before_bits is None or after_bits is None:
+            raise RefusedError("Malformed attr-set log entry; nothing to undo.")
+        result = await _apply_attr_bits(conn, Path(src), before_bits, after_bits, batch_id, undo_of=op_id)
+    elif t == "folder-type-set":
+        if not src or not Path(src).exists():
+            raise RefusedError("The folder is no longer where the log left it.")
+        data = json.loads(row["reason"] or "{}")
+        folder_bits_before = data.get("folder_bits_before")
+        if folder_bits_before is None:
+            raise RefusedError("Malformed folder-type-set log entry; nothing to undo.")
+        before_ini_b64 = data.get("before_ini")
+        before_bytes = base64.b64decode(before_ini_b64) if before_ini_b64 else None
+        result = await _undo_folder_type_set(conn, op_id, Path(src), before_bytes, folder_bits_before, batch_id)
     else:
         raise RefusedError(f"Operation type '{t}' has no inverse.")
     if result["status"] != "done":

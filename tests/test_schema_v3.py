@@ -16,9 +16,9 @@ async def _tables(db_path):
 
 
 async def test_v3_tables_and_columns(db):
-    assert CURRENT_SCHEMA_VERSION == 3
+    assert CURRENT_SCHEMA_VERSION == 4
     names = await _tables(db)
-    for t in ("config", "recent_actions", "favorites", "pinned_folders"):
+    for t in ("config", "recent_actions", "favorites", "pinned_folders", "index_roots"):
         assert t in names
     for ix in ("idx_ops_source", "idx_ops_dest", "idx_ops_batch", "idx_file_tags_tag", "idx_files_filename", "idx_recent_ts"):
         assert ix in names
@@ -42,6 +42,6 @@ async def test_migration_from_v2_adds_columns(tmp_path):
     assert {"error", "undo_of"} <= cols
     async with aiosqlite.connect(db_path) as db:
         cur = await db.execute("SELECT version FROM schema_version")
-        assert (await cur.fetchone())[0] == 3
+        assert (await cur.fetchone())[0] == 4
         cur = await db.execute("SELECT COUNT(*) FROM operations_log")
         assert (await cur.fetchone())[0] == 1  # data preserved

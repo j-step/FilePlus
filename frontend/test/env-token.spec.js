@@ -7,7 +7,7 @@ const { test, expect } = require('@playwright/test');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { parseEnvValue, readEnvFileToken } = require('../envToken');
+const { parseEnvValue, readEnvFileToken, readEnvFileValue } = require('../envToken');
 
 test.describe('parseEnvValue', () => {
   test('plain value', () => {
@@ -80,5 +80,39 @@ test.describe('readEnvFileToken', () => {
   test('returns "" when the key is absent', () => {
     fs.writeFileSync(path.join(dir, '.env'), 'OTHER_KEY=x\n');
     expect(readEnvFileToken(dir)).toBe('');
+  });
+});
+
+test.describe('readEnvFileValue', () => {
+  let dir;
+
+  test.beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fileplus-envvalue-'));
+  });
+
+  test.afterEach(() => {
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  test('reads FILEPLUS_PORT', () => {
+    fs.writeFileSync(path.join(dir, '.env'), 'FILEPLUS_PORT=9877\n');
+    expect(readEnvFileValue(dir, 'FILEPLUS_PORT')).toBe('9877');
+  });
+
+  test('reads an arbitrary key alongside others, ignoring comments', () => {
+    fs.writeFileSync(
+      path.join(dir, '.env'),
+      '# FILEPLUS_PORT=<override>  # optional in dev\nOTHER_KEY=x\nFILEPLUS_PORT=9877\n'
+    );
+    expect(readEnvFileValue(dir, 'FILEPLUS_PORT')).toBe('9877');
+  });
+
+  test('returns "" when the key is absent', () => {
+    fs.writeFileSync(path.join(dir, '.env'), 'OTHER_KEY=x\n');
+    expect(readEnvFileValue(dir, 'FILEPLUS_PORT')).toBe('');
+  });
+
+  test('returns "" when .env is missing', () => {
+    expect(readEnvFileValue(path.join(dir, 'does-not-exist'), 'FILEPLUS_PORT')).toBe('');
   });
 });

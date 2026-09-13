@@ -1,10 +1,13 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en" data-theme="dark">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <!-- connect-src allows both the default backend port (9876) and verify.ps1's
+       (9877, so it can run its own backend beside a developer's already-running
+       instance) -- see FILEPLUS_PORT in backend/config.py and frontend/main.js. -->
   <meta http-equiv="Content-Security-Policy"
-        content="default-src 'self'; script-src 'self'; img-src 'self' data: blob:; connect-src 'self' http://127.0.0.1:9876 http://localhost:9876; style-src 'self' 'unsafe-inline';" />
+        content="default-src 'self'; script-src 'self'; img-src 'self' data: blob:; connect-src 'self' http://127.0.0.1:9876 http://localhost:9876 http://127.0.0.1:9877 http://localhost:9877; style-src 'self' 'unsafe-inline';" />
   <title>FilePlus</title>
   <link rel="stylesheet" href="src/styles.css" />
 </head>
@@ -18,9 +21,7 @@
   <header class="fp-titlebar" id="titlebar">
     <div class="fp-titlebar__brand">
       <!-- 14×14 brand mark (amber gradient square with white + cross) -->
-      <svg class="fp-brand fp-brand--14" width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
-        <path d="M4 7h6M7 4v6" stroke="var(--text-on-accent)" stroke-width="1.8" stroke-linecap="round"/>
-      </svg>
+      <svg class="fp-icon fp-brand fp-brand--14" aria-hidden="true"><use href="#fp-brand"></use></svg>
       <span class="fp-titlebar__brand-name">FilePlus</span>
     </div>
     <!-- drag region fills center -->
@@ -28,13 +29,13 @@
     <!-- window controls -->
     <div class="fp-titlebar__controls" style="-webkit-app-region:no-drag">
       <button class="fp-titlebar__btn" id="btn-minimize" data-action="window-minimize" aria-label="Minimize">
-        <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><rect x="1" y="5.5" width="10" height="1" fill="currentColor"/></svg>
+        <svg class="fp-icon fp-icon--12" aria-hidden="true"><use href="#fp-window-minimize"></use></svg>
       </button>
       <button class="fp-titlebar__btn" id="btn-maximize" data-action="window-maximize" aria-label="Maximize">
-        <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><rect x="1" y="1" width="10" height="10" rx="1" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>
+        <svg class="fp-icon fp-icon--12" aria-hidden="true"><use href="#fp-window-maximize"></use></svg>
       </button>
       <button class="fp-titlebar__btn fp-titlebar__btn--close" id="btn-close" data-action="window-close" aria-label="Close">
-        <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M2 2l8 8M10 2l-8 8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+        <svg class="fp-icon fp-icon--12" aria-hidden="true"><use href="#fp-close"></use></svg>
       </button>
     </div>
   </header>
@@ -56,16 +57,11 @@
            original header height now that the tab bar lives inside .main) -->
       <div class="fp-sidebar__header">
         <!-- Brand mark — also acts as expand button in collapsed mode -->
-        <svg class="fp-sidebar__brand-mark" width="36" height="36" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-          <rect x="2" y="2" width="20" height="20" rx="5" fill="var(--accent)" opacity="0.85"/>
-          <path d="M8 12h8M12 8v8" stroke="var(--text-on-accent)" stroke-width="1.8" stroke-linecap="round"/>
-        </svg>
+        <svg class="fp-icon fp-icon--36 fp-sidebar__brand-mark" aria-hidden="true"><use href="#fp-brand-badge"></use></svg>
         <!-- Expand button — only visible in collapsed mode (collapsed uses icon-only layout) -->
         <button class="fp-icon-btn fp-icon-btn--sm fp-sidebar__expand-btn" id="btn-sidebar-expand"
                 data-action="toggle-sidebar" title="Expand sidebar (Ctrl+B)" style="-webkit-app-region:no-drag">
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-            <path d="M5 2l5 5-5 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-          </svg>
+          <svg class="fp-icon fp-icon--14" aria-hidden="true"><use href="#fp-chevron-right"></use></svg>
         </button>
         <div style="flex:1;min-width:0">
           <!-- Editable device name — double-click to rename, persists to localStorage. -->
@@ -74,11 +70,20 @@
         </div>
         <button class="fp-icon-btn fp-icon-btn--sm" id="btn-sidebar-collapse"
                 data-action="toggle-sidebar" title="Collapse sidebar (Ctrl+B)" style="-webkit-app-region:no-drag">
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-            <path d="M9 2L4 7l5 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-          </svg>
+          <svg class="fp-icon fp-icon--14" aria-hidden="true"><use href="#fp-chevron-left"></use></svg>
         </button>
       </div>
+
+      <!-- Ask File+ (Task 15, design spec §9) — the AI entry point's visible
+           shell only; opens #ask-popout, nothing is wired to a model until
+           Stage 3. Single button for both sidebar states: the label hides
+           and the pill shrinks to an icon-only square when collapsed
+           (styles.css .fp-sidebar--collapsed .fp-ask), same as nav-home. -->
+      <button class="fp-ask" id="btn-ask-fileplus" data-action="ask-open"
+              title="Ask File+ (Ctrl+J)">
+        <svg class="fp-icon fp-icon--16" aria-hidden="true"><use href="#fp-sparkle"></use></svg>
+        <span class="fp-ask__label">Ask File+</span>
+      </button>
 
       <div class="fp-sidebar__scroll">
 
@@ -88,32 +93,23 @@
 
         <button class="fp-sidebar__item fp-sidebar__item--active" id="nav-home"
                 data-screen="home" data-action="navigate-screen" title="Home">
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-            <path d="M1.5 7.5L8 1l6.5 6.5h-1V15h-4v-4.5h-3V15h-4V7.5z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
-          </svg>
+          <svg class="fp-icon fp-icon--16" aria-hidden="true"><use href="#fp-home"></use></svg>
           <span class="fp-sidebar__item__label">Home</span>
         </button>
 
-        <!-- Downloads — opens Browser at configured Downloads path -->
-        <button class="fp-sidebar__item" id="nav-downloads"
-                data-screen="browser" data-action="navigate-path"
-                data-path="C:\Users\justi\Downloads"
-                title="Downloads (configured Downloads Folder)">
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-            <path d="M8 2v8M5 7l3 3 3-3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
-            <path d="M2 12h12" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
-          </svg>
-          <span class="fp-sidebar__item__label">Downloads</span>
-        </button>
+        <!-- Quick Access known folders (Desktop, Downloads, Screenshots by
+             default) — rendered by loadQuickAccess() (app.js) from
+             GET /known-folders, filtered against ui.quick_access_hidden.
+             Each item carries an absolute data-path and data-known-id (the
+             latter drives the sidebar-item context menu's "Remove from Quick
+             Access" and the Settings › Personalization checkboxes). Replaces
+             the old static #nav-downloads entry (Stage 2C Task 9). -->
+        <div id="sb-quick-access-folders"></div>
 
         <!-- Review Bin with accent badge when non-zero -->
         <button class="fp-sidebar__item" id="nav-review-bin"
                 data-screen="review-bin" data-action="navigate-screen" title="Review Bin (Ctrl+Shift+R)">
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-            <rect x="2" y="3" width="12" height="11" rx="1.5" stroke="currentColor" stroke-width="1.2"/>
-            <path d="M5 3V2a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v1M2 6h12" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
-            <path d="M6 9l1.5 1.5L10 9" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
-          </svg>
+          <svg class="fp-icon fp-icon--16" aria-hidden="true"><use href="#fp-review-bin"></use></svg>
           <span class="fp-sidebar__item__label">Review Bin</span>
           <!-- INTEGRATION: count from GET /review-bin/count -->
           <span class="fp-badge fp-badge--accent fp-sidebar__item__badge" id="sb-review-bin-count" style="display:none">0</span>
@@ -125,39 +121,35 @@
         <!-- Populated by loadPins() from GET /pins -->
         <div id="sb-pinned-folders"></div>
 
-        <!-- ── TREE ─────────────────────────────────────────────── -->
-        <!-- Real fixed drives from GET /drives (Stage 3 will add the AI-organised dot) -->
-        <div class="fp-sidebar__section-label">Tree</div>
-
-        <div id="sb-drives"></div>
+        <!-- ── THIS PC ──────────────────────────────────────────── -->
+        <!-- Real fixed drives from GET /drives (Stage 3 will add the
+             AI-organised dot). Collapsible: thispc-toggle flips
+             aria-expanded, hides #sb-drives, rotates the chevron, and
+             persists ui.sidebar_thispc_open; thispc-open opens the drives
+             listing itself (openBrowserAt(null), tab label "This PC"). -->
+        <div class="fp-sidebar__section" id="sb-thispc">
+          <div class="fp-sidebar__section-head" role="button" tabindex="0" data-action="thispc-open">
+            <button class="fp-sidebar__chevron" data-action="thispc-toggle" aria-label="Collapse This PC" aria-expanded="true">
+              <svg class="fp-icon fp-icon--14" aria-hidden="true"><use href="#fp-chevron-down"></use></svg>
+            </button>
+            <span class="fp-sidebar__section-label">This PC</span>
+          </div>
+          <div class="fp-sidebar__section-body" id="sb-drives"></div>
+        </div>
 
         <!-- ── TAGS ─────────────────────────────────────────────── -->
-        <!-- INTEGRATION: top tags from GET /tags?limit=8 -->
-        <div class="fp-sidebar__section-label">Tags</div>
+        <!-- The top 8 real tags by file count (GET /tags) — app.js's
+             loadSidebarTags(). The whole section hides when nothing is
+             tagged yet; a chip runs a This PC search filtered to that tag. -->
+        <div class="fp-sidebar__section-label" id="sb-tags-label">Tags</div>
         <div id="sb-tags">
-          <button class="fp-chip fp-chip--tinted" data-action="filter-by-tag" data-tag="work" title="Filter by tag: work">
-            work <span class="fp-chip__count">42</span>
-          </button>
-          <button class="fp-chip" data-action="filter-by-tag" data-tag="photos" title="Filter by tag: photos">
-            photos <span class="fp-chip__count">214</span>
-          </button>
-          <button class="fp-chip" data-action="filter-by-tag" data-tag="docs" title="Filter by tag: docs">
-            docs <span class="fp-chip__count">88</span>
-          </button>
-          <button class="fp-chip" data-action="filter-by-tag" data-tag="code" title="Filter by tag: code">
-            code <span class="fp-chip__count">371</span>
-          </button>
+          <div id="sb-tags-chips"></div>
           <button class="fp-btn fp-btn--ghost fp-sidebar__tags-more"
                   data-action="open-tag-canvas" title="View all tags">View all →</button>
           <!-- Collapsed-mode replacement: single Tags icon + chevron — only visible when sidebar is collapsed -->
           <button class="fp-sidebar__tags-collapsed" data-action="open-tag-canvas" title="View all tags">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M20.59 13.41 13.42 20.58a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/>
-              <line x1="7" y1="7" x2="7.01" y2="7"/>
-            </svg>
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <polyline points="6 9 12 15 18 9"/>
-            </svg>
+            <svg class="fp-icon fp-icon--16" aria-hidden="true"><use href="#fp-tag"></use></svg>
+            <svg class="fp-icon fp-icon--10" aria-hidden="true"><use href="#fp-chevron-down"></use></svg>
           </button>
         </div>
 
@@ -166,23 +158,13 @@
 
         <button class="fp-sidebar__item" id="nav-ftree"
                 data-screen="ftree" data-action="navigate-screen" title="File Tree canvas">
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-            <rect x="6" y="1" width="4" height="4" rx="0.5" stroke="currentColor" stroke-width="1.2"/>
-            <rect x="1" y="11" width="4" height="4" rx="0.5" stroke="currentColor" stroke-width="1.2"/>
-            <rect x="6" y="11" width="4" height="4" rx="0.5" stroke="currentColor" stroke-width="1.2"/>
-            <rect x="11" y="11" width="4" height="4" rx="0.5" stroke="currentColor" stroke-width="1.2"/>
-            <path d="M8 5v3M8 8H3v3M8 8h5v3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
-          </svg>
+          <svg class="fp-icon fp-icon--16" aria-hidden="true"><use href="#fp-file-tree"></use></svg>
           <span class="fp-sidebar__item__label">File Tree</span>
         </button>
 
         <button class="fp-sidebar__item" id="nav-scan"
                 data-screen="scan-config" data-action="navigate-screen" title="Scan &amp; Index">
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-            <circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.2"/>
-            <path d="M8 8l3.2-3.2" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
-            <circle cx="5.5" cy="10" r="1" fill="currentColor"/>
-          </svg>
+          <svg class="fp-icon fp-icon--16" aria-hidden="true"><use href="#fp-scan"></use></svg>
           <span class="fp-sidebar__item__label">Scan</span>
         </button>
 
@@ -193,11 +175,7 @@
       <div class="fp-sidebar__bottom">
         <button class="fp-sidebar__item" id="nav-everything"
                 data-screen="everything" data-action="navigate-screen" title="Everything Folder">
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-            <rect x="2" y="3" width="12" height="11" rx="1.5" stroke="currentColor" stroke-width="1.2"/>
-            <path d="M2 7h12" stroke="currentColor" stroke-width="1.2"/>
-            <path d="M5 5h6" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
-          </svg>
+          <svg class="fp-icon fp-icon--16" aria-hidden="true"><use href="#fp-everything"></use></svg>
           <span class="fp-sidebar__item__label">Everything Folder</span>
           <!-- INTEGRATION: error count from GET /everything/errors -->
           <!-- badge uses bad-wash bg + bad text + bad-edge border when errors exist -->
@@ -206,10 +184,7 @@
 
         <button class="fp-sidebar__item" id="nav-settings"
                 data-screen="settings" data-action="navigate-screen" title="Settings (Ctrl+,)">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/>
-            <circle cx="12" cy="12" r="3"/>
-          </svg>
+          <svg class="fp-icon fp-icon--16" aria-hidden="true"><use href="#fp-settings"></use></svg>
           <span class="fp-sidebar__item__label">Settings</span>
         </button>
       </div>
@@ -225,32 +200,30 @@
       <!-- ═════════════════════════════════════════════════════════
            A.1.2  TAB BAR  (32px) — explorer-style tabs
            Lives inside .main so its left edge snaps to the sidebar's
-           right edge. Each tab carries its OWN screen state via
-           data-tab-screen — switching tabs restores that tab's state;
-           navigating within a tab updates that tab's state in place.
+           right edge. Each tab's real state (screen, path, history,
+           selection, scroll…) lives in app.js's `tabs.list` records, not on
+           this markup — this seed element is registered into that model at
+           boot by seedInitialTab(); every other tab is built by createTab().
       ══════════════════════════════════════════════════════════════ -->
       <div class="fp-tabbar" id="tabbar" role="tablist">
         <!-- Initial Home tab (active by default).
              NOTE: the close affordance is a <span role="button">, NOT a nested
-             <button>. Nesting buttons is invalid HTML — Chromium silently
-             splits the inner one out as a sibling, which left the seed tab's
-             X visually orphaned (no longer a descendant of .fp-tab--active,
-             so the opacity:1 rule didn't apply) and produced a phantom 16px
-             gap between tabs in the row. -->
-        <button class="fp-tab fp-tab--active" role="tab" aria-selected="true"
-                data-tab-id="tab-1" data-tab-screen="home" data-action="switch-tab"
-                title="Home" draggable="true">
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
-            <path d="M1 6.5L7 1l6 5.5V13H9V9H5v4H1V6.5z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
-          </svg>
+             <button> — nesting buttons is invalid HTML and Chromium silently
+             splits the inner one out as a sibling. The tab itself is a <div>
+             (not a <button>) for the same reason: it hosts the close span as
+             a real descendant with no nested-interactive-content trouble. -->
+        <div class="fp-tab fp-tab--active" role="tab" aria-selected="true"
+             data-tab-id="tab-1" data-action="switch-tab"
+             title="Home" draggable="true">
+          <svg class="fp-icon fp-icon--14" aria-hidden="true"><use href="#fp-home"></use></svg>
           <span class="fp-tab__label">Home</span>
           <span class="fp-tab__close" role="button" data-action="close-tab" title="Close tab" tabindex="-1" aria-label="Close tab">
-            <svg width="10" height="10" viewBox="0 0 10 10"><path d="M2 2l6 6M8 2l-6 6" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+            <svg class="fp-icon fp-icon--10" aria-hidden="true"><use href="#fp-close"></use></svg>
           </span>
-        </button>
+        </div>
         <!-- New tab button -->
         <button class="fp-icon-btn fp-icon-btn--sm" id="btn-new-tab" data-action="new-tab" title="New tab (Ctrl+T)" style="margin-left:2px;flex-shrink:0;-webkit-app-region:no-drag">
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 2v10M2 7h10" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+          <svg class="fp-icon fp-icon--14" aria-hidden="true"><use href="#fp-new-tab"></use></svg>
         </button>
         <!-- spacer fills rest of row (also acts as window drag region) -->
         <div style="flex:1;align-self:stretch;-webkit-app-region:drag"></div>
@@ -265,72 +238,94 @@
         <!-- Nav: Back / Forward / Up -->
         <div style="display:flex;gap:2px;flex-shrink:0">
           <button class="fp-icon-btn" id="btn-back" data-action="nav-back" title="Back (Alt+Left)">
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M10 3L5 8l5 5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <svg class="fp-icon fp-icon--16" aria-hidden="true"><use href="#fp-arrow-left"></use></svg>
           </button>
           <button class="fp-icon-btn" id="btn-forward" data-action="nav-forward" title="Forward (Alt+Right)">
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M6 3l5 5-5 5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <svg class="fp-icon fp-icon--16" aria-hidden="true"><use href="#fp-arrow-right"></use></svg>
           </button>
           <button class="fp-icon-btn" id="btn-up" data-action="nav-up" title="Up (Alt+Up)">
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M3 10l5-5 5 5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <svg class="fp-icon fp-icon--16" aria-hidden="true"><use href="#fp-arrow-up"></use></svg>
           </button>
         </div>
 
-        <!-- Breadcrumb / address bar (flex grow) -->
+        <!-- Breadcrumb / address bar. The WRAPPER is what flexes: it is
+             right-anchored with a leading fade, so as the search bar grows
+             the start of the path scrolls out of view while its end (the
+             folder you are actually in) stays put — design §8.3. -->
         <!-- middot separator, never > or / — per spec A.1.4 -->
-        <nav class="fp-breadcrumb" id="breadcrumb" aria-label="Location">
-          <button class="fp-breadcrumb__crumb" data-action="navigate-crumb" data-path="home">Home</button>
-          <!-- Sample deeper path:
-          <span class="fp-breadcrumb__sep">·</span>
-          <button class="fp-breadcrumb__crumb" data-action="navigate-crumb" data-path="D:\">D:\</button>
-          <span class="fp-breadcrumb__sep">·</span>
-          <button class="fp-breadcrumb__crumb fp-breadcrumb__crumb--current" data-action="navigate-crumb" data-path="D:\Projects">Projects</button>
-          -->
-        </nav>
+        <div class="fp-breadcrumb-wrap" id="breadcrumb-wrap">
+          <nav class="fp-breadcrumb" id="breadcrumb" aria-label="Location">
+            <button class="fp-breadcrumb__crumb" data-action="navigate-crumb" data-path="home">Home</button>
+            <!-- Sample deeper path:
+            <span class="fp-breadcrumb__sep">·</span>
+            <button class="fp-breadcrumb__crumb" data-action="navigate-crumb" data-path="D:\">D:\</button>
+            <span class="fp-breadcrumb__sep">·</span>
+            <button class="fp-breadcrumb__crumb fp-breadcrumb__crumb--current" data-action="navigate-crumb" data-path="D:\Projects">Projects</button>
+            -->
+          </nav>
+        </div>
 
-        <!-- Search field (concave chrome, ⌘K hint) -->
+        <!-- Refresh: re-lists the current folder (no index run), keeps
+             selection by path and scroll position, spins while in flight -->
+        <button class="fp-icon-btn" id="btn-refresh"
+                data-action="refresh-directory" title="Refresh (F5)">
+          <svg class="fp-icon fp-icon--16" aria-hidden="true"><use href="#fp-refresh"></use></svg>
+        </button>
+
+        <!-- Search field (Task 14, design §8.1). Focusing it opens
+             #search-dropdown; picked filters become .fp-search-chip chips
+             BEFORE the input, Discord-style, and the text after them is the
+             name query. The bar grows with its content up to 60% of the
+             toolbar (styles.css) and pushes the path left. -->
         <div class="fp-search fp-toolbar__search" id="search-wrap">
-          <!-- Collapsed-mode icon (inline SVG — no CSP data-URI issue) -->
-          <svg class="fp-toolbar__search-collapse-icon" width="14" height="14" viewBox="0 0 24 24" fill="none"
-               stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"
-               aria-hidden="true">
-            <circle cx="11" cy="11" r="8"/>
-            <path d="m21 21-4.35-4.35"/>
-          </svg>
-          <svg class="fp-search__icon" width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
-            <circle cx="6" cy="6" r="4.5" stroke="currentColor" stroke-width="1.3"/>
-            <path d="M10 10l2.5 2.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
-          </svg>
-          <input class="fp-search__input" id="search-input" type="search"
+          <!-- Narrow-toolbar stand-in: the whole bar folds into this button
+               below #toolbar[data-narrow]'s threshold; clicking it expands the
+               bar again (app.js's initToolbarNarrowMode / search.js). -->
+          <button class="fp-search__collapsed" id="search-collapsed"
+                  data-action="focus-search" title="Search files" aria-label="Search files">
+            <svg class="fp-icon fp-icon--14" aria-hidden="true"><use href="#fp-search"></use></svg>
+          </button>
+          <svg class="fp-icon fp-icon--14 fp-search__icon" aria-hidden="true"><use href="#fp-search"></use></svg>
+          <!-- Filter chips — rendered by search.js's renderSearchChips() -->
+          <div class="fp-search__chips" id="search-chips"></div>
+          <input class="fp-search__input" id="search-input" type="text"
                  placeholder="Search files…" aria-label="Search files"
                  spellcheck="false" autocomplete="off"
-                 data-action="focus-search" />
+                 role="combobox" aria-expanded="false" aria-controls="search-dropdown" />
+          <!-- Width ruler for the field-sizing:content fallback (search.js's
+               resizeSearchInput) — never painted. -->
+          <span class="fp-search__measure" id="search-measure" aria-hidden="true"></span>
+
+          <!-- Filters + History dropdown — body rendered by search.js -->
+          <div class="fp-search-dd" id="search-dropdown" role="menu" aria-label="Search filters" hidden></div>
         </div>
 
-        <!-- View toggle: List / Grid segmented control -->
-        <div class="fp-segmented" id="view-toggle" role="group" aria-label="View mode"
-             style="flex-shrink:0;height:30px">
-          <button class="fp-segmented__opt active" id="btn-view-list"
-                  data-view="list" data-action="set-view-mode" title="List view">
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M2 3.5h10M2 7h10M2 10.5h10" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+        <!-- View / Sort: Windows-style dropdown menus (Task 10), replacing
+             the old List/Grid segmented toggle. Both open the shared
+             #context-menu anchored below the button (showContextMenu's
+             {anchor} option) from VIEW_MENU_ITEMS/SORT_MENU_ITEMS (app.js). -->
+        <div style="display:flex;gap:2px;flex-shrink:0">
+          <button class="fp-icon-btn" id="btn-view-menu"
+                  data-action="open-view-menu" title="View" aria-haspopup="true">
+            <svg class="fp-icon fp-icon--16" aria-hidden="true"><use href="#fp-view-grid"></use></svg>
           </button>
-          <button class="fp-segmented__opt" id="btn-view-grid"
-                  data-view="grid" data-action="set-view-mode" title="Grid view">
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><rect x="2" y="2" width="4" height="4" rx="0.5" stroke="currentColor" stroke-width="1.3"/><rect x="8" y="2" width="4" height="4" rx="0.5" stroke="currentColor" stroke-width="1.3"/><rect x="2" y="8" width="4" height="4" rx="0.5" stroke="currentColor" stroke-width="1.3"/><rect x="8" y="8" width="4" height="4" rx="0.5" stroke="currentColor" stroke-width="1.3"/></svg>
+          <button class="fp-icon-btn" id="btn-sort-menu"
+                  data-action="open-sort-menu" title="Sort" aria-haspopup="true">
+            <svg class="fp-icon fp-icon--16" aria-hidden="true"><use href="#fp-sort"></use></svg>
           </button>
         </div>
 
         <!-- Inspector toggle -->
         <button class="fp-icon-btn" id="btn-inspector-toggle"
                 data-action="toggle-inspector" title="Toggle inspector (⌘I)">
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-            <rect x="1" y="2" width="14" height="12" rx="1.5" stroke="currentColor" stroke-width="1.2"/>
-            <path d="M10 2v12" stroke="currentColor" stroke-width="1.2"/>
-          </svg>
+          <svg class="fp-icon fp-icon--16" aria-hidden="true"><use href="#fp-inspector"></use></svg>
         </button>
 
-        <!-- Theme toggle (keep from old toolbar) -->
+        <!-- Theme toggle (keep from old toolbar). Icon tracks the resolved
+             theme (applyTheme swaps the <use> href); static default matches
+             <html data-theme="dark"> above. -->
         <button class="fp-icon-btn" id="btn-theme" data-action="toggle-theme" title="Toggle theme">
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><circle cx="8" cy="8" r="3" stroke="currentColor" stroke-width="1.2"/><path d="M8 1v1.5M8 13.5V15M1 8h1.5M13.5 8H15M3 3l1.1 1.1M11.9 11.9l1.1 1.1M3 13l1.1-1.1M11.9 4.1l1.1-1.1" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+          <svg class="fp-icon fp-icon--16" aria-hidden="true"><use href="#fp-theme-dark"></use></svg>
         </button>
 
       </div><!-- /.fp-toolbar -->
@@ -380,7 +375,7 @@
           <div class="home-pane" data-pane="shared" style="display:none">
             <!-- Always shows disabled empty state; tab itself is disabled -->
             <div class="fp-empty-state">
-              <svg class="fp-empty-state__icon" viewBox="0 0 48 48" fill="none"><circle cx="24" cy="24" r="20" stroke="currentColor" stroke-width="2"/><path d="M16 24h16M24 16l8 8-8 8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <svg class="fp-icon fp-icon--48 fp-empty-state__icon" aria-hidden="true"><use href="#fp-coming-soon"></use></svg>
               <p class="fp-empty-state__title">Coming in a future version.</p>
               <p class="fp-empty-state__desc">Cloud and network shared files will appear here.</p>
             </div>
@@ -397,33 +392,39 @@
             <!-- ── File list pane ──────────────────────────── -->
             <div class="list-pane" id="list-pane">
 
+              <!-- Search-results header (Task 14) — "N results" / "First 500
+                   results — refine the search" / "Searching…", plus the This
+                   PC scope's "N drives are not indexed — Index now" hint.
+                   Hidden outside search mode. -->
+              <div class="list-search-header" id="list-search-header" role="status" aria-live="polite" hidden></div>
+
               <!-- Column header (32px, bg-content, sticky) -->
               <div class="list-head" id="list-head">
                 <div class="list-col list-col--icon"></div>
                 <div class="list-col list-col--name fp-sortable active" data-sort="name"
                      data-action="sort-by" style="cursor:default">
                   Name
-                  <svg class="list-col__caret" width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden="true"><path d="M2 4l3 3 3-3" stroke="var(--text-secondary)" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  <svg class="fp-icon fp-icon--10 list-col__caret" aria-hidden="true"><use href="#fp-chevron-down"></use></svg>
                 </div>
                 <div class="list-col list-col--size fp-sortable" data-sort="size" data-action="sort-by" style="cursor:pointer;display:flex;align-items:center;gap:4px;justify-content:flex-end">Size
-                  <svg class="list-col__caret" width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden="true"><path d="M2 4l3 3 3-3" stroke="var(--text-secondary)" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  <svg class="fp-icon fp-icon--10 list-col__caret" aria-hidden="true"><use href="#fp-chevron-down"></use></svg>
                 </div>
                 <div class="list-col list-col--modified fp-sortable" data-sort="modified" data-action="sort-by" style="cursor:pointer;display:flex;align-items:center;gap:4px;justify-content:flex-end">Modified
-                  <svg class="list-col__caret" width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden="true"><path d="M2 4l3 3 3-3" stroke="var(--text-secondary)" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  <svg class="fp-icon fp-icon--10 list-col__caret" aria-hidden="true"><use href="#fp-chevron-down"></use></svg>
                 </div>
                 <div class="list-col list-col--tags">Tags</div>
               </div>
 
               <!-- File scroll area -->
               <div class="list-scroll" id="list-scroll" role="listbox"
-                   aria-label="Files" tabindex="0" data-view="list">
+                   aria-label="Files" tabindex="0" data-view="details">
 
                 <!-- INTEGRATION: directory listing from GET /browse?path=... -->
 
                 <!-- Folder row (default) -->
                 <div class="fp-row fp-row--folder" role="option"
                      data-path="D:\Projects" data-action="navigate-path" tabindex="-1">
-                  <svg class="fp-row__icon" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M1 4a1 1 0 0 1 1-1h4l1.5 1.5H14a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V4z" fill="var(--accent)" opacity=".75" stroke="var(--accent-edge)" stroke-width="0.8"/></svg>
+                  <svg class="fp-icon fp-icon--16 fp-row__icon" aria-hidden="true"><use href="#fp-folder"></use></svg>
                   <span class="fp-row__name">Projects</span>
                   <span class="fp-row__size">—</span>
                   <span class="fp-row__modified">Today</span>
@@ -433,7 +434,7 @@
                 <!-- File row — selected state (accent-wash + 2px left bar) -->
                 <div class="fp-row fp-row--selected" role="option" aria-selected="true"
                      data-path="D:\design-brief.md" data-action="select-file" tabindex="-1">
-                  <svg class="fp-row__icon" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="2" y="1" width="9" height="13" rx="1.5" fill="var(--bg-raised)" stroke="var(--border-subtle)" stroke-width="0.8"/><path d="M11 1v4h3" stroke="var(--border-subtle)" stroke-width="0.8" stroke-linejoin="round"/><path d="M5 6h6M5 8.5h6M5 11h4" stroke="var(--text-tertiary)" stroke-width="0.8" stroke-linecap="round"/></svg>
+                  <svg class="fp-icon fp-icon--16 fp-row__icon" aria-hidden="true"><use href="#fp-file"></use></svg>
                   <span class="fp-row__name">design-brief.md</span>
                   <span class="fp-row__size mono">18.7 KB</span>
                   <span class="fp-row__modified mono">1 hr ago</span>
@@ -446,7 +447,7 @@
                 <!-- File row — default/unprocessed state -->
                 <div class="fp-row" role="option" data-path="D:\README.md"
                      data-action="select-file" tabindex="-1">
-                  <svg class="fp-row__icon" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="2" y="1" width="9" height="13" rx="1.5" fill="var(--bg-raised)" stroke="var(--border-subtle)" stroke-width="0.8"/><path d="M11 1v4h3" stroke="var(--border-subtle)" stroke-width="0.8" stroke-linejoin="round"/></svg>
+                  <svg class="fp-icon fp-icon--16 fp-row__icon" aria-hidden="true"><use href="#fp-file"></use></svg>
                   <span class="fp-row__name">README.md</span>
                   <span class="fp-row__size mono">4.2 KB</span>
                   <span class="fp-row__modified mono">3d ago</span>
@@ -502,7 +503,7 @@
             <!-- Snapshot view mode banner (warn) — hidden in live mode -->
             <div class="fp-mode-banner fp-mode-banner--warn ftree-banner ftree-banner--snapshot"
                  id="ftree-banner-snapshot" style="display:none">
-              <svg class="fp-mode-banner__icon" width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><circle cx="7" cy="7" r="6" stroke="currentColor" stroke-width="1.2"/><path d="M7 4v3l2 1.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/><path d="M2 2l1.5 1.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+              <svg class="fp-icon fp-icon--14 fp-mode-banner__icon" aria-hidden="true"><use href="#fp-history"></use></svg>
               <span class="fp-mode-banner__label" id="ftree-snapshot-label">
                 Viewing snapshot from <strong>Apr 22, 2026</strong> · read-only
               </span>
@@ -514,7 +515,7 @@
             <div class="fp-mode-banner fp-mode-banner--accent ftree-banner ftree-banner--proposal"
                  id="ftree-banner-proposal" style="display:none">
               <!-- INTEGRATION: proposal generated by AI from POST /propose -->
-              <svg class="fp-mode-banner__icon" width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M7 1.5l1 3h3.2l-2.6 1.9 1 3-2.6-1.9L4.4 9.4l1-3L2.8 4.5H6z" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round"/></svg>
+              <svg class="fp-icon fp-icon--14 fp-mode-banner__icon" aria-hidden="true"><use href="#fp-sparkle"></use></svg>
               <span class="fp-mode-banner__label">Reviewing AI proposal · changes you make update it</span>
               <button class="fp-btn fp-btn--primary fp-btn--sm fp-mode-banner__action"
                       data-action="ftree-execute-proposal" id="btn-ftree-execute">Execute</button>
@@ -529,11 +530,11 @@
                 <div class="ftree-rail__list" id="ftree-jump-list">
                   <!-- INTEGRATION: flat list of all visible nodes from canvas state -->
                   <button class="fp-sidebar__item" data-path="C:\" data-action="ftree-jump" style="font-size:12px">
-                    <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><ellipse cx="7" cy="5" rx="5" ry="2" stroke="currentColor" stroke-width="1.2"/><path d="M2 5v4c0 1.1 2.24 2 5 2s5-.9 5-2V5" stroke="currentColor" stroke-width="1.2"/></svg>
+                    <svg class="fp-icon fp-icon--14" aria-hidden="true"><use href="#fp-drive"></use></svg>
                     <span class="fp-sidebar__item__label">C:\</span>
                   </button>
                   <button class="fp-sidebar__item" data-path="D:\" data-action="ftree-jump" style="font-size:12px">
-                    <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><ellipse cx="7" cy="5" rx="5" ry="2" stroke="currentColor" stroke-width="1.2"/><path d="M2 5v4c0 1.1 2.24 2 5 2s5-.9 5-2V5" stroke="currentColor" stroke-width="1.2"/></svg>
+                    <svg class="fp-icon fp-icon--14" aria-hidden="true"><use href="#fp-drive"></use></svg>
                     <span class="fp-sidebar__item__label">D:\</span>
                   </button>
                   <!--
@@ -544,7 +545,7 @@
                 <!-- Collapse rail button -->
                 <button class="fp-icon-btn fp-icon-btn--sm" data-action="ftree-toggle-left-rail"
                         style="margin:4px auto;display:flex" title="Collapse jump list">
-                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M4 2l-2 4 2 4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  <svg class="fp-icon fp-icon--12" aria-hidden="true"><use href="#fp-chevron-left"></use></svg>
                 </button>
               </div>
 
@@ -557,48 +558,48 @@
                   <!-- Changes toggle -->
                   <button class="fp-icon-btn" data-action="ftree-toggle-changes"
                           title="Toggle AI-proposed changes" id="btn-ftree-changes">
-                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M3 5h6M3 8h4M9 11l2 2 4-4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                    <svg class="fp-icon fp-icon--16" aria-hidden="true"><use href="#fp-changes"></use></svg>
                   </button>
                   <div class="ftree-toolbar__sep"></div>
                   <!-- Expand all / Collapse to depth-3 -->
                   <button class="fp-icon-btn" data-action="ftree-expand-all" title="Expand all">
-                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M3 5l5 5 5-5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+                    <svg class="fp-icon fp-icon--16" aria-hidden="true"><use href="#fp-chevron-down"></use></svg>
                   </button>
                   <button class="fp-icon-btn" data-action="ftree-collapse-depth3" title="Collapse to depth 3">
-                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M3 11l5-5 5 5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+                    <svg class="fp-icon fp-icon--16" aria-hidden="true"><use href="#fp-chevron-up"></use></svg>
                   </button>
                   <div class="ftree-toolbar__sep"></div>
                   <!-- Zoom controls -->
                   <button class="fp-icon-btn" data-action="ftree-zoom-out" title="Zoom out">
-                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="7" cy="7" r="5" stroke="currentColor" stroke-width="1.2"/><path d="M4.5 7h5M11 11l2.5 2.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+                    <svg class="fp-icon fp-icon--16" aria-hidden="true"><use href="#fp-zoom-out"></use></svg>
                   </button>
                   <span class="ftree-toolbar__zoom mono" id="ftree-zoom-pct"
                         style="font:500 var(--t-small) var(--font-data);color:var(--text-secondary);min-width:36px;text-align:center">100%</span>
                   <button class="fp-icon-btn" data-action="ftree-zoom-in" title="Zoom in">
-                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="7" cy="7" r="5" stroke="currentColor" stroke-width="1.2"/><path d="M7 4.5v5M4.5 7h5M11 11l2.5 2.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+                    <svg class="fp-icon fp-icon--16" aria-hidden="true"><use href="#fp-zoom-in"></use></svg>
                   </button>
                   <button class="fp-icon-btn" data-action="ftree-fit-view" title="Fit to view">
-                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 5V2h3M11 2h3v3M14 11v3h-3M5 14H2v-3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                    <svg class="fp-icon fp-icon--16" aria-hidden="true"><use href="#fp-fit-view"></use></svg>
                   </button>
                   <div class="ftree-toolbar__sep"></div>
                   <!-- Add folder -->
                   <button class="fp-icon-btn" data-action="ftree-add-folder" title="Add folder">
-                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M1 4a1 1 0 0 1 1-1h4l1.5 1.5H14a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V4z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><path d="M8 8v4M6 10h4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+                    <svg class="fp-icon fp-icon--16" aria-hidden="true"><use href="#fp-folder-add"></use></svg>
                   </button>
                   <!-- Delete (disabled state: 40% opacity) -->
                   <button class="fp-icon-btn" data-action="ftree-delete-selected"
                           title="Delete selected" disabled style="opacity:.4">
-                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 4h12M5 4V2h6v2M6 7v5M10 7v5M3 4l1 10h8l1-10" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                    <svg class="fp-icon fp-icon--16" aria-hidden="true"><use href="#fp-delete"></use></svg>
                   </button>
                   <div class="ftree-toolbar__sep"></div>
                   <!-- View hidden files -->
                   <button class="fp-icon-btn" data-action="ftree-toggle-hidden"
                           title="Toggle hidden files" id="btn-ftree-hidden">
-                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M1 8s3-6 7-6 7 6 7 6-3 6-7 6-7-6-7-6z" stroke="currentColor" stroke-width="1.2"/><circle cx="8" cy="8" r="2.5" stroke="currentColor" stroke-width="1.2"/></svg>
+                    <svg class="fp-icon fp-icon--16" aria-hidden="true"><use href="#fp-eye"></use></svg>
                   </button>
                   <!-- Fullscreen -->
                   <button class="fp-icon-btn" data-action="ftree-fullscreen" title="Fullscreen (collapse both rails)">
-                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 5V2h3M11 2h3v3M14 11v3h-3M5 14H2v-3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                    <svg class="fp-icon fp-icon--16" aria-hidden="true"><use href="#fp-fit-view"></use></svg>
                   </button>
                 </div>
 
@@ -611,7 +612,7 @@
 
                     <!-- Default folder node -->
                     <div class="ftree-node" data-path="D:\" style="top:20px;left:20px">
-                      <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M2 5a1 1 0 0 1 1-1h5l2 2h8a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V5z" fill="var(--accent)" opacity=".8" stroke="var(--accent-edge)" stroke-width="0.8"/></svg>
+                      <svg class="fp-icon fp-icon--20" aria-hidden="true" style="color:var(--accent)"><use href="#fp-folder"></use></svg>
                       <span class="ftree-node__name">D:\</span>
                       <span class="ftree-node__count mono">2,841 files</span>
                       <!-- Expand children badge -->
@@ -622,7 +623,7 @@
                     <!-- AI-suggested addition (inline — shows ftree-node--ai-add state) -->
                     <div class="ftree-node ftree-node--ai-add" data-path="D:\Archive" style="top:20px;left:220px"
                          data-action="ftree-select-node">
-                      <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M2 5a1 1 0 0 1 1-1h5l2 2h8a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V5z" fill="var(--good)" opacity=".4" stroke="var(--good-edge)" stroke-width="0.8"/></svg>
+                      <svg class="fp-icon fp-icon--20" aria-hidden="true" style="color:var(--good)"><use href="#fp-folder"></use></svg>
                       <span class="ftree-node__name">Archive</span>
                       <span class="ftree-node__count mono">0 files</span>
                       <span class="fp-chip" style="font-size:10px;height:16px;padding:0 4px;background:var(--good-wash);border-color:var(--good-edge);color:var(--good)">new</span>
@@ -660,7 +661,7 @@
                   <span>Snapshots</span>
                   <button class="fp-icon-btn fp-icon-btn--sm" data-action="ftree-new-snapshot"
                           title="New snapshot">
-                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M6 2v8M2 6h8" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+                    <svg class="fp-icon fp-icon--12" aria-hidden="true"><use href="#fp-add"></use></svg>
                   </button>
                 </div>
 
@@ -676,7 +677,7 @@
 
                   <!-- User-bookmarked snapshot -->
                   <div class="ftree-snapshot" data-action="ftree-view-snapshot" data-snapshot="2026-04-22T14:00">
-                    <svg width="14" height="14" viewBox="0 0 14 14" fill="var(--accent)" aria-hidden="true"><path d="M7 1l1.5 3 3.5.5-2.5 2.4.6 3.5L7 9l-3.1 1.4.6-3.5L2 4.5l3.5-.5z" stroke="var(--accent)" stroke-width="0.8"/></svg>
+                    <svg class="fp-icon fp-icon--14" aria-hidden="true" style="color:var(--accent)"><use href="#fp-star-filled"></use></svg>
                     <div style="flex:1;min-width:0">
                       <span class="ftree-snapshot__label">Before big cleanup</span>
                       <span class="ftree-snapshot__sub">Apr 22, 2026</span>
@@ -734,9 +735,7 @@
           <div class="scan-topbar" id="scan-topbar">
             <!-- 48×48 brand mark per spec A.5.1 -->
             <div class="fp-brand fp-brand--48" aria-label="FilePlus" style="flex-shrink:0">
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                <path d="M6 12h12M12 6v12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-              </svg>
+              <svg class="fp-icon fp-icon--24" aria-hidden="true"><use href="#fp-brand"></use></svg>
             </div>
             <div style="display:flex;gap:8px;flex-shrink:0">
               <!-- Always visible per spec A.5.1 -->
@@ -854,13 +853,13 @@
                       <div class="scan-form-path-row" style="display:flex;align-items:center;gap:8px">
                         <span class="mono" style="font:400 var(--t-compact) var(--font-data);color:var(--text-primary);flex:1">D:\Projects</span>
                         <button class="fp-icon-btn fp-icon-btn--sm" data-action="scan-form-remove-path" data-path="D:\Projects" title="Remove">
-                          <svg width="10" height="10" viewBox="0 0 10 10"><path d="M2 2l6 6M8 2l-6 6" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+                          <svg class="fp-icon fp-icon--10" aria-hidden="true"><use href="#fp-close"></use></svg>
                         </button>
                       </div>
                       <div class="scan-form-path-row" style="display:flex;align-items:center;gap:8px">
                         <span class="mono" style="font:400 var(--t-compact) var(--font-data);color:var(--text-primary);flex:1">C:\Users\Justin\Documents</span>
                         <button class="fp-icon-btn fp-icon-btn--sm" data-action="scan-form-remove-path" data-path="C:\Users\Justin\Documents" title="Remove">
-                          <svg width="10" height="10" viewBox="0 0 10 10"><path d="M2 2l6 6M8 2l-6 6" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+                          <svg class="fp-icon fp-icon--10" aria-hidden="true"><use href="#fp-close"></use></svg>
                         </button>
                       </div>
                     </div>
@@ -872,14 +871,14 @@
                     <div style="font:500 var(--t-compact) var(--font-ui);color:var(--text-secondary);margin-bottom:6px">Or scan entire drives</div>
                     <label style="display:flex;align-items:center;gap:8px;height:28px;cursor:default">
                       <span class="fp-checkbox fp-checkbox--checked" data-action="scan-form-toggle-drive" data-drive="C:\">
-                        <svg viewBox="0 0 12 12" fill="none"><polyline points="2 6 5 9 10 3" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                        <svg class="fp-icon fp-icon--12" aria-hidden="true"><use href="#fp-check"></use></svg>
                       </span>
                       <span class="mono" style="font:400 var(--t-body) var(--font-data)">C:\</span>
                       <span class="mono" style="font:400 var(--t-small) var(--font-data);color:var(--text-tertiary)">127 GB used</span>
                     </label>
                     <label style="display:flex;align-items:center;gap:8px;height:28px;cursor:default">
                       <span class="fp-checkbox fp-checkbox--checked" data-action="scan-form-toggle-drive" data-drive="D:\">
-                        <svg viewBox="0 0 12 12" fill="none"><polyline points="2 6 5 9 10 3" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                        <svg class="fp-icon fp-icon--12" aria-hidden="true"><use href="#fp-check"></use></svg>
                       </span>
                       <span class="mono" style="font:400 var(--t-body) var(--font-data)">D:\</span>
                       <span class="mono" style="font:400 var(--t-small) var(--font-data);color:var(--text-tertiary)">843 GB used</span>
@@ -931,7 +930,7 @@
               <!-- "Never touch" folders -->
               <div class="fp-card">
                 <div class="fp-card__header">
-                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><circle cx="7" cy="7" r="6" stroke="currentColor" stroke-width="1.2"/><path d="M7 4v4M7 10v.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+                  <svg class="fp-icon fp-icon--14" aria-hidden="true"><use href="#fp-error"></use></svg>
                   <span class="fp-card__title">"Never touch" folders</span>
                 </div>
                 <p style="font:400 var(--t-compact) var(--font-ui);color:var(--text-secondary);margin:0 0 10px">The AI will never propose moving or modifying files in these folders.</p>
@@ -987,7 +986,7 @@
               <!-- Stage: Index — done (example) -->
               <div class="fp-stage fp-stage--done">
                 <div class="fp-stage__icon">
-                  <svg viewBox="0 0 12 12" fill="none" aria-hidden="true"><polyline points="2 6 5 9 10 3" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  <svg class="fp-icon fp-icon--12" aria-hidden="true"><use href="#fp-check"></use></svg>
                 </div>
                 <span class="fp-stage__label">Index</span>
                 <span class="fp-stage__meta">214,823 files</span>
@@ -996,7 +995,7 @@
               <!-- Stage: Deduplicate — current (active, with progress bar) -->
               <div class="fp-stage fp-stage--current">
                 <div class="fp-stage__icon">
-                  <svg viewBox="0 0 12 12" fill="none" aria-hidden="true"><circle cx="6" cy="6" r="5" stroke="currentColor" stroke-width="1.2"/><path d="M6 4v2l1.5 1" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+                  <svg class="fp-icon fp-icon--12" aria-hidden="true"><use href="#fp-history"></use></svg>
                 </div>
                 <span class="fp-stage__label">Deduplicate</span>
                 <span class="fp-stage__meta">35%</span>
@@ -1097,10 +1096,7 @@
               padding:10px 14px;
               display:flex;align-items:center;gap:10px
             ">
-              <svg width="14" height="14" viewBox="0 0 14 14" fill="none" style="flex-shrink:0;color:var(--good)" aria-hidden="true">
-                <rect x="4" y="6" width="6" height="6" rx="1" stroke="currentColor" stroke-width="1.2"/>
-                <path d="M5 6V4a2 2 0 1 1 4 0v2" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
-              </svg>
+              <svg class="fp-icon fp-icon--14" aria-hidden="true" style="flex-shrink:0;color:var(--good)"><use href="#fp-lock"></use></svg>
               <span style="font:400 var(--t-body) var(--font-ui);color:var(--text-primary)">Nothing is being moved. Continues in background if you close this window.</span>
             </div>
 
@@ -1179,11 +1175,11 @@
               <div class="scan-dupe-group" data-group-id="dupe-1">
                 <!-- Group row (36px, bg-raised on hover) -->
                 <div class="scan-dupe-group__header" data-action="scan-toggle-dupe-group" data-group="dupe-1">
-                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" style="color:var(--text-tertiary)" aria-hidden="true"><path d="M3 2l-2 4 2 4M11 2l2 4-2 4M6 11l2-8" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+                  <svg class="fp-icon fp-icon--14" aria-hidden="true" style="color:var(--text-tertiary)"><use href="#fp-compare"></use></svg>
                   <span class="fp-row__name" style="flex:1">IMG_4821.jpg</span>
                   <span class="fp-chip fp-chip--tinted" style="font-size:10px;height:18px;padding:0 6px">3 copies</span>
                   <span style="font:400 var(--t-compact) var(--font-data);color:var(--good);margin-left:8px">+4.2 MB</span>
-                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none" style="color:var(--text-tertiary);margin-left:4px" aria-hidden="true"><path d="M2 4l4 4 4-4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  <svg class="fp-icon fp-icon--12" aria-hidden="true" style="color:var(--text-tertiary);margin-left:4px"><use href="#fp-chevron-down"></use></svg>
                 </div>
 
                 <!-- Per-copy rows (nested) -->
@@ -1214,11 +1210,11 @@
               <!-- INTEGRATION: more groups from API -->
               <div class="scan-dupe-group" data-group-id="dupe-2">
                 <div class="scan-dupe-group__header" data-action="scan-toggle-dupe-group" data-group="dupe-2">
-                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" style="color:var(--text-tertiary)"><rect x="2" y="1" width="7" height="10" rx="1" stroke="currentColor" stroke-width="1.1"/><rect x="5" y="3" width="7" height="10" rx="1" stroke="currentColor" stroke-width="1.1"/></svg>
+                  <svg class="fp-icon fp-icon--14" aria-hidden="true" style="color:var(--text-tertiary)"><use href="#fp-copy"></use></svg>
                   <span class="fp-row__name" style="flex:1">report_Q1_2026.pdf</span>
                   <span class="fp-chip fp-chip--tinted" style="font-size:10px;height:18px;padding:0 6px">2 copies</span>
                   <span style="font:400 var(--t-compact) var(--font-data);color:var(--good);margin-left:8px">+38.7 MB</span>
-                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none" style="color:var(--text-tertiary);margin-left:4px"><path d="M4 2l4 4-4 4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  <svg class="fp-icon fp-icon--12" aria-hidden="true" style="color:var(--text-tertiary);margin-left:4px"><use href="#fp-chevron-right"></use></svg>
                 </div>
                 <!-- Children hidden (collapsed) -->
                 <div class="scan-dupe-group__children" id="scan-dupe-2-children" style="display:none"></div>
@@ -1271,12 +1267,12 @@
                 <div class="scan-cleanup-cat-header" data-action="scan-toggle-cleanup-cat" data-cat="temp">
                   <label style="display:flex;align-items:center;gap:8px;flex:1;cursor:default">
                     <span class="fp-checkbox fp-checkbox--checked" data-action="scan-cleanup-select-all" data-cat="temp">
-                      <svg viewBox="0 0 12 12" fill="none"><polyline points="2 6 5 9 10 3" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                      <svg class="fp-icon fp-icon--12" aria-hidden="true"><use href="#fp-check"></use></svg>
                     </span>
                     <span style="font:600 var(--t-body) var(--font-ui);color:var(--text-primary)">Temporary files</span>
                   </label>
                   <span style="font:400 var(--t-compact) var(--font-data);color:var(--good)">1.4 GB</span>
-                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none" style="color:var(--text-tertiary)"><path d="M2 4l4 4 4-4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+                  <svg class="fp-icon fp-icon--12" aria-hidden="true" style="color:var(--text-tertiary)"><use href="#fp-chevron-down"></use></svg>
                 </div>
                 <!-- Expanded file list -->
                 <div class="scan-cleanup-cat-files" id="scan-cleanup-temp">
@@ -1287,12 +1283,12 @@
                   <!-- INTEGRATION: files from GET /scan/cleanup/temp -->
                   <div style="padding:0 16px 8px;display:flex;flex-direction:column;gap:4px">
                     <label style="display:flex;align-items:center;gap:10px;height:26px;cursor:default">
-                      <span class="fp-checkbox fp-checkbox--checked" data-action="scan-cleanup-toggle-file" data-file="C:\Windows\Temp\setup.tmp"><svg viewBox="0 0 12 12" fill="none"><polyline points="2 6 5 9 10 3" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+                      <span class="fp-checkbox fp-checkbox--checked" data-action="scan-cleanup-toggle-file" data-file="C:\Windows\Temp\setup.tmp"><svg class="fp-icon fp-icon--12" aria-hidden="true"><use href="#fp-check"></use></svg></span>
                       <span class="mono" style="font:400 var(--t-small) var(--font-data);color:var(--text-secondary);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">C:\Windows\Temp\setup.tmp</span>
                       <span class="mono" style="font:400 var(--t-small) var(--font-data);color:var(--text-tertiary);flex-shrink:0">824 KB</span>
                     </label>
                     <label style="display:flex;align-items:center;gap:10px;height:26px;cursor:default">
-                      <span class="fp-checkbox fp-checkbox--checked" data-action="scan-cleanup-toggle-file" data-file="C:\Windows\Temp\etilqs_6B4.tmp"><svg viewBox="0 0 12 12" fill="none"><polyline points="2 6 5 9 10 3" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+                      <span class="fp-checkbox fp-checkbox--checked" data-action="scan-cleanup-toggle-file" data-file="C:\Windows\Temp\etilqs_6B4.tmp"><svg class="fp-icon fp-icon--12" aria-hidden="true"><use href="#fp-check"></use></svg></span>
                       <span class="mono" style="font:400 var(--t-small) var(--font-data);color:var(--text-secondary);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">C:\Windows\Temp\etilqs_6B4.tmp</span>
                       <span class="mono" style="font:400 var(--t-small) var(--font-data);color:var(--text-tertiary);flex-shrink:0">1.2 MB</span>
                     </label>
@@ -1304,11 +1300,11 @@
               <div class="fp-card" style="padding:0;overflow:hidden">
                 <div class="scan-cleanup-cat-header" data-action="scan-toggle-cleanup-cat" data-cat="empty-folders">
                   <label style="display:flex;align-items:center;gap:8px;flex:1;cursor:default">
-                    <span class="fp-checkbox fp-checkbox--checked" data-action="scan-cleanup-select-all" data-cat="empty-folders"><svg viewBox="0 0 12 12" fill="none"><polyline points="2 6 5 9 10 3" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+                    <span class="fp-checkbox fp-checkbox--checked" data-action="scan-cleanup-select-all" data-cat="empty-folders"><svg class="fp-icon fp-icon--12" aria-hidden="true"><use href="#fp-check"></use></svg></span>
                     <span style="font:600 var(--t-body) var(--font-ui);color:var(--text-primary)">Empty folders</span>
                   </label>
                   <span style="font:400 var(--t-compact) var(--font-data);color:var(--text-secondary)">23 folders</span>
-                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none" style="color:var(--text-tertiary)"><path d="M4 2l4 4-4 4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+                  <svg class="fp-icon fp-icon--12" aria-hidden="true" style="color:var(--text-tertiary)"><use href="#fp-chevron-right"></use></svg>
                 </div>
                 <div class="scan-cleanup-cat-files" style="display:none" id="scan-cleanup-empty-folders"></div>
               </div>
@@ -1317,7 +1313,7 @@
               <div class="fp-card" style="padding:0;overflow:hidden">
                 <div class="scan-cleanup-cat-header" data-action="scan-toggle-cleanup-cat" data-cat="old-downloads">
                   <label style="display:flex;align-items:center;gap:8px;flex:1;cursor:default">
-                    <span class="fp-checkbox fp-checkbox--checked" data-action="scan-cleanup-select-all" data-cat="old-downloads"><svg viewBox="0 0 12 12" fill="none"><polyline points="2 6 5 9 10 3" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+                    <span class="fp-checkbox fp-checkbox--checked" data-action="scan-cleanup-select-all" data-cat="old-downloads"><svg class="fp-icon fp-icon--12" aria-hidden="true"><use href="#fp-check"></use></svg></span>
                     <span style="font:600 var(--t-body) var(--font-ui);color:var(--text-primary)">Old downloads</span>
                   </label>
                   <div style="display:flex;align-items:center;gap:10px">
@@ -1328,7 +1324,7 @@
                     </label>
                     <span style="font:400 var(--t-compact) var(--font-data);color:var(--good)">2.4 GB</span>
                   </div>
-                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none" style="color:var(--text-tertiary)"><path d="M4 2l4 4-4 4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+                  <svg class="fp-icon fp-icon--12" aria-hidden="true" style="color:var(--text-tertiary)"><use href="#fp-chevron-right"></use></svg>
                 </div>
                 <div class="scan-cleanup-cat-files" style="display:none" id="scan-cleanup-old-downloads"></div>
               </div>
@@ -1341,7 +1337,7 @@
                     <span style="font:600 var(--t-body) var(--font-ui);color:var(--text-primary)">Large unused files</span>
                   </label>
                   <span style="font:400 var(--t-compact) var(--font-data);color:var(--text-secondary)">12 files</span>
-                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none" style="color:var(--text-tertiary)"><path d="M4 2l4 4-4 4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+                  <svg class="fp-icon fp-icon--12" aria-hidden="true" style="color:var(--text-tertiary)"><use href="#fp-chevron-right"></use></svg>
                 </div>
                 <div class="scan-cleanup-cat-files" style="display:none" id="scan-cleanup-large-unused"></div>
               </div>
@@ -1417,9 +1413,7 @@
                 <div class="rb-group" data-group="album-mix-2024">
                   <div class="rb-group__header">
                     <!-- 16×16 folder icon in text-secondary -->
-                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style="flex-shrink:0;color:var(--text-secondary)">
-                      <path d="M2 4a1 1 0 0 1 1-1h3.5l1 1.5H13a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V4z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
-                    </svg>
+                    <svg class="fp-icon fp-icon--16" aria-hidden="true" style="flex-shrink:0;color:var(--text-secondary)"><use href="#fp-folder"></use></svg>
                     <span class="rb-group__dest" style="font:500 var(--t-body) var(--font-ui);color:var(--text-primary);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">→ /album-mix-2024</span>
                     <span class="fp-mono rb-group__meta" style="font:400 var(--t-compact) var(--font-data);color:var(--text-tertiary);flex-shrink:0;white-space:nowrap">3 files · avg 82%</span>
                     <div class="rb-group__actions">
@@ -1444,7 +1438,7 @@
                       <div class="rb-conf-bar__fill" style="width:82%;background:var(--good)"></div>
                     </div>
                     <button class="fp-icon-btn fp-icon-btn--sm" data-action="rb-row-overflow" data-file-id="f001" title="More options" style="flex-shrink:0">
-                      <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="3" r="1" fill="currentColor"/><circle cx="7" cy="7" r="1" fill="currentColor"/><circle cx="7" cy="11" r="1" fill="currentColor"/></svg>
+                      <svg class="fp-icon fp-icon--14" aria-hidden="true"><use href="#fp-more"></use></svg>
                     </button>
                   </div>
 
@@ -1460,7 +1454,7 @@
                       <div class="rb-conf-bar__fill" style="width:79%;background:var(--good)"></div>
                     </div>
                     <button class="fp-icon-btn fp-icon-btn--sm" data-action="rb-row-overflow" data-file-id="f002" title="More options" style="flex-shrink:0">
-                      <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="3" r="1" fill="currentColor"/><circle cx="7" cy="7" r="1" fill="currentColor"/><circle cx="7" cy="11" r="1" fill="currentColor"/></svg>
+                      <svg class="fp-icon fp-icon--14" aria-hidden="true"><use href="#fp-more"></use></svg>
                     </button>
                   </div>
 
@@ -1476,7 +1470,7 @@
                       <div class="rb-conf-bar__fill" style="width:85%;background:var(--good)"></div>
                     </div>
                     <button class="fp-icon-btn fp-icon-btn--sm" data-action="rb-row-overflow" data-file-id="f003" title="More options" style="flex-shrink:0">
-                      <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="3" r="1" fill="currentColor"/><circle cx="7" cy="7" r="1" fill="currentColor"/><circle cx="7" cy="11" r="1" fill="currentColor"/></svg>
+                      <svg class="fp-icon fp-icon--14" aria-hidden="true"><use href="#fp-more"></use></svg>
                     </button>
                   </div>
                 </div><!-- /.rb-group -->
@@ -1484,9 +1478,7 @@
                 <!-- ─── Destination group: medium confidence ─── -->
                 <div class="rb-group" data-group="work-invoices-2025">
                   <div class="rb-group__header">
-                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style="flex-shrink:0;color:var(--text-secondary)">
-                      <path d="M2 4a1 1 0 0 1 1-1h3.5l1 1.5H13a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V4z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
-                    </svg>
+                    <svg class="fp-icon fp-icon--16" aria-hidden="true" style="flex-shrink:0;color:var(--text-secondary)"><use href="#fp-folder"></use></svg>
                     <span class="rb-group__dest" style="font:500 var(--t-body) var(--font-ui);color:var(--text-primary);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">→ /work-invoices-2025</span>
                     <span class="fp-mono rb-group__meta" style="font:400 var(--t-compact) var(--font-data);color:var(--text-tertiary);flex-shrink:0;white-space:nowrap">5 files · avg 63%</span>
                     <div class="rb-group__actions">
@@ -1508,7 +1500,7 @@
                       <div class="rb-conf-bar__fill" style="width:67%;background:var(--warn)"></div>
                     </div>
                     <button class="fp-icon-btn fp-icon-btn--sm" data-action="rb-row-overflow" data-file-id="f004" title="More options" style="flex-shrink:0">
-                      <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="3" r="1" fill="currentColor"/><circle cx="7" cy="7" r="1" fill="currentColor"/><circle cx="7" cy="11" r="1" fill="currentColor"/></svg>
+                      <svg class="fp-icon fp-icon--14" aria-hidden="true"><use href="#fp-more"></use></svg>
                     </button>
                   </div>
 
@@ -1526,7 +1518,7 @@
                       <div class="rb-conf-bar__fill" style="width:58%;background:var(--warn)"></div>
                     </div>
                     <button class="fp-icon-btn fp-icon-btn--sm" data-action="rb-row-overflow" data-file-id="f005" title="More options" style="flex-shrink:0">
-                      <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="3" r="1" fill="currentColor"/><circle cx="7" cy="7" r="1" fill="currentColor"/><circle cx="7" cy="11" r="1" fill="currentColor"/></svg>
+                      <svg class="fp-icon fp-icon--14" aria-hidden="true"><use href="#fp-more"></use></svg>
                     </button>
                   </div>
                 </div><!-- /.rb-group -->
@@ -1535,10 +1527,7 @@
                 <div class="rb-group rb-group--uncertain" data-group="uncertain">
                   <div class="rb-group__header" style="background:var(--warn-wash);border:1px solid var(--warn-edge);border-radius:var(--r-card) var(--r-card) 0 0;margin:0 -1px">
                     <!-- 14×14 alert-triangle in warn -->
-                    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" style="flex-shrink:0;color:var(--warn)">
-                      <path d="M7 2L1.5 12h11L7 2z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>
-                      <path d="M7 6v3M7 10.5v.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
-                    </svg>
+                    <svg class="fp-icon fp-icon--14" aria-hidden="true" style="flex-shrink:0;color:var(--warn)"><use href="#fp-warning"></use></svg>
                     <span class="rb-group__dest" style="font:500 var(--t-body) var(--font-ui);color:var(--text-primary);flex:1;min-width:0">Uncertain — individual review</span>
                     <span class="fp-mono rb-group__meta" style="font:400 var(--t-compact) var(--font-data);color:var(--text-tertiary);flex-shrink:0;white-space:nowrap">6 files · avg 38%</span>
                     <div class="rb-group__actions">
@@ -1561,7 +1550,7 @@
                       <div class="rb-conf-bar__fill" style="width:38%;background:var(--bad)"></div>
                     </div>
                     <button class="fp-icon-btn fp-icon-btn--sm" data-action="rb-row-overflow" data-file-id="f010" title="More options" style="flex-shrink:0">
-                      <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="3" r="1" fill="currentColor"/><circle cx="7" cy="7" r="1" fill="currentColor"/><circle cx="7" cy="11" r="1" fill="currentColor"/></svg>
+                      <svg class="fp-icon fp-icon--14" aria-hidden="true"><use href="#fp-more"></use></svg>
                     </button>
                   </div>
 
@@ -1577,7 +1566,7 @@
                       <div class="rb-conf-bar__fill" style="width:41%;background:var(--bad)"></div>
                     </div>
                     <button class="fp-icon-btn fp-icon-btn--sm" data-action="rb-row-overflow" data-file-id="f011" title="More options" style="flex-shrink:0">
-                      <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="3" r="1" fill="currentColor"/><circle cx="7" cy="7" r="1" fill="currentColor"/><circle cx="7" cy="11" r="1" fill="currentColor"/></svg>
+                      <svg class="fp-icon fp-icon--14" aria-hidden="true"><use href="#fp-more"></use></svg>
                     </button>
                   </div>
                 </div><!-- /.rb-group rb-group--uncertain -->
@@ -1643,20 +1632,20 @@
                   <div style="display:flex;flex-direction:column;gap:6px">
 
                     <div style="display:flex;align-items:center;gap:8px;height:26px">
-                      <svg width="14" height="14" viewBox="0 0 14 14" fill="none" style="flex-shrink:0;color:var(--good)"><path d="M2 7l4 4 6-7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                      <svg class="fp-icon fp-icon--14" aria-hidden="true" style="flex-shrink:0;color:var(--good)"><use href="#fp-check"></use></svg>
                       <span style="font:400 var(--t-body) var(--font-ui);color:var(--text-primary);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">costa_rica_2024_01.jpg → album-mix-2024</span>
                       <span class="fp-mono" style="font:400 var(--t-small) var(--font-data);color:var(--text-tertiary);flex-shrink:0">2 days ago</span>
                     </div>
 
                     <div style="display:flex;align-items:center;gap:8px;height:26px">
-                      <svg width="14" height="14" viewBox="0 0 14 14" fill="none" style="flex-shrink:0;color:var(--good)"><path d="M2 7l4 4 6-7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                      <svg class="fp-icon fp-icon--14" aria-hidden="true" style="flex-shrink:0;color:var(--good)"><use href="#fp-check"></use></svg>
                       <span style="font:400 var(--t-body) var(--font-ui);color:var(--text-primary);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">trip_jan_photos_bulk.zip → album-mix-2024</span>
                       <span class="fp-mono" style="font:400 var(--t-small) var(--font-data);color:var(--text-tertiary);flex-shrink:0">5 days ago</span>
                     </div>
 
                     <div style="display:flex;align-items:center;gap:8px;height:26px">
                       <!-- Rejected past decision -->
-                      <svg width="14" height="14" viewBox="0 0 14 14" fill="none" style="flex-shrink:0;color:var(--bad)"><path d="M2 2l10 10M12 2L2 12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+                      <svg class="fp-icon fp-icon--14" aria-hidden="true" style="flex-shrink:0;color:var(--bad)"><use href="#fp-close"></use></svg>
                       <span style="font:400 var(--t-body) var(--font-ui);color:var(--text-secondary);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">scan0022.jpg → album-mix-2024 (rejected)</span>
                       <span class="fp-mono" style="font:400 var(--t-small) var(--font-data);color:var(--text-tertiary);flex-shrink:0">1 wk ago</span>
                     </div>
@@ -1739,7 +1728,7 @@
           <div class="ef-col-header">
             <button class="ef-col ef-col--name ef-col--sortable ef-col--sorted-asc" data-action="ef-sort" data-col="name">
               Name
-              <svg width="10" height="10" viewBox="0 0 10 10" fill="none" style="margin-left:4px;opacity:.6"><path d="M5 2v6M2 5l3-3 3 3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <svg class="fp-icon fp-icon--10" aria-hidden="true" style="margin-left:4px;opacity:.6"><use href="#fp-sort"></use></svg>
             </button>
             <button class="ef-col ef-col--landed ef-col--sortable" data-action="ef-sort" data-col="landed">
               Landed
@@ -1757,7 +1746,7 @@
             <!-- Row state: settled (no dot) -->
             <div class="ef-row" data-action="ef-select-file" data-file-id="ef001" role="listitem" tabindex="0">
               <div class="ef-row__icon">
-                <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2" y="1" width="9" height="13" rx="1.5" fill="var(--bg-raised)" stroke="var(--border-subtle)" stroke-width="1"/><path d="M11 1v4h3" stroke="var(--border-subtle)" stroke-width="1" stroke-linejoin="round"/><path d="M4 7h7M4 9.5h7M4 12h4" stroke="var(--text-tertiary)" stroke-width="1" stroke-linecap="round"/></svg>
+                <svg class="fp-icon fp-icon--16" aria-hidden="true"><use href="#fp-file"></use></svg>
               </div>
               <span class="ef-row__name" style="font:500 var(--t-body) var(--font-ui);color:var(--text-primary)">project_proposal_final.pdf</span>
               <span class="ef-row__landed fp-mono" style="font:400 var(--t-compact) var(--font-data);color:var(--text-secondary)">3 hr ago</span>
@@ -1769,7 +1758,7 @@
             <!-- Row state: unprocessed (grey dot) -->
             <div class="ef-row" data-action="ef-select-file" data-file-id="ef002" role="listitem" tabindex="0">
               <div class="ef-row__icon">
-                <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="1" y="3" width="14" height="11" rx="1.5" fill="var(--bg-raised)" stroke="var(--border-subtle)" stroke-width="1"/><circle cx="6" cy="7.5" r="2" stroke="var(--text-tertiary)" stroke-width="1"/><path d="M1 10l4-3.5 4 3.5 2-2 4 2" stroke="var(--text-tertiary)" stroke-width="1" stroke-linejoin="round"/></svg>
+                <svg class="fp-icon fp-icon--16" aria-hidden="true"><use href="#fp-image"></use></svg>
               </div>
               <span class="ef-row__name" style="font:500 var(--t-body) var(--font-ui);color:var(--text-primary)">screenshot_2026-04-24.png</span>
               <span class="ef-row__landed fp-mono" style="font:400 var(--t-compact) var(--font-data);color:var(--text-secondary)">12 min ago</span>
@@ -1783,7 +1772,7 @@
             <!-- Row state: needs review (warn dot) -->
             <div class="ef-row" data-action="ef-select-file" data-file-id="ef003" role="listitem" tabindex="0">
               <div class="ef-row__icon">
-                <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2" y="1" width="9" height="13" rx="1.5" fill="var(--bg-raised)" stroke="var(--border-subtle)" stroke-width="1"/><path d="M11 1v4h3" stroke="var(--border-subtle)" stroke-width="1" stroke-linejoin="round"/><path d="M4 7h7M4 9.5h7M4 12h4" stroke="var(--text-tertiary)" stroke-width="1" stroke-linecap="round"/></svg>
+                <svg class="fp-icon fp-icon--16" aria-hidden="true"><use href="#fp-file"></use></svg>
               </div>
               <span class="ef-row__name" style="font:500 var(--t-body) var(--font-ui);color:var(--text-primary)">doc_untitled_final_v3.docx</span>
               <span class="ef-row__landed fp-mono" style="font:400 var(--t-compact) var(--font-data);color:var(--text-secondary)">Yesterday</span>
@@ -1797,7 +1786,7 @@
             <!-- Row state: moving / in progress (accent dot) -->
             <div class="ef-row" data-action="ef-select-file" data-file-id="ef004" role="listitem" tabindex="0">
               <div class="ef-row__icon">
-                <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="1" y="3" width="14" height="11" rx="1.5" fill="var(--bg-raised)" stroke="var(--border-subtle)" stroke-width="1"/><circle cx="6" cy="7.5" r="2" stroke="var(--text-tertiary)" stroke-width="1"/><path d="M1 10l4-3.5 4 3.5 2-2 4 2" stroke="var(--text-tertiary)" stroke-width="1" stroke-linejoin="round"/></svg>
+                <svg class="fp-icon fp-icon--16" aria-hidden="true"><use href="#fp-image"></use></svg>
               </div>
               <span class="ef-row__name" style="font:500 var(--t-body) var(--font-ui);color:var(--text-primary)">beach_holiday_2024.jpg</span>
               <span class="ef-row__landed fp-mono" style="font:400 var(--t-compact) var(--font-data);color:var(--text-secondary)">2 days ago</span>
@@ -1811,7 +1800,7 @@
             <!-- Row state: error (bad dot) + hover tooltip placeholder -->
             <div class="ef-row ef-row--error" data-action="ef-select-file" data-file-id="ef005" role="listitem" tabindex="0">
               <div class="ef-row__icon">
-                <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2" y="1" width="9" height="13" rx="1.5" fill="var(--bg-raised)" stroke="var(--border-subtle)" stroke-width="1"/><path d="M11 1v4h3" stroke="var(--border-subtle)" stroke-width="1" stroke-linejoin="round"/><path d="M4 7h7M4 9.5h7M4 12h4" stroke="var(--text-tertiary)" stroke-width="1" stroke-linecap="round"/></svg>
+                <svg class="fp-icon fp-icon--16" aria-hidden="true"><use href="#fp-file"></use></svg>
               </div>
               <span class="ef-row__name" style="font:500 var(--t-body) var(--font-ui);color:var(--text-primary)">budget_final_LOCKED.xlsx</span>
               <span class="ef-row__landed fp-mono" style="font:400 var(--t-compact) var(--font-data);color:var(--text-secondary)">3 days ago</span>
@@ -1827,7 +1816,7 @@
 
             <div class="ef-row" data-action="ef-select-file" data-file-id="ef006" role="listitem" tabindex="0">
               <div class="ef-row__icon">
-                <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2" y="1" width="9" height="13" rx="1.5" fill="var(--bg-raised)" stroke="var(--border-subtle)" stroke-width="1"/><path d="M11 1v4h3" stroke="var(--border-subtle)" stroke-width="1" stroke-linejoin="round"/><path d="M4 7h7M4 9.5h7M4 12h4" stroke="var(--text-tertiary)" stroke-width="1" stroke-linecap="round"/></svg>
+                <svg class="fp-icon fp-icon--16" aria-hidden="true"><use href="#fp-file"></use></svg>
               </div>
               <span class="ef-row__name" style="font:500 var(--t-body) var(--font-ui);color:var(--text-primary)">invoice_stripe_march.pdf</span>
               <span class="ef-row__landed fp-mono" style="font:400 var(--t-compact) var(--font-data);color:var(--text-secondary)">1 hr ago</span>
@@ -1861,7 +1850,7 @@
                 files
               </span>
               <button class="fp-icon-btn fp-icon-btn--sm" data-action="ef-toggle-moving-card" title="Collapse">
-                <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M2 4l4 4 4-4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                <svg class="fp-icon fp-icon--12" aria-hidden="true" style="color:var(--text-tertiary)"><use href="#fp-chevron-down"></use></svg>
               </button>
             </div>
             <!-- 4px progress bar: accent fill on inset-recess track -->
@@ -2007,10 +1996,69 @@
                   </div>
                   <div class="settings-sep"></div>
                   <div class="settings-row">
+                    <div class="settings-row__label">Dynamic media view</div>
+                    <label class="fp-toggle">
+                      <input type="checkbox" checked data-action="settings-toggle" data-setting="dynamic-media-view" />
+                      <span class="fp-toggle__track"></span>
+                      <span class="fp-toggle__thumb"></span>
+                    </label>
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row">
                     <div class="settings-row__label">Open folders with</div>
                     <div class="fp-segmented">
                       <button class="fp-segmented__opt active" data-action="settings-set-click-mode" data-val="double">Double click</button>
                       <button class="fp-segmented__opt" data-action="settings-set-click-mode" data-val="single">Single click</button>
+                    </div>
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row">
+                    <div class="settings-row__label">File icons</div>
+                    <div class="settings-row__control">
+                      <div class="fp-segmented">
+                        <button class="fp-segmented__opt active" data-action="settings-set-icon-source" data-val="fileplus">FilePlus</button>
+                        <button class="fp-segmented__opt" data-action="settings-set-icon-source" data-val="windows">Windows</button>
+                      </div>
+                      <span style="font:400 var(--t-small) var(--font-ui);color:var(--text-tertiary);margin-left:10px">FilePlus draws its own file-type icons; Windows uses the icon each file's registered app supplies.</span>
+                    </div>
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row">
+                    <div class="settings-row__label">Properties panel</div>
+                    <div class="settings-row__control">
+                      <div class="fp-segmented">
+                        <button class="fp-segmented__opt active" data-action="settings-set-properties-mode" data-val="fileplus">FilePlus</button>
+                        <button class="fp-segmented__opt" data-action="settings-set-properties-mode" data-val="windows">Windows</button>
+                      </div>
+                      <span style="font:400 var(--t-small) var(--font-ui);color:var(--text-tertiary);margin-left:10px">FilePlus shows its own Properties panel; Windows opens the native dialog instead.</span>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Quick Access — one checkbox per known folder (desktop/downloads/
+                     screenshots), checked = shown in the sidebar's Quick Access
+                     section. Populated by loadQuickAccess() (app.js) alongside the
+                     sidebar list itself, from the same GET /known-folders +
+                     ui.quick_access_hidden source. -->
+                <div class="fp-card settings-card">
+                  <div class="fp-card__header"><span class="fp-card__title">Quick Access</span></div>
+                  <div id="settings-quick-access-list">
+                    <!-- INTEGRATION: populated by loadQuickAccess() (app.js) -->
+                  </div>
+                </div>
+
+                <!-- Keyboard -->
+                <div class="fp-card settings-card">
+                  <div class="fp-card__header"><span class="fp-card__title">Keyboard</span></div>
+                  <div class="settings-row">
+                    <div class="settings-row__label">Backspace deletes selected items</div>
+                    <div class="settings-row__control">
+                      <label class="fp-toggle">
+                        <input type="checkbox" id="settings-backspace-deletes" data-action="settings-set-backspace-deletes" />
+                        <span class="fp-toggle__track"></span>
+                        <span class="fp-toggle__thumb"></span>
+                      </label>
+                      <span style="font:400 var(--t-small) var(--font-ui);color:var(--text-tertiary);margin-left:10px">Otherwise Backspace goes up a folder. Applies in the file browser only; no effect with nothing selected.</span>
                     </div>
                   </div>
                 </div>
@@ -2022,53 +2070,23 @@
               <div class="settings-pane" id="settings-pane-scan-index" data-pane="scan-index" style="display:none">
                 <h2 class="settings-pane__title">Scan &amp; Index</h2>
 
+                <!-- Real index state (Task 14, design §8.7): GET /index/status,
+                     one row per indexed root with its file count and last run,
+                     Re-index (POST /index) and Remove (DELETE /index?root=) per
+                     row, plus "Index a folder…" (shell folder picker → POST
+                     /index). Rendered by settings.js's loadIndexStatus(). -->
                 <div class="fp-card settings-card">
                   <div class="settings-row settings-row--col">
                     <div class="settings-row__label">Indexed drives &amp; folders</div>
-                    <!-- INTEGRATION: list from config -->
-                    <div style="display:flex;flex-direction:column;gap:6px;margin-top:var(--s-8)">
-                      <div style="display:flex;align-items:center;gap:var(--s-8);height:32px;padding:0 var(--s-8);background:var(--bg-content);border:1px solid var(--border-subtle);border-radius:var(--r-sm)">
-                        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" style="color:var(--text-secondary)"><rect x="1" y="2" width="12" height="10" rx="1.5" stroke="currentColor" stroke-width="1.2"/><circle cx="5" cy="7" r="1.5" stroke="currentColor" stroke-width="1.1"/><path d="M1 9l3-3 3 3 2-2 4 2" stroke="currentColor" stroke-width="1.1"/></svg>
-                        <span class="fp-mono" style="font-size:11px;color:var(--text-primary);flex:1">C:\</span>
-                        <button class="fp-icon-btn fp-icon-btn--sm" data-action="settings-remove-drive" data-drive="C:">
-                          <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><path d="M1 1l8 8M9 1L1 9" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
-                        </button>
-                      </div>
-                      <button class="fp-btn fp-btn--ghost fp-btn--sm" data-action="settings-add-drive" style="align-self:flex-start">+ Add drive or folder</button>
+                    <p class="settings-row__desc">
+                      The index powers the <strong>This PC</strong> search scope. Searching a single
+                      folder walks it live and needs no index.
+                    </p>
+                    <div id="settings-index-status" class="settings-index"></div>
+                    <div class="settings-index__actions">
+                      <button class="fp-btn fp-btn--secondary fp-btn--sm" data-action="settings-index-add">Index a folder…</button>
+                      <span class="settings-index__running" id="settings-index-running" hidden>Indexing…</span>
                     </div>
-                  </div>
-                  <div class="settings-sep"></div>
-                  <div class="settings-row settings-row--col">
-                    <div class="settings-row__label">Ignore patterns</div>
-                    <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:var(--s-8)">
-                      <span class="fp-chip">node_modules</span>
-                      <span class="fp-chip">.git</span>
-                      <span class="fp-chip">*.tmp</span>
-                      <span class="fp-chip">~$*</span>
-                      <button class="fp-chip" data-action="settings-add-ignore-pattern" style="background:transparent;border-style:dashed">+ Add pattern</button>
-                    </div>
-                  </div>
-                  <div class="settings-sep"></div>
-                  <div class="settings-row">
-                    <div class="settings-row__label">File content analysis</div>
-                    <label class="fp-toggle">
-                      <input type="checkbox" checked disabled title="Planned for Stage 4" data-action="settings-toggle" data-setting="content-analysis" />
-                      <span class="fp-toggle__track"></span>
-                      <span class="fp-toggle__thumb"></span>
-                    </label>
-                  </div>
-                  <div class="settings-sep"></div>
-                  <div class="settings-row">
-                    <div class="settings-row__label">Re-scan schedule</div>
-                    <div class="fp-segmented">
-                      <button class="fp-segmented__opt active" data-action="settings-set-scan-schedule" data-val="manual">Manual</button>
-                      <button class="fp-segmented__opt" data-action="settings-set-scan-schedule" data-val="daily">Daily</button>
-                      <button class="fp-segmented__opt" data-action="settings-set-scan-schedule" data-val="weekly">Weekly</button>
-                    </div>
-                  </div>
-                  <div class="settings-sep"></div>
-                  <div class="settings-row">
-                    <button class="fp-btn fp-btn--primary fp-btn--sm" data-action="navigate-screen" data-screen="scan-config">Run new scan</button>
                   </div>
                 </div>
               </div><!-- /#settings-pane-scan-index -->
@@ -2124,7 +2142,7 @@
                     <div style="display:flex;flex-direction:column;gap:6px;margin-top:var(--s-8)">
                       <div class="settings-row" style="padding:0">
                         <span style="display:flex;align-items:center;gap:var(--s-8);font:400 var(--t-body) var(--font-ui);color:var(--text-primary)">
-                          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style="flex-shrink:0"><circle cx="8" cy="8" r="6.5" stroke="var(--text-tertiary)" stroke-width="1"/><path d="M8 1.5C6 4 5.5 6 5.5 8s.5 4 2.5 6.5M8 1.5C10 4 10.5 6 10.5 8S10 12 8 14.5M1.5 8h13" stroke="var(--text-tertiary)" stroke-width="1" stroke-linecap="round"/></svg>
+                          <svg class="fp-icon fp-icon--16" aria-hidden="true"><use href="#fp-globe"></use></svg>
                           Chrome
                         </span>
                         <label class="fp-toggle">
@@ -2331,7 +2349,7 @@
                       <input type="password" id="settings-api-key" class="fp-input" placeholder="sk-ant-…" data-action="settings-set-api-key" style="width:100%;padding-right:36px" />
                       <button class="fp-icon-btn fp-icon-btn--sm" id="btn-toggle-api-key" data-action="settings-toggle-api-key-visibility"
                               style="position:absolute;right:4px;top:50%;transform:translateY(-50%)">
-                        <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><ellipse cx="6.5" cy="6.5" rx="5" ry="3" stroke="currentColor" stroke-width="1.2"/><circle cx="6.5" cy="6.5" r="1.5" stroke="currentColor" stroke-width="1.2"/></svg>
+                        <svg class="fp-icon fp-icon--13" aria-hidden="true"><use href="#fp-eye"></use></svg>
                       </button>
                     </div>
                   </div>
@@ -2426,8 +2444,8 @@
                     </span>
                     <span class="settings-filetypes-col settings-filetypes-col--desc" style="color:var(--text-secondary)">Sketch design files</span>
                     <span class="settings-filetypes-col settings-filetypes-col--act">
-                      <button class="fp-icon-btn fp-icon-btn--sm" data-action="settings-edit-filetype"><svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M8.5 1.5l2 2-7 7H1.5v-2l7-7z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg></button>
-                      <button class="fp-icon-btn fp-icon-btn--sm" data-action="settings-delete-filetype"><svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M1.5 3h9M4 3V1.5h4V3M4.5 5v4M7.5 5v4M2.5 3l.8 7h5.4l.8-7" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+                      <button class="fp-icon-btn fp-icon-btn--sm" data-action="settings-edit-filetype"><svg class="fp-icon fp-icon--12" aria-hidden="true"><use href="#fp-edit"></use></svg></button>
+                      <button class="fp-icon-btn fp-icon-btn--sm" data-action="settings-delete-filetype"><svg class="fp-icon fp-icon--12" aria-hidden="true"><use href="#fp-delete"></use></svg></button>
                     </span>
                   </div>
                   <div class="settings-filetypes-row">
@@ -2438,8 +2456,8 @@
                     </span>
                     <span class="settings-filetypes-col settings-filetypes-col--desc" style="color:var(--text-secondary)">Figma local files</span>
                     <span class="settings-filetypes-col settings-filetypes-col--act">
-                      <button class="fp-icon-btn fp-icon-btn--sm" data-action="settings-edit-filetype"><svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M8.5 1.5l2 2-7 7H1.5v-2l7-7z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg></button>
-                      <button class="fp-icon-btn fp-icon-btn--sm" data-action="settings-delete-filetype"><svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M1.5 3h9M4 3V1.5h4V3M4.5 5v4M7.5 5v4M2.5 3l.8 7h5.4l.8-7" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+                      <button class="fp-icon-btn fp-icon-btn--sm" data-action="settings-edit-filetype"><svg class="fp-icon fp-icon--12" aria-hidden="true"><use href="#fp-edit"></use></svg></button>
+                      <button class="fp-icon-btn fp-icon-btn--sm" data-action="settings-delete-filetype"><svg class="fp-icon fp-icon--12" aria-hidden="true"><use href="#fp-delete"></use></svg></button>
                     </span>
                   </div>
                 </div>
@@ -2721,7 +2739,6 @@
                background:var(--bg-raised);
                border:1px solid var(--border-hairline);
                border-radius:var(--r-card);
-               aspect-ratio:16/10;
                display:flex;align-items:center;justify-content:center;
                flex-shrink:0;overflow:hidden;
              ">
@@ -2732,12 +2749,17 @@
             <span style="font:400 var(--t-compact) var(--font-ui)">Preview unavailable</span>
           </div>
           -->
-          <svg width="40" height="40" viewBox="0 0 40 40" fill="none" style="color:var(--text-tertiary)" aria-hidden="true"><rect x="5" y="3" width="23" height="33" rx="3" fill="var(--bg-raised)" stroke="var(--border-subtle)" stroke-width="1.2"/><path d="M28 3v10h10" stroke="var(--border-subtle)" stroke-width="1.2" stroke-linejoin="round"/><path d="M12 17h16M12 22h16M12 27h10" stroke="var(--text-tertiary)" stroke-width="1.5" stroke-linecap="round"/></svg>
+          <svg class="fp-icon fp-icon--40" aria-hidden="true" style="color:var(--text-tertiary)"><use href="#fp-file"></use></svg>
         </div>
 
-        <!-- Filename + path -->
-        <h3 class="inspector__filename" id="inspector-filename">design-brief.md</h3>
-        <p class="inspector__filepath mono" id="inspector-filepath" style="font:400 var(--t-compact) var(--font-data);color:var(--text-tertiary);word-break:break-all;line-height:1.4;margin:0 0 8px">D:\design-brief.md</p>
+        <!-- Filename + path — fixed-height header (inspector.js/app.js only
+             ever touch the text inside, never this wrapper) so the block's
+             own geometry never jitters between "No file selected" and a
+             real filename. -->
+        <div class="inspector__header">
+          <h3 class="inspector__filename" id="inspector-filename">design-brief.md</h3>
+          <p class="inspector__filepath mono" id="inspector-filepath" style="font:400 var(--t-compact) var(--font-data);color:var(--text-tertiary);line-height:1.4;margin:0 0 8px">D:\design-brief.md</p>
+        </div>
 
         <!-- Inspector tabs: Preview / Tags / History (underline style) -->
         <div class="fp-tabs fp-inspector__tabs" style="border-bottom:1px solid var(--border-hairline);margin:0 -16px;padding:0 16px">
@@ -2751,7 +2773,13 @@
         </div>
 
         <!-- Inspector panes -->
-        <div class="inspector__body" id="inspector-body" style="flex:1;overflow-y:auto;min-height:0;padding-top:12px">
+        <div class="inspector__body" id="inspector-body" style="padding-top:12px">
+         <!-- Fixed min-height (styles.css) so switching panes — or between a
+              selection and the "No file selected" state — never jitters the
+              layout below (Task 8, playtest pass 1 §3.4). Panes are toggled
+              with the `hidden` attribute (switchInspectorTab / updateInspector
+              in app.js/inspector.js), never inline display. -->
+         <div class="inspector__panes">
 
           <!-- Preview pane (metadata) -->
           <div class="fp-inspector__pane" data-pane="preview">
@@ -2781,7 +2809,7 @@
           </div>
 
           <!-- Tags pane -->
-          <div class="fp-inspector__pane" data-pane="tags" style="display:none">
+          <div class="fp-inspector__pane" data-pane="tags" hidden>
             <div class="inspector__tags-wrap fp-chip-group" id="inspector-tags"></div>
             <input class="fp-input" id="inspector-tag-input" placeholder="Add tag…"
                    list="inspector-tag-suggestions" style="margin-top:10px;width:100%">
@@ -2789,7 +2817,7 @@
           </div>
 
           <!-- History pane -->
-          <div class="fp-inspector__pane" data-pane="history" style="display:none">
+          <div class="fp-inspector__pane" data-pane="history" hidden>
             <div id="inspector-history">
               <p style="font:400 var(--t-body) var(--font-ui);color:var(--text-tertiary);padding:8px 0">No history available yet.</p>
             </div>
@@ -2797,7 +2825,7 @@
 
           <!-- INSPECTOR: multi-select state — shown by updateInspector('multi', ...) when >1 item selected -->
           <!-- Single-file state (preview/tags/history tabs above) is the default -->
-          <div class="fp-inspector__pane" data-pane="multi" style="display:none">
+          <div class="fp-inspector__pane" data-pane="multi" hidden>
             <div style="font:500 var(--t-title-sm) var(--font-ui);color:var(--text-primary);margin-bottom:4px">
               <span id="inspector-multi-count">3</span> items selected
             </div>
@@ -2814,6 +2842,7 @@
             </div>
           </div>
 
+         </div><!-- /.inspector__panes -->
         </div><!-- /.inspector__body -->
 
         <!-- Bottom action row: 1px border-hairline top -->
@@ -2825,7 +2854,7 @@
           <button class="fp-btn fp-btn--secondary fp-btn--sm" data-action="open-file-with">Open with…</button>
           <button class="fp-btn fp-btn--secondary fp-btn--sm" data-action="inspector-reveal" id="btn-reveal-file">Reveal</button>
           <button class="fp-icon-btn fp-icon-btn--sm" data-action="inspector-more" title="More actions" style="margin-left:auto">
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><circle cx="7" cy="3" r="1.2" fill="currentColor"/><circle cx="7" cy="7" r="1.2" fill="currentColor"/><circle cx="7" cy="11" r="1.2" fill="currentColor"/></svg>
+            <svg class="fp-icon fp-icon--14" aria-hidden="true"><use href="#fp-more"></use></svg>
           </button>
         </div>
 
@@ -2968,12 +2997,12 @@
           <div id="palette-commands">
             <div class="fp-palette__section" id="pal-sec-commands">&gt; Commands</div>
             <button class="fp-palette__item fp-palette__item--selected" role="option" data-action="navigate-screen" data-screen="home">
-              <svg width="14" height="14" viewBox="0 0 14 14" fill="none" style="flex-shrink:0;color:var(--text-secondary)"><path d="M7 2L1 8h2v4h3V9h2v3h3V8h2L7 2z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>
+              <svg class="fp-icon fp-icon--14" aria-hidden="true" style="flex-shrink:0;color:var(--text-secondary)"><use href="#fp-home"></use></svg>
               <span>Go to Home</span>
               <span class="fp-palette__kbd fp-mono">⌘1</span>
             </button>
             <button class="fp-palette__item" role="option" data-action="navigate-screen" data-screen="browser">
-              <svg width="14" height="14" viewBox="0 0 14 14" fill="none" style="flex-shrink:0;color:var(--text-secondary)"><path d="M1 3.5a1 1 0 0 1 1-1h3l1 1.5H12a1 1 0 0 1 1 1V10a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V3.5z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>
+              <svg class="fp-icon fp-icon--14" aria-hidden="true" style="flex-shrink:0;color:var(--text-secondary)"><use href="#fp-folder"></use></svg>
               <span>Open Browser</span>
               <span class="fp-palette__kbd fp-mono">⌘2</span>
             </button>
@@ -3057,6 +3086,13 @@
 <div class="fp-scrim fp-scrim--strong" id="tag-canvas-scrim" aria-hidden="true" style="display:none">
   <div class="fp-modal fp-modal--tag-canvas" id="tag-canvas" role="dialog" aria-modal="true" aria-label="Tag Canvas">
 
+    <!-- Task 15 / D2C-3: still a Stage 3 placeholder. The header (title +
+         working Close button) stays live above the banner; only the mock
+         tag-tree/graph/file-grid body below is dimmed, so Close keeps
+         working instead of being caught under fp-planned-dim's
+         pointer-events:none. -->
+    <div class="fp-banner fp-banner--planned" role="status">Not built yet — planned for Stage 3.</div>
+
     <!-- 48px header -->
     <div class="fp-modal__header" style="height:48px;display:flex;align-items:center;padding:0 var(--s-20);border-bottom:1px solid var(--border-hairline)">
       <h2 style="font:600 var(--t-title-sm) var(--font-ui);color:var(--text-primary);flex:1;margin:0">
@@ -3065,12 +3101,12 @@
         <span id="tag-canvas-active-tag" style="color:var(--accent)"></span>
       </h2>
       <button class="fp-icon-btn" data-action="close-tag-canvas" aria-label="Close Tag Canvas">
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M5 5l14 14M19 5L5 19" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+        <svg class="fp-icon fp-icon--24" aria-hidden="true"><use href="#fp-close"></use></svg>
       </button>
     </div>
 
-    <!-- Two-pane body -->
-    <div style="display:flex;flex:1;min-height:0;overflow:hidden">
+    <!-- Two-pane body (mock data — dimmed and non-interactive until Stage 3) -->
+    <div class="fp-planned-dim" style="display:flex;flex:1;min-height:0;overflow:hidden">
 
       <!-- Left: tag tree (240px, bg-content) -->
       <div class="fp-modal__tag-tree" style="width:240px;flex-shrink:0;background:var(--bg-content);border-right:1px solid var(--border-hairline);overflow-y:auto;padding:var(--s-8)">
@@ -3116,7 +3152,7 @@
         <!-- Tag relationship graph (SVG placeholder) -->
         <div style="flex:1;min-height:0;overflow:hidden;border-bottom:1px solid var(--border-hairline);position:relative">
           <!-- INTEGRATION: tag relationship graph rendered as SVG from /tags/graph -->
-          <svg width="100%" height="100%" style="display:block">
+          <svg id="tag-graph-canvas" width="100%" height="100%" style="display:block">
             <!-- Background nodes/edges placeholder -->
             <circle cx="50%" cy="50%" r="30" fill="var(--accent-wash)" stroke="var(--accent-edge)" stroke-width="1.5"/>
             <text x="50%" y="50%" text-anchor="middle" dominant-baseline="middle" font-family="Segoe UI Variable Text, Segoe UI, sans-serif" font-size="11" fill="var(--accent)">photography</text>
@@ -3161,10 +3197,7 @@
     <div class="fp-modal__header" style="display:flex;align-items:flex-start;gap:var(--s-12);padding:var(--s-20) var(--s-20) 0">
       <!-- Icon: warn variant (alert-triangle in warn) or danger (alert-octagon in bad) -->
       <!-- INTEGRATION: icon swapped per modal type by openModal() -->
-      <svg id="modal-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" style="flex-shrink:0;color:var(--warn)">
-        <path d="M12 3L2 21h20L12 3z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
-        <path d="M12 10v5M12 17.5v.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-      </svg>
+      <svg id="modal-icon" class="fp-icon fp-icon--24" aria-hidden="true" style="flex-shrink:0;color:var(--warn)"><use href="#fp-warning"></use></svg>
       <h2 id="modal-title" style="font:600 var(--t-display-sm) var(--font-ui);color:var(--text-primary);margin:0;line-height:1.2">Confirm Action</h2>
     </div>
 
@@ -3207,6 +3240,107 @@
   </div><!-- /.fp-modal -->
 </div><!-- /#modal-scrim -->
 
+<!-- ══════════════════════════════════════════════════════════════════════════
+     Properties panel (Stage 2C Task 13, playtest pass 1 §5.1)
+     Own scrim/modal — General/Details tabs, editable name, attribute
+     checkboxes, folder-type select. Opened via openProperties(path)
+     (frontend/src/properties.js). No Cancel button: Close discards any
+     unapplied edit the way Cancel used to; Apply is disabled until an edit.
+     ══════════════════════════════════════════════════════════════════════════ -->
+<!-- Search › More filters (Task 14, design §8.1) — every filter at once,
+     seeded from the chips already in the bar; Apply replaces the chip set.
+     Same scrim/modal chrome as #modal, its own body. -->
+<div class="fp-scrim" id="search-filters-scrim" aria-hidden="true" style="display:none">
+  <div class="fp-modal" id="search-filters-modal" role="dialog" aria-modal="true"
+       aria-labelledby="search-filters-title" style="width:460px">
+    <div class="fp-modal__header" style="padding:var(--s-20) var(--s-20) 0">
+      <h2 class="fp-modal__title" id="search-filters-title">More filters</h2>
+    </div>
+    <div class="fp-modal__body" style="padding:var(--s-16) var(--s-20) 0">
+      <div class="search-filters__grid">
+        <label class="search-filters__label" for="search-filter-type">Type</label>
+        <select class="fp-input" id="search-filter-type"></select>
+
+        <label class="search-filters__label" for="search-filter-ext">Extension</label>
+        <input class="fp-input" id="search-filter-ext" type="text" placeholder="pdf" spellcheck="false" autocomplete="off" />
+
+        <label class="search-filters__label" for="search-filter-modified-from">Modified</label>
+        <div class="search-filters__range">
+          <input class="fp-input" id="search-filter-modified-from" type="date" aria-label="Modified from" />
+          <span class="search-filters__dash">→</span>
+          <input class="fp-input" id="search-filter-modified-to" type="date" aria-label="Modified to" />
+        </div>
+
+        <label class="search-filters__label" for="search-filter-created-from">Created</label>
+        <div class="search-filters__range">
+          <input class="fp-input" id="search-filter-created-from" type="date" aria-label="Created from" />
+          <span class="search-filters__dash">→</span>
+          <input class="fp-input" id="search-filter-created-to" type="date" aria-label="Created to" />
+        </div>
+
+        <label class="search-filters__label" for="search-filter-min-mb">Size (MB)</label>
+        <div class="search-filters__range">
+          <input class="fp-input" id="search-filter-min-mb" type="number" min="0" step="0.1" placeholder="min" aria-label="Minimum size in MB" />
+          <span class="search-filters__dash">→</span>
+          <input class="fp-input" id="search-filter-max-mb" type="number" min="0" step="0.1" placeholder="max" aria-label="Maximum size in MB" />
+        </div>
+
+        <label class="search-filters__label" for="search-filter-tag">Tag</label>
+        <select class="fp-input" id="search-filter-tag"></select>
+
+        <span class="search-filters__label">Hidden items</span>
+        <label class="fp-toggle">
+          <input type="checkbox" id="search-filter-hidden" />
+          <span class="fp-toggle__track"></span>
+          <span class="fp-toggle__thumb"></span>
+        </label>
+
+        <span class="search-filters__label">Match whole words</span>
+        <label class="fp-toggle">
+          <input type="checkbox" id="search-filter-whole-word" />
+          <span class="fp-toggle__track"></span>
+          <span class="fp-toggle__thumb"></span>
+        </label>
+      </div>
+    </div>
+    <div class="fp-modal__footer" style="padding:0 var(--s-20) var(--s-20)">
+      <button class="fp-btn fp-btn--secondary fp-btn--sm" data-action="search-more-cancel">Cancel</button>
+      <button class="fp-btn fp-btn--primary fp-btn--sm" data-action="search-more-apply">Apply</button>
+    </div>
+  </div>
+</div><!-- /#search-filters-scrim -->
+
+<div class="fp-scrim" id="properties-modal-scrim" aria-hidden="true" style="display:none">
+  <div class="fp-modal fp-modal--properties" id="properties-modal" role="dialog" aria-modal="true" aria-label="Properties">
+
+    <div class="properties__header">
+      <span class="props__icon" id="properties-icon"><!-- INTEGRATION: iconFor(entry, 24) --></span>
+      <input type="text" class="fp-input properties__name-input" id="properties-name-input" aria-label="Name">
+    </div>
+
+    <div class="fp-tabs fp-properties__tabs" id="properties-tabs">
+      <button class="fp-tabs__item fp-properties__tab fp-tabs__item--active" data-tab="general" data-action="switch-properties-tab">General</button>
+      <button class="fp-tabs__item fp-properties__tab" data-tab="details" data-action="switch-properties-tab">Details</button>
+      <div class="fp-tabs__indicator"></div>
+    </div>
+
+    <div class="properties__body">
+      <div class="properties__pane" id="properties-pane-general" data-pane="general">
+        <dl class="properties__grid" id="properties-general-grid"><!-- INTEGRATION: renderGeneral(props) --></dl>
+      </div>
+      <div class="properties__pane" id="properties-pane-details" data-pane="details" hidden>
+        <div id="properties-details-content"><!-- INTEGRATION: renderDetails(details), lazy-loaded --></div>
+      </div>
+    </div>
+
+    <div class="properties__footer">
+      <button class="fp-btn fp-btn--primary fp-btn--sm" id="properties-apply" data-action="props-apply" disabled>Apply</button>
+      <button class="fp-btn fp-btn--secondary fp-btn--sm" data-action="props-close">Close</button>
+    </div>
+
+  </div><!-- /.fp-modal--properties -->
+</div><!-- /#properties-modal-scrim -->
+
 <!-- Example: warn modal variant (shown when spec calls for a less severe confirmation)
 <div class="fp-scrim" ...>
   <div class="fp-modal" ...>
@@ -3222,6 +3356,28 @@
   </div>
 </div>
 -->
+
+<!-- Ask File+ popout (Task 15, design spec §9) — anchored to the sidebar's
+     .fp-ask button by openAskPopout() (app.js), which positions it fixed at
+     the button's bottom-left on open. No AI is wired yet (Stage 3): Send
+     stays disabled and nothing here ever calls the backend. -->
+<div class="fp-popover" id="ask-popout" role="dialog" aria-labelledby="ask-popout-title" style="display:none">
+  <div class="fp-ask-popout__title" id="ask-popout-title">Ask File+</div>
+  <textarea class="fp-input fp-ask-popout__textarea" id="ask-input" rows="3"
+            placeholder="Ask File+ to find, move or organise your files…" aria-label="Ask File+"></textarea>
+  <div class="fp-ask-popout__examples">
+    <button class="fp-ask-popout__example" data-action="ask-example"
+            data-text="Find last week's screenshots">Find last week's screenshots</button>
+    <button class="fp-ask-popout__example" data-action="ask-example"
+            data-text="Move these PDFs to Documents/Invoices">Move these PDFs to Documents/Invoices</button>
+    <button class="fp-ask-popout__example" data-action="ask-example"
+            data-text="What is filling my Downloads folder?">What is filling my Downloads folder?</button>
+  </div>
+  <div class="fp-ask-popout__footer">
+    <button class="fp-btn fp-btn--primary fp-btn--sm" id="ask-send" disabled title="AI arrives in Stage 3">Send</button>
+    <button class="fp-btn fp-btn--secondary fp-btn--sm" data-action="ask-close">Close</button>
+  </div>
+</div><!-- /#ask-popout -->
 
 <!-- Context menu — A.10 (single shared instance, content populated by app.js CONTEXT_MENUS map)
      Menu type determined by right-click target via getMenuTypeForTarget().
@@ -3304,6 +3460,14 @@
   z-index:900;pointer-events:none
 "></div>
 
+<!-- Drag badge (Task 12) — follows the pointer during a pointer-event drag
+     session, reading "Move file" / "Copy 3 files". pointer-events:none is
+     load-bearing: dragdrop.js resolves the drop target with
+     elementFromPoint(), and this sits directly under the pointer. -->
+<div id="drag-badge" class="fp-drag-badge" hidden aria-hidden="true">
+  <span class="fp-drag-badge__icon"></span><span class="fp-drag-badge__text"></span>
+</div>
+
 <!-- Toast container (bottom-right) -->
 <div id="toast-container" style="
   position:fixed;bottom:40px;right:16px;
@@ -3312,11 +3476,17 @@
 "></div>
 
 <script src="src/api.js"></script>
+<script src="src/filetypes.js"></script>
+<script src="src/icons-sprite.js"></script>
+<script src="src/icons.js"></script>
 <script src="src/fileops.js"></script>
 <script src="src/browser.js"></script>
+<script src="src/dragdrop.js"></script>
+<script src="src/search.js"></script>
 <script src="src/inspector.js"></script>
 <script src="src/home.js"></script>
 <script src="src/settings.js"></script>
+<script src="src/properties.js"></script>
 <script src="src/app.js"></script>
 </body>
 </html>

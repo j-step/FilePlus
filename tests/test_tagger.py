@@ -36,3 +36,16 @@ async def test_apply_and_remove_tag_log_before_act_and_mark_executed(conn, sandb
     assert len(rows) == 3
     assert all(r["executed"] == 1 for r in rows)
     assert await ol.pending_operations(conn) == []
+
+
+async def test_paths_for_tag(conn, sandbox):
+    p1 = sandbox / "one.txt"; p1.write_text("1")
+    p2 = sandbox / "two.txt"; p2.write_text("2")
+    fid1 = await index_file(p1, conn)
+    fid2 = await index_file(p2, conn)
+    await conn.commit()
+    await tagger.apply_tags(conn, fid1, ["keep"])
+    await tagger.apply_tags(conn, fid2, ["other"])
+
+    assert await tagger.paths_for_tag(conn, "keep") == {str(p1)}
+    assert await tagger.paths_for_tag(conn, "nonexistent-tag") == set()

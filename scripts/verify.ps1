@@ -6,6 +6,16 @@ $ErrorActionPreference = 'Continue'
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
 
+# verify runs its own backend on 9877, not the default 9876, so it can run
+# alongside a developer's already-running instance without a bind conflict
+# or verify wrongly refusing to start ("port already in use"). backend/api.py
+# reads this via config.FILEPLUS_PORT; the Electron app (started by npm test,
+# below) reads it via main.js/preload.js's apiPort() bridge, and
+# frontend/test/smoke.spec.js reads it directly from process.env.
+$env:FILEPLUS_PORT = '9877'
+$backendPort = $env:FILEPLUS_PORT
+$healthUrl = "http://127.0.0.1:$backendPort/health"
+
 try {
   Get-Command py, npm -ErrorAction Stop | Out-Null
 } catch {
@@ -22,7 +32,7 @@ function Stop-Backend {
   for ($i = 0; $i -lt 10; $i++) {
     Start-Sleep -Milliseconds 500
     try {
-      Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:9876/health' -TimeoutSec 1 | Out-Null
+      Invoke-WebRequest -UseBasicParsing -Uri $healthUrl -TimeoutSec 1 | Out-Null
       $stillUp = $true
     } catch {
       $stillUp = $false
@@ -30,7 +40,7 @@ function Stop-Backend {
     }
   }
   if ($stillUp) {
-    Write-Host 'backend still listening on 9876 after stop' -ForegroundColor Red
+    Write-Host "backend still listening on $backendPort after stop" -ForegroundColor Red
     $script:teardownFailed = $true
   }
 }
@@ -58,12 +68,38 @@ $stubScreens = (Select-String -Path frontend/src/app.js -Pattern 'showToast\(STU
 if ($stubScreens -ne 0) { Write-Host 'showToast(STUB_SCREENS still referenced in app.js' -ForegroundColor Red; exit 1 }
 node scripts/check_menu_cases.js
 if ($LASTEXITCODE -ne 0) { Write-Host 'check_menu_cases failed' -ForegroundColor Red; exit 1 }
+node scripts/check_icons.js
+if ($LASTEXITCODE -ne 0) { Write-Host 'check_icons failed' -ForegroundColor Red; exit 1 }
+
+# filetypes parity: frontend/src/filetypes.js is generated from
+# backend/filetypes.py (scripts/build_filetypes.py); tests/test_filetypes.py
+# ::test_generated_js_is_current checks the same thing inside pytest, but a
+# stale generated file is easy to miss in a long pytest tail -- this gate
+# puts it front and centre in the frontend-gates stage instead.
+$filetypesTmpDir = Join-Path $root 'artifacts'
+New-Item -ItemType Directory -Force $filetypesTmpDir | Out-Null
+$filetypesTmp = Join-Path $filetypesTmpDir 'filetypes-parity.js'
+try {
+  py -3 scripts/build_filetypes.py $filetypesTmp
+  if ($LASTEXITCODE -ne 0) { Write-Host 'build_filetypes.py failed' -ForegroundColor Red; exit 1 }
+  $filetypesGenHash = (Get-FileHash $filetypesTmp -Algorithm SHA256).Hash
+  $filetypesCurHash = (Get-FileHash frontend/src/filetypes.js -Algorithm SHA256).Hash
+  if ($filetypesGenHash -ne $filetypesCurHash) {
+    Write-Host 'frontend/src/filetypes.js is stale -- run: py -3 scripts/build_filetypes.py' -ForegroundColor Red
+    exit 1
+  }
+} finally {
+  # Remove the temp file even when build_filetypes.py itself failed partway
+  # (e.g. wrote a partial file before erroring) -- not just on the success path.
+  Remove-Item $filetypesTmp -ErrorAction SilentlyContinue
+}
+Write-Host 'check_filetypes_parity: ok (frontend/src/filetypes.js matches backend/filetypes.py)' -ForegroundColor Green
 
 Write-Host '== 5/6 backend ==' -ForegroundColor Cyan
 
 try {
-  Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:9876/health' -TimeoutSec 1 | Out-Null
-  Write-Host 'port 9876 already in use; stop that backend first (verify never kills a process it did not start)' -ForegroundColor Red
+  Invoke-WebRequest -UseBasicParsing -Uri $healthUrl -TimeoutSec 1 | Out-Null
+  Write-Host "port $backendPort already in use; stop that backend first (verify never kills a process it did not start)" -ForegroundColor Red
   exit 1
 } catch { }
 
@@ -90,7 +126,7 @@ for ($i = 0; $i -lt 40; $i++) {
     exit 1
   }
   try {
-    $r = Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:9876/health' -TimeoutSec 1
+    $r = Invoke-WebRequest -UseBasicParsing -Uri $healthUrl -TimeoutSec 1
     if ($r.StatusCode -eq 200) { $healthy = $true; break }
   } catch { }
   Start-Sleep -Milliseconds 500

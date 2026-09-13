@@ -83,6 +83,10 @@
   --t-display-sm: 22px/30px;
   --t-display:    28px/34px;
 
+  /* Bare font-size (no line-height) for calc() — Task 10's --list-scale
+     multiplies this for the file-list row name in list/details view. */
+  --fs-13: 13px;
+
   --track-body:    0;
   --track-button:  0;
   --track-display: 0;
@@ -113,6 +117,9 @@
   --dur-press-up:   80ms;
   --dur-fast:       120ms;
   --dur-slide:      180ms;
+  /* Spring-load pulse (.fp-spring, Task 12). dragdrop.js waits exactly this
+     long after starting the pulse before it navigates — keep the two equal. */
+  --dur-spring:     250ms;
   --dur-pulse:      400ms;
   --dur-info:       1500ms;
 
@@ -124,6 +131,7 @@
   --row-compact:     22px;
   --row-default:     26px;
   --row-comfortable: 32px;
+  --row-spacious:    40px;
   --row-height:      var(--row-default);
 
   --sidebar-item-h:  28px;
@@ -143,6 +151,55 @@
 
   --w-sidebar:           240px;
   --w-sidebar-collapsed: 52px;
+
+  /* ---------- File-type family colours (Stage 2C Task 6) ----------
+     One token per family in backend/filetypes.py (mirrored into
+     frontend/src/filetypes.js). Each fp-ft-<family> sprite symbol paints its
+     tab — and nothing else — with its own token; the page outline and the
+     glyph stay on currentColor so they follow row/selection colour. The
+     family hues are brand hues (a PDF is red everywhere), so they are shared
+     between the two themes; only --ft-folder, which sits as a large solid
+     shape against the page, is darkened for the light theme. */
+  --ft-text:        #8A8F98;
+  --ft-markdown:    #6C8EBF;
+  --ft-pdf:         #E5484D;
+  --ft-word:        #2B579A;
+  --ft-excel:       #217346;
+  --ft-powerpoint:  #D24726;
+  --ft-csv:         #3E9C6A;
+  --ft-code-js:     #E8C547;
+  --ft-code-ts:     #3178C6;
+  --ft-code-py:     #3776AB;
+  --ft-code-html:   #E44D26;
+  --ft-code-css:    #264DE4;
+  --ft-code-json:   #8B8B8B;
+  --ft-code-xml:    #0060AC;
+  --ft-code-yaml:   #CB171E;
+  --ft-code-shell:  #4EAA25;
+  --ft-code-c:      #5C6BC0;
+  --ft-code-java:   #B07219;
+  --ft-code-go:     #00ADD8;
+  --ft-code-rust:   #DEA584;
+  --ft-code-other:  #7C5CFF;
+  --ft-image:       #3FA7D6;
+  --ft-image-raw:   #2F7FA6;
+  --ft-svg:         #FFB13B;
+  --ft-video:       #A259FF;
+  --ft-audio:       #FF7A59;
+  --ft-archive:     #B08968;
+  --ft-executable:  #4C8BF5;
+  --ft-shortcut:    #4C8BF5;
+  --ft-installer:   #4C8BF5;
+  --ft-font:        #5B5F97;
+  --ft-disk-image:  #6B7280;
+  --ft-database:    #0E7C7B;
+  --ft-ebook:       #9C6644;
+  --ft-generic:     #8A8F98;
+  --ft-folder:      #F2C94C;
+  /* Glyph painted ON the folder body (monitor, arrow, note, …) — always the
+     light end of the scale, since it sits on a saturated yellow shape in both
+     themes rather than on the page background. */
+  --ft-folder-glyph: #FFFFFF;
 }
 
 [data-theme="light"] {
@@ -177,6 +234,53 @@
 
   --shadow-popover: 0 8px 24px rgba(0, 0, 0, 0.14);
   --shadow-modal:   0 16px 48px rgba(0, 0, 0, 0.20);
+
+  /* ---------- File-type family colours (Stage 2C Task 6) ----------
+     Restated in full so the light theme owns its own copy of the palette
+     rather than inheriting a dark-theme value by omission (a future tweak to
+     one theme then cannot silently move the other). Identical to :root except
+     the four hues that are too pale to hold their own against a white page:
+     --ft-folder (a large solid shape), and --ft-code-js / --ft-svg /
+     --ft-code-rust, each darkened until its tab clears 3:1 against
+     --bg-content #FFFFFF (3.18, 3.46 and 4.67 respectively; the :root values
+     sit at 9.24, 8.57 and 7.25 against the dark #232428). */
+  --ft-text:        #8A8F98;
+  --ft-markdown:    #6C8EBF;
+  --ft-pdf:         #E5484D;
+  --ft-word:        #2B579A;
+  --ft-excel:       #217346;
+  --ft-powerpoint:  #D24726;
+  --ft-csv:         #3E9C6A;
+  --ft-code-js:     #AE8D08;
+  --ft-code-ts:     #3178C6;
+  --ft-code-py:     #3776AB;
+  --ft-code-html:   #E44D26;
+  --ft-code-css:    #264DE4;
+  --ft-code-json:   #8B8B8B;
+  --ft-code-xml:    #0060AC;
+  --ft-code-yaml:   #CB171E;
+  --ft-code-shell:  #4EAA25;
+  --ft-code-c:      #5C6BC0;
+  --ft-code-java:   #B07219;
+  --ft-code-go:     #00ADD8;
+  --ft-code-rust:   #A4653A;
+  --ft-code-other:  #7C5CFF;
+  --ft-image:       #3FA7D6;
+  --ft-image-raw:   #2F7FA6;
+  --ft-svg:         #C77700;
+  --ft-video:       #A259FF;
+  --ft-audio:       #FF7A59;
+  --ft-archive:     #B08968;
+  --ft-executable:  #4C8BF5;
+  --ft-shortcut:    #4C8BF5;
+  --ft-installer:   #4C8BF5;
+  --ft-font:        #5B5F97;
+  --ft-disk-image:  #6B7280;
+  --ft-database:    #0E7C7B;
+  --ft-ebook:       #9C6644;
+  --ft-generic:     #8A8F98;
+  --ft-folder:      #E8B923;
+  --ft-folder-glyph: #FFFFFF;
 }
 
 /* -----------------------------------------------------------------------------
@@ -430,12 +534,56 @@ svg { flex-shrink: 0; }
   padding: var(--s-14) var(--s-8) var(--s-6);
 }
 
-/* Group separation between sidebar sections (Quick Access / Tree / Tags /
+/* Group separation between sidebar sections (Quick Access / This PC / Tags /
    System). Specificity beats the collapsed-mode margin reset on purpose:
-   collapsed labels are invisible spacers and keep this same rhythm. */
-.fp-sidebar__scroll > .fp-sidebar__section-label:not(:first-child) {
+   collapsed labels are invisible spacers and keep this same rhythm.
+   .fp-sidebar__section (This PC's wrapper) gets the same top rhythm as a
+   bare .fp-sidebar__section-label since its own head owns the label. */
+.fp-sidebar__scroll > .fp-sidebar__section-label:not(:first-child),
+.fp-sidebar__scroll > .fp-sidebar__section:not(:first-child) {
   margin-top: var(--s-8);
 }
+
+/* This PC — collapsible section head (chevron + label) wrapping #sb-drives.
+   The label re-uses .fp-sidebar__section-label but sits inside a flex row
+   with the chevron, so it drops its own top/bottom padding in favor of the
+   head's (avoids doubling the vertical rhythm above). */
+.fp-sidebar__section-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  padding: var(--s-14) var(--s-8) var(--s-6);
+  cursor: pointer;
+  user-select: none;
+  background: transparent;
+  border: none;
+}
+.fp-sidebar__section-head .fp-sidebar__section-label {
+  padding: 0;
+}
+.fp-sidebar__section-head:hover .fp-sidebar__section-label {
+  color: var(--text-secondary);
+}
+.fp-sidebar__chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  flex-shrink: 0;
+  background: transparent;
+  border: none;
+  border-radius: var(--r-chip);
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: transform var(--dur-flash) var(--ease-snap),
+              color var(--dur-flash) var(--ease-snap);
+}
+.fp-sidebar__chevron svg { width: 12px; height: 12px; }
+.fp-sidebar__chevron:hover { color: var(--text-primary); }
+.fp-sidebar__chevron[aria-expanded="false"] { transform: rotate(-90deg); }
 
 #sb-tags {
   display: flex;
@@ -569,6 +717,56 @@ svg { flex-shrink: 0; }
 .fp-sidebar--collapsed .fp-sidebar__item > svg,
 .fp-sidebar--collapsed .fp-sidebar__item > .icon { width: 18px; height: 18px; }
 
+/* ── Ask File+ (Task 15, design spec §9) ────────────────────────────────────
+   Sidebar CTA that opens #ask-popout — the AI entry point's visible shell
+   only; no model is wired until Stage 3. Reuses .fp-btn--primary's accent
+   fill + hover/press tokens (accent-hover/accent-press) rather than a new
+   accent recipe, with its own layout (full sidebar width, pill radius)
+   layered on top. */
+.fp-ask {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s-8);
+  width: 100%;
+  height: 32px;
+  margin: var(--s-6) 0 var(--s-4);
+  padding: 0 var(--s-12);
+  background: var(--accent);
+  color: var(--text-on-accent);
+  border: none;
+  border-radius: var(--r-pill);
+  font: 600 var(--t-body) var(--font-ui);
+  letter-spacing: var(--track-button);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background-color var(--dur-flash) var(--ease-snap),
+              transform var(--dur-press-up) var(--ease-snap);
+}
+.fp-ask:hover { background: var(--accent-hover); }
+.fp-ask:active {
+  background: var(--accent-press);
+  transform: translateY(1px);
+  transition-duration: var(--dur-press-down);
+}
+.fp-ask:focus-visible {
+  outline: 1px solid var(--text-on-accent);
+  outline-offset: -3px;
+}
+.fp-ask svg { color: var(--text-on-accent); }
+.fp-ask__label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Collapsed sidebar: icon-only square, same treatment .fp-sidebar__item's own
+   collapsed override gets just above. */
+.fp-sidebar--collapsed .fp-ask {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  margin: var(--s-4) auto;
+  border-radius: var(--r-icon-btn);
+}
+.fp-sidebar--collapsed .fp-ask__label { display: none; }
+
 /* -----------------------------------------------------------------------------
    7. TOOLBAR (Section 11)
    ----------------------------------------------------------------------------- */
@@ -589,53 +787,68 @@ svg { flex-shrink: 0; }
   flex: 1;
   min-width: 0;
 }
-/* Responsive search collapse */
+/* Search bar sizing (Task 14, design §8.3). The bar is content-sized: it
+   starts at its placeholder width and grows as chips and text are added, up
+   to 60% of the toolbar, at which point the input scrolls inside it. No JS
+   runs per frame — #breadcrumb-wrap (§9) absorbs whatever the bar takes. */
 .fp-toolbar__search {
-  flex-shrink: 0;
-  width: 220px;
+  flex: 0 1 auto;
+  width: auto;
+  max-width: 60%;
+  min-width: 148px;
   position: relative;
-  /* Note: no width transition — width is updated continuously by JS each frame
-     during resize; a CSS transition would restart every frame and stutter. */
-}
-.fp-toolbar__search--narrow {
-  width: 140px;
-}
-.fp-toolbar__search--icon {
-  width: 28px !important;
-  height: 28px;
-  min-width: 28px;
-  padding: 0;
-  cursor: pointer;
   overflow: visible;
-  display: inline-flex;
+}
+
+/* Order of yielding as the toolbar narrows: the breadcrumb gives first (it
+   shrinks to nothing under its own fade), then the search bar folds into the
+   magnifier button below; the button groups never move or clip. Fix round 1
+   restores the no-overflow guarantee the deleted per-frame JS used to give,
+   with one ResizeObserver toggle (app.js's initToolbarNarrowMode) instead. */
+#toolbar > * { min-width: 0; }
+#toolbar[data-narrow] {
+  gap: var(--s-4);
+}
+#toolbar[data-narrow] .fp-breadcrumb-wrap {
+  min-width: 0;
+}
+/* Collapsed: a 28px icon button, exactly like its toolbar neighbours. */
+#toolbar[data-narrow] .fp-toolbar__search:not(.fp-search--expanded) {
+  flex: 0 0 auto;
+  width: 28px;
+  min-width: 28px;
+  max-width: 28px;
+  padding: 0;
+  border-color: transparent;
+  background: transparent;
   justify-content: center;
-  align-items: center;
-  border: 1px solid var(--border-subtle);
+}
+#toolbar[data-narrow] .fp-toolbar__search:not(.fp-search--expanded) .fp-search__icon,
+#toolbar[data-narrow] .fp-toolbar__search:not(.fp-search--expanded) .fp-search__chips,
+#toolbar[data-narrow] .fp-toolbar__search:not(.fp-search--expanded) .fp-search__input {
+  display: none;
+}
+#toolbar[data-narrow] .fp-toolbar__search.fp-search--expanded {
+  min-width: 140px;
+  max-width: 70%;
+}
+.fp-search__collapsed {
+  display: none;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: none;
   border-radius: var(--r-icon-btn);
   background: transparent;
-}
-.fp-toolbar__search--icon .fp-search__input,
-.fp-toolbar__search--icon .fp-search__kbd,
-.fp-toolbar__search--icon .fp-search__icon {
-  display: none !important;
-}
-.fp-toolbar__search--icon:hover {
-  background: var(--bg-raised);
-}
-/* Collapsed-mode inline SVG icon — always hidden in expanded mode */
-.fp-toolbar__search-collapse-icon {
-  display: none;
   color: var(--text-secondary);
-  flex-shrink: 0;
-  width: 14px;
-  height: 14px;
+  cursor: pointer;
+  align-items: center;
+  justify-content: center;
 }
-.fp-toolbar__search--icon .fp-toolbar__search-collapse-icon {
-  display: block;
+#toolbar[data-narrow] .fp-toolbar__search:not(.fp-search--expanded) .fp-search__collapsed {
+  display: inline-flex;
 }
-.fp-toolbar__search--icon:hover .fp-toolbar__search-collapse-icon {
-  color: var(--text-primary);
-}
+.fp-search__collapsed:hover { background: var(--bg-raised); color: var(--text-primary); }
 
 /* -----------------------------------------------------------------------------
    8. APPROVALS PILL (Section 13)
@@ -697,32 +910,41 @@ svg { flex-shrink: 0; }
    9. BREADCRUMB (Section 14)
    ----------------------------------------------------------------------------- */
 /* === fp-breadcrumb === */
+/* The WRAPPER flexes and clips; the path inside keeps its natural width and
+   is pinned to the wrapper's right edge, so when the search bar grows the
+   START of the path slides out under the leading fade and the folder you are
+   actually in stays visible (design §8.3). */
+.fp-breadcrumb-wrap {
+  flex: 1 1 auto;
+  min-width: 120px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  -webkit-mask-image: linear-gradient(to right, transparent 0, #000 24px, #000 100%);
+          mask-image: linear-gradient(to right, transparent 0, #000 24px, #000 100%);
+}
 .fp-breadcrumb {
   display: flex;
   align-items: center;
   gap: 6px;
   font: 500 var(--t-body) var(--font-ui);
   color: var(--text-secondary);
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
+  flex: 0 0 auto;
   flex-wrap: nowrap;
   white-space: nowrap;
-  position: relative; /* required for ::before cave-fade anchor */
 }
-.fp-breadcrumb--scroll {
-  overflow-x: auto;
-  scrollbar-width: none;
-  position: relative;
-  /* Left-edge cave fade. mask-image is applied to the breadcrumb itself, so it
-     anchors to the VISIBLE viewport — not the scrollable content like an
-     ::before pseudo-element would (which scrolls with content and disappears). */
-  -webkit-mask-image: linear-gradient(to right, transparent 0, #000 24px, #000 100%);
-          mask-image: linear-gradient(to right, transparent 0, #000 24px, #000 100%);
+/* Search mode: the crumbs are replaced by "Search in <folder>" + a clear × */
+.fp-breadcrumb__search {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-6);
+  padding: 4px 6px;
+  color: var(--text-primary);
+  white-space: nowrap;
 }
-.fp-breadcrumb--scroll::-webkit-scrollbar {
-  display: none;
-}
+.fp-breadcrumb__search .fp-icon { color: var(--text-secondary); }
+.fp-breadcrumb__clear { flex-shrink: 0; }
 .fp-breadcrumb__crumb {
   background: transparent;
   color: var(--text-secondary);
@@ -758,18 +980,15 @@ svg { flex-shrink: 0; }
    ----------------------------------------------------------------------------- */
 .fp-search {
   height: var(--h-input);
-  width: 220px;
-  padding: 0 var(--s-12);
+  padding: 0 var(--s-8) 0 var(--s-12);
   background: var(--bg-raised);
   border: 1px solid var(--border-subtle);
   border-radius: var(--r-button);
   box-shadow: none;
   display: flex;
   align-items: center;
-  gap: var(--s-8);
-  /* No width transition — width is JS-driven and any easing here would
-     interpolate every JS update, producing a perceived "acceleration" smoothing
-     during continuous resize. */
+  gap: var(--s-6);
+  min-width: 0;
   transition: border-color var(--dur-flash) var(--ease-snap),
               box-shadow var(--dur-flash) var(--ease-snap);
 }
@@ -779,32 +998,166 @@ svg { flex-shrink: 0; }
 }
 .fp-search__icon { width: 14px; height: 14px; color: var(--text-tertiary); flex-shrink: 0; }
 .fp-search__input {
-  flex: 1;
+  /* field-sizing: content makes the input exactly as wide as what is typed
+     (Chromium 123+, i.e. Electron 41) — that plus .fp-search's own auto width
+     is what makes the whole bar grow with its content. search.js measures a
+     hidden ruler span instead where field-sizing is unsupported. flex-shrink
+     lets the input give way once the bar has hit its 60% cap. */
+  field-sizing: content;
+  flex: 0 1 auto;
+  width: 14ch;              /* empty-state width: enough for the placeholder */
+  min-width: 6ch;
   background: transparent;
   border: none;
   outline: none;
   font: 400 var(--t-body) var(--font-ui);
   letter-spacing: var(--track-body);
   color: var(--text-primary);
-  min-width: 0;
 }
+/* Chips live INSIDE the bar, before the input (Discord's model). */
+.fp-search__chips {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+}
+.fp-search__chips:empty { display: none; }
+.fp-search--has-chips .fp-search__input::placeholder { color: transparent; }
+/* Off-screen ruler for the field-sizing fallback — never painted. */
+.fp-search__measure {
+  position: absolute;
+  visibility: hidden;
+  white-space: pre;
+  pointer-events: none;
+  font: 400 var(--t-body) var(--font-ui);
+  letter-spacing: var(--track-body);
+}
+
+/* ── Search filter chips (Discord-style) ── */
+.fp-search-chip {
+  flex-shrink: 0;
+  height: 18px;
+  padding: 0 6px;
+  gap: 3px;
+  background: var(--bg-pressed);
+  border: 1px solid transparent;
+  border-radius: var(--r-button);
+  font: 500 var(--t-small) var(--font-ui);
+  color: var(--text-primary);
+  cursor: pointer;
+  max-width: 180px;
+  overflow: hidden;
+}
+.fp-search-chip:hover { background: var(--bg-pressed); border-color: var(--border-mid); }
+.fp-search-chip__key { color: var(--text-secondary); }
+.fp-search-chip__value {
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Search dropdown (Filters + History) ── */
+.fp-search-dd {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 340px;
+  max-width: 460px;
+  max-height: 420px;
+  overflow-y: auto;
+  padding: var(--s-4);
+  background: var(--bg-raised);
+  border: 1px solid var(--border-mid);
+  border-radius: var(--r-card);
+  box-shadow: var(--shadow-popover);
+  z-index: 300;
+}
+.fp-search-dd__section {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--s-6) var(--s-8) var(--s-4);
+  font: 500 var(--t-small) var(--font-ui);
+  text-transform: uppercase;
+  letter-spacing: var(--track-caps);
+  color: var(--text-tertiary);
+}
+.fp-search-dd__section--history { border-top: 1px solid var(--border-hairline); margin-top: var(--s-4); }
+.fp-search-dd__row,
+.fp-search-dd__history {
+  display: flex;
+  align-items: center;
+  gap: var(--s-8);
+  width: 100%;
+  padding: var(--s-6) var(--s-8);
+  background: transparent;
+  border: none;
+  border-radius: var(--r-button);
+  text-align: left;
+  cursor: pointer;
+  color: var(--text-primary);
+  font: 400 var(--t-body) var(--font-ui);
+}
+.fp-search-dd__row:hover,
+.fp-search-dd__history:hover { background: var(--bg-pressed); }
+.fp-search-dd__row--open { background: var(--bg-pressed); }
+.fp-search-dd__icon { color: var(--text-secondary); flex-shrink: 0; }
+.fp-search-dd__title { color: var(--text-primary); white-space: nowrap; }
+.fp-search-dd__hint {
+  margin-left: auto;
+  color: var(--text-tertiary);
+  font: 400 var(--t-compact) var(--font-ui);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fp-search-dd__choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: var(--s-4) var(--s-8) var(--s-8) 34px;
+}
+.fp-search-dd__choice {
+  height: 22px;
+  padding: 0 var(--s-8);
+  background: var(--bg-pressed);
+  border: 1px solid transparent;
+  border-radius: var(--r-button);
+  color: var(--text-primary);
+  font: 500 var(--t-small) var(--font-ui);
+  cursor: pointer;
+}
+.fp-search-dd__choice:hover { border-color: var(--accent-edge); background: var(--accent-wash); }
+.fp-search-dd__empty {
+  padding: var(--s-6) var(--s-8);
+  color: var(--text-tertiary);
+  font: 400 var(--t-compact) var(--font-ui);
+}
+/* Same [hidden] restatement as .fp-drag-badge — these three carry an explicit
+   display of their own, which the UA's display:none for [hidden] loses to. */
+.fp-search-dd[hidden] { display: none; }
+#sb-tags[hidden],
+#sb-tags-label[hidden] { display: none; }
+
+/* ── More filters modal body ── */
+.search-filters__grid {
+  display: grid;
+  grid-template-columns: 132px 1fr;
+  align-items: center;
+  gap: var(--s-8) var(--s-12);
+}
+.search-filters__label {
+  font: 500 var(--t-body) var(--font-ui);
+  color: var(--text-primary);
+}
+.search-filters__range { display: flex; align-items: center; gap: var(--s-6); }
+.search-filters__range .fp-input { min-width: 0; flex: 1; }
+.search-filters__dash { color: var(--text-tertiary); }
 .fp-search__input::placeholder { color: var(--text-tertiary); }
 .fp-search:focus-within .fp-search__input::placeholder { color: var(--text-secondary); }
-.fp-search__kbd {
-  min-width: 16px; height: 16px;
-  padding: 0 4px;
-  background: var(--bg-raised);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--r-chip);
-  font: 500 var(--t-small) var(--font-data);
-  font-variant-numeric: tabular-nums;
-  letter-spacing: var(--track-mono);
-  color: var(--text-tertiary);
-  display: inline-flex; align-items: center; justify-content: center;
-  flex-shrink: 0;
-}
-.fp-search__clear { width: 12px; height: 12px; color: var(--text-tertiary); cursor: default; }
-.fp-search__clear:hover { color: var(--text-primary); }
 
 /* -----------------------------------------------------------------------------
    11. COMMAND PALETTE (Section 16)
@@ -1926,6 +2279,62 @@ svg { flex-shrink: 0; }
   to   { opacity: 1; transform: translateY(0); }
 }
 
+/* === Ask File+ popout (Task 15, design spec §9) ===
+   Extends .fp-popover (chrome + z-index 200 — above the sidebar, below every
+   modal's 1000+). Positioned via JS (openAskPopout() in app.js) at the
+   sidebar button's bottom-left, the same getBoundingClientRect() anchor
+   technique showContextMenu() uses for the View/Sort toolbar dropdowns. No
+   AI is wired yet: the Send button stays permanently disabled (Stage 3). */
+#ask-popout {
+  position: fixed;
+  width: 320px;
+  padding: var(--s-14);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-10);
+}
+.fp-ask-popout__title {
+  font: 600 var(--t-body) var(--font-ui);
+  color: var(--text-primary);
+}
+.fp-ask-popout__textarea {
+  height: auto;
+  min-height: 64px;
+  padding: var(--s-8) var(--s-10);
+  resize: none;
+  line-height: 1.4;
+}
+.fp-ask-popout__examples {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-6);
+}
+.fp-ask-popout__example {
+  max-width: 100%;
+  padding: var(--s-4) var(--s-10);
+  background: var(--bg-content);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-pill);
+  font: 400 var(--t-small) var(--font-ui);
+  text-align: left;
+  white-space: normal;
+  cursor: pointer;
+  transition: background-color var(--dur-flash) var(--ease-snap),
+              border-color var(--dur-flash) var(--ease-snap),
+              color var(--dur-flash) var(--ease-snap);
+}
+.fp-ask-popout__example:hover {
+  background: var(--bg-pressed);
+  border-color: var(--border-mid);
+  color: var(--text-primary);
+}
+.fp-ask-popout__footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--s-8);
+}
+
 .fp-modal-scrim {
   position: fixed;
   inset: 0;
@@ -2015,7 +2424,10 @@ svg { flex-shrink: 0; }
   display: flex;
   align-items: center;
   gap: 8px;
-  height: var(--row-height, 26px);
+  /* --list-scale (Task 10, Ctrl+wheel over #list-scroll / the View menu's
+     icon-size presets) scales the row height in list & details view; grid
+     mode's own rule below (height: auto) overrides this by specificity. */
+  height: calc(var(--row-height, 26px) * var(--list-scale, 1));
   padding: 0 12px;
   background: transparent;
   border: 1px solid transparent;
@@ -2034,10 +2446,14 @@ svg { flex-shrink: 0; }
   background: var(--accent-wash);
   border-color: var(--accent-edge);
 }
+/* Edge-hugging accent bar (Task 11, playtest pass 1 §4.1) — flush with the
+   list's left edge (.list-scroll carries no horizontal padding) rather than
+   inset inside the row, so it reads as one continuous rail against adjacent
+   selected rows below. */
 .fp-row--selected::before {
   content: '';
   position: absolute;
-  left: 4px;
+  left: 0;
   top: 0;
   bottom: 0;
   width: 2px;
@@ -2045,6 +2461,23 @@ svg { flex-shrink: 0; }
   border-radius: 2px;
 }
 .fp-row--selected .fp-row__icon { color: var(--accent); }
+
+/* Merged borders for a contiguous run of selected rows (Task 11): the lower
+   row of an adjacent pair drops its own top border/radius so only the upper
+   row's bottom edge shows at the seam, and the upper row squares its bottom
+   corners to match — the pair (and any longer run) reads as one block with
+   one accent bar spanning it. Scoped away from grid tiles, whose "adjacent"
+   DOM siblings are not necessarily adjacent visually (they can land in
+   different grid rows). */
+#list-scroll:not([data-view="grid"]) .fp-row--selected + .fp-row--selected {
+  border-top-color: transparent;
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
+#list-scroll:not([data-view="grid"]) .fp-row--selected:has(+ .fp-row--selected) {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
 
 .fp-row--focused {
   outline: 1px solid var(--accent);
@@ -2060,6 +2493,66 @@ svg { flex-shrink: 0; }
   box-shadow: inset 0 0 0 1px var(--accent-edge);
 }
 .fp-row--drag-target .fp-row__icon { transform: scale(1.05); }
+
+/* ── Pointer-event drag session (Task 12) ──────────────────────────────────
+   The toolbar Up button is a drop target like any other — drop on it to move
+   a level up, or hover it to spring back out of a folder you dragged into.
+   Same accent wash/edge pair as the row, sidebar and crumb targets. */
+.fp-icon-btn--drag-target {
+  background: var(--accent-wash-strong);
+  color: var(--text-primary);
+  box-shadow: inset 0 0 0 1px var(--accent-edge);
+}
+
+/* Spring-load pulse: played on the target for 250ms immediately BEFORE the
+   navigation, so descending into a folder mid-drag is never an unexplained
+   jump. The strict prefers-reduced-motion block at the bottom of this file
+   collapses the animation; dragdrop.js additionally skips the 250ms wait
+   entirely in that case, so the navigation stays instant rather than merely
+   silent. */
+.fp-spring { animation: fp-spring var(--dur-spring) var(--ease-out); }
+@keyframes fp-spring {
+  0%   { transform: scale(1); }
+  50%  { transform: scale(1.04); }
+  100% { transform: scale(1); }
+}
+
+/* The badge that follows the pointer. Raised fill + hairline + one soft
+   popover shadow — the same flat-elevation recipe every other overlay uses.
+   pointer-events:none is load-bearing, not cosmetic: dragdrop.js resolves the
+   drop target with elementFromPoint() and this element sits under the pointer
+   for the whole drag. */
+.fp-drag-badge {
+  position: fixed;
+  left: -9999px;
+  top: -9999px;
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  gap: var(--s-6);
+  max-width: 260px;
+  padding: var(--s-4) var(--s-8);
+  background: var(--bg-raised);
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--r-card);
+  box-shadow: var(--shadow-popover);
+  font: 500 var(--t-body) var(--font-ui);
+  color: var(--text-primary);
+  white-space: nowrap;
+  pointer-events: none;
+  user-select: none;
+}
+/* [hidden]'s UA display:none loses to the display:flex above — restate it. */
+.fp-drag-badge[hidden] { display: none; }
+.fp-drag-badge__icon { display: inline-flex; align-items: center; flex: none; }
+.fp-drag-badge__text { overflow: hidden; text-overflow: ellipsis; }
+
+/* A drag in flight must never paint a text selection across the rows it
+   crosses (pointermove's own preventDefault stops most of it; this covers
+   whatever started before the threshold was reached). */
+body.is-dragging,
+body.is-dragging * { user-select: none; }
+body.is-dragging { cursor: default; }
 
 .fp-row--ai-filed {
   animation: fp-row-ai-fade 1.7s ease-out;
@@ -2079,18 +2572,50 @@ svg { flex-shrink: 0; }
 
 .fp-row__icon {
   flex-shrink: 0;
-  width: 16px;
-  height: 16px;
+  width: calc(16px * var(--list-scale, 1));
+  height: calc(16px * var(--list-scale, 1));
   color: var(--text-secondary);
 }
 .fp-row__name {
   flex: 1;
   font: 500 var(--t-body) var(--font-ui);
+  font-size: calc(var(--fs-13, 13px) * var(--list-scale, 1));
   color: var(--text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* Search-results rows (Task 14): the name gets a "Location" subline, so the
+   name cell stacks and the row grows. Only ever applied in search mode — a
+   folder listing's markup and geometry are untouched. */
+.fp-row__namecell {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 1px;
+}
+.fp-row__namecell .fp-row__name { flex: 0 0 auto; }
+.fp-row__location {
+  font: 400 var(--t-small) var(--font-ui);
+  color: var(--text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;            /* keep the tail of a long path visible */
+  text-align: left;
+}
+.fp-row__mark {
+  background: var(--accent-wash-strong);
+  color: var(--text-primary);
+  border-radius: 2px;
+  padding: 0 1px;
+}
+#list-scroll[data-mode="search"]:not([data-view="grid"]) .fp-row {
+  height: calc(var(--row-height, 26px) * var(--list-scale, 1) * 1.6);
+}
+
 .fp-row__size,
 .fp-row__modified {
   flex-shrink: 0;
@@ -2126,12 +2651,32 @@ svg { flex-shrink: 0; }
   gap: 4px;
 }
 
+/* Favorites star (Task 11, playtest pass 1 §4.3) — small accent indicator
+   right of the name on a favorited Browser row (browser.js renderFsRow) and
+   a Home Recent row (home.js renderRecentRow, rendered into the row's own
+   .fp-row__tags cell so it needs no change to that row's grid columns). The
+   Favorites list itself never renders one (every row there is already a
+   favorite — see home.js's renderFavoriteRow). */
+.fp-row__star {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  color: var(--accent);
+}
+
 /* Compact density (22px) — class-based (list container) */
 .fp-list--compact     { --row-height: var(--row-compact); }
 .fp-list--comfortable { --row-height: var(--row-comfortable); }
-/* Compact density (22px) — data-density attribute (canonical) */
-[data-density="compact"]     .fp-row { height: 22px; }
-[data-density="comfortable"] .fp-row { height: 32px; }
+/* Density (data-density attribute, canonical, set on <html>) — sets
+   --row-height rather than a literal .fp-row height so the base rule above
+   (height: calc(var(--row-height) * var(--list-scale))) still scales it with
+   Ctrl+wheel/the View menu's icon-size presets. .fp-row is shared by Browser
+   rows and Home's Recent/Favorites rows (.fp-row--recent), so one set of
+   rules covers both (playtest pass 1 §3.14 — spacious had a Settings button
+   but no rule until Task 8's review). */
+[data-density="compact"]     { --row-height: var(--row-compact); }
+[data-density="comfortable"] { --row-height: var(--row-comfortable); }
+[data-density="spacious"]    { --row-height: var(--row-spacious); }
 
 /* -----------------------------------------------------------------------------
    20. LIST HEADER (Section 24)
@@ -2740,6 +3285,12 @@ svg { flex-shrink: 0; }
 }
 .fp-spinner--lg { width: 16px; height: 16px; }
 @keyframes fp-spin { to { transform: rotate(360deg); } }
+
+/* Toolbar refresh button (Task 8, playtest pass 1 §3.6) — spins its icon
+   while refreshDirectory() is in flight. Reuses fp-spin above; the global
+   prefers-reduced-motion block (bottom of this file) already collapses
+   every animation-duration to ~0, so reduced motion needs no override here. */
+#btn-refresh.is-spinning svg { animation: fp-spin 800ms linear infinite; }
 
 /* -----------------------------------------------------------------------------
    34. LAYOUT HELPERS
@@ -3498,6 +4049,30 @@ svg { flex-shrink: 0; }
   background: var(--bg-content);
 }
 
+/* Search-results header — "N results" / "Searching…", above the columns */
+.list-search-header {
+  display: flex;
+  align-items: center;
+  gap: var(--s-8);
+  min-height: 30px;
+  padding: 0 var(--s-12);
+  background: var(--bg-content);
+  border-bottom: 1px solid var(--border-hairline);
+  flex-shrink: 0;
+  font: 500 var(--t-compact) var(--font-ui);
+  color: var(--text-secondary);
+}
+.list-search-header__count { color: var(--text-primary); }
+.list-search-header__hint {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-6);
+  color: var(--text-tertiary);
+}
+/* [hidden]'s UA display:none loses to the display:flex above — restate it. */
+.list-search-header[hidden] { display: none; }
+
 /* Column header */
 .list-head {
   /* flex layout — must match .fp-row exactly so columns align */
@@ -3541,12 +4116,17 @@ svg { flex-shrink: 0; }
   flex: 1;
   overflow-y: auto;
   outline: none;
+  /* No inset — lets .fp-row--selected::before's accent bar hug the true
+     list edge (Task 11, playtest pass 1 §4.1). */
+  padding-left: 0;
 }
 
 /* ── 40f. BROWSER GRID VIEW (A.3.1) ──────────────────────────────────────── */
 #list-scroll[data-view="grid"] {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  /* --list-scale (Task 10): grid tile size, matching .fp-tile__thumb's own
+     calc(96px * var(--list-scale, 1)) below. */
+  grid-template-columns: repeat(auto-fill, minmax(calc(120px * var(--list-scale, 1)), 1fr));
   gap: var(--s-8);
   padding: var(--s-12);
   align-content: start;
@@ -3557,7 +4137,7 @@ svg { flex-shrink: 0; }
   align-items: center;
   text-align: center;
   height: auto;
-  min-height: 96px;
+  min-height: calc(120px * var(--list-scale, 1));
   padding: var(--s-8);
   border: 1px solid var(--border-subtle);
   border-radius: var(--r-card);
@@ -3572,14 +4152,26 @@ svg { flex-shrink: 0; }
   background: var(--accent-wash);
   border-color: var(--accent-edge);
 }
-#list-scroll[data-view="grid"] .fp-row__icon {
-  width: 40px;
-  height: 40px;
+/* Grid selection bar (Task 11, playtest pass 1 §4.1): a single selected tile
+   gets an accent bar along its bottom edge; several selected tiles show only
+   the wash/border above, no bar. #list-scroll's own data-selection-count
+   (browser.js onSelectionChanged) is the source of truth for "single" since
+   it counts the WHOLE selection, not this tile alone. */
+#list-scroll[data-view="grid"] .fp-row--selected::before {
+  display: none;
 }
-#list-scroll[data-view="grid"] .fp-row__icon svg {
-  width: 40px;
-  height: 40px;
+#list-scroll[data-view="grid"][data-selection-count="1"] .fp-row--selected::before {
+  display: block;
+  left: 0;
+  right: 0;
+  top: auto;
+  bottom: 0;
+  height: 2px;
+  width: auto;
 }
+/* Grid tiles carry .fp-tile__thumb (see §57b) instead of the list view's
+   16px .fp-row__icon — the tile's whole point is a thumbnail area big
+   enough to show the file's actual content. */
 #list-scroll[data-view="grid"] .fp-row__name {
   font: 500 var(--t-compact) var(--font-ui);
   max-width: 100%;
@@ -3590,10 +4182,17 @@ svg { flex-shrink: 0; }
   -webkit-box-orient: vertical;
   white-space: normal;
 }
+/* 'list' (Task 10): name-only rows — same column hiding as grid, but the
+   row stays a normal single-column flex row (no tile layout applies, since
+   every rule above this is scoped to [data-view="grid"] specifically). */
 #list-scroll[data-view="grid"] .fp-row__size,
 #list-scroll[data-view="grid"] .fp-row__modified,
-#list-scroll[data-view="grid"] .fp-row__tags { display: none; }
-/* Hide column headers in grid mode */
+#list-scroll[data-view="grid"] .fp-row__tags,
+#list-scroll[data-view="grid"] .fp-row__star,
+#list-scroll[data-view="list"] .fp-row__size,
+#list-scroll[data-view="list"] .fp-row__modified,
+#list-scroll[data-view="list"] .fp-row__tags { display: none; }
+/* Hide column headers outside details view (grid and the name-only list) */
 .list-head--grid-hidden { display: none !important; }
 
 /* Marquee selection rectangle (A.3.1) */
@@ -4124,7 +4723,11 @@ svg { flex-shrink: 0; }
   height: 28px;
   padding: 0 var(--s-8) 0 var(--s-10);
   border-radius: var(--r-button) var(--r-button) 0 0;
-  background: transparent;
+  /* Inactive tabs are visibly filled (not transparent) so the strip reads as
+     a row of tabs rather than a row of labels — the active one is then
+     legible by CONTRAST (border + lighter fill + accent underline) instead
+     of being the only tab with any chrome at all. */
+  background: var(--bg-raised);
   border: 1px solid transparent;
   border-bottom: none;
   margin-right: 2px;
@@ -4145,23 +4748,18 @@ svg { flex-shrink: 0; }
   max-width: 240px;
   cursor: default;
   transition: background var(--dur-flash) var(--ease-snap),
-              color var(--dur-flash) var(--ease-snap);
+              color var(--dur-flash) var(--ease-snap),
+              border-color var(--dur-flash) var(--ease-snap);
 }
-.fp-tab:hover { background: var(--bg-raised); color: var(--text-primary); }
+.fp-tab:hover { background: var(--bg-pressed); color: var(--text-primary); }
 .fp-tab--active,
 .fp-tab.fp-tab--active {
   background: var(--bg-content);
   color: var(--text-primary);
   border-color: var(--border-hairline);
-}
-.fp-tab--active::after,
-.fp-tab.fp-tab--active::after {
-  content: "";
-  position: absolute;
-  bottom: 0; left: 4px; right: 4px;
-  height: 2px;
-  background: var(--accent);
-  border-radius: 999px;
+  /* Accent underline via inset box-shadow rather than a ::after pseudo —
+     respects the tab's own border-radius and needs no extra positioning. */
+  box-shadow: inset 0 -2px 0 var(--accent);
 }
 .fp-tab__label {
   flex: 1 1 0;            /* fills space between icon and the close (X) button */
@@ -4243,7 +4841,7 @@ svg { flex-shrink: 0; }
 .fp-sidebar--collapsed .fp-sidebar__drive-ai-dot { display: none; }
 
 /* Section labels become invisible spacers — provide equal vertical gap between
-   Quick Access / Tree / Tags / System groups in the collapsed rail. */
+   Quick Access / This PC / Tags / System groups in the collapsed rail. */
 .fp-sidebar--collapsed .fp-sidebar__section-label {
   display: block;
   height: 12px;
@@ -4253,6 +4851,10 @@ svg { flex-shrink: 0; }
   margin: 0;
   pointer-events: none;
 }
+/* This PC's chevron has no room in the 52px collapsed rail — the section
+   head collapses to the same invisible spacer as every other section label
+   (above), drive icons underneath stay visible via .fp-sidebar__drive-item. */
+.fp-sidebar--collapsed .fp-sidebar__chevron { display: none; }
 
 /* Drive in collapsed mode: the letter renders as a small SSD-shaped badge with
    a tiny LED dot top-right, signifying "this is a drive." The original disc
@@ -4505,6 +5107,19 @@ button.fp-pill:hover {
   height: 14px;
   color: var(--text-secondary);
 }
+/* Leading check-icon slot (Task 10's View/Sort menus, showContextMenu's
+   {ctx} option) — reserved on every item in a checkable menu, checked or
+   not, so labels all line up regardless of which items are currently
+   checked. */
+.fp-context-menu__check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+.fp-context-menu__check svg { color: var(--accent); }
 /* kbd child — named class and legacy flat class */
 .fp-context-menu__item__kbd,
 .fp-context-menu__kbd {
@@ -4521,6 +5136,19 @@ button.fp-pill:hover {
 .fp-context-menu__item--danger .fp-context-menu__item__icon,
 .fp-context-menu__item--danger svg { color: var(--bad); }
 .fp-context-menu__item--danger:hover { background: var(--bad-wash); color: var(--bad); }
+/* Inapplicable item (Task 11, playtest pass 1 §4.2 — showContextMenu's
+   enabled(ctx)). pointer-events: none does double duty: it blocks the click
+   (the event falls through to .fp-context-menu itself, which has no
+   data-action, so nothing dispatches and the menu stays open) and, since
+   :hover can never match an element the pointer can't reach, suppresses the
+   hover highlight too — no separate :hover override needed. */
+.fp-context-menu__item--disabled {
+  color: var(--text-tertiary);
+  cursor: default;
+  pointer-events: none;
+}
+.fp-context-menu__item--disabled .fp-context-menu__item__icon,
+.fp-context-menu__item--disabled svg { color: var(--text-tertiary); }
 /* separator — canonical name + legacy alias */
 .fp-context-menu__sep,
 .fp-context-menu__separator {
@@ -5209,6 +5837,300 @@ button.fp-pill:hover {
 /* A.17 #11 — Inspector preview fail (already commented inline in HTML) */
 /* .inspector__preview--fail → uses existing fp-empty-state pattern, no new class needed */
 
+/* =============================================================================
+   50. ICON SPRITE SYSTEM (Stage 2C Task 5)
+   Every chrome icon is a <use> against the symbols installed by
+   fpInstallSprite() (frontend/src/icons.js) from FP_ICON_SPRITE
+   (frontend/src/icons-sprite.js, generated by scripts/build_icons.js).
+   Symbols are authored fill="currentColor" (or, for the two-tone brand-badge
+   symbol, explicit var(--accent)/var(--text-on-accent)) so text-color tokens
+   drive icon color the same way they drive label color — no hardcoded icon
+   colors. Default size is 1em (matches surrounding text); most call sites
+   pin an explicit pixel size via a modifier below since icons mostly sit in
+   fixed-height chrome (buttons, rows) rather than inline with text.
+   ============================================================================= */
+.fp-icon {
+  width: 1em;
+  height: 1em;
+  display: inline-block;
+  vertical-align: -0.15em;
+  fill: currentColor;
+  flex: none;
+}
+.fp-icon--10 { width: 10px; height: 10px; }
+.fp-icon--12 { width: 12px; height: 12px; }
+.fp-icon--13 { width: 13px; height: 13px; }
+.fp-icon--14 { width: 14px; height: 14px; }
+.fp-icon--16 { width: 16px; height: 16px; }
+.fp-icon--20 { width: 20px; height: 20px; }
+.fp-icon--24 { width: 24px; height: 24px; }
+.fp-icon--36 { width: 36px; height: 36px; }
+.fp-icon--40 { width: 40px; height: 40px; }
+.fp-icon--48 { width: 48px; height: 48px; }
+
+/* =============================================================================
+   57b. FILE-TYPE ICONS, WINDOWS SHELL ICONS, THUMBNAILS (Stage 2C Task 6)
+   The fp-ft-<family> sprite symbols paint their own family tab from an
+   --ft-* token and leave everything else on currentColor, so they inherit
+   row/selection colour like any chrome icon; these rules only cover the
+   non-sprite parts — the lazily-filled <img> elements and their containers.
+   ============================================================================= */
+
+/* Windows shell icon (ui.icon_source = 'windows'): a real bitmap, sized by
+   the same .fp-icon--N modifier the sprite <use> would have carried. */
+.fp-icon--win { object-fit: contain; }
+
+/* Unknown extension in FilePlus mode: the blank page icon carries the
+   extension itself beside it rather than pretending to know the type. */
+.fp-ext-badge {
+  flex: none;
+  font: 500 9px/1 var(--font-data);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--r-chip);
+  padding: 2px 3px;
+}
+
+/* Sprite icon with a shell thumbnail layered over it: the icon paints
+   immediately, the thumbnail fades in on top once the shell answers, and a
+   file the shell cannot picture keeps its icon (.fp-thumb--failed). */
+.fp-thumb-box {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+}
+.fp-thumb {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  max-width: 100%;
+  max-height: 100%;
+  opacity: 0;
+  border-radius: var(--r-sm);
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+.fp-thumb--ready { opacity: 1; }
+.fp-thumb--failed { display: none; }
+/* Thumbnail arrived: the placeholder icon has done its job. Hidden rather
+   than removed so a re-render doesn't have to rebuild the box. */
+.fp-thumb-box--has-thumb > .fp-icon { visibility: hidden; }
+
+/* Folder preview: up to two of the folder's own pictures (GET /fs/peek)
+   fanned out of the folder's mouth. The folder body is lifted above them so
+   they read as being INSIDE it — a folder tile must still say "folder"
+   first, and its contents second. */
+.fp-thumb-box--peeked > .fp-icon { position: relative; z-index: 1; }
+.fp-thumb--mini {
+  inset: auto;
+  left: 50%;
+  top: 13%;
+  width: 40%;
+  height: 40%;
+  z-index: 0;
+  object-fit: cover;
+  border: 1px solid var(--border-subtle);
+  border-radius: 2px;
+  background: var(--bg-content);
+}
+.fp-thumb--mini-1 { transform: translate(-90%, 0) rotate(-9deg); }
+.fp-thumb--mini-2 { transform: translate(-10%, 0) rotate(9deg); }
+
+/* Grid tile thumbnail area. Task 10 introduces --list-scale as the grid's
+   size control; until then the fallback keeps every tile at 96px. */
+.fp-tile__thumb {
+  width: calc(96px * var(--list-scale, 1));
+  height: calc(96px * var(--list-scale, 1));
+}
+.fp-tile__thumb > .fp-icon { width: 58%; height: 58%; }
+
+/* List row whose 16px icon is a thumbnail of the picture itself. */
+.fp-row__icon--thumb { overflow: hidden; border-radius: var(--r-sm); }
+
+/* Command-palette result icons (iconFor at 14px). */
+.fp-palette__item-icon { flex: none; color: var(--text-secondary); }
+
+/* =============================================================================
+   PROPERTIES PANEL (Stage 2C Task 13, playtest pass 1 §5.1)
+   Own scrim/modal (#properties-modal-scrim / #properties-modal) — deliberately
+   NOT built on .fp-modal__header/__body/__footer (the shared confirm modal's
+   classes): those carry margins/backgrounds tuned for a single-message
+   dialog, and this one needs its own header (icon + editable name), tab
+   strip, scrolling body and footer. Only the outer .fp-modal chrome
+   (background/border/radius/shadow) is reused, via .fp-modal--properties.
+   ============================================================================= */
+.fp-modal--properties {
+  width: 480px;
+  max-width: calc(100vw - 48px);
+  max-height: calc(100vh - 48px);
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.properties__header {
+  display: flex;
+  align-items: center;
+  gap: var(--s-12);
+  padding: var(--s-20) var(--s-20) var(--s-12);
+  flex-shrink: 0;
+}
+.props__icon {
+  display: flex;
+  flex-shrink: 0;
+  color: var(--text-secondary);
+}
+.properties__name-input {
+  flex: 1;
+  min-width: 0;
+  font: 600 var(--t-body) var(--font-ui);
+}
+.fp-properties__tabs { flex-shrink: 0; padding: 0 var(--s-20); }
+.properties__body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--s-16) var(--s-20);
+}
+.properties__footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--s-8);
+  flex-shrink: 0;
+  padding: var(--s-12) var(--s-20) var(--s-20);
+  border-top: 1px solid var(--border-hairline);
+}
+
+/* General tab: <dt>/<dd> field grid */
+.properties__grid {
+  display: grid;
+  grid-template-columns: 150px 1fr;
+  row-gap: var(--s-12);
+  column-gap: var(--s-16);
+  margin: 0;
+}
+.properties__grid dt {
+  font: 500 var(--t-compact) var(--font-ui);
+  color: var(--text-tertiary);
+  padding-top: 2px;
+}
+.properties__grid dd {
+  margin: 0;
+  font: 400 var(--t-body) var(--font-ui);
+  color: var(--text-primary);
+  word-break: break-word;
+}
+.properties__attrs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-16);
+}
+.properties__attr {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-8);
+  cursor: pointer;
+}
+.properties__attr-label { font: 400 var(--t-body) var(--font-ui); color: var(--text-primary); }
+.properties__opens-with {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-8);
+}
+.properties__opens-with-icon {
+  display: inline-flex;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+.properties__opens-with-icon img { width: 16px; height: 16px; }
+.properties__opens-with-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 160px;
+}
+
+/* Details tab: grouped name/value rows (GET /fs/properties/details) */
+#properties-details-content .properties__details-group {
+  font: 600 var(--t-small) var(--font-ui);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-tertiary);
+  margin: var(--s-16) 0 var(--s-8);
+}
+#properties-details-content .properties__details-group:first-child { margin-top: 0; }
+#properties-details-content .properties__details-list { margin: 0; }
+#properties-details-content .properties__details-row {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--s-16);
+  padding: var(--s-6) 0;
+  border-bottom: 1px solid var(--border-hairline);
+  font: 400 var(--t-body) var(--font-ui);
+}
+#properties-details-content .properties__details-row dt { margin: 0; color: var(--text-tertiary); flex-shrink: 0; }
+#properties-details-content .properties__details-row dd { margin: 0; color: var(--text-primary); text-align: right; word-break: break-word; }
+.properties__details-empty { font: 400 var(--t-body) var(--font-ui); color: var(--text-tertiary); margin: 0; }
+
+/* =============================================================================
+   INSPECTOR: FIXED GEOMETRY (Task 8, playtest pass 1 §3.4)
+   Appended last so these declarations win over both earlier .inspector*
+   blocks (Section 43's legacy/unused version and the docked one above) for
+   every property they touch, without having to untangle that history.
+   Together: the header/preview/tabs/meta never resize between "No file
+   selected" and a real file, and pane-switching (hidden attribute, not
+   inline display) never jitters the panel below them. The screenshots
+   inspector-empty.png/inspector-file.png (smoke) compare the header,
+   preview and meta blocks' bounding boxes between the two states.
+   ============================================================================= */
+.inspector__header { flex-shrink: 0; height: 56px; overflow: hidden; }
+.inspector__preview { width: 100%; aspect-ratio: 16 / 10; }
+.fp-inspector__tabs { height: 44px; flex-shrink: 0; }
+.inspector__body { min-height: 0; flex: 1; overflow: auto; }
+/* Panes container: fixed min-height so the shortest pane (Tags/History's
+   "Select a file"/"No history available yet." one-liners) reserves the same
+   space as the tallest (Preview's 5-row meta grid). */
+.inspector__panes { min-height: 160px; }
+/* 5 rows: Kind, Size, Modified, Created, Hash — the only fields
+   renderInspectorMeta() (inspector.js) ever writes. */
+.inspector__meta { display: grid; grid-template-rows: repeat(5, 24px); }
+.inspector__filename {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Fix round 1: the path used to hard-clip mid-word against
+   .inspector__header's overflow:hidden once that fixed-height wrapper
+   existed. Self-truncate instead, ellipsis at the START so the filename end
+   of the path (the part that actually identifies the file, e.g.
+   "...doc-00.txt") stays visible — the classic rtl + text-align:left trick:
+   direction:rtl moves the browser's overflow/ellipsis truncation to the
+   left edge, text-align:left keeps the (still LTR-read) text flush against
+   the box's left edge instead of following rtl's own default right
+   alignment. unicode-bidi:isolate (NOT plaintext — plaintext recomputes the
+   effective paragraph direction from the content's own first strong
+   character, which for a "C:\..." path is the drive letter, silently
+   cancelling the explicit direction:rtl above and putting the ellipsis back
+   on the wrong end; confirmed empirically against inspector-file.png)
+   contains the content's own bidi resolution — so the drive-letter path's
+   backslashes/colons (bidi-neutral) still resolve against their
+   strong-LTR neighbours and read left-to-right as normal — without
+   touching which end direction:rtl truncates from. */
+#inspector-filepath {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: rtl;
+  text-align: left;
+  unicode-bidi: isolate;
+}
+
 /* ── Reduced motion: see canonical block appended below (UI-SPEC §A.0) ─────── */
 
 /* === prefers-reduced-motion: strict policy per UI-SPEC §A.0 === */
@@ -5227,4 +6149,60 @@ button.fp-pill:hover {
     animation-duration: revert !important;
     transition-duration: revert !important;
   }
+}
+
+
+/* -----------------------------------------------------------------------------
+   SETTINGS › SCAN & INDEX (Task 14, design §8.7)
+   Real index state from GET /index/status — one row per indexed root.
+   ----------------------------------------------------------------------------- */
+.settings-index { width: 100%; margin-top: var(--s-8); }
+.settings-index__table {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-sm);
+  overflow: hidden;
+}
+.settings-index__row {
+  display: flex;
+  align-items: center;
+  gap: var(--s-8);
+  padding: var(--s-8);
+  background: var(--bg-content);
+  border-top: 1px solid var(--border-hairline);
+  font: 400 var(--t-compact) var(--font-ui);
+  color: var(--text-secondary);
+}
+.settings-index__row:first-child { border-top: none; }
+.settings-index__main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.settings-index__root {
+  font-size: 11px;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;            /* the tail of a long path is the useful half */
+  text-align: left;
+}
+.settings-index__meta { color: var(--text-tertiary); }
+.settings-index__actions-cell {
+  display: flex;
+  gap: var(--s-4);
+  flex-shrink: 0;
+}
+.settings-index__actions-cell .fp-btn { white-space: nowrap; }
+.settings-index__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--s-8);
+  margin-top: var(--s-8);
+}
+.settings-index__running {
+  font: 500 var(--t-compact) var(--font-ui);
+  color: var(--accent);
 }

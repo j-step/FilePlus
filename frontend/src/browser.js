@@ -2,28 +2,71 @@
  * FilePlus browser screen: folder navigation via /fs/list, directory list
  * rendering, view-mode/column-sort/marquee-selection UI, the selection model
  * + keyboard navigation, and the small formatting helpers (icons, size,
- * modified date, HTML escaping) the row renderer needs. Navigation history
- * (navHistory) stays in app.js — it is also read by the sidebar active-state
- * and dispatch code there.
+ * modified date, HTML escaping) the row renderer needs.
+ *
+ * Navigation history is per-tab (Stage 2C Task 7): `nav` below is just an
+ * ACCESSOR — app.js's activateTab() repoints nav.history/nav.index at the
+ * active tab's own arrays (by reference) on every tab switch, so
+ * pushHistory()/navBack()/navForward() here always mutate whichever tab is
+ * currently active without needing to know the tabs model exists.
  */
+
+// ── Per-tab navigation history accessor ───────────────────────────────────────
+// Swapped by app.js's activateTab(); seeded for the initial tab by
+// app.js's seedInitialTab() at boot.
+const nav = { history: [], index: -1 };
+
+// ── List/grid scale (Task 10) ────────────────────────────────────────────────
+// Ctrl+wheel over #list-scroll and the View menu's icon-size presets both
+// step/set this — it drives --list-scale on #list-scroll (see styles.css:
+// row height/icon/font in list & details view, tile/thumb size in grid).
+const LIST_SCALE_STEPS = [0.75, 0.875, 1, 1.125, 1.25, 1.5, 1.75, 2];
+
+// Per-path manual view override, this session only (Map, never persisted) —
+// set by setViewMode(mode, {manual: true}) (View menu items, the empty-area
+// menu's View → Details/Grid). Read by loadDirectory()'s dynamic-media-view
+// check (decideViewAndScale, below) so a folder the user has explicitly
+// switched away from its auto-decided view stays that way for the rest of
+// the session, even if its media share still qualifies it for the other view.
+const manualViewByPath = new Map();
 
 // ── Browser state ─────────────────────────────────────────────────────────────
 // The last-loaded directory listing. `parent`/`isRoot` come straight from the
 // /fs/list response so navUp() and the up-button never need to re-derive a
 // parent by string-slicing the path. `showHidden` is seeded from
 // config['ui.show_hidden'] by app.js's init sequence, before the first load.
-// `sort` persists per session (sessionStorage['fp-sort']). `selection` is the
-// set of absolute paths currently selected; `anchor` is the shift-range
-// origin, `focus` is the last row acted on (keyboard/click).
+// `sort`/`view`/`listScale` are re-applied from ui.sort/ui.view_mode/
+// ui.list_scale by settings.js's applySettingsFromConfig() once GET /config
+// has answered — the literal defaults below only cover the brief window
+// before that first resolves. `selection` is the set of absolute paths
+// currently selected; `anchor` is the shift-range origin, `focus` is the
+// last row acted on (keyboard/click).
 const browserState = {
   path: null,
   entries: [],
-  sort: readSavedSort(),
+  sort: { key: 'name', dir: 'asc' },
   selection: new Set(),
   anchor: null,
   focus: null,
   showHidden: false,
   showExtensions: true,
+  // 'details' (the old 'list' — columns) | 'list' (name-only, single
+  // column) | 'grid' — mirrors #list-scroll[data-view], read by renderFsRow
+  // to pick row vs tile markup (a tile carries a thumbnail area a row has no
+  // place for). setViewMode() is the only writer, and re-renders the
+  // listing after changing it.
+  view: 'details',
+  // Current --list-scale value (a LIST_SCALE_STEPS member) applied to
+  // #list-scroll; setListScale() is the only writer.
+  listScale: 1,
+  // 'browse' (a real /fs/list listing) | 'search' (a results listing from
+  // search.js — see renderSearchResults). loadDirectory()'s dynamic-media-view
+  // check never runs in 'search', so a results listing never has its own view
+  // choice fought over by a folder's media share.
+  mode: 'browse',
+  // In 'search' mode: the root the results came from ('*' for the This PC
+  // index scope) — what the breadcrumb's "Search in <x>" names. null otherwise.
+  searchRoot: null,
   parent: null,
   isRoot: false,
   truncated: false,
@@ -31,40 +74,39 @@ const browserState = {
   // root) — whatever the load's outcome. Used by the error banner's "Retry"
   // action so it can re-attempt the exact same load that just failed.
   lastAttemptedPath: null,
+  // Monotonic counter, bumped by every loadDirectory() call before its
+  // fetch — lets a call whose fetch resolves late detect it's been
+  // superseded (by a tab switch OR a newer navigation in the same tab) and
+  // bail out instead of painting stale data over whatever's current. See
+  // loadDirectory()'s reqTabId/reqSeq guard.
+  _loadSeq: 0,
 };
 
-/** Reads a validated {key, dir} sort spec from sessionStorage, defaulting to name/asc. */
-function readSavedSort() {
-  try {
-    const raw = sessionStorage.getItem('fp-sort');
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (parsed && ['name', 'size', 'modified'].includes(parsed.key) && (parsed.dir === 'asc' || parsed.dir === 'desc')) {
-        return { key: parsed.key, dir: parsed.dir };
-      }
-    }
-  } catch (_) { /* corrupt/missing — fall through to default */ }
-  return { key: 'name', dir: 'asc' };
-}
-
 // ── View modes ────────────────────────────────────────────────────────────────
-function setViewMode(mode) {
-  // v2 segmented opts
-  document.querySelectorAll('.fp-segmented__opt[data-view]').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.view === mode);
-  });
-  // legacy buttons
-  document.querySelectorAll('.tool-group__btn[data-view]').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.view === mode);
-  });
+/**
+ * Sets the active view + syncs every DOM surface that reflects it (list vs
+ * grid layout, the column header's visibility, Home's Recent/Favorites
+ * panes) and re-renders the listing (row and tile markup differ).
+ *
+ * `manual` (View menu items, the empty-area menu's View → Details/Grid,
+ * Task 11's future callers) records the choice into manualViewByPath for the
+ * CURRENT folder and persists it as the ui.view_mode default; an automatic
+ * choice (loadDirectory()'s dynamic-media-view check, via decideViewAndScale)
+ * does neither, so it never clobbers a default the user picked deliberately,
+ * nor a future folder's own auto-decision.
+ */
+function setViewMode(mode, { manual = false } = {}) {
+  const v = (mode === 'list' || mode === 'grid') ? mode : 'details';
+  browserState.view = v;
   const listScroll = document.getElementById('list-scroll');
   const listHead   = document.getElementById('list-head');
   if (listScroll) {
     // Suppress layout flicker by hiding briefly during the layout swap
     listScroll.style.opacity = '0';
-    listScroll.dataset.view = mode;
-    // Show/hide column header in grid mode (A.3.1)
-    if (listHead) listHead.classList.toggle('list-head--grid-hidden', mode === 'grid');
+    listScroll.dataset.view = v;
+    // Only 'details' shows the column header — 'list' (name-only) and
+    // 'grid' both hide it (A.3.1's rule extended to the new name-only view).
+    if (listHead) listHead.classList.toggle('list-head--grid-hidden', v !== 'details');
     // Restore opacity on next paint — batches DOM updates before repaint
     requestAnimationFrame(() => {
       listScroll.style.opacity = '';
@@ -72,9 +114,72 @@ function setViewMode(mode) {
   }
   // Home — Recent and Favorites panes share the same view-mode toggle
   document.querySelectorAll('.home-pane').forEach(pane => {
-    pane.dataset.view = mode;
+    pane.dataset.view = v;
   });
-  sessionStorage.setItem('fp-view-mode', mode);
+  if (manual) {
+    if (browserState.path) manualViewByPath.set(browserState.path, v);
+    saveSetting('ui.view_mode', v);
+  }
+  // Rows and tiles are different markup (a tile has a 96px thumbnail area
+  // that requests a real shell thumbnail; a row has a 16px icon), so the
+  // listing has to be re-rendered rather than just re-styled.
+  if (browserState.entries && browserState.entries.length) renderDirectory();
+}
+
+/**
+ * Sets --list-scale on #list-scroll (list row height/icon/font, grid
+ * tile/thumb size — see styles.css) and, by default, persists it as
+ * ui.list_scale. loadDirectory()'s dynamic-media-view check passes
+ * {persist: false} to apply a listing-scoped scale (the auto-grid default,
+ * or just re-syncing the already-persisted value) without touching the
+ * user's actual saved preference.
+ */
+function setListScale(v, { persist = true } = {}) {
+  const scale = LIST_SCALE_STEPS.includes(v) ? v : 1;
+  browserState.listScale = scale;
+  const listScroll = document.getElementById('list-scroll');
+  if (listScroll) listScroll.style.setProperty('--list-scale', String(scale));
+  if (persist) saveSetting('ui.list_scale', scale);
+}
+
+/** Steps --list-scale by one LIST_SCALE_STEPS entry in `direction` (+1/-1) —
+ * Ctrl+wheel over #list-scroll (app.js). Persists like any other manual
+ * scale change (setListScale's default). */
+function stepListScale(direction) {
+  const idx = LIST_SCALE_STEPS.indexOf(browserState.listScale);
+  const curIdx = idx === -1 ? LIST_SCALE_STEPS.indexOf(1) : idx;
+  const nextIdx = Math.max(0, Math.min(LIST_SCALE_STEPS.length - 1, curIdx + direction));
+  setListScale(LIST_SCALE_STEPS[nextIdx]);
+}
+
+/**
+ * Dynamic media view (playtest pass 1, Task 10): decides the view + scale
+ * for `path`'s freshly-fetched `entries`. Called by loadDirectory() after
+ * every real navigation — never for a tab-switch restore, which reapplies
+ * whatever that tab last showed instead (see loadDirectory()'s restore.view
+ * handling), and never in a future search-results mode (browserState.mode).
+ *
+ * A manual override recorded for this exact path this session wins outright,
+ * at the persisted scale. Otherwise, unless ui.dynamic_media_view is
+ * explicitly false, a folder whose own non-hidden files are more than half
+ * pictures/video opens in grid at scale 1 — not persisted, since this is a
+ * per-listing default, not a change to the user's actual preference.
+ * Anything else falls back to the persisted ui.view_mode/ui.list_scale.
+ */
+function decideViewAndScale(path, entries) {
+  const cfg = window.__fpConfig || {};
+  const persistedScale = LIST_SCALE_STEPS.includes(cfg['ui.list_scale']) ? cfg['ui.list_scale'] : 1;
+  const defaultView = ['details', 'list', 'grid'].includes(cfg['ui.view_mode']) ? cfg['ui.view_mode'] : 'details';
+  const manualPicked = manualViewByPath.get(path);
+  if (manualPicked) return { view: manualPicked, scale: persistedScale };
+  if (cfg['ui.dynamic_media_view'] !== false) {
+    const files = entries.filter(e => !e.is_dir && !e.is_hidden);
+    const mediaShare = files.length
+      ? files.filter(e => typeof fpIsMedia === 'function' && fpIsMedia(e.ext)).length / files.length
+      : 0;
+    if (mediaShare > 0.5) return { view: 'grid', scale: 1 };
+  }
+  return { view: defaultView, scale: persistedScale };
 }
 
 // ── Column sort cycling (A.3.1 / Task 3) ────────────────────────────────────
@@ -104,10 +209,11 @@ function updateSortHeaderUI() {
   });
 }
 
-/** Sets the active sort, persists it, and re-renders the current directory. */
+/** Sets the active sort, persists it (ui.sort — replaces the old
+ * sessionStorage['fp-sort']), and re-renders the current directory. */
 function applySort(key, dir) {
   browserState.sort = { key, dir };
-  try { sessionStorage.setItem('fp-sort', JSON.stringify(browserState.sort)); } catch (_) { /* storage unavailable */ }
+  saveSetting('ui.sort', browserState.sort);
   updateSortHeaderUI();
   renderDirectory();
 }
@@ -115,17 +221,20 @@ function applySort(key, dir) {
 /**
  * Returns browserState.entries sorted for display: folders always precede
  * files (regardless of direction), then each group is ordered by the active
- * sort key — name (natural, case-insensitive), size, or modified (numeric).
+ * sort key — name (natural, case-insensitive), size, modified (numeric), or
+ * type (file-type family, filetypes.js's fpFamilyFor, then name).
  */
 function sortedEntries() {
   const { key, dir } = browserState.sort;
   const sign = dir === 'desc' ? -1 : 1;
+  const byName = (a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
   return [...browserState.entries].sort((a, b) => {
     if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
     let cmp;
     if (key === 'size') cmp = (a.size ?? 0) - (b.size ?? 0);
     else if (key === 'modified') cmp = (a.modified ?? 0) - (b.modified ?? 0);
-    else cmp = a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
+    else if (key === 'type') cmp = fpFamilyFor(a.ext).localeCompare(fpFamilyFor(b.ext)) || byName(a, b);
+    else cmp = byName(a, b);
     return cmp * sign;
   });
 }
@@ -208,19 +317,11 @@ function initMarqueeSelection() {
 
 // ── File list loading ─────────────────────────────────────────────────────────
 
-const ICON_FILE = `<svg class="fp-row__icon" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="2" y="1" width="9" height="13" rx="1.5" fill="var(--bg-raised)" stroke="var(--border-subtle)" stroke-width="0.8"/><path d="M11 1v4h3" stroke="var(--border-subtle)" stroke-width="0.8" stroke-linejoin="round"/></svg>`;
-const ICON_IMG  = `<svg class="fp-row__icon" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="1" y="2" width="14" height="12" rx="1.5" fill="var(--bg-raised)" stroke="var(--border-subtle)" stroke-width="0.8"/><circle cx="5.5" cy="7" r="1.5" stroke="var(--text-tertiary)" stroke-width="0.8"/><path d="M1 12l4-4 4 4 2-2 4 2" stroke="var(--text-tertiary)" stroke-width="0.8" stroke-linejoin="round"/></svg>`;
-const ICON_TXT  = `<svg class="fp-row__icon" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="2" y="1" width="9" height="13" rx="1.5" fill="var(--bg-raised)" stroke="var(--border-subtle)" stroke-width="0.8"/><path d="M11 1v4h3" stroke="var(--border-subtle)" stroke-width="0.8" stroke-linejoin="round"/><path d="M5 6h6M5 8.5h6M5 11h4" stroke="var(--text-tertiary)" stroke-width="0.8" stroke-linecap="round"/></svg>`;
-const ICON_FOLDER = `<svg class="fp-row__icon" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M1 4a1 1 0 0 1 1-1h4l1.5 1.5H14a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V4z" fill="var(--accent)" opacity=".75" stroke="var(--accent-edge)" stroke-width="0.8"/></svg>`;
-
-const EXT_IMG   = new Set(['.jpg','.jpeg','.png','.gif','.bmp','.webp','.heic','.svg','.tiff']);
-const EXT_TXT   = new Set(['.txt','.md','.csv','.log','.json','.xml','.yaml','.yml','.toml','.ini','.cfg','.html','.css','.js','.ts','.py','.rs','.go','.java','.c','.cpp','.h']);
-
-function iconForExt(ext) {
-  if (EXT_IMG.has(ext)) return ICON_IMG;
-  if (EXT_TXT.has(ext)) return ICON_TXT;
-  return ICON_FILE;
-}
+// Row and tile icons all come from iconFor()/fpThumbBox() in icons.js — the
+// old ICON_* constants and the two hard-coded extension sets they switched on
+// are gone (Stage 2C Task 6): the family split now lives in
+// backend/filetypes.py, mirrored into frontend/src/filetypes.js, and each
+// family has its own fp-ft-<family> sprite symbol.
 
 function formatSize(bytes) {
   if (bytes == null) return '—';
@@ -254,6 +355,22 @@ function joinPath(parentPath, name) {
   return parentPath.replace(/[\\\/]+$/, '') + '\\' + name;
 }
 
+/**
+ * The absolute path of one browserState.entries item.
+ *
+ * A /fs/list entry carries only its own `name` and belongs to
+ * browserState.path; a search result (Task 14) carries a full `path` of its
+ * own and can live anywhere on disk. Every place that used to join
+ * browserState.path onto a name goes through this instead, so the selection
+ * model, entry lookup and keyboard navigation all work unchanged in both
+ * modes.
+ */
+function entryPath(entry) {
+  if (!entry) return null;
+  if (entry.path) return entry.path;
+  return browserState.path ? joinPath(browserState.path, entry.name) : entry.name;
+}
+
 /** Returns the parent folder of an absolute path (string-only; no filesystem
  * lookup) — used by "Open in new tab" on a file row, which may belong to a
  * directory that isn't the currently loaded one (e.g. a Home/Recent row). */
@@ -263,18 +380,45 @@ function parentOfPath(p) {
   return idx > 0 ? norm.slice(0, idx) : norm;
 }
 
+/**
+ * opts.restore (Stage 2C Task 7) — {scrollTop, selection, view} from a tab
+ * record being reactivated: applied after the fresh render lands (selection
+ * only for paths still present in the refreshed listing). Mutually exclusive
+ * with opts.preserveSelection — activateTab() is the only restore caller and
+ * it always passes addToHistory:false too.
+ *
+ * reqTabId/reqSeq (fix round 1) guard against the fetch resolving after this
+ * call has been superseded — either by a tab switch (tabs.activeId no longer
+ * reqTabId) or by a newer navigation in the same tab (browserState._loadSeq
+ * moved on). Without this, an unawaited loadDirectory() left running while
+ * the user switches tabs (or fires a second navigation before the first
+ * lands) could paint a stale listing over whatever's actually current.
+ */
 async function loadDirectory(absPath, opts = {}) {
-  const { addToHistory = true, preserveSelection = false } = opts;
+  const { addToHistory = true, preserveSelection = false, restore = null } = opts;
+  const reqTabId = tabs.activeId;
+  const reqSeq = ++browserState._loadSeq;
+  // Any real navigation ends a search — opening a result folder, Back, a
+  // sidebar click, a spring-loaded drop. Done here rather than at each call
+  // site so there is exactly one exit from search mode.
+  leaveSearchMode();
   browserState.lastAttemptedPath = absPath;
+  // Sets the active tab's label/icon, the sidebar highlight, and (when
+  // absPath is a real path) the breadcrumb — synchronously, before the
+  // fetch below, so none of them wait on the network or get rewritten a
+  // second time once it resolves.
+  onNavigated(absPath);
   let data;
   try {
     data = absPath
       ? await API.get('/fs/list', { path: absPath, show_hidden: browserState.showHidden })
       : await API.get('/fs/list/root', { show_hidden: browserState.showHidden });
   } catch (err) {
+    if (tabs.activeId !== reqTabId || browserState._loadSeq !== reqSeq) return;
     handleLoadError(err, absPath);
     return;
   }
+  if (tabs.activeId !== reqTabId || browserState._loadSeq !== reqSeq) return;
 
   const prevSelection = preserveSelection ? new Set(browserState.selection) : null;
   const prevAnchor    = preserveSelection ? browserState.anchor : null;
@@ -284,8 +428,32 @@ async function loadDirectory(absPath, opts = {}) {
   browserState.entries = data.entries;
   browserState.parent = data.parent;
   browserState.isRoot = data.is_root;
+  // Dynamic media view (Task 10): decided fresh on every real navigation —
+  // never for a tab-switch restore (restore.view below reapplies whatever
+  // that tab last showed instead), and never in a future search-results mode.
+  const decidedView = (!(restore && restore.view) && browserState.mode !== 'search')
+    ? decideViewAndScale(data.path, data.entries)
+    : null;
+  if (restore && restore.view) browserState.view = restore.view;
+  else if (decidedView) browserState.view = decidedView.view;
 
-  if (preserveSelection && prevSelection) {
+  // Keep the active tab's own record continuously pointed at the real
+  // (resolved) path — this is what lets switchScreen() tell "this tab has
+  // never loaded a folder" (path still null, createTab()'s default) apart
+  // from "this tab is sitting at the sandbox root" (a real resolved path).
+  const tab = activeTab();
+  if (tab) { tab.path = data.path; tab.screen = 'browser'; }
+  // onNavigated(null) (the sandbox-root request) couldn't build breadcrumb
+  // crumbs from nothing — finalize them now that the real path is known.
+  if (!absPath) updateBreadcrumb(data.path);
+
+  if (restore) {
+    const validPaths = new Set(data.entries.map(e => joinPath(data.path, e.name)));
+    const restoredSelection = (restore.selection || []).filter(p => validPaths.has(p));
+    browserState.selection = new Set(restoredSelection);
+    browserState.anchor = restoredSelection.length ? restoredSelection[0] : null;
+    browserState.focus  = restoredSelection.length ? restoredSelection[restoredSelection.length - 1] : null;
+  } else if (preserveSelection && prevSelection) {
     // Keep only paths that still exist in the refreshed listing.
     const validPaths = new Set(data.entries.map(e => joinPath(data.path, e.name)));
     browserState.selection = new Set([...prevSelection].filter(p => validPaths.has(p)));
@@ -298,21 +466,53 @@ async function loadDirectory(absPath, opts = {}) {
   }
 
   renderDirectory(data);
+  if (restore && restore.view) {
+    setViewMode(restore.view);
+  } else if (decidedView) {
+    setListScale(decidedView.scale, { persist: false });
+    setViewMode(decidedView.view, { manual: false });
+  }
   if (addToHistory) pushHistory(data.path);
   else refreshNavButtons();
-  updateBreadcrumb(data.path);
   updateAddressBar(data.path);
-  updateSidebarActive();
-  syncActiveTabPath(data.path);
   onSelectionChanged();
+
+  const listScroll = document.getElementById('list-scroll');
+  if (listScroll) listScroll.scrollTop = restore ? (restore.scrollTop || 0) : 0;
 }
 
-/** Re-fetches the current directory, keeping selection/anchor/focus where the paths still exist.
- * Returns loadDirectory's promise so callers (fileops.run(), inline rename) can await the
- * re-render actually landing before touching the DOM again. */
+/** Re-fetches the current directory, keeping selection/anchor/focus (by path)
+ * and the list scroll position where they still apply, and spins the
+ * toolbar refresh button's icon for the duration — shared by the toolbar
+ * button (data-action="refresh-directory"), F5, and the empty-area context
+ * menu's Refresh item, all of which just call this (Task 8, playtest pass 1
+ * §3.6). Returns loadDirectory's promise so callers (fileops.run(), inline
+ * rename) can await the re-render actually landing before touching the DOM
+ * again.
+ *
+ * In search-results mode there is no folder to re-list: the same call re-runs
+ * the current search instead (Task 14), which is what a file operation
+ * performed on a result row needs so the vanished/renamed row disappears from
+ * the results the same way it would from a folder listing. */
 function refreshDirectory() {
+  if (browserState.mode === 'search') {
+    const searchBtn = document.getElementById('btn-refresh');
+    searchBtn?.classList.add('is-spinning');
+    const rerun = typeof runSearch === 'function'
+      ? Promise.resolve(runSearch({ pushHistory: false, preserveSelection: true }))
+      : Promise.resolve();
+    return rerun.finally(() => searchBtn?.classList.remove('is-spinning'));
+  }
   if (!browserState.path) return;
-  return loadDirectory(browserState.path, { addToHistory: false, preserveSelection: true });
+  const btn = document.getElementById('btn-refresh');
+  const listScroll = document.getElementById('list-scroll');
+  const scrollTop = listScroll ? listScroll.scrollTop : 0;
+  btn?.classList.add('is-spinning');
+  const p = loadDirectory(browserState.path, { addToHistory: false, preserveSelection: true });
+  return p.finally(() => {
+    if (listScroll) listScroll.scrollTop = scrollTop;
+    btn?.classList.remove('is-spinning');
+  });
 }
 
 // Every load failure gets the same two recovery actions: "Go back" (real
@@ -352,30 +552,38 @@ function retryLoad() {
 }
 
 function pushHistory(path) {
-  // If we navigated forward from a non-tail position, drop the forward stack.
-  if (navHistory.idx < navHistory.stack.length - 1) {
-    navHistory.stack = navHistory.stack.slice(0, navHistory.idx + 1);
+  // If we navigated forward from a non-tail position, drop the forward
+  // stack — truncate nav.history IN PLACE (never reassign it to a new
+  // array) so it stays the same object activateTab() pointed the active
+  // tab's own record.history at.
+  if (nav.index < nav.history.length - 1) {
+    nav.history.length = nav.index + 1;
   }
-  if (navHistory.stack[navHistory.idx] !== path) {
-    navHistory.stack.push(path);
-    navHistory.idx = navHistory.stack.length - 1;
+  if (nav.history[nav.index] !== path) {
+    nav.history.push(path);
+    nav.index = nav.history.length - 1;
   }
   refreshNavButtons();
 }
 
 function navBack() {
-  if (navHistory.idx <= 0) return;
-  navHistory.idx -= 1;
-  loadDirectory(navHistory.stack[navHistory.idx], { addToHistory: false });
+  if (nav.index <= 0) return;
+  nav.index -= 1;
+  loadDirectory(nav.history[nav.index], { addToHistory: false });
 }
 
 function navForward() {
-  if (navHistory.idx >= navHistory.stack.length - 1) return;
-  navHistory.idx += 1;
-  loadDirectory(navHistory.stack[navHistory.idx], { addToHistory: false });
+  if (nav.index >= nav.history.length - 1) return;
+  nav.index += 1;
+  loadDirectory(nav.history[nav.index], { addToHistory: false });
 }
 
 function navUp() {
+  // Explorer's rule: Up out of a results listing goes back to the folder that
+  // was searched, not to that folder's parent. This is the one path behind the
+  // toolbar Up button, Alt+Up and Backspace (browserKeydown, when
+  // ui.backspace_deletes is off), so all three agree by construction.
+  if (browserState.mode === 'search') { exitSearchResults(); return; }
   if (browserState.isRoot || !browserState.parent) return;
   loadDirectory(browserState.parent);
 }
@@ -384,9 +592,12 @@ function refreshNavButtons() {
   const back = document.querySelector('[data-action="nav-back"]');
   const fwd  = document.querySelector('[data-action="nav-forward"]');
   const up   = document.querySelector('[data-action="nav-up"]');
-  if (back) back.disabled = navHistory.idx <= 0;
-  if (fwd)  fwd.disabled  = navHistory.idx >= navHistory.stack.length - 1;
-  if (up)   up.disabled   = !browserState.path || browserState.isRoot || !browserState.parent;
+  if (back) back.disabled = nav.index <= 0;
+  if (fwd)  fwd.disabled  = nav.index >= nav.history.length - 1;
+  // In search mode Up always has somewhere to go (back to the searched
+  // folder), regardless of whether that folder has a parent of its own.
+  if (up)   up.disabled   = browserState.mode !== 'search'
+    && (!browserState.path || browserState.isRoot || !browserState.parent);
 }
 
 function renderDirectory(data) {
@@ -394,10 +605,13 @@ function renderDirectory(data) {
   const listScroll = document.getElementById('list-scroll');
   if (!listScroll) return;
 
-  const truncatedHtml = browserState.truncated ? renderTruncatedBanner() : '';
+  const isSearch = browserState.mode === 'search';
+  // The 10,000-entry banner belongs to a /fs/list listing; a truncated search
+  // says so in its own results header instead (renderSearchResults).
+  const truncatedHtml = (!isSearch && browserState.truncated) ? renderTruncatedBanner() : '';
 
   if (!browserState.entries || browserState.entries.length === 0) {
-    listScroll.innerHTML = truncatedHtml + renderEmptyFolder();
+    listScroll.innerHTML = truncatedHtml + (isSearch ? renderNoSearchResults() : renderEmptyFolder());
     updateStatusBar();
     return;
   }
@@ -409,9 +623,7 @@ function renderDirectory(data) {
 
 function renderTruncatedBanner() {
   return `<div class="fp-error-banner fp-error-banner--info" role="status">
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-      <circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>
-    </svg>
+    ${icon('info', 'fp-icon--14')}
     <span class="fp-body" style="color: var(--text-primary)">Showing the first 10,000 entries</span>
   </div>`;
 }
@@ -425,9 +637,43 @@ function stemOf(name) {
   return dot > 0 ? name.slice(0, dot) : name;
 }
 
+/** Leading visual for one entry: a 16px family icon in list view, a 96px
+ * thumbnail area in grid view.
+ *
+ * Grid tiles show real content wherever the shell can produce it — a shell
+ * thumbnail for media files, and, for a folder in 'fileplus' mode, up to two
+ * of the folder's own pictures fanned over the folder icon (GET /fs/peek,
+ * requested only once the tile is on screen). In 'windows' mode every tile
+ * asks the shell directly, folders included, which is what Explorer shows.
+ * List view keeps the family icon everywhere except image rows, which get a
+ * 16px thumbnail of the picture itself. */
+function renderFsIcon(entry) {
+  const source = fpIconSource();
+  if (browserState.view !== 'grid') {
+    const wantsThumb = !entry.is_dir && !entry.error && source === 'fileplus'
+      && typeof fpIsMedia === 'function' && fpIsMedia(entry.ext)
+      && fpFamilyFor(entry.ext) !== 'svg'; // an SVG's own markup is its icon
+    return wantsThumb
+      ? fpThumbBox(entry, 16, 'fp-row__icon fp-row__icon--thumb')
+      : iconFor(entry, 16, 'fp-row__icon');
+  }
+  if (entry.error) return fpTileIcon(entry);
+  if (source === 'windows') return fpThumbBox(entry, 96, 'fp-tile__thumb');
+  if (entry.is_dir) return fpFolderPeekBox(entry, 'fp-tile__thumb');
+  if (typeof fpIsMedia === 'function' && fpIsMedia(entry.ext) && fpFamilyFor(entry.ext) !== 'svg') {
+    return fpThumbBox(entry, 96, 'fp-tile__thumb');
+  }
+  return fpTileIcon(entry);
+}
+
 function renderFsRow(entry, parentPath) {
-  const childPath = joinPath(parentPath, entry.name);
-  const icon = entry.is_dir ? ICON_FOLDER : iconForExt(entry.ext);
+  // A search result carries its own absolute path (it can live anywhere under
+  // the searched root); a /fs/list entry is joined onto the open folder.
+  const childPath = entry.path || joinPath(parentPath, entry.name);
+  // iconFor()/fpThumbBox() key their shell requests off an absolute path, and
+  // a /fs/list entry only carries its own name — join it on here rather than
+  // making every icon call site re-derive it.
+  const iconHtml = renderFsIcon({ ...entry, path: childPath });
   const sizeText = (entry.is_dir || entry.error) ? '—' : formatSize(entry.size);
   const modifiedText = entry.error ? '—' : formatModified(entry.modified * 1000);
   const rowClass = `fp-row${entry.is_dir ? ' fp-row--folder' : ''}${entry.error ? ' fp-row--disabled' : ''}`;
@@ -437,11 +683,36 @@ function renderFsRow(entry, parentPath) {
   const hideExt = !entry.is_dir && browserState.showExtensions === false;
   const displayName = hideExt ? stemOf(entry.name) : entry.name;
   const nameTitleAttr = hideExt ? ` title="${escapeHtml(entry.name)}"` : '';
-  return `<div class="${rowClass}" role="option" draggable="true"
+  // Search mode: wrap the matched substrings in <mark> and hang the parent
+  // folder under the name as a "Location" subline. entry.match's offsets index
+  // the RAW name, so highlighting is skipped when show-extensions has trimmed
+  // it — the spans would no longer line up with what is being rendered.
+  const isSearch = browserState.mode === 'search';
+  const nameHtml = (isSearch && !hideExt)
+    ? highlightMatch(displayName, entry.match)
+    : escapeHtml(displayName);
+  const location = isSearch ? (entry.location || parentOfPath(childPath)) : '';
+  // favoritesHas is home.js's (loaded AFTER browser.js — see the module load
+  // order in CLAUDE.md) — safe here because renderFsRow's body only ever
+  // runs later, from a directory render, never at this file's own parse time.
+  const starHtml = (typeof favoritesHas === 'function' && favoritesHas(childPath))
+    ? `<span class="fp-row__star" title="In Favorites">${icon('star')}</span>`
+    : '';
+  // No draggable="true": Stage 2C Task 12 replaced HTML5 drag and drop with a
+  // pointer-event drag session (dragdrop.js). The native attribute would now
+  // only get in the way — a native drag starting under our own pointermove
+  // handler swallows the rest of the session.
+  return `<div class="${rowClass}" role="option"
             data-path="${escapeHtml(childPath)}"
             data-type="${entry.is_dir ? 'folder' : 'file'}" tabindex="-1"${titleAttr}>
-    ${icon}
-    <span class="fp-row__name"${nameTitleAttr}>${escapeHtml(displayName)}</span>
+    ${iconHtml}
+    ${isSearch
+      ? `<span class="fp-row__namecell">
+          <span class="fp-row__name"${nameTitleAttr}>${nameHtml}</span>
+          <span class="fp-row__location" title="${escapeHtml(location)}">${escapeHtml(location)}</span>
+        </span>`
+      : `<span class="fp-row__name"${nameTitleAttr}>${nameHtml}</span>`}
+    ${starHtml}
     <span class="fp-row__size mono">${sizeText}</span>
     <span class="fp-row__modified mono">${modifiedText}</span>
     <div class="fp-row__tags"></div>
@@ -450,12 +721,189 @@ function renderFsRow(entry, parentPath) {
 
 function renderEmptyFolder() {
   return `<div class="fp-empty-state" role="status" aria-live="polite">
-    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-      <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/>
-    </svg>
+    ${icon('ft-folder-open', 'fp-icon--48 fp-empty-state__icon')}
     <h3 class="t-title-sm">This folder is empty</h3>
     <p class="t-body" style="color: var(--text-secondary)">Drop files here or right-click to create new ones.</p>
   </div>`;
+}
+
+// ── Search results listing (Task 14, design §8.2) ────────────────────────────
+// Search renders INTO the Browser list, not into a popup: every result is a
+// real .fp-row carrying its absolute path, so open / context menu / drag /
+// favorites / properties / inspector all work on a result unchanged. search.js
+// owns the query; everything below owns how the answer looks.
+
+/** Wraps every `match` span in <mark>, escaping around and inside the spans.
+ * `spans` index the RAW name, so the string is sliced first and each piece
+ * escaped afterwards — escaping first would shift every offset. */
+function highlightMatch(name, spans) {
+  const raw = String(name == null ? '' : name);
+  if (!Array.isArray(spans) || spans.length === 0) return escapeHtml(raw);
+  let html = '';
+  let cursor = 0;
+  for (const span of spans) {
+    if (!Array.isArray(span) || span.length < 2) continue;
+    const start = Math.max(0, Math.min(raw.length, span[0] | 0));
+    const end = Math.max(start, Math.min(raw.length, span[1] | 0));
+    if (start < cursor) continue;   // overlapping/unsorted — the backend merges, but never trust it blindly
+    html += escapeHtml(raw.slice(cursor, start));
+    html += `<mark class="fp-row__mark">${escapeHtml(raw.slice(start, end))}</mark>`;
+    cursor = end;
+  }
+  return html + escapeHtml(raw.slice(cursor));
+}
+
+function renderNoSearchResults() {
+  return `<div class="fp-empty-state" role="status" aria-live="polite">
+    ${icon('search', 'fp-icon--48 fp-empty-state__icon')}
+    <h3 class="t-title-sm">No matches</h3>
+    <p class="t-body" style="color: var(--text-secondary)">Try fewer filters, or search This PC instead of this folder.</p>
+  </div>`;
+}
+
+/** The one writer of #list-search-header's text ("N results" / "Searching…"). */
+function setSearchHeader(text) {
+  const el = document.getElementById('list-search-header');
+  if (!el) return;
+  el.hidden = false;
+  el.innerHTML = `<span class="list-search-header__count">${escapeHtml(text)}</span>`;
+}
+
+/** Appends a right-aligned note + action button to the results header — the
+ * This PC scope's "N drives are not indexed — Index now" (design §8.1). */
+function appendSearchHeaderHint(text, actionLabel, actionName) {
+  const el = document.getElementById('list-search-header');
+  if (!el || el.hidden) return;
+  el.insertAdjacentHTML('beforeend', `<span class="list-search-header__hint">
+      ${escapeHtml(text)} —
+      <button class="fp-btn fp-btn--ghost fp-btn--sm" data-action="${escapeHtml(actionName)}">${escapeHtml(actionLabel)}</button>
+    </span>`);
+}
+
+/** Called by search.js the moment a request goes out: enter search mode (so
+ * the breadcrumb and header already read "Search in …") and say we're walking.
+ * Rows from a previous search stay on screen until the new ones land — only
+ * the first search of a session clears the folder listing underneath. */
+function showSearchPending(query, root) {
+  const listScroll = document.getElementById('list-scroll');
+  const entering = browserState.mode !== 'search';
+  // A search firing (or re-firing while typing) supersedes any /fs/list still
+  // in flight from loadDirectory() the same way a real navigation would —
+  // otherwise a slow listing that resolves after the bar starts searching
+  // would paint folder entries into the now-search-mode list.
+  browserState._loadSeq++;
+  browserState.mode = 'search';
+  browserState.searchRoot = root;
+  if (listScroll) listScroll.dataset.mode = 'search';
+  if (entering) {
+    browserState.entries = [];
+    browserState.selection = new Set();
+    browserState.anchor = null;
+    browserState.focus = null;
+    if (listScroll) listScroll.innerHTML = '';
+  }
+  updateSearchBreadcrumb(root);
+  setSearchHeader('Searching…');
+  refreshNavButtons();
+}
+
+/**
+ * Paints a search payload as the Browser listing.
+ *
+ * `payload` is always in GET /fs/search's shape ({results, truncated, …}) —
+ * search.js normalises the index route's rows into it first — and each result
+ * gets a `location` (its parent folder) for the row's subline.
+ *
+ * `preserveSelection` (Task 8/finding 5 parity with loadDirectory's own
+ * preserveSelection branch, browser.js ~456-461) keeps whichever result paths
+ * are still present after a re-run — refreshDirectory()'s search-mode branch
+ * passes this so an op on a result row (favorite toggle, attributes Apply,
+ * rename) doesn't drop the selection and blank the inspector.
+ */
+function renderSearchResults(payload, { query = '', root = '', preserveSelection = false } = {}) {
+  const listScroll = document.getElementById('list-scroll');
+  if (!listScroll) return;
+  const prevSelection = preserveSelection ? new Set(browserState.selection) : null;
+  const prevAnchor = preserveSelection ? browserState.anchor : null;
+  const prevFocus = preserveSelection ? browserState.focus : null;
+  browserState.mode = 'search';
+  browserState.searchRoot = root;
+  browserState.truncated = false;
+  browserState.entries = (payload.results || []).map(r => ({ ...r, location: parentOfPath(r.path) }));
+  if (preserveSelection && prevSelection) {
+    const validPaths = new Set(browserState.entries.map(e => e.path));
+    browserState.selection = new Set([...prevSelection].filter(p => validPaths.has(p)));
+    browserState.anchor = prevAnchor && validPaths.has(prevAnchor) ? prevAnchor : null;
+    browserState.focus = prevFocus && validPaths.has(prevFocus) ? prevFocus : null;
+  } else {
+    browserState.selection = new Set();
+    browserState.anchor = null;
+    browserState.focus = null;
+  }
+  listScroll.dataset.mode = 'search';
+
+  updateSearchBreadcrumb(root);
+  renderDirectory();
+  listScroll.scrollTop = 0;
+
+  const n = browserState.entries.length;
+  setSearchHeader(payload.truncated ? `First ${n} results — refine the search` : `${n} results`);
+  onSelectionChanged();
+  refreshNavButtons();
+}
+
+/** The breadcrumb in search mode: `Search in <folder>` plus a × that returns
+ * to the folder the tab was showing (data-action="search-clear"). */
+function updateSearchBreadcrumb(root) {
+  const crumb = document.getElementById('breadcrumb');
+  if (!crumb) return;
+  const label = root === '*'
+    ? 'This PC'
+    : (pathBaseName(root) || String(root || '') || 'this folder');
+  crumb.innerHTML = `<span class="fp-breadcrumb__search">
+      ${icon('search', 'fp-icon--14')}
+      <span>Search in ${escapeHtml(label)}</span>
+    </span>
+    <button class="fp-icon-btn fp-icon-btn--sm fp-breadcrumb__clear" data-action="search-clear"
+            title="Clear search" aria-label="Clear search">${icon('close', 'fp-icon--10')}</button>`;
+}
+
+/**
+ * Tears the search UI down WITHOUT reloading anything — called at the top of
+ * every loadDirectory() so that navigating away from results (opening a
+ * result folder, Back, a sidebar click, a spring-loaded drop) leaves search
+ * mode exactly once, in one place. exitSearchResults() is this plus the
+ * reload; splitting them is what keeps the two from recursing into each other.
+ */
+function leaveSearchMode() {
+  if (browserState.mode !== 'search') return;
+  browserState.mode = 'browse';
+  browserState.searchRoot = null;
+  // search.js loads after browser.js, so its exports only exist once the app
+  // has booted — safe here because leaveSearchMode() is only ever called from
+  // event handlers, long after every script has run. Abort the in-flight
+  // request and bump the sequence runSearch()'s superseded() checks so a
+  // response that lands after this navigation is ignored instead of
+  // repainting stale search results over the folder we're navigating to.
+  if (typeof abortSearch === 'function') abortSearch();
+  if (typeof searchState !== 'undefined' && searchState) searchState._seq++;
+  const listScroll = document.getElementById('list-scroll');
+  if (listScroll) delete listScroll.dataset.mode;
+  const header = document.getElementById('list-search-header');
+  if (header) { header.hidden = true; header.innerHTML = ''; }
+  const tab = typeof activeTab === 'function' ? activeTab() : null;
+  if (tab) tab.search = null;
+  if (typeof searchResetBar === 'function') searchResetBar();
+}
+
+/** Leaves search mode and re-lists the folder the active tab was showing —
+ * the breadcrumb's × and search.js's clearSearch(). */
+function exitSearchResults() {
+  if (browserState.mode !== 'search') return undefined;
+  const tab = typeof activeTab === 'function' ? activeTab() : null;
+  const target = tab && tab.path !== undefined ? tab.path : browserState.path;
+  leaveSearchMode();
+  return loadDirectory(target, { addToHistory: false });
 }
 
 function updateAddressBar(path) {
@@ -465,15 +913,19 @@ function updateAddressBar(path) {
 
 function updateBreadcrumb(path) {
   const crumb = document.getElementById('breadcrumb');
-  if (!crumb) return;
+  if (!crumb || !path) return;
   // Split on \ or /, drop empties. First part is drive letter (e.g. "C:") — keep with backslash for nav.
-  const parts = path.split(/[\\\/]+/).filter(Boolean);
+  const parts = String(path).split(/[\\\/]+/).filter(Boolean);
   let cumulative = '';
   const html = parts.map((part, i) => {
     cumulative = i === 0 ? part + '\\' : cumulative + part + '\\';
     const isLast = i === parts.length - 1;
     const cls = isLast ? 'fp-breadcrumb__crumb fp-breadcrumb__crumb--current' : 'fp-breadcrumb__crumb';
-    return `<button class="${cls}" data-action="navigate-crumb" data-path="${escapeHtml(cumulative)}">${escapeHtml(part)}</button>`;
+    // First crumb of a drive path shows the real drive label (Task 7) — the
+    // button's own data-path stays the literal "D:\\" for navigation either way.
+    const isDriveRoot = i === 0 && /^[A-Za-z]:$/.test(part);
+    const label = isDriveRoot ? driveDisplayLabel(part) : part;
+    return `<button class="${cls}" data-action="navigate-crumb" data-path="${escapeHtml(cumulative)}">${escapeHtml(label)}</button>`;
   }).join('<span class="fp-breadcrumb__sep">·</span>');
   crumb.innerHTML = html;
 }
@@ -493,9 +945,7 @@ function showErrorBanner(message, opts = {}) {
       ).join('')}</div>`
     : '';
   listScroll.innerHTML = `<div class="fp-error-banner" role="alert">
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-      <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
-    </svg>
+    ${icon('error', 'fp-icon--14')}
     <span class="fp-body" style="color: var(--text-primary)">${escapeHtml(message)}</span>
     ${actionsHtml}
   </div>`;
@@ -506,10 +956,17 @@ function showErrorBanner(message, opts = {}) {
 /** Returns the current selection as an array of absolute paths. */
 function getSelectedPaths() { return [...browserState.selection]; }
 
+/** Rename applies to exactly one item — the single shared rule behind both
+ * the Rename context-menu item (app.js's CONTEXT_MENUS 'cm-rename' entries,
+ * file and folder menus both call this directly) and the F2 keyboard
+ * shortcut (browserKeydown below), so the two can never drift apart
+ * (Task 11 fix round 1). */
+function canRenameSelection() { return browserState.selection.size === 1; }
+
 /** Looks up the entry object for an absolute path in the current directory, or null. */
 function entryForPath(path) {
-  if (!browserState.path) return null;
-  return browserState.entries.find(e => joinPath(browserState.path, e.name) === path) || null;
+  if (!browserState.path && browserState.mode !== 'search') return null;
+  return browserState.entries.find(e => entryPath(e) === path) || null;
 }
 
 /** Finds the rendered row element for an absolute path, or null. */
@@ -551,7 +1008,7 @@ function applySelectionState() {
  */
 function selectRow(path, { ctrl = false, shift = false } = {}) {
   if (!browserState.path) return;
-  const order = sortedEntries().map(e => joinPath(browserState.path, e.name));
+  const order = sortedEntries().map(entryPath);
 
   if (shift) {
     const anchorPath = browserState.anchor || path;
@@ -583,7 +1040,7 @@ function selectRow(path, { ctrl = false, shift = false } = {}) {
 /** Selects every entry in the current directory. */
 function selectAll() {
   if (!browserState.path) return;
-  const order = sortedEntries().map(e => joinPath(browserState.path, e.name));
+  const order = sortedEntries().map(entryPath);
   browserState.selection = new Set(order);
   if (order.length) {
     browserState.anchor = order[0];
@@ -612,7 +1069,7 @@ function clearSelection() {
  */
 function moveFocus(delta, { shift = false } = {}) {
   if (!browserState.path) return;
-  const order = sortedEntries().map(e => joinPath(browserState.path, e.name));
+  const order = sortedEntries().map(entryPath);
   if (!order.length) return;
 
   const curIdx = browserState.focus ? order.indexOf(browserState.focus) : -1;
@@ -764,142 +1221,6 @@ function startInlineRename(path) {
   input.addEventListener('click', e => e.stopPropagation());
 }
 
-// ── Drag and drop (Task 4) ─────────────────────────────────────────────────────
-// Rows are drag SOURCES (dragstart, set in renderFsRow via draggable="true");
-// folder rows, sidebar drives/pins/Downloads, and breadcrumb crumbs are drop
-// TARGETS. The MIME type carries the whole selection as JSON so a drag of a
-// multi-selection moves/copies every selected item, not just the row that
-// was physically dragged.
-const FP_DRAG_MIME = 'application/x-fileplus-paths';
-
-// The dragged selection, tracked separately from dataTransfer: per the HTML5
-// DnD spec, dataTransfer.getData() only returns real data during the 'drop'
-// event — during 'dragover'/'dragenter' it reads back empty for security
-// reasons, even within the same page. dragover needs to know what's being
-// dragged (to skip highlighting an invalid target), so dragstart mirrors the
-// paths here too; dragend clears it.
-let _draggingPaths = [];
-
-/** Why `destDir` is not a valid drop target for `paths`, or null if it's fine.
- *  'self'       — destDir is (case-insensitively) one of the dragged paths
- *  'current'    — destDir is the directory already open
- *  'descendant' — destDir is nested inside one of the dragged folders */
-function dropViolation(destDir, paths) {
-  if (!destDir || !paths || !paths.length) return 'self';
-  const norm = p => String(p).replace(/[\\\/]+$/, '').toLowerCase();
-  const destLower = norm(destDir);
-  if (paths.some(p => norm(p) === destLower)) return 'self';
-  if (destLower === norm(browserState.path || '')) return 'current';
-  if (paths.some(p => destLower.startsWith(norm(p) + '\\'))) return 'descendant';
-  return null;
-}
-
-/** Shared drop handler for every drop target (folder rows, sidebar items,
- * breadcrumb crumbs). */
-function handleFsDrop(e, destDir) {
-  let paths;
-  try { paths = JSON.parse(e.dataTransfer.getData(FP_DRAG_MIME) || '[]'); }
-  catch (_) { paths = []; }
-  const violation = dropViolation(destDir, paths);
-  if (violation === 'descendant') { showToast('Cannot move a folder into itself', 'error'); return; }
-  if (violation) return; // 'self' (dropped onto a dragged item) / 'current' (the open folder) — silent no-op
-  fileops.moveTo(paths, destDir, e.ctrlKey);
-}
-
-/** Shared dragover handler. A 'self'/'current' violation is not a drop
- * target at all — skip preventDefault() entirely so the browser shows its
- * native "not allowed" cursor and 'drop' never fires (nothing to refuse; a
- * dragged item never paints as its own drop target). A 'descendant'
- * violation DOES need preventDefault() — 'drop' must still fire so
- * handleFsDrop can refuse it with the "Cannot move a folder into itself"
- * toast — but it's never highlighted, matching the "not highlighted" rule
- * for a target that will just bounce. */
-function dragOverTarget(e, el, destDir, dragTargetClass) {
-  const violation = dropViolation(destDir, _draggingPaths);
-  if (violation === 'self' || violation === 'current') return;
-  e.preventDefault();
-  e.dataTransfer.dropEffect = e.ctrlKey ? 'copy' : 'move';
-  if (!violation) el.classList.add(dragTargetClass);
-}
-
-function initRowDragDrop() {
-  const listScroll = document.getElementById('list-scroll');
-  if (!listScroll) return;
-
-  listScroll.addEventListener('dragstart', e => {
-    const row = e.target.closest('.fp-row[data-path]');
-    if (!row) { e.preventDefault(); return; }
-    if (!browserState.selection.has(row.dataset.path)) selectRow(row.dataset.path, {});
-    const paths = getSelectedPaths();
-    _draggingPaths = paths;
-    e.dataTransfer.effectAllowed = 'copyMove';
-    e.dataTransfer.setData(FP_DRAG_MIME, JSON.stringify(paths));
-    e.dataTransfer.setData('text/plain', paths.join('\n'));
-  });
-  listScroll.addEventListener('dragend', () => { _draggingPaths = []; });
-
-  listScroll.addEventListener('dragover', e => {
-    const row = e.target.closest('.fp-row[data-type="folder"][data-path]');
-    if (!row) return;
-    dragOverTarget(e, row, row.dataset.path, 'fp-row--drag-target');
-  });
-  listScroll.addEventListener('dragleave', e => {
-    const row = e.target.closest('.fp-row[data-type="folder"][data-path]');
-    if (row && !row.contains(e.relatedTarget)) row.classList.remove('fp-row--drag-target');
-  });
-  listScroll.addEventListener('drop', e => {
-    const row = e.target.closest('.fp-row[data-type="folder"][data-path]');
-    if (!row) return;
-    e.preventDefault();
-    row.classList.remove('fp-row--drag-target');
-    handleFsDrop(e, row.dataset.path);
-  });
-}
-
-function initSidebarDragDrop() {
-  const sidebarEl = document.getElementById('sidebar');
-  if (!sidebarEl) return;
-
-  sidebarEl.addEventListener('dragover', e => {
-    const item = e.target.closest('.fp-sidebar__item[data-path]');
-    if (!item) return;
-    dragOverTarget(e, item, item.dataset.path, 'fp-sidebar__item--drag-target');
-  });
-  sidebarEl.addEventListener('dragleave', e => {
-    const item = e.target.closest('.fp-sidebar__item[data-path]');
-    if (item && !item.contains(e.relatedTarget)) item.classList.remove('fp-sidebar__item--drag-target');
-  });
-  sidebarEl.addEventListener('drop', e => {
-    const item = e.target.closest('.fp-sidebar__item[data-path]');
-    if (!item) return;
-    e.preventDefault();
-    item.classList.remove('fp-sidebar__item--drag-target');
-    handleFsDrop(e, item.dataset.path);
-  });
-}
-
-function initBreadcrumbDragDrop() {
-  const crumb = document.getElementById('breadcrumb');
-  if (!crumb) return;
-
-  crumb.addEventListener('dragover', e => {
-    const btn = e.target.closest('.fp-breadcrumb__crumb[data-path]');
-    if (!btn) return;
-    dragOverTarget(e, btn, btn.dataset.path, 'fp-breadcrumb__crumb--drag-target');
-  });
-  crumb.addEventListener('dragleave', e => {
-    const btn = e.target.closest('.fp-breadcrumb__crumb[data-path]');
-    if (btn && !btn.contains(e.relatedTarget)) btn.classList.remove('fp-breadcrumb__crumb--drag-target');
-  });
-  crumb.addEventListener('drop', e => {
-    const btn = e.target.closest('.fp-breadcrumb__crumb[data-path]');
-    if (!btn) return;
-    e.preventDefault();
-    btn.classList.remove('fp-breadcrumb__crumb--drag-target');
-    handleFsDrop(e, btn.dataset.path);
-  });
-}
-
 // Selection → inspector debounce: arrow-key navigation and marquee drags can
 // change the selection many times a second, and each change would otherwise
 // fire a fresh GET /file + GET /preview + GET /files/history round-trip.
@@ -912,13 +1233,20 @@ let _inspectorDebounceTimer = null;
  * immediately, and (debounced) the inspector panel via showInspectorFor /
  * showInspectorMulti / updateInspector('none'). */
 function onSelectionChanged() {
+  // Drives the grid single-tile-only selection bar (styles.css, Task 11
+  // playtest pass 1 §4.1) — a plain string attribute rather than a boolean
+  // so CSS can target the exact count ([data-selection-count="1"]) instead
+  // of merely "any selection".
+  const listScroll = document.getElementById('list-scroll');
+  if (listScroll) listScroll.dataset.selectionCount = String(browserState.selection.size);
   updateStatusBar();
   clearTimeout(_inspectorDebounceTimer);
   _inspectorDebounceTimer = setTimeout(() => {
     const n = browserState.selection.size;
     if (n === 0) {
       _inspectorSeq++; // invalidate any fetch still in flight from the prior selection
-      renderPreviewNone(); // revoke the blob: URL — nothing is selected to preview anymore
+      // updateInspector('none') renders the full empty state itself now
+      // (including revoking any preview blob: URL) — no separate call needed.
       updateInspector('none');
     } else if (n === 1) {
       showInspectorFor([...browserState.selection][0]);
@@ -942,7 +1270,8 @@ function selectionTotalSize() {
 function updateStatusBar() {
   const countEl = document.getElementById('status-count');
   const selEl = document.getElementById('status-selected');
-  if (countEl) countEl.textContent = `${browserState.entries.length} items`;
+  const n = browserState.entries.length;
+  if (countEl) countEl.textContent = browserState.mode === 'search' ? `${n} results` : `${n} items`;
   if (selEl) {
     const n = browserState.selection.size;
     if (n === 0) selEl.textContent = 'Nothing selected';
@@ -991,8 +1320,11 @@ function browserKeydown(e) {
   // not also undo the last file op behind it, and typing in the palette
   // search box must not trigger F2/Delete/etc.
   const modalScrim = document.getElementById('modal-scrim');
+  const propertiesScrim = document.getElementById('properties-modal-scrim');
   const paletteOpen = paletteScrim && paletteScrim.style.display !== 'none';
-  if ((modalScrim && modalScrim.style.display !== 'none') || paletteOpen) return;
+  if ((modalScrim && modalScrim.style.display !== 'none')
+      || (propertiesScrim && propertiesScrim.style.display !== 'none')
+      || paletteOpen) return;
 
   const key = e.key;
   const ctrl = e.ctrlKey || e.metaKey;
@@ -1001,6 +1333,14 @@ function browserKeydown(e) {
     if (key === 'ArrowUp')         { e.preventDefault(); navUp(); }
     else if (key === 'ArrowLeft')  { e.preventDefault(); navBack(); }
     else if (key === 'ArrowRight') { e.preventDefault(); navForward(); }
+    // Alt+Enter — Properties for the focused/selected single item (Task 13;
+    // canRenameSelection()'s single-selection rule doubles as "Properties is
+    // single-item only in this pass", design spec §5.1). Same target as F2's
+    // Rename below: browserState.focus.
+    else if (key === 'Enter' && canRenameSelection() && browserState.focus) {
+      e.preventDefault();
+      if (typeof openProperties === 'function') openProperties(browserState.focus);
+    }
     return;
   }
 
@@ -1022,7 +1362,7 @@ function browserKeydown(e) {
   if (ctrl && key.toLowerCase() === 'x') { e.preventDefault(); fileops.cutSelection(); return; }
   if (ctrl && key.toLowerCase() === 'c') { e.preventDefault(); fileops.copySelection(); return; }
   if (ctrl && key.toLowerCase() === 'v') { e.preventDefault(); if (browserState.path) fileops.pasteInto(browserState.path); return; }
-  if (key === 'F2') { e.preventDefault(); if (browserState.focus) startInlineRename(browserState.focus); return; }
+  if (key === 'F2') { e.preventDefault(); if (canRenameSelection() && browserState.focus) startInlineRename(browserState.focus); return; }
   if (key === 'Delete') { e.preventDefault(); fileops.trashSelection(); return; }
 
   switch (key) {
@@ -1031,7 +1371,17 @@ function browserKeydown(e) {
     case 'Home':      e.preventDefault(); moveFocus('home', { shift: e.shiftKey }); break;
     case 'End':       e.preventDefault(); moveFocus('end', { shift: e.shiftKey }); break;
     case 'Enter':     e.preventDefault(); openFocused(); break;
-    case 'Backspace': e.preventDefault(); navUp(); break;
+    case 'Backspace': {
+      e.preventDefault();
+      // ui.backspace_deletes (Settings › Personalization › Keyboard): trash
+      // the selection instead of navigating up. trashSelection() already
+      // no-ops on an empty selection, so "nothing selected" falls out for
+      // free rather than needing its own check here.
+      const backspaceDeletes = !!(window.__fpConfig && window.__fpConfig['ui.backspace_deletes']);
+      if (backspaceDeletes) fileops.trashSelection();
+      else navUp();
+      break;
+    }
     case 'F5':        e.preventDefault(); refreshDirectory(); break;
     default: break;
   }

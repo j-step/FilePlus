@@ -58,9 +58,55 @@ def test_search_and_quick_index(client, sandbox):
         if client.get("/index/status").json()["running"] is False: break
         time.sleep(0.1)
     st = client.get("/index/status").json()
-    assert st["running"] is False and st["count"] >= 1 and st["error"] is None
-    hits = client.get("/search", params={"q": "budget"}).json()
+    entry = next(r for r in st["roots"] if r["root"] == str(sandbox))
+    assert st["running"] is False and entry["file_count"] >= 1 and entry["last_run"]
+    # GET /search now returns {"results": [...], "indexed_roots": [...]} (Stage 2C Task 2)
+    # instead of a bare list, so This-PC search can flag un-indexed drives.
+    body = client.get("/search", params={"q": "budget"}).json()
+    hits = body["results"]
     assert hits and hits[0]["filename"] == "budget-2026.xlsx" and hits[0]["hash"] is None   # quick index does not hash
+    assert str(sandbox) in body["indexed_roots"]
+
+
+def test_search_type_and_ext_filters_and_indexed_roots(client, sandbox):
+    (sandbox / "doc-note.txt").write_text("hello")
+    (sandbox / "doc-readme.md").write_text("hello")
+    (sandbox / "doc-photo.png").write_bytes(b"\x89PNG")
+    r = client.post("/index", json={"path": str(sandbox)}); assert r.status_code == 200
+    import time
+    for _ in range(50):
+        if client.get("/index/status").json()["running"] is False: break
+        time.sleep(0.1)
+
+    body = client.get("/search", params={"q": "doc", "type": "document"}).json()
+    assert {r["filename"] for r in body["results"]} == {"doc-note.txt", "doc-readme.md"}
+    assert str(sandbox) in body["indexed_roots"]
+
+    ext_body = client.get("/search", params={"q": "doc", "ext": "md"}).json()
+    assert [r["filename"] for r in ext_body["results"]] == ["doc-readme.md"]
+
+
+def test_search_whole_word_filter(client, sandbox):
+    (sandbox / "mydoc.txt").write_text("x")
+    (sandbox / "my doc.txt").write_text("x")
+    client.post("/index", json={"path": str(sandbox)})
+    import time
+    for _ in range(50):
+        if client.get("/index/status").json()["running"] is False: break
+        time.sleep(0.1)
+
+    body = client.get("/search", params={"q": "doc", "whole_word": "true"}).json()
+    assert {r["filename"] for r in body["results"]} == {"my doc.txt"}
+
+
+def test_search_tag_filter(client, sandbox):
+    p = sandbox / "tagged.txt"; p.write_text("x")
+    other = sandbox / "untagged.txt"; other.write_text("x")
+    fid = client.get("/file", params={"path": str(p)}).json()["id"]
+    client.get("/file", params={"path": str(other)})  # index it too, untagged, so both rows exist
+    client.post(f"/files/{fid}/tags", json={"name": "keep"})
+    body = client.get("/search", params={"q": "", "tag": "keep"}).json()
+    assert [r["filename"] for r in body["results"]] == ["tagged.txt"]
 
 
 def test_files_pagination(client, sandbox):
@@ -117,3 +163,27 @@ def test_index_conflict_while_running(client, sandbox):
         assert r.status_code == 409
     finally:
         app.state.index_state["running"] = False
+
+
+def test_tags_listing_carries_file_count(client, sandbox):
+    """GET /tags (no q) reports how many files carry each tag — the sidebar's
+    Tags section ranks by it and hides a zero-count tag (Stage 2C Task 14)."""
+    a = sandbox / "ta.txt"; a.write_text("a")
+    b = sandbox / "tb.txt"; b.write_text("b")
+    fid_a = client.get("/file", params={"path": str(a)}).json()["id"]
+    fid_b = client.get("/file", params={"path": str(b)}).json()["id"]
+    client.post(f"/files/{fid_a}/tags", json={"name": "shared"})
+    client.post(f"/files/{fid_b}/tags", json={"name": "shared"})
+    client.post(f"/files/{fid_a}/tags", json={"name": "solo"})
+
+    counts = {t["name"]: t["count"] for t in client.get("/tags").json()}
+    assert counts == {"shared": 2, "solo": 1}
+
+    # A tag every file has since dropped still lists, at count 0.
+    tid = next(t["id"] for t in client.get(f"/files/{fid_a}/tags").json() if t["name"] == "solo")
+    client.delete(f"/files/{fid_a}/tags/{tid}")
+    assert {t["name"]: t["count"] for t in client.get("/tags").json()}["solo"] == 0
+
+    # The q= (prefix search) branch is untouched — no count, same keys as before.
+    hit = client.get("/tags", params={"q": "sha"}).json()
+    assert [t["name"] for t in hit] == ["shared"] and "count" not in hit[0]

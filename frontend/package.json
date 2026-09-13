@@ -8,6 +8,7 @@
     "test": "playwright test"
   },
   "devDependencies": {
+    "@fluentui/svg-icons": "1.1.341",
     "@playwright/test": "^1.63.0",
     "electron": "^41.3.0"
   }

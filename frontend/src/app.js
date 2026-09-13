@@ -4,7 +4,6 @@ const sidebar            = document.getElementById('sidebar');
 const btnSidebarCollapse = document.getElementById('btn-sidebar-collapse');
 const paletteScrim       = document.getElementById('palette-scrim');
 const paletteInput       = document.getElementById('palette-input');
-const searchInput        = document.getElementById('search-input');
 
 // ── Screen switching ────────────────────────────────────────────────────────
 // Screens whose backend wiring is not yet complete. Each screen's HTML carries
@@ -20,25 +19,46 @@ const STUB_SCREENS = {
   'scan-results':   4,
 };
 
-// Per-tab UI state model
-// ─────────────────────
-// Each tab is an independent state container — its current screen is held on
-// the tab DOM element via data-tab-screen, and its label/title reflect that
-// screen. Two tabs on the same screen are still distinct: clicking one only
-// activates that single tab.
+// Per-tab UI state model (Stage 2C Task 7)
+// ─────────────────────────────────────────
+// `tabs.list` holds one record per open tab; `tabs.activeId` names the active
+// one. Each record owns its screen, its folder path, its own back/forward
+// history, and (for the browser screen) the bits of browserState worth
+// restoring — selection, scroll position, view mode. Two tabs on the same
+// screen are still distinct: activating one never touches another.
 //
-//   switchScreen(id)   — change the ACTIVE tab's screen in place. Sidebar
-//                        navigation, keyboard shortcuts, and any other "go to
-//                        screen X" entry point should call this. Tabs do NOT
-//                        switch on their own.
-//   switchToTab(tab)   — user clicked a tab; activate that specific tab and
-//                        restore its screen. Other tabs are deactivated; their
-//                        screen state is preserved on their DOM nodes.
+//   activeTab()          — the active tab's record.
+//   createTab(opts)       — builds a record + DOM element, does NOT activate it.
+//   activateTab(id)       — saves the outgoing tab's live state into its own
+//                          record, then restores the incoming one (re-fetching
+//                          its folder for the browser screen — #list-scroll is
+//                          shared DOM, so switching tabs always repaints it).
+//   switchScreen(id)      — change the ACTIVE tab's screen in place. Sidebar
+//                          navigation, keyboard shortcuts, and any other "go
+//                          to screen X" entry point should call this.
+//   openBrowserAt(path, {tab}) — point a tab (default: the active one) at a
+//                          folder; only fetches immediately if that tab is
+//                          the active one, otherwise just stages the path.
+const tabs = { list: [], activeId: null };
+let _tabIdSeq = 1; // unique id generator (HTML seeds the first tab as tab-1)
+let _closedTabs = []; // stack of full tab records, most-recently-closed last
 
-// NOTE: 'browser' deliberately maps to 'Files' as a last-resort fallback —
-// in practice every browser-tab entry point should pass an explicit label
-// (a folder/drive name) to switchScreen(), so users see "Downloads" or
-// "D:\\" or "Projects" rather than the meta-label "Browser".
+function nextTabId() {
+  _tabIdSeq += 1;
+  return `tab-${_tabIdSeq}`;
+}
+
+function activeTab() {
+  return tabs.list.find(t => t.id === tabs.activeId) || null;
+}
+
+function tabRecordFor(id) {
+  return tabs.list.find(t => t.id === id) || null;
+}
+
+// NOTE: 'browser' has no fixed label here — a browser tab's title always
+// comes from tabLabelFor(path) (computed from the folder itself), never from
+// this map. Non-browser screens still use it as-is.
 const SCREEN_LABELS = {
   home:            'Home',
   browser:         'Files',
@@ -52,17 +72,12 @@ const SCREEN_LABELS = {
 };
 
 const SCREEN_ICONS = {
-  home:    '<svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M1 6.5L7 1l6 5.5V13H9V9H5v4H1V6.5z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>',
-  browser: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M1 4a1 1 0 0 1 1-1h4l1.5 1.5H12a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V4z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>',
+  home: icon('home', 'fp-icon--14'),
 };
-const DEFAULT_TAB_ICON = '<svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><rect x="2" y="2" width="10" height="10" rx="1.5" stroke="currentColor" stroke-width="1.2"/></svg>';
+const DEFAULT_TAB_ICON = icon('file', 'fp-icon--14');
 
 function getScreenLabel(id) { return SCREEN_LABELS[id] || id; }
 function getScreenIcon(id)  { return SCREEN_ICONS[id]  || DEFAULT_TAB_ICON; }
-
-function getActiveTab() {
-  return document.querySelector('.fp-tab.fp-tab--active');
-}
 
 function pathBaseName(p) {
   if (!p) return '';
@@ -71,121 +86,412 @@ function pathBaseName(p) {
   return parts[parts.length - 1] || String(p);
 }
 
-function updateTabAppearance(tab, screenId, labelOverride) {
+/** Tab label for a browser-screen path: 'This PC' for the sandbox root
+ * (loadDirectory(null)'s target — never a folder name), the bare drive
+ * letter for a drive root ('D:'), the folder's basename otherwise. (A Home
+ * tab's label comes from createTab's own 'Home' default, not from here —
+ * this only ever runs for the browser screen, from onNavigated().) */
+function tabLabelFor(path) {
+  if (!path) return 'This PC';
+  const norm = String(path).replace(/[\\/]+$/, '');
+  if (/^[A-Za-z]:$/.test(norm)) return norm.toUpperCase();
+  return pathBaseName(norm) || 'This PC';
+}
+
+/** 'Seagate Barracuda 4tb HDD (D:)' from the cached /drives list
+ * (window.__fpDrives, populated by loadDrives()) — 'Local Disk (D:)' when the
+ * drive has no label, or the bare letter when the drive isn't in the cache
+ * yet (e.g. a breadcrumb painted before loadDrives() has resolved). */
+function driveDisplayLabel(letter) {
+  const norm = String(letter || '').replace(/[\\/]+$/, '').toUpperCase();
+  const drives = window.__fpDrives || [];
+  const d = drives.find(x => String(x.letter || '').replace(/[\\/]+$/, '').toUpperCase() === norm);
+  if (!d) return norm;
+  const label = (d.label || '').trim();
+  return label ? `${label} (${norm})` : `Local Disk (${norm})`;
+}
+
+/** Tab element icon: home for the Home screen, a drive glyph for a browser
+ * tab sitting at a drive root, a plain folder for every other browser tab,
+ * and the screen's own icon (falling back to a generic file glyph) for
+ * anything else. */
+function tabIconFor(record) {
+  if (record.screen === 'browser') {
+    const norm = String(record.path || '').replace(/[\\/]+$/, '');
+    return /^[A-Za-z]:$/.test(norm) ? icon('drive', 'fp-icon--14') : icon('folder', 'fp-icon--14');
+  }
+  return getScreenIcon(record.screen);
+}
+
+/** Syncs one tab's DOM element (icon, label, title) to its record. Never
+ * touches active/aria-selected state — that belongs solely to activateTab(). */
+function updateTabElementAppearance(record) {
+  const el = document.querySelector(`.fp-tab[data-tab-id="${record.id}"]`);
+  if (!el) return;
+  const labelEl = el.querySelector('.fp-tab__label');
+  if (labelEl) labelEl.textContent = record.label;
+  const firstSvg = el.querySelector(':scope > svg');
+  if (firstSvg) firstSvg.outerHTML = tabIconFor(record);
+  el.setAttribute('title', record.label);
+}
+
+function buildTabHtml(record) {
+  // Close affordance is a <span role="button">, NOT a nested <button> —
+  // nesting buttons is invalid HTML and Chromium silently splits the inner
+  // one out as a sibling (see index.html's seed-tab comment for the fallout).
+  return `${tabIconFor(record)}<span class="fp-tab__label">${escapeHtml(record.label)}</span><span class="fp-tab__close" role="button" data-action="close-tab" title="Close tab" tabindex="-1" aria-label="Close tab">${icon('close', 'fp-icon--10')}</span>`;
+}
+
+function createTabElement(record) {
+  const el = document.createElement('div');
+  el.className = 'fp-tab';
+  el.setAttribute('role', 'tab');
+  el.setAttribute('aria-selected', 'false');
+  el.setAttribute('data-tab-id', record.id);
+  el.setAttribute('data-action', 'switch-tab');
+  el.setAttribute('title', record.label);
+  el.setAttribute('draggable', 'true');
+  el.innerHTML = buildTabHtml(record);
+  return el;
+}
+
+/** Builds a tab record + DOM element and inserts it into the tab strip.
+ * Does NOT activate it — callers that want the new tab visible call
+ * activateTab(record.id) themselves. */
+function createTab({ screen = 'home', path = null, history = [], historyIndex = -1, label = 'Home' } = {}) {
+  const record = {
+    id: nextTabId(),
+    screen, label, path,
+    history: history.slice(),
+    historyIndex,
+    view: null,
+    scrollTop: 0,
+    selection: [],
+    // Task 14: this tab's own search (chips + text + the rendered results),
+    // or null when it is showing a plain folder listing. Captured on every
+    // deactivation and repainted on reactivation, so switching tabs and back
+    // keeps the results without re-walking the tree.
+    search: null,
+  };
+  tabs.list.push(record);
+  const el = createTabElement(record);
+  const tabbar = document.getElementById('tabbar');
+  const newTabBtn = document.getElementById('btn-new-tab');
+  if (tabbar) tabbar.insertBefore(el, newTabBtn);
+  initTabDrag(el);
+  return record;
+}
+
+/** Copies the live browserState/nav into the currently active tab's own
+ * record — the record is the only place that state lives once this tab
+ * stops being active (switched away from, closed, or duplicated). */
+function syncActiveTabRecord() {
+  const tab = activeTab();
   if (!tab) return;
-  const label = labelOverride || getScreenLabel(screenId);
-  const labelEl = tab.querySelector('.fp-tab__label');
-  if (labelEl) labelEl.textContent = label;
-  // Replace the leading <svg> icon (first child) with the screen's icon.
-  const firstSvg = tab.querySelector(':scope > svg');
-  if (firstSvg) firstSvg.outerHTML = getScreenIcon(screenId);
-  tab.setAttribute('title', label);
+  tab.path = browserState.path;
+  tab.view = browserState.view;
+  tab.selection = [...browserState.selection];
+  tab.historyIndex = nav.index;
+  // The live search bar + its results, or null when this tab is showing a
+  // plain listing (search.js's captureSearchState).
+  tab.search = typeof captureSearchState === 'function' ? captureSearchState() : null;
+  const listScroll = document.getElementById('list-scroll');
+  if (listScroll) tab.scrollTop = listScroll.scrollTop;
 }
 
-// Called whenever the active tab's path changes — keeps the tab title in
-// sync with the current folder so each tab's label reflects its real state.
-function syncActiveTabPath(path) {
-  const active = getActiveTab();
-  if (!active || active.dataset.tabScreen !== 'browser') return;
-  const folderName = pathBaseName(path) || getScreenLabel('browser');
-  updateTabAppearance(active, 'browser', folderName);
+/** Activates tab `id`: saves the outgoing tab's live state into its own
+ * record, swaps browser.js's nav accessor over to the incoming tab's own
+ * history (by reference), and restores the incoming tab — re-fetching its
+ * folder for the browser screen, since #list-scroll is DOM shared by every
+ * tab and has to be repainted on every switch either way. */
+function activateTab(id) {
+  const incoming = tabRecordFor(id);
+  if (!incoming || incoming.id === tabs.activeId) return;
+
+  if (tabs.activeId) syncActiveTabRecord();
+  // The outgoing tab stops fetching the moment it stops being visible; its
+  // chips and text are already on its record (syncActiveTabRecord above) and
+  // re-run below if no results had landed yet.
+  if (typeof abortSearch === 'function') abortSearch();
+
+  tabs.activeId = id;
+  document.querySelectorAll('.fp-tab').forEach(t => {
+    const isActive = t.dataset.tabId === id;
+    t.classList.toggle('fp-tab--active', isActive);
+    t.setAttribute('aria-selected', isActive ? 'true' : 'false');
+  });
+
+  nav.history = incoming.history;
+  nav.index = incoming.historyIndex;
+
+  if (incoming.screen === 'browser' && incoming.search && incoming.search.results
+      && typeof restoreSearchResultsForTab === 'function') {
+    // This tab was showing search results: repaint them from the tab's own
+    // snapshot rather than re-running the walk. browserState.path stays the
+    // folder the tab was in before the search, which is where the breadcrumb's
+    // × (exitSearchResults) returns to.
+    showScreenDom('browser');
+    browserState.path = incoming.path;
+    browserState.parent = null;
+    browserState.isRoot = false;
+    // Apply the INCOMING tab's own view/scale before repainting its results —
+    // otherwise renderDirectory() (called from inside restoreSearchResultsForTab
+    // → renderSearchResults) paints them with whatever view/scale the OUTGOING
+    // tab left behind (e.g. a grid Pictures tab making another tab's results
+    // render as tiles). Mirrors the listing branch's restore.view handling below.
+    const cfg = window.__fpConfig || {};
+    const cfgView = ['details', 'list', 'grid'].includes(cfg['ui.view_mode']) ? cfg['ui.view_mode'] : 'details';
+    if (typeof setViewMode === 'function') setViewMode(incoming.view || cfgView);
+    if (typeof setListScale === 'function' && typeof LIST_SCALE_STEPS !== 'undefined') {
+      const cfgScale = LIST_SCALE_STEPS.includes(cfg['ui.list_scale']) ? cfg['ui.list_scale'] : 1;
+      setListScale(cfgScale, { persist: false });
+    }
+    restoreSearchResultsForTab(incoming.search);
+    updateSidebarActive(incoming.path);
+    refreshNavButtons();
+  } else if (incoming.screen === 'browser') {
+    showScreenDom('browser');
+    if (typeof searchResetBar === 'function') searchResetBar();
+    const loaded = loadDirectory(incoming.path, {
+      // Empty history means this tab was staged in the background (openBrowserAt
+      // on an inactive tab) and is only now getting its first real fetch — treat
+      // that as a real navigation (push it) rather than a pure restore.
+      addToHistory: incoming.history.length === 0,
+      restore: { scrollTop: incoming.scrollTop, selection: incoming.selection, view: incoming.view },
+    });
+    // A search this tab had typed but not finished (its request was aborted
+    // when it was switched away) re-runs once the folder listing underneath it
+    // has landed — running the two concurrently would let the listing paint
+    // over the results.
+    if (incoming.search && typeof resumeSearchForTab === 'function') {
+      Promise.resolve(loaded).then(() => resumeSearchForTab(incoming.search, incoming.id));
+    }
+  } else {
+    showScreenDom(incoming.screen);
+    updateSidebarActive(incoming.screen);
+  }
+  updateTabElementAppearance(incoming);
 }
 
-// Load a screen's DOM into view (no tab-state changes — caller owns those).
+// Load a screen's DOM into view (no tab-state changes, no data fetch —
+// callers own both; the browser screen's own auto-load-root fallback lives
+// in switchScreen(), the one caller that can tell "never loaded" from "just
+// showing what's already in #list-scroll" apart).
 function showScreenDom(id) {
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
   const target = document.getElementById(`screen-${id}`);
   if (target) target.classList.add('active');
-  if (id === 'browser' && navHistory.stack.length === 0) {
-    loadDirectory(null);
-  }
   if (id === 'home') {
     loadRecent();
     loadFavorites();
   }
-  sessionStorage.setItem('fp-active-screen', id);
-  updateSidebarActive();
 }
 
 function switchScreen(id, labelOverride) {
   // Mutate the ACTIVE tab's screen state — never switch tabs from here.
-  // labelOverride lets callers pin the tab title to a meaningful string
-  // (e.g. the folder/drive name) so browser tabs don't briefly read "Files".
-  const active = getActiveTab();
-  if (active) {
-    active.dataset.tabScreen = id;
-    updateTabAppearance(active, id, labelOverride);
-  }
-  showScreenDom(id);
-}
-
-// Shared by the 'navigate-path' dispatch case and the sidebar pin's "Open in
-// new tab" context-menu action: pre-seed navHistory before switching to the
-// browser screen, so showScreenDom's automatic loadDirectory(null) (sandbox
-// root, fired when navHistory.stack is still empty) can never race this
-// call's own explicit loadDirectory(path) for a real target path. Extracted
-// so the guard can't be forgotten by a future third caller.
-function openBrowserAt(path, label) {
-  if (path && navHistory.stack.length === 0) navHistory.stack.push(null);
-  switchScreen('browser', label);
-  if (path) return loadDirectory(path);
-}
-
-function switchToTab(tab) {
+  const tab = activeTab();
   if (!tab) return;
-  document.querySelectorAll('.fp-tab').forEach(t => {
-    const isActive = t === tab;
-    t.classList.toggle('fp-tab--active', isActive);
-    t.setAttribute('aria-selected', isActive ? 'true' : 'false');
+  tab.screen = id;
+  if (id === 'browser') {
+    if (tab.path === null) {
+      // This tab has never shown Browser before — load the sandbox root,
+      // same fallback the old global navHistory-empty check used to give.
+      showScreenDom('browser');
+      loadDirectory(null);
+    } else {
+      // Already has a folder loaded, still sitting in #list-scroll from
+      // earlier in this tab's life (screens are hidden, not torn down) — just
+      // reveal it, no re-fetch.
+      tab.label = labelOverride || tabLabelFor(tab.path);
+      updateTabElementAppearance(tab);
+      showScreenDom('browser');
+      updateSidebarActive(tab.path);
+    }
+    return;
+  }
+  tab.label = labelOverride || getScreenLabel(id);
+  updateTabElementAppearance(tab);
+  showScreenDom(id);
+  updateSidebarActive(id);
+}
+
+/**
+ * Points tab `opts.tab` (default: the active tab) at `path`. If that tab is
+ * the active one, switches to the Browser screen and loads it now (through
+ * loadDirectory()/onNavigated(), which set the label/sidebar/breadcrumb
+ * synchronously before the fetch). Otherwise just stages screen/path/label
+ * on the (inactive) tab's own record — activateTab() does the real fetch
+ * once the user actually switches to it, so a background tab is never
+ * loaded before it's seen.
+ */
+function openBrowserAt(path, { tab } = {}) {
+  const target = tab || activeTab();
+  if (!target) return;
+  if (target.id !== tabs.activeId) {
+    target.screen = 'browser';
+    target.path = path ?? null;
+    target.label = tabLabelFor(target.path);
+    updateTabElementAppearance(target);
+    return Promise.resolve();
+  }
+  showScreenDom('browser');
+  return loadDirectory(path);
+}
+
+function openNewTab() {
+  const record = createTab({ screen: 'home', label: 'Home' });
+  activateTab(record.id);
+  showSnackbar('New tab opened', null, null);
+  return record;
+}
+
+/** Closes tab `id`. Closing the last remaining tab opens a fresh Home tab
+ * instead of quitting the app. Every closed record (full state included)
+ * goes onto the _closedTabs stack for reopenLastTab(). */
+function closeTabById(id) {
+  const idx = tabs.list.findIndex(t => t.id === id);
+  if (idx === -1) return;
+  if (id === tabs.activeId) syncActiveTabRecord();
+  const record = tabs.list[idx];
+  const el = document.querySelector(`.fp-tab[data-tab-id="${id}"]`);
+  const wasActive = tabs.activeId === id;
+  // Neighbor is read off the DOM (not tabs.list's order, which drag-reorder
+  // never touches) so the fallback active tab always matches what the user
+  // actually sees next to the one they closed.
+  const prevEl = el?.previousElementSibling;
+  const nextEl = el?.nextElementSibling;
+  const neighborEl = (prevEl && prevEl.classList.contains('fp-tab')) ? prevEl
+                    : (nextEl && nextEl.classList.contains('fp-tab')) ? nextEl : null;
+
+  tabs.list.splice(idx, 1);
+  el?.remove();
+  _closedTabs.push(record);
+
+  if (tabs.list.length === 0) {
+    const fresh = createTab({ screen: 'home', label: 'Home' });
+    activateTab(fresh.id);
+  } else if (wasActive) {
+    activateTab(neighborEl ? neighborEl.dataset.tabId : tabs.list[0].id);
+  }
+  showSnackbar('Tab closed · Ctrl+Shift+T to reopen', null, null);
+}
+
+// Backwards compat — the Ctrl+W keyboard shortcut calls this name.
+function closeCurrentTab() {
+  const tab = activeTab();
+  if (tab) closeTabById(tab.id);
+}
+
+function reopenLastTab() {
+  if (!_closedTabs.length) { showToast('No recently closed tabs', 'warn'); return; }
+  const record = _closedTabs.pop();
+  const restored = createTab({
+    screen: record.screen,
+    path: record.path,
+    history: record.history,
+    historyIndex: record.historyIndex,
+    label: record.label,
   });
-  showScreenDom(tab.dataset.tabScreen || 'home');
+  restored.view = record.view;
+  restored.scrollTop = record.scrollTop;
+  restored.selection = record.selection;
+  activateTab(restored.id);
+}
+
+function duplicateTab(id) {
+  const source = tabRecordFor(id);
+  if (!source) return;
+  if (source.id === tabs.activeId) syncActiveTabRecord();
+  const sourceEl = document.querySelector(`.fp-tab[data-tab-id="${id}"]`);
+  const copy = createTab({
+    screen: source.screen,
+    path: source.path,
+    history: source.history.slice(),
+    historyIndex: source.historyIndex,
+    label: source.label,
+  });
+  copy.view = source.view;
+  copy.selection = source.selection.slice();
+  copy.scrollTop = source.scrollTop;
+  // Place the duplicate right after its source, matching a browser's
+  // "Duplicate tab" placement, instead of at the end of the strip.
+  const copyEl = document.querySelector(`.fp-tab[data-tab-id="${copy.id}"]`);
+  if (sourceEl && copyEl) sourceEl.insertAdjacentElement('afterend', copyEl);
+  activateTab(copy.id);
+}
+
+function closeOtherTabs(id) {
+  if (!tabRecordFor(id)) return;
+  if (tabs.activeId !== id) activateTab(id);
+  [...tabs.list].forEach(t => { if (t.id !== id) closeTabById(t.id); });
+}
+
+/** Registers the statically-authored seed tab (index.html's tab-1) into the
+ * tabs model at boot — every other tab is created through createTab(). */
+function seedInitialTab() {
+  const el = document.querySelector('.fp-tab[data-tab-id]');
+  const id = el ? el.dataset.tabId : 'tab-1';
+  const record = { id, screen: 'home', label: 'Home', path: null, history: [], historyIndex: -1, view: null, scrollTop: 0, selection: [], search: null };
+  tabs.list.push(record);
+  tabs.activeId = id;
+  nav.history = record.history;
+  nav.index = record.historyIndex;
+}
+
+/**
+ * Runs synchronously at the START of loadDirectory(), before the network
+ * fetch — updates everything derivable from the path STRING alone (tab
+ * label/icon, sidebar highlight, breadcrumb) so none of it waits on the
+ * network, and none of it gets rewritten a second time once the fetch
+ * resolves (the old syncActiveTabPath()/data-manual-active flash). Only ever
+ * called from inside loadDirectory() — never at module load time.
+ */
+function onNavigated(path) {
+  const tab = activeTab();
+  if (tab) {
+    tab.screen = 'browser';
+    tab.label = tabLabelFor(path);
+    updateTabElementAppearance(tab);
+  }
+  updateSidebarActive(path);
+  if (path) updateBreadcrumb(path);
 }
 
 // ── Sidebar active-state machinery ────────────────────────────────────────────
-// Exactly ONE sidebar item carries --active at any time.
+// Exactly ONE sidebar item carries --active at any time — this is the single
+// place that decides which one, called synchronously from onNavigated() (a
+// browser-screen path, including null for the sandbox root) and from
+// activateTab()/switchScreen() (a non-browser screen id). No other code
+// touches .fp-sidebar__item--active.
 //
 // Two modes:
-//   Screen-only items  — active when data-screen matches the current screen
-//                        AND they have no data-path (they are not path-bound).
-//   Path-bound items   — active when the current screen is "browser" AND their
-//                        data-path is the longest prefix of the current nav path.
-//
-// All --active classes are cleared first so only one item can be set.
-function updateSidebarActive() {
+//   Screen-only items  — active when data-screen matches pathOrScreen AND
+//                        they have no data-path (they are not path-bound).
+//   Path-bound items   — active when pathOrScreen is a real path and their
+//                        data-path is its longest matching prefix.
+function updateSidebarActive(pathOrScreen) {
   const items = document.querySelectorAll('.fp-sidebar__item');
-  const screen = sessionStorage.getItem('fp-active-screen') || 'home';
+  items.forEach(it => {
+    it.classList.remove('fp-sidebar__item--active');
+    it.classList.remove('active');
+  });
 
-  if (screen !== 'browser') {
-    // Screen-based: clear all (including manual-active flag) then highlight the current screen item.
+  const isKnownScreen = typeof pathOrScreen === 'string'
+    && pathOrScreen !== 'browser'
+    && Object.prototype.hasOwnProperty.call(SCREEN_LABELS, pathOrScreen);
+  if (isKnownScreen) {
     items.forEach(it => {
-      it.classList.remove('fp-sidebar__item--active');
-      it.classList.remove('active');
-      it.removeAttribute('data-manual-active');
-    });
-    items.forEach(it => {
-      if (it.dataset.screen === screen && !it.dataset.path) {
+      if (it.dataset.screen === pathOrScreen && !it.dataset.path) {
         it.classList.add('fp-sidebar__item--active');
       }
     });
     return;
   }
 
-  // Browser screen: highlight the path-bound item that is the longest prefix of currentPath.
-  // If data-manual-active is set (from a recent navigate-path click), it stays
-  // until a real path is loaded and prefix-matching runs below.
-  const currentPath = (navHistory.stack[navHistory.idx] || '').toLowerCase();
-  // If we have no real path yet, keep the manual click-active state (if any).
-  if (!currentPath) {
-    // Nothing loaded yet — manual active (if set) remains; nothing else to do.
-    return;
-  }
-
-  // We have a real path — clear manual flag and re-match by path prefix.
-  items.forEach(it => {
-    it.classList.remove('fp-sidebar__item--active');
-    it.classList.remove('active');
-    it.removeAttribute('data-manual-active');
-  });
+  // A real filesystem path (or null/'' for the sandbox root, which has no
+  // sidebar entry to highlight) — match the longest data-path prefix.
+  const currentPath = String(pathOrScreen || '').toLowerCase();
+  if (!currentPath) return;
 
   let bestMatch = null;
   let bestMatchLen = 0;
@@ -355,184 +661,50 @@ function initDeviceName() {
   });
 }
 
-// ── Responsive toolbar search ─────────────────────────────────────────────────
-// Continuous-resize model: search bar is as wide as possible up to MAX. As the
-// breadcrumb (which has flex:1) grows, search shrinks to make room. Below the
-// short-placeholder threshold we swap the placeholder to "Search…". Below the
-// icon threshold we collapse to the magnifier icon. When room reappears, we
-// re-expand smoothly. The cave fade tracks actual breadcrumb overflow only.
-const SEARCH_MAX_WIDTH                  = 220; // px; expanded full width
-const SEARCH_MIN_FULL_PLACEHOLDER       = 170; // px; below this, swap to short placeholder "Search…"
-const SEARCH_MIN_SHORT_PLACEHOLDER      = 110; // px; below this, collapse to icon
-const SEARCH_ICON_WIDTH                 = 28;  // px; collapsed icon width
-const SEARCH_RESIZE_DEAD_ZONE           = 0;   // px; pixel-for-pixel response
+// ── Toolbar layout ─────────────────────────────────────────────────
+// The old JS resize model (initToolbarResponsive: a ResizeObserver +
+// MutationObserver pair that measured the breadcrumb every frame and wrote a
+// pixel width onto the search bar, collapsing it to an icon below a threshold)
+// is gone — Task 14's layout is pure CSS (styles.css §7/§9/§10, design §8.3):
+// #breadcrumb-wrap flexes and is right-anchored with a leading mask fade, and
+// #search-wrap grows with its own content (field-sizing: content, with
+// search.js's measuring-span fallback) up to 60% of the toolbar. Nothing has
+// to run per frame, and the search bar no longer collapses into a button that
+// opened the palette instead of searching.
 
-const PLACEHOLDER_FULL  = 'Search files…';
-const PLACEHOLDER_SHORT = 'Search…';
+// The toolbar stays on one line at every width: the breadcrumb yields its
+// space first (it can shrink to nothing under its fade), then the search bar
+// folds into a single magnifier button, and the nav/View/Sort/Inspector/Theme
+// buttons never move. The only thing JS decides is WHEN that fold happens —
+// once per resize, never per frame.
+const TOOLBAR_SEARCH_MIN = 140;  // px the expanded search bar wants
+const TOOLBAR_PATH_MIN   = 120;  // px the breadcrumb wants before the bar folds
 
-function initToolbarResponsive() {
-  const toolbar    = document.querySelector('.fp-toolbar');
-  const breadcrumb = document.getElementById('breadcrumb');
-  const searchWrap = document.getElementById('search-wrap');
-  const input      = document.getElementById('search-input');
-  if (!toolbar || !breadcrumb || !searchWrap) return;
+function initToolbarNarrowMode() {
+  const toolbar = document.getElementById('toolbar');
+  if (!toolbar || typeof ResizeObserver === 'undefined') return;
 
-  let moRafId = null;
-  let lastAppliedWidth = SEARCH_MAX_WIDTH;
-  let lastAppliedState = 'full'; // 'full' | 'short' | 'icon'
-  let iconEnteredAt = 0;          // performance.now() when state became 'icon'
-  let caveDelayTimer = null;      // pending setTimeout for deferred cave-show
-  const CAVE_REVEAL_DELAY_MS = 10;
-
-  function applyContinuous(width, state) {
-    // Track entry into icon state for the cave-reveal delay.
-    if (state === 'icon' && lastAppliedState !== 'icon') {
-      iconEnteredAt = performance.now();
-    }
-    if (state === 'icon') {
-      searchWrap.classList.add('fp-toolbar__search--icon');
-      searchWrap.style.width = '';
-      // Icon state: breadcrumb may be pushed into the cave. Allow it to shrink
-      // (basis:0, shrink:1) so it claims remaining space and overflow-scrolls.
-      breadcrumb.style.flex = '1 1 0';
-      breadcrumb.style.minWidth = '0';
-    } else {
-      searchWrap.classList.remove('fp-toolbar__search--icon');
-      searchWrap.style.width = width + 'px';
-      // Non-icon: PIN breadcrumb at its natural content width. shrink:0 means
-      // flex layout will NOT clip the path; grow:1 still lets it absorb empty
-      // space when the toolbar is wider than needed. Search absorbs all the
-      // shrink as the toolbar narrows — the path stays put until search has
-      // collapsed to the icon.
-      breadcrumb.style.flex = '1 0 auto';
-      breadcrumb.style.minWidth = '';
-      if (input) {
-        const desired = state === 'full' ? PLACEHOLDER_FULL : PLACEHOLDER_SHORT;
-        if (input.placeholder !== desired) input.placeholder = desired;
-      }
-    }
-    lastAppliedWidth = width;
-    lastAppliedState = state;
-  }
-
-  function actualRecalc() {
-    // Compute the toolbar's available width MINUS every fixed-width child
-    // (back/forward/up nav, view toggle, inspector toggle, theme toggle) MINUS
-    // breadcrumb's NATURAL desired width. The remainder is what search can claim.
-    //
-    // CRITICAL: breadcrumb.scrollWidth is NOT a reliable "natural width" — when
-    // content fits inside the breadcrumb container, scrollWidth == clientWidth
-    // (the full allocated flex space). To get the true natural desired width,
-    // sum the breadcrumb's children's actual rendered widths plus the gaps.
-    const breadcrumbStyle = getComputedStyle(breadcrumb);
-    const bcGap           = parseFloat(breadcrumbStyle.gap || 0);
-    let breadcrumbNatural = 0;
-    let bcVisibleChildren = 0;
-    for (const child of breadcrumb.children) {
-      const w = child.getBoundingClientRect().width;
-      if (w > 0) {
-        breadcrumbNatural += w;
-        bcVisibleChildren++;
-      }
-    }
-    if (bcVisibleChildren > 1) breadcrumbNatural += bcGap * (bcVisibleChildren - 1);
-
-    const toolbarStyle   = getComputedStyle(toolbar);
-    const toolbarPadding = parseFloat(toolbarStyle.paddingLeft || 0) + parseFloat(toolbarStyle.paddingRight || 0);
-    const toolbarGap     = parseFloat(toolbarStyle.gap || 0);
-
-    let otherWidths = 0;
-    let visibleChildren = 0;
+  function recalc() {
+    const style = getComputedStyle(toolbar);
+    const gap = parseFloat(style.gap) || 0;
+    let fixed = 0;
+    let visible = 0;
     for (const child of toolbar.children) {
-      if (child === searchWrap || child === breadcrumb) continue;
-      const r = child.getBoundingClientRect();
-      if (r.width > 0) {
-        otherWidths += r.width;
-        visibleChildren++;
-      }
+      const width = child.getBoundingClientRect().width;
+      if (width === 0) continue;
+      visible++;
+      // The two flexible children are excluded so the measurement cannot
+      // change as a result of the mode it decides — no oscillation.
+      if (child.id === 'search-wrap' || child.id === 'breadcrumb-wrap') continue;
+      fixed += width;
     }
-    // Total gaps in toolbar = (visibleChildren + 2 [search + breadcrumb]) - 1
-    const totalGaps = toolbarGap * Math.max(0, (visibleChildren + 2) - 1);
-
-    const availableForSearch = toolbar.clientWidth - toolbarPadding - otherWidths - totalGaps - breadcrumbNatural;
-
-    let targetWidth, targetState;
-    if (availableForSearch >= SEARCH_MIN_SHORT_PLACEHOLDER) {
-      targetWidth = Math.min(SEARCH_MAX_WIDTH, Math.max(SEARCH_MIN_SHORT_PLACEHOLDER, availableForSearch));
-      targetState = targetWidth >= SEARCH_MIN_FULL_PLACEHOLDER ? 'full' : 'short';
-    } else {
-      targetWidth = SEARCH_ICON_WIDTH;
-      targetState = 'icon';
-    }
-
-    // Pixel-for-pixel: apply if width or state changed at all
-    const widthChanged = targetWidth !== lastAppliedWidth;
-    const stateChanged = targetState !== lastAppliedState;
-    if (widthChanged || stateChanged) {
-      applyContinuous(targetWidth, targetState);
-    }
-
-    // Cave fade only appears when search has collapsed to the icon AND a short
-    // delay has passed since the collapse — the delay prevents same-frame
-    // visual coupling between the search shrinking and the cave appearing.
-    // Until both conditions are met, the breadcrumb is pinned and cannot show
-    // a cave. The path is only "pushed back" once the search has nowhere
-    // left to give AND the eye has registered the collapse.
-    const bcOverflow = breadcrumb.scrollWidth - breadcrumb.clientWidth;
-    const isIcon = lastAppliedState === 'icon';
-    const elapsed = isIcon ? performance.now() - iconEnteredAt : 0;
-    const delayPassed = elapsed >= CAVE_REVEAL_DELAY_MS;
-    const showCave = isIcon && delayPassed && (bcOverflow > 1);
-
-    breadcrumb.classList.toggle('fp-breadcrumb--scroll', showCave);
-    if (showCave) {
-      breadcrumb.scrollLeft = breadcrumb.scrollWidth;
-    }
-
-    // If we're in icon state and would show the cave but the delay hasn't
-    // elapsed yet, schedule a deferred recalc so the cave appears right after
-    // the delay window closes.
-    if (isIcon && !delayPassed && (bcOverflow > 1)) {
-      if (caveDelayTimer === null) {
-        const remaining = Math.max(0, CAVE_REVEAL_DELAY_MS - elapsed) + 1;
-        caveDelayTimer = setTimeout(() => {
-          caveDelayTimer = null;
-          actualRecalc();
-        }, remaining);
-      }
-    } else if (caveDelayTimer !== null && !isIcon) {
-      // Left icon state during the delay window — cancel the deferred reveal.
-      clearTimeout(caveDelayTimer);
-      caveDelayTimer = null;
-    }
+    const padding = (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0);
+    const available = toolbar.clientWidth - padding - gap * Math.max(0, visible - 1);
+    toolbar.toggleAttribute('data-narrow', available < fixed + TOOLBAR_SEARCH_MIN + TOOLBAR_PATH_MIN);
   }
 
-  // ResizeObserver fires post-layout, pre-paint — call actualRecalc directly
-  // (no rAF wrap) so the search width updates in the SAME frame as the toolbar
-  // resize. Wrapping in rAF would push the update to the NEXT frame, which the
-  // user perceives as "smoothing" / lag during fast drags.
-  const ro = new ResizeObserver(() => actualRecalc());
-  ro.observe(toolbar);
-
-  // MutationObserver can fire synchronously many times (e.g. breadcrumb rebuilds);
-  // coalesce those into one rAF to avoid layout thrashing.
-  function moRecalc() {
-    if (moRafId !== null) return;
-    moRafId = requestAnimationFrame(() => { moRafId = null; actualRecalc(); });
-  }
-  const mo = new MutationObserver(moRecalc);
-  mo.observe(breadcrumb, { childList: true, characterData: true, subtree: true });
-
-  // Click on collapsed icon → open command palette (do NOT expand inline).
-  searchWrap.addEventListener('click', e => {
-    if (searchWrap.classList.contains('fp-toolbar__search--icon')) {
-      e.preventDefault();
-      e.stopPropagation();
-      if (typeof openPalette === 'function') openPalette();
-    }
-  }, true /* capture */);
-
-  actualRecalc();
+  new ResizeObserver(recalc).observe(toolbar);
+  recalc();
 }
 
 // ── Command palette ───────────────────────────────���──────────────────────��─────
@@ -548,24 +720,17 @@ function closePalette() {
   if (!paletteScrim) return;
   paletteScrim.style.display = 'none';
   paletteScrim.setAttribute('aria-hidden', 'true');
-  clearTimeout(_paletteSearchTimer);
-  _paletteSearchSeq++; // invalidate any in-flight search response
 }
 
-// ── Palette search mode (A.11.1 / Task 6) ─────────────────────────────────
-// Below the 2-char threshold (including empty), the static Commands group is
-// shown and search results are cleared. At 2+ chars, input is debounced
-// 150ms then GET /search?q=&limit=30 fires; results replace the Commands
-// group until the query drops back below the threshold.
-const PALETTE_FILE_ICON = `<svg width="14" height="14" viewBox="0 0 14 14" fill="none" style="flex-shrink:0;color:var(--text-secondary)"><rect x="2" y="1" width="8" height="11" rx="1" fill="var(--bg-raised)" stroke="currentColor" stroke-width="1.1"/><path d="M10 1v3h3" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round"/><path d="M4 6h6M4 8h4" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/></svg>`;
-const PALETTE_FOLDER_ICON = `<svg width="14" height="14" viewBox="0 0 14 14" fill="none" style="flex-shrink:0;color:var(--text-secondary)"><path d="M1 3.5a1 1 0 0 1 1-1h3l1 1.5H12a1 1 0 0 1 1 1V10a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V3.5z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>`;
-const PALETTE_MIN_CHARS = 2;
-const PALETTE_DEBOUNCE_MS = 150;
-let _paletteSearchTimer = null;
-let _paletteSearchSeq = 0;
+// ── Palette → toolbar search (Task 14, design §8.5) ────────────────────
+// The palette no longer runs its own GET /search: one search code path, and
+// it is the toolbar bar. Typing at least one character puts a single command
+// at the top of the list — "Search files for '<text>'" — which hands the text
+// to search.js and shows the results in the Browser like any other search.
+const PALETTE_MIN_CHARS = 1;
 
 /** Every visible (not display:none-ancestor'd), non-disabled palette item —
- * whichever group (Commands or search results) is currently shown. */
+ * whichever group (the search command or Commands) is currently shown. */
 function paletteVisibleItems() {
   return [...document.querySelectorAll('#palette-search-pane .fp-palette__item:not([disabled])')]
     .filter(el => el.offsetParent !== null);
@@ -578,8 +743,6 @@ function paletteSelectFirst() {
 }
 
 function paletteResetToCommands() {
-  clearTimeout(_paletteSearchTimer);
-  _paletteSearchSeq++; // invalidate any in-flight search response
   const resultsEl = document.getElementById('palette-search-results');
   const commandsEl = document.getElementById('palette-commands');
   if (resultsEl) resultsEl.innerHTML = '';
@@ -587,62 +750,20 @@ function paletteResetToCommands() {
   paletteSelectFirst();
 }
 
-async function runPaletteSearch(q) {
-  const seq = ++_paletteSearchSeq;
-  const resultsEl = document.getElementById('palette-search-results');
-  if (!resultsEl) return;
-  let hits = [];
-  try {
-    hits = await API.get('/search', { q, limit: 30 });
-  } catch (err) {
-    hits = [];
-  }
-  if (seq !== _paletteSearchSeq) return; // a newer query has since superseded this response
-
-  if (!hits || hits.length === 0) {
-    resultsEl.innerHTML = `<button class="fp-palette__item" role="option" disabled aria-disabled="true">
-      <span>No matches in the index — index folders from the sidebar (right-click a folder → Index for search)</span>
-    </button>`;
-    return;
-  }
-
-  const fileItems = hits.map(hit => `
-    <button class="fp-palette__item" role="option" data-action="palette-open-file" data-path="${escapeHtml(hit.path)}">
-      ${PALETTE_FILE_ICON}
-      <span>${escapeHtml(hit.filename)}</span>
-      <span class="fp-palette__item-meta fp-mono">${escapeHtml(parentOfPath(hit.path))}</span>
-    </button>`).join('');
-
-  // One folder item per distinct parent of the first 5 hits.
-  const seenParents = new Set();
-  const folderItems = [];
-  for (const hit of hits.slice(0, 5)) {
-    const parent = parentOfPath(hit.path);
-    if (seenParents.has(parent)) continue;
-    seenParents.add(parent);
-    folderItems.push(`
-      <button class="fp-palette__item" role="option" data-action="palette-open-folder" data-path="${escapeHtml(parent)}">
-        ${PALETTE_FOLDER_ICON}
-        <span>Open folder ${escapeHtml(pathBaseName(parent))}</span>
-        <span class="fp-palette__item-meta fp-mono">${escapeHtml(parent)}</span>
-      </button>`);
-  }
-
-  resultsEl.innerHTML = `<div class="fp-palette__section">Files</div>${fileItems}`
-    + (folderItems.length ? `<div class="fp-palette__section">Folders</div>${folderItems.join('')}` : '');
-  paletteSelectFirst();
-}
-
 paletteInput?.addEventListener('input', () => {
   const q = paletteInput.value.trim();
-  clearTimeout(_paletteSearchTimer);
+  const resultsEl = document.getElementById('palette-search-results');
+  if (!resultsEl) return;
   if (q.length < PALETTE_MIN_CHARS) {
     paletteResetToCommands();
     return;
   }
-  const commandsEl = document.getElementById('palette-commands');
-  if (commandsEl) commandsEl.style.display = 'none';
-  _paletteSearchTimer = setTimeout(() => runPaletteSearch(q), PALETTE_DEBOUNCE_MS);
+  resultsEl.innerHTML = `<button class="fp-palette__item" role="option"
+      data-action="palette-search-files" data-query="${escapeHtml(q)}">
+      ${icon('search', 'fp-icon--14 fp-palette__item-icon')}
+      <span>Search files for “${escapeHtml(q)}”</span>
+    </button>`;
+  paletteSelectFirst();
 });
 
 paletteInput?.addEventListener('keydown', e => {
@@ -704,6 +825,47 @@ function closeTagCanvas() {
   scrim.setAttribute('aria-hidden', 'true');
 }
 
+// ── Ask File+ (Task 15, design spec §9) ─────────────────────────────────────
+// Visible shell only — no model wired until Stage 3. Opens a popover anchored
+// to the sidebar's .fp-ask button; Send stays permanently disabled and
+// nothing here ever calls the backend.
+function askPopoutOpen() {
+  const popout = document.getElementById('ask-popout');
+  return !!popout && popout.style.display !== 'none';
+}
+
+function openAskPopout() {
+  const popout = document.getElementById('ask-popout');
+  const btn = document.getElementById('btn-ask-fileplus');
+  if (!popout || !btn) return;
+  popout.style.display = 'flex';
+  // Anchor to the button's bottom-left, clamped to the viewport — the same
+  // getBoundingClientRect() technique showContextMenu()'s {anchor} branch
+  // uses for the View/Sort toolbar dropdowns.
+  const r = btn.getBoundingClientRect();
+  const vw = window.innerWidth, vh = window.innerHeight;
+  popout.style.left = `${Math.min(r.left, vw - popout.offsetWidth - 8)}px`;
+  popout.style.top  = `${Math.min(r.bottom + 6, vh - popout.offsetHeight - 8)}px`;
+  document.getElementById('ask-input')?.focus();
+}
+
+function closeAskPopout() {
+  // Fix round 1 (Task 16): the global Escape handler calls closeAskPopout()
+  // unconditionally (it also closes the palette, Properties modal, etc.), so
+  // the focus-return below must only fire when the popout was actually open
+  // -- otherwise every unrelated Escape steals focus to the Ask File+ pill.
+  // Mirrors the open-check the outside-click handler already uses.
+  const wasOpen = askPopoutOpen();
+  const popout = document.getElementById('ask-popout');
+  if (popout) popout.style.display = 'none';
+  if (wasOpen) document.getElementById('btn-ask-fileplus')?.focus();
+}
+
+function toggleAskPopout() {
+  if (askPopoutOpen()) closeAskPopout();
+  else openAskPopout();
+}
+
 // ── Confirmation modal (A.11.3) ───────────────────────────────────────────────
 // The modal can close via several independent paths — the Cancel button, a
 // backdrop click, Escape, an extraActions button, or the default Confirm
@@ -726,13 +888,12 @@ function openModal(type, config = {}) {
   const textInput = document.getElementById('modal-text-input');
   if (!scrim) return;
 
-  // Icon: danger uses alert-octagon in bad, warn uses alert-triangle in warn
+  // Icon: danger uses the sprite's error glyph in bad, warn uses warning in warn.
   const isDanger = type === 'danger';
   if (icon) {
     icon.style.color = isDanger ? 'var(--bad)' : 'var(--warn)';
-    icon.innerHTML = isDanger
-      ? '<path d="M7.86 2h8.28L22 7.86v8.28L16.14 22H7.86L2 16.14V7.86L7.86 2z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M12 8v4M12 16h.01" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>'
-      : '<path d="M12 3L2 21h20L12 3z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M12 10v5M12 17.5v.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>';
+    const iconUse = icon.querySelector('use');
+    if (iconUse) iconUse.setAttribute('href', `#fp-${isDanger ? 'error' : 'warning'}`);
   }
   if (title)   title.textContent  = config.title   || 'Confirm';
   if (body)    body.textContent   = config.body    || '';
@@ -822,16 +983,24 @@ function resolveTheme(mode) {
   return mode === 'system' ? (_systemDark.matches ? 'dark' : 'light') : mode;
 }
 
+// Flips the RESOLVED theme's opposite (dark <-> light) and persists that as
+// an explicit choice — never lands on 'system'. "Follow Windows" stays
+// available only in Settings (settings-set-theme, below). Root cause of the
+// old two-click bug (design spec §3.9): the previous cycle went
+// dark -> light -> system, so from "system resolving dark" the first click
+// landed on "dark" with no visible change.
 function toggleTheme() {
   const current = localStorage.getItem('fp-theme') || 'system';
-  const next = THEME_MODES[(THEME_MODES.indexOf(current) + 1) % THEME_MODES.length];
+  const next = resolveTheme(current) === 'dark' ? 'light' : 'dark';
   applyTheme(next);
+  saveSetting('ui.theme', next);
 }
 
 function applyTheme(mode) {
   if (!THEME_MODES.includes(mode)) mode = 'system';
   const html = document.documentElement;
-  html.dataset.theme = resolveTheme(mode);
+  const resolved = resolveTheme(mode);
+  html.dataset.theme = resolved;
   html.dataset.themeMode = mode;
   localStorage.setItem('fp-theme', mode);
   if (window.electronAPI?.setThemeSource) window.electronAPI.setThemeSource(mode);
@@ -845,6 +1014,10 @@ function applyTheme(mode) {
     const v = btn.dataset.theme || btn.dataset.val;
     btn.classList.toggle('active', v === mode);
   });
+  // Toolbar toggle's icon tracks the RESOLVED theme (not the picked mode —
+  // 'system' resolves to whichever the OS currently reports).
+  const themeIconUse = document.querySelector('#btn-theme use');
+  if (themeIconUse) themeIconUse.setAttribute('href', `#fp-theme-${resolved}`);
 }
 
 // ── Zoom — uses Electron webContents.setZoomFactor when in Electron (no layout cut-off),
@@ -910,63 +1083,111 @@ function zoomReset() {
   updateZoomPill();
 }
 
+// ── Context-menu applicability (Task 11, playtest pass 1 §4.2) ─────────────
+// Shared enabled(ctx)/label(ctx) predicates, built from buildMenuContext()'s
+// ctx = { selection, target, favoritesSet, clipboard } (defined further
+// below, next to getMenuTypeForTarget). An item with no `enabled` is always
+// enabled, matching showContextMenu's existing "unknown field is simply
+// never read" contract for `checked`.
+
+/** Open: a single item; or several items that are all files (no folders, no
+ * access-denied rows) sharing one non-empty extension. */
+function cmOpenEnabled(ctx) {
+  const sel = ctx.selection || [];
+  if (sel.length === 0) return false;
+  if (sel.length === 1) return true;
+  if (sel.some(e => !e || e.is_dir || e.error)) return false;
+  const exts = new Set(sel.map(e => String(e.ext || '').toLowerCase()));
+  return exts.size === 1 && [...exts][0] !== '';
+}
+/** Open with…, Properties: single item only. (Rename has its own identical-
+ * by-construction rule, browser.js's canRenameSelection() — kept separate so
+ * it stays the one shared source of truth with the F2 keyboard shortcut,
+ * Task 11 fix round 1, rather than incidentally matching this one.) */
+function cmSingleEnabled(ctx) { return (ctx.selection || []).length === 1; }
+/** Pin to sidebar, Index for search: a single FOLDER only. */
+function cmSingleFolderEnabled(ctx) {
+  const sel = ctx.selection || [];
+  return sel.length === 1 && !!sel[0] && !!sel[0].is_dir;
+}
+/** Cut, Copy, Delete, Add tag, Add/Remove favorites: any (non-empty) count. */
+function cmAnyEnabled(ctx) { return (ctx.selection || []).length > 0; }
+/** Paste: only when the clipboard actually holds something. */
+function cmClipboardEnabled(ctx) { return (ctx.clipboard || 0) > 0; }
+/** Add/Remove Favorites label — "Remove" only when EVERY selected item (or
+ * the single Home row) is already favorited; "Add" otherwise, including an
+ * empty selection (the item is disabled then anyway, via cmAnyEnabled). */
+function cmFavoriteLabel(ctx) {
+  const sel = ctx.selection || [];
+  const allFav = sel.length > 0 && ctx.favoritesSet
+    && sel.every(e => e && ctx.favoritesSet.has(String(e.path || '').toLowerCase()));
+  return allFav ? 'Remove from Favorites' : 'Add to Favorites';
+}
+
 // ── Context menu ──────────────────────────────────────────────────────────────
 // A.10: five menu type definitions (items rendered dynamically into #context-menu)
 const CONTEXT_MENUS = {
   // A.10.1 — File context menu
+  // "Open in new tab" is folder-only (Task 11 fix round 1 ruling) — it never
+  // appears here at all (visible, not merely disabled: a file's own "open in
+  // a new tab" concept doesn't exist), and stays unconditional on the folder
+  // menu below.
   file: [
-    { label: 'Open',            action: 'cm-open',            icon: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="1" y="1" width="12" height="12" rx="2" stroke="currentColor" stroke-width="1.2"/><path d="M5 5l4 2-4 2V5z" fill="currentColor"/></svg>' },
-    { label: 'Open with…',      action: 'cm-open-with' },
-    { label: 'Open in new tab', action: 'cm-open-new-tab',    icon: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="1" y="3" width="12" height="10" rx="1.5" stroke="currentColor" stroke-width="1.2"/><path d="M1 6h12" stroke="currentColor" stroke-width="1.2"/></svg>' },
+    { label: 'Open',            action: 'cm-open',            icon: icon('open', 'fp-icon--14'), enabled: cmOpenEnabled },
+    { label: 'Open with…',      action: 'cm-open-with',       enabled: cmSingleEnabled },
     'sep',
-    { label: 'Cut',    action: 'cm-cut',    kbd: 'Ctrl+X' },
-    { label: 'Copy',   action: 'cm-copy',   kbd: 'Ctrl+C' },
-    { label: 'Paste',  action: 'cm-paste',  kbd: 'Ctrl+V' },
-    { label: 'Rename', action: 'cm-rename', kbd: 'F2' },
-    { label: 'Delete', action: 'cm-delete', kbd: 'Del', danger: true, icon: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M2 4h10M5 4V2.5h4V4M5.5 6v5M8.5 6v5M3 4l.8 8h6.4L11 4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>' },
+    { label: 'Cut',    action: 'cm-cut',    kbd: 'Ctrl+X', enabled: cmAnyEnabled },
+    { label: 'Copy',   action: 'cm-copy',   kbd: 'Ctrl+C', enabled: cmAnyEnabled },
+    { label: 'Paste',  action: 'cm-paste',  kbd: 'Ctrl+V', enabled: cmClipboardEnabled },
+    // Same rule, same predicate as the F2 keyboard shortcut
+    // (browser.js's browserKeydown) — canRenameSelection() is the one
+    // shared source of truth for both (Task 11 fix round 1).
+    { label: 'Rename', action: 'cm-rename', kbd: 'F2', enabled: () => canRenameSelection() },
+    { label: 'Delete', action: 'cm-delete', kbd: 'Del', danger: true, icon: icon('delete', 'fp-icon--14'), enabled: cmAnyEnabled },
     'sep',
-    { label: 'Add tag…',         action: 'cm-add-tag',     icon: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M2 8.5L7.5 3l3.5 3.5L5.5 12 2 8.5z" stroke="currentColor" stroke-width="1.2"/><circle cx="5" cy="5" r="1" fill="currentColor"/></svg>' },
-    { label: 'Add to Favorites', action: 'cm-favorite' },
+    { label: 'Add tag…',         action: 'cm-add-tag',     icon: icon('tag', 'fp-icon--14'), enabled: cmAnyEnabled },
+    { label: cmFavoriteLabel,    action: 'cm-favorite',    enabled: cmAnyEnabled },
     'sep',
-    { label: 'Properties',             action: 'cm-properties' },
+    { label: 'Properties',             action: 'cm-properties', enabled: cmSingleEnabled },
     { label: 'Show in Windows Explorer', action: 'cm-reveal-explorer' },
   ],
 
   // A.10.2 — Folder context menu
   folder: [
-    { label: 'Open',             action: 'cm-open', icon: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M1 3.5a1 1 0 0 1 1-1h3l1 1.5H12a1 1 0 0 1 1 1V11a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V3.5z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>' },
+    { label: 'Open',             action: 'cm-open', icon: icon('folder', 'fp-icon--14'), enabled: cmOpenEnabled },
     { label: 'Open in new tab',  action: 'cm-open-new-tab' },
     'sep',
-    { label: 'Cut',    action: 'cm-cut',    kbd: 'Ctrl+X' },
-    { label: 'Copy',   action: 'cm-copy',   kbd: 'Ctrl+C' },
-    { label: 'Paste',  action: 'cm-paste',  kbd: 'Ctrl+V' },
-    { label: 'Rename', action: 'cm-rename', kbd: 'F2' },
-    { label: 'Delete', action: 'cm-delete', kbd: 'Del', danger: true, icon: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M2 4h10M5 4V2.5h4V4M5.5 6v5M8.5 6v5M3 4l.8 8h6.4L11 4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>' },
+    { label: 'Cut',    action: 'cm-cut',    kbd: 'Ctrl+X', enabled: cmAnyEnabled },
+    { label: 'Copy',   action: 'cm-copy',   kbd: 'Ctrl+C', enabled: cmAnyEnabled },
+    { label: 'Paste',  action: 'cm-paste',  kbd: 'Ctrl+V', enabled: cmClipboardEnabled },
+    { label: 'Rename', action: 'cm-rename', kbd: 'F2', enabled: () => canRenameSelection() },
+    { label: 'Delete', action: 'cm-delete', kbd: 'Del', danger: true, icon: icon('delete', 'fp-icon--14'), enabled: cmAnyEnabled },
     'sep',
     { label: 'New folder inside', action: 'cm-new-folder' },
     { label: 'New file',          action: 'cm-new-file' },
     'sep',
-    { label: 'Add to Favorites',   action: 'cm-favorite' },
-    { label: 'Pin to sidebar',     action: 'cm-pin-sidebar' },
-    { label: 'Index for search',   action: 'cm-index-folder' },
+    { label: cmFavoriteLabel,      action: 'cm-favorite',      enabled: cmAnyEnabled },
+    { label: 'Pin to sidebar',     action: 'cm-pin-sidebar',   enabled: cmSingleFolderEnabled },
+    { label: 'Index for This PC search', action: 'cm-index-folder', enabled: cmSingleFolderEnabled },
     'sep',
-    { label: 'Properties',              action: 'cm-properties' },
+    { label: 'Properties',              action: 'cm-properties', enabled: cmSingleEnabled },
     { label: 'Show in Windows Explorer', action: 'cm-reveal-explorer' },
   ],
 
-  // A.10.3 — Empty area context menu
+  // A.10.3 — Empty area context menu (targets the current folder itself, not
+  // a selection — Properties and the rest stay unconditionally enabled).
   'empty-area': [
-    { label: 'New folder', action: 'cm-new-folder', icon: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M1 3.5a1 1 0 0 1 1-1h3l1 1.5H12a1 1 0 0 1 1 1V11a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V3.5z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>' },
+    { label: 'New folder', action: 'cm-new-folder', icon: icon('folder-add', 'fp-icon--14') },
     { label: 'New file',   action: 'cm-new-file' },
-    { label: 'Paste',      action: 'cm-paste',      kbd: 'Ctrl+V' },
+    { label: 'Paste',      action: 'cm-paste',      kbd: 'Ctrl+V', enabled: cmClipboardEnabled },
     { label: 'Refresh',    action: 'cm-refresh',    kbd: 'F5' },
     'sep',
-    { label: 'View → List',       action: 'cm-view-list' },
+    { label: 'View → Details',    action: 'cm-view-list' },
     { label: 'View → Grid',       action: 'cm-view-grid' },
     { label: 'Sort by → name',    action: 'cm-sort-name' },
     { label: 'Sort by → modified', action: 'cm-sort-modified' },
     'sep',
-    { label: 'Show hidden files', action: 'cm-toggle-hidden' },
+    { label: ctx => browserState.showHidden ? 'Hide hidden files' : 'Show hidden files', action: 'cm-toggle-hidden' },
     { label: 'Properties',        action: 'cm-properties' },
   ],
 
@@ -974,37 +1195,103 @@ const CONTEXT_MENUS = {
   tab: [
     { label: 'New tab',            action: 'cm-new-tab' },
     { label: 'Duplicate tab',      action: 'cm-duplicate-tab' },
+    'sep',
     { label: 'Close tab',          action: 'cm-close-tab',  kbd: 'Ctrl+W' },
     { label: 'Close other tabs',   action: 'cm-close-other-tabs' },
-    'sep',
-    { label: 'Pin tab',            action: 'cm-pin-tab' },
-    { label: 'Rename tab',         action: 'cm-rename-tab' },
   ],
 
-  // A.10.5 — Sidebar item context menu (pinned folders only — see getMenuTypeForTarget)
+  // A.10.5 — Sidebar item context menu (pinned folders and Quick Access known
+  // folders — see getMenuTypeForTarget). Unpin/Rename apply to pins only;
+  // Remove from Quick Access applies to known folders only; a drive gets
+  // neither (its sidebar item carries neither data-pin-id nor data-known-id,
+  // so both predicates read false for it) — visible(ctx) reads ctx.target
+  // (the resolved .fp-sidebar__item element itself) and OMITS whichever pair
+  // doesn't match the right-clicked item's kind (Task 11 fix round 1 ruling:
+  // never-applicable-to-this-kind is a hide, not a grey — replacing both the
+  // ad hoc .filter() Task 9/10 used and Task 11's own initial enabled(ctx)
+  // pass, which greyed these instead of hiding them).
   'sidebar-item': [
-    { label: 'Open in new tab',    action: 'cm-open-new-tab' },
-    { label: 'Unpin',              action: 'cm-unpin-sidebar' },
-    { label: 'Rename label',       action: 'cm-rename-sidebar-item' },
+    { label: 'Open in new tab',          action: 'cm-open-new-tab' },
+    { label: 'Unpin',                    action: 'cm-unpin-sidebar',        visible: ctx => !!ctx.target?.dataset?.pinId },
+    { label: 'Rename label',             action: 'cm-rename-sidebar-item',  visible: ctx => !!ctx.target?.dataset?.pinId },
+    { label: 'Remove from Quick Access', action: 'cm-quick-access-remove',  visible: ctx => !!ctx.target?.dataset?.knownId },
   ],
 
   // A.10.6 — Home row context menu (Recent + Favorites rows). "Add/Remove
-  // from Favorites" label is set dynamically at contextmenu time (see the
-  // listener below) based on home.js's favoritesSet.
+  // from Favorites" label reflects buildMenuContext's single-row selection.
   'home-row': [
     { label: 'Open',               action: 'open-file' },
     { label: 'Reveal in Browser',  action: 'reveal-file' },
     { label: 'Copy path',          action: 'copy-path' },
     'sep',
-    { label: 'Add to Favorites',   action: 'home-toggle-favorite' },
+    { label: cmFavoriteLabel,      action: 'home-toggle-favorite' },
   ],
 };
 
+// ── Inspector "…" menu (Task 13) ──────────────────────────────────────────────
+// Single item so far — Properties, single-selection only (design spec §5.1:
+// "Properties is single-item only in this pass"). Opened below the button by
+// the same showContextMenu({anchor}) the View/Sort toolbar dropdowns use.
+const INSPECTOR_MORE_MENU_ITEMS = [
+  { label: 'Properties', action: 'inspector-properties', enabled: () => browserState.selection.size === 1 },
+];
+
+// ── View / Sort toolbar dropdowns (Task 10) ─────────────────────────────────
+// Windows-Explorer-style menus opened below the toolbar's View/Sort buttons
+// (data-action="open-view-menu"/"open-sort-menu"), replacing the old
+// List/Grid segmented toggle. Both share showContextMenu() with the rest of
+// the app — {anchor} positions the menu below the button instead of at a
+// click point, and {ctx: menuContext()} drives each item's checked(ctx)
+// predicate (Task 11 adds enabled(ctx) to the same item shape — unknown
+// fields are simply ignored by showContextMenu, not an error).
+const VIEW_MENU_ITEMS = [
+  { label: 'Extra large icons', action: 'view-xl',      checked: ctx => ctx.view === 'grid' && ctx.scale === 2 },
+  { label: 'Large icons',       action: 'view-large',   checked: ctx => ctx.view === 'grid' && ctx.scale === 1.5 },
+  { label: 'Medium icons',      action: 'view-medium',  checked: ctx => ctx.view === 'grid' && ctx.scale === 1 },
+  { label: 'Small icons',       action: 'view-small',   checked: ctx => ctx.view === 'grid' && ctx.scale === 0.75 },
+  'sep',
+  // "List" is deliberately not Explorer's multi-column flowing list — ours
+  // is a single-column, name-only row (see browser.js's setViewMode).
+  { label: 'List',              action: 'view-list',    checked: ctx => ctx.view === 'list' },
+  { label: 'Details',           action: 'view-details', checked: ctx => ctx.view === 'details' },
+  'sep',
+  { label: 'Show hidden files',    action: 'toggle-show-hidden',     checked: ctx => ctx.showHidden },
+  { label: 'Show file extensions', action: 'toggle-show-extensions', checked: ctx => ctx.showExtensions },
+  { label: 'Dynamic media view',   action: 'toggle-dynamic-media',   checked: ctx => ctx.dynamicMediaView },
+];
+
+const SORT_MENU_ITEMS = [
+  { label: 'Name',          action: 'sort-name',     checked: ctx => ctx.sortKey === 'name' },
+  { label: 'Date modified', action: 'sort-modified', checked: ctx => ctx.sortKey === 'modified' },
+  { label: 'Type',          action: 'sort-type',     checked: ctx => ctx.sortKey === 'type' },
+  { label: 'Size',          action: 'sort-size',     checked: ctx => ctx.sortKey === 'size' },
+  'sep',
+  { label: 'Ascending',     action: 'sort-asc',      checked: ctx => ctx.sortDir === 'asc' },
+  { label: 'Descending',    action: 'sort-desc',     checked: ctx => ctx.sortDir === 'desc' },
+];
+
+/** Snapshot of the state the View/Sort menus' checked(ctx) predicates read —
+ * built fresh each time either menu opens (the menu itself is rebuilt from
+ * scratch on every open, so there is nothing to keep in sync between opens). */
+function menuContext() {
+  const cfg = window.__fpConfig || {};
+  return {
+    view: browserState.view,
+    scale: browserState.listScale,
+    showHidden: browserState.showHidden,
+    showExtensions: browserState.showExtensions,
+    dynamicMediaView: cfg['ui.dynamic_media_view'] !== false,
+    sortKey: browserState.sort.key,
+    sortDir: browserState.sort.dir,
+  };
+}
+
 function getMenuTypeForTarget(target) {
   if (target.closest('.fp-tab')) return 'tab';
-  // Only user pins carry data-pin-id — Home/Downloads/drives are not pins
-  // and fall through to the empty-area menu instead.
-  if (target.closest('.fp-sidebar__item[data-pin-id]')) return 'sidebar-item';
+  // User pins (data-pin-id) and Quick Access known folders (data-known-id)
+  // both get the sidebar-item menu — Home and drives are neither and fall
+  // through to the empty-area menu instead.
+  if (target.closest('.fp-sidebar__item[data-pin-id], .fp-sidebar__item[data-known-id]')) return 'sidebar-item';
   // Home's Recent/Favorites rows get their own menu — checked before the
   // generic folder/file checks below so a Home row never falls into those.
   if (target.closest('.fp-row--recent')) return 'home-row';
@@ -1040,39 +1327,138 @@ function contextTargetDir() {
   return browserState.path;
 }
 
+/**
+ * Builds the ctx object passed to every CONTEXT_MENUS item's enabled(ctx)/
+ * label(ctx) predicate (Task 11, playtest pass 1 §4.2): `{ selection,
+ * target, favoritesSet, clipboard }`.
+ *
+ * `selection` is the array of full entry objects (path included) the menu
+ * should judge applicability against — for 'file'/'folder'/'empty-area' that
+ * is the Browser's real multi-selection (browserState.selection, via
+ * getSelectedPaths()/entryForPath(), both browser.js); for 'home-row' it's
+ * the single right-clicked row (Home has no multi-selection); every other
+ * menu type (tab, sidebar-item) has no notion of a file selection and gets
+ * an empty array — their own items don't read ctx.selection.
+ *
+ * `target` is contextMenuTarget (already resolved by the caller below) —
+ * the sidebar-item menu's enabled() predicates read its dataset directly
+ * (data-pin-id vs data-known-id) instead of the old per-kind item filter.
+ */
+function buildMenuContext(target) {
+  const type = getMenuTypeForTarget(target);
+  let selection = [];
+  if (type === 'home-row') {
+    const row = target?.closest ? target.closest('.fp-row[data-path]') : null;
+    if (row) selection = [{ path: row.dataset.path, ext: row.dataset.ext || '', is_dir: (row.dataset.ext || '') === '' }];
+  } else if (type === 'file' || type === 'folder' || type === 'empty-area') {
+    selection = getSelectedPaths().map(p => {
+      const entry = entryForPath(p);
+      return entry ? { ...entry, path: p } : { path: p };
+    });
+  }
+  return {
+    selection,
+    target: contextMenuTarget,
+    favoritesSet,
+    clipboard: fileops.clipboardCount(),
+  };
+}
+
 const contextMenu = document.getElementById('context-menu');
 
-function showContextMenu(x, y, items) {
+/**
+ * Renders `items` into the shared #context-menu and shows it.
+ *
+ * opts.anchor (the View/Sort toolbar buttons) positions the menu below that
+ * element instead of at the click point `x,y`, which are then ignored.
+ * opts.ctx, when present, is passed to every item's `checked(ctx)`,
+ * `enabled(ctx)`, `label(ctx)` and `visible(ctx)` predicates (Task 11 adds
+ * the latter three; an item with no such field just always renders, enabled,
+ * with its own static `label`). The leading check-icon slot still only
+ * appears on a menu that actually has `checked` items (the View/Sort
+ * dropdowns) — keyed off the item list itself rather than "was ctx passed",
+ * since Task 11 now passes ctx to every right-click menu too (for
+ * enabled/label/visible) without wanting their layout to grow that slot.
+ *
+ * `visible(ctx) === false` OMITS the item entirely — distinct from
+ * `enabled(ctx) === false`, which keeps it in place but greys it out. Use
+ * `visible` for an item that structurally can never apply to the target
+ * kind (Task 11 fix round 1: a pin's menu never even shows "Remove from
+ * Quick Access", rather than showing it permanently disabled); use `enabled`
+ * for a state-dependent rule that could flip the other way for the very
+ * same kind of target (single- vs multi-selection, empty vs non-empty
+ * clipboard, …). A separator left with nothing but hidden items on one or
+ * both sides is dropped too, so a menu never shows a leading, trailing, or
+ * doubled-up divider.
+ */
+function showContextMenu(x, y, items, opts = {}) {
   if (!contextMenu) return;
   contextMenu.innerHTML = '';
-  items.forEach(item => {
+  const ctx = opts.ctx;
+  const shown = [];
+  for (const item of items) {
+    if (item === 'sep') {
+      if (shown.length === 0 || shown[shown.length - 1] === 'sep') continue;
+      shown.push(item);
+      continue;
+    }
+    if (typeof item.visible === 'function' && !item.visible(ctx)) continue;
+    shown.push(item);
+  }
+  while (shown.length && shown[shown.length - 1] === 'sep') shown.pop();
+  const showChecks = shown.some(item => item !== 'sep' && typeof item.checked === 'function');
+  shown.forEach(item => {
     if (item === 'sep') {
       const sep = document.createElement('div');
       sep.className = 'fp-context-menu__sep';
       contextMenu.appendChild(sep);
       return;
     }
+    const isEnabled = typeof item.enabled !== 'function' || !!item.enabled(ctx);
+    const label = typeof item.label === 'function' ? item.label(ctx) : item.label;
     const btn = document.createElement('button');
-    btn.className = 'fp-context-menu__item' + (item.danger ? ' fp-context-menu__item--danger' : '');
+    btn.className = 'fp-context-menu__item'
+      + (item.danger ? ' fp-context-menu__item--danger' : '')
+      + (!isEnabled ? ' fp-context-menu__item--disabled' : '');
     btn.setAttribute('data-action', item.action || '');
     btn.setAttribute('role', 'menuitem');
-    if (item.icon) btn.innerHTML = item.icon;
-    btn.innerHTML += `<span>${item.label}</span>`;
+    if (!isEnabled) {
+      btn.setAttribute('aria-disabled', 'true');
+      btn.setAttribute('tabindex', '-1'); // keyboard Tab order skips it too
+    }
+    if (showChecks) {
+      const isChecked = typeof item.checked === 'function' && !!item.checked(ctx);
+      btn.innerHTML = `<span class="fp-context-menu__check">${isChecked ? icon('check', 'fp-icon--14') : ''}</span>`;
+    }
+    if (item.icon) btn.innerHTML += item.icon;
+    btn.innerHTML += `<span>${label}</span>`;
     if (item.kbd) {
       const kbd = document.createElement('span');
       kbd.className = 'fp-context-menu__kbd';
       kbd.textContent = item.kbd;
       btn.appendChild(kbd);
     }
-    if (item.onClick) btn.addEventListener('click', () => { item.onClick(); hideContextMenu(); });
-    else btn.addEventListener('click', hideContextMenu);
+    // A disabled item gets no click listener at all — CSS's pointer-events:
+    // none on .fp-context-menu__item--disabled already keeps the click from
+    // ever reaching this button (see styles.css), so this is belt-and-braces
+    // against that CSS being bypassed some other way, not the only guard.
+    if (isEnabled) {
+      if (item.onClick) btn.addEventListener('click', () => { item.onClick(); hideContextMenu(); });
+      else btn.addEventListener('click', hideContextMenu);
+    }
     contextMenu.appendChild(btn);
   });
   contextMenu.style.display = 'block';
   // Position within viewport
   const vw = window.innerWidth, vh = window.innerHeight;
-  contextMenu.style.left = `${Math.min(x, vw - 200)}px`;
-  contextMenu.style.top  = `${Math.min(y, vh - contextMenu.offsetHeight - 8)}px`;
+  if (opts.anchor) {
+    const r = opts.anchor.getBoundingClientRect();
+    contextMenu.style.left = `${Math.min(r.left, vw - 220)}px`;
+    contextMenu.style.top  = `${Math.min(r.bottom + 4, vh - contextMenu.offsetHeight - 8)}px`;
+  } else {
+    contextMenu.style.left = `${Math.min(x, vw - 200)}px`;
+    contextMenu.style.top  = `${Math.min(y, vh - contextMenu.offsetHeight - 8)}px`;
+  }
 }
 
 function hideContextMenu() {
@@ -1082,6 +1468,42 @@ function hideContextMenu() {
 document.addEventListener('click', e => {
   if (!contextMenu?.contains(e.target)) hideContextMenu();
 });
+
+// ── Deselect anywhere (design spec §3.5) ────────────────────────────────────
+// A capture-phase mousedown on #app clears the active selection (Browser
+// rows or Home rows, whichever screen the active tab is on) unless the
+// target sits inside an interactive element. Right-click on open space does
+// the same (called from the contextmenu listener below, before the
+// empty-area menu opens).
+//
+// #list-scroll (the file list background) is excluded entirely — it runs
+// its own marquee mousedown/mouseup handling (browser.js,
+// initMarqueeSelection), which already clears on a near-zero-distance drag
+// (a plain click) and needs browserState.selection to still hold whatever
+// was selected BEFORE this mousedown so a Ctrl/Shift-drag can keep rows
+// outside the marquee box selected (`keep = ctrlDrag &&
+// browserState.selection.has(...)`). Clearing here first — even though the
+// marquee's own mouseup runs later and would seem to override it — races
+// that read: this capture-phase handler fires and clears synchronously
+// before the marquee's bubble-phase mousedown listener ever runs, so by the
+// time it reads browserState.selection to decide what to keep, it's already
+// empty. Fix round 1 (playtest pass 1): every OTHER open space (sidebar,
+// toolbar, tab bar, inspector blank space, Home background) still clears.
+const DESELECT_INTERACTIVE_SELECTOR = 'button, a, input, select, textarea, ' +
+  '[contenteditable], [role=button], .fp-row, .home-row, .fp-tab, ' +
+  '.fp-sidebar__item, .fp-context-menu, .modal, .palette, .fp-inspector__tab, .fp-chip';
+
+function deselectOnOpenSpace(target) {
+  if (target?.closest?.(DESELECT_INTERACTIVE_SELECTOR)) return;
+  if (target?.closest?.('#list-scroll')) return;
+  const screen = activeTab()?.screen;
+  if (screen === 'browser') clearSelection();
+  else if (screen === 'home') homeClearSelection();
+}
+
+document.getElementById('app')?.addEventListener('mousedown', e => {
+  deselectOnOpenSpace(e.target);
+}, true);
 
 // ── Snackbar ───────────────────────────────────────────────��────────────────────
 // Notifications gate (single setting controls all transient toasts/snackbars).
@@ -1138,17 +1560,12 @@ function showToast(message, variant = '') {
   container.appendChild(el);
 }
 
-// ── Folder navigation via /fs/list (read-only) ────────────────────────────────
-// Maintains a client-side history stack for back/forward.
-const navHistory = { stack: [], idx: -1 };
-
 async function triggerScan(path) {
   showToast('Scanning…', 'default');
   try {
     const data = await API.post('/scan', path ? { path } : {}, { signal: AbortSignal.timeout(60000) });
     showSnackbar(`Scan complete — ${data.count} file${data.count !== 1 ? 's' : ''} indexed`);
-    switchScreen('browser', pathBaseName(data.path) || undefined);
-    await loadDirectory(data.path);
+    await openBrowserAt(data.path);
   } catch (err) {
     showToast(`Scan failed: ${formatApiError(err)}`, 'error');
   }
@@ -1208,6 +1625,7 @@ async function loadDrives() {
     console.warn('[fp-drives] failed to load drives:', formatApiError(err));
     return;
   }
+  window.__fpDrives = driveList; // driveDisplayLabel() reads this synchronously
   container.innerHTML = driveList.map(renderDriveItem).join('');
 }
 
@@ -1220,10 +1638,7 @@ function renderDriveItem(d) {
   return `<div class="fp-sidebar__drive-item">
     <button class="fp-sidebar__item" data-screen="browser" data-path="${escapeHtml(d.mount)}"
             data-action="navigate-path" title="${escapeHtml(labelText)}">
-      <svg class="fp-sidebar__drive-icon" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-        <ellipse cx="8" cy="6" rx="6" ry="2.5" stroke="currentColor" stroke-width="1.2"/>
-        <path d="M2 6v4c0 1.4 2.7 2.5 6 2.5s6-1.1 6-2.5V6" stroke="currentColor" stroke-width="1.2"/>
-      </svg>
+      <svg class="fp-icon fp-icon--16 fp-sidebar__drive-icon" aria-hidden="true"><use href="#fp-drive"></use></svg>
       <span class="fp-sidebar__drive-letter" aria-hidden="true">${escapeHtml(letter)}</span>
       <span class="fp-sidebar__item__label">${escapeHtml(labelText)}</span>
     </button>
@@ -1250,23 +1665,139 @@ function renderPinItem(pin) {
   const label = pin.label || pathBaseName(pin.path) || pin.path;
   return `<button class="fp-sidebar__item" data-screen="browser" data-path="${escapeHtml(pin.path)}"
           data-pin-id="${pin.id}" data-action="navigate-path" title="${escapeHtml(pin.path)}">
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-      <path d="M1 4a1 1 0 0 1 1-1h4l1.5 1.5H14a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V4z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
-    </svg>
+    <svg class="fp-icon fp-icon--16" aria-hidden="true"><use href="#fp-folder"></use></svg>
     <span class="fp-sidebar__item__label">${escapeHtml(label)}</span>
   </button>`;
 }
 
-// Downloads' data-path is resolved once at startup: config['paths.downloads']
-// when the user configured one, else the real OS Downloads folder (main.js's
-// get-home-dir bridge), never the old hardcoded sandbox-relative guess.
-function applyDownloadsPath() {
-  const el = document.getElementById('nav-downloads');
-  if (!el) return;
-  const configured = window.__fpConfig && window.__fpConfig['paths.downloads'];
-  const home = window.electronAPI?.homeDir?.();
-  const path = configured || (home ? `${home}\\Downloads` : null);
-  if (path) el.dataset.path = path;
+// ── Sidebar Tags (Task 14) ─────────────────────────────────────────
+// The eight most-used real tags (GET /tags, ranked by the file count the
+// route now reports), replacing the four hardcoded sample chips. The whole
+// section — label, chips and "View all →" — hides when nothing is tagged
+// yet, rather than showing an empty shelf. The response is also cached on
+// window.__fpTags for search.js's Tag filter row and the More-filters modal,
+// so neither has to fetch again.
+const SIDEBAR_TAG_LIMIT = 8;
+
+async function loadSidebarTags() {
+  const chips = document.getElementById('sb-tags-chips');
+  const section = document.getElementById('sb-tags');
+  const label = document.getElementById('sb-tags-label');
+  if (!chips) return;
+  let tags;
+  try {
+    tags = await API.get('/tags');
+  } catch (err) {
+    console.warn('[fp-tags] failed to load tags:', formatApiError(err));
+    return;
+  }
+  window.__fpTags = Array.isArray(tags) ? tags : [];
+  const top = window.__fpTags
+    .filter(t => (t.count || 0) > 0)
+    .sort((a, b) => (b.count || 0) - (a.count || 0) || a.name.localeCompare(b.name))
+    .slice(0, SIDEBAR_TAG_LIMIT);
+  const empty = top.length === 0;
+  if (section) section.hidden = empty;
+  if (label) label.hidden = empty;
+  chips.innerHTML = top.map(t => `<button class="fp-chip" data-action="filter-by-tag"
+      data-tag="${escapeHtml(t.name)}" title="Search This PC for tag: ${escapeHtml(t.name)}">
+      ${escapeHtml(t.name)} <span class="fp-chip__count">${t.count}</span>
+    </button>`).join('');
+}
+
+// ── Quick Access known folders (Task 9) ─────────────────────────────────────
+// Known-folder ids shown in Quick Access by default: Desktop, Downloads, and
+// Screenshots (when the machine has one — GET /known-folders only returns it
+// if the folder actually exists). Each maps to its own icon() sprite symbol
+// — distinct from icons.js's FP_FOLDER_SPECIALS, the family-sprite icon used
+// for folder rows inside a directory listing.
+const QUICK_ACCESS_IDS = ['desktop', 'downloads', 'screenshots'];
+const QUICK_ACCESS_ICON = { desktop: 'desktop', downloads: 'download', screenshots: 'screenshots' };
+
+function quickAccessHiddenIds() {
+  const hidden = window.__fpConfig && window.__fpConfig['ui.quick_access_hidden'];
+  return Array.isArray(hidden) ? hidden : [];
+}
+
+/** Renders the sidebar's Quick Access known-folder items (between Home and
+ * Review Bin) and the Settings › Personalization checkboxes that control
+ * them — both read the same GET /known-folders cache (fpLoadKnownFolders(),
+ * icons.js, awaited before this in app.js's init) and the
+ * ui.quick_access_hidden config array, so one function keeps them in sync.
+ * Safe to re-run any time either source changes (a Settings checkbox, the
+ * sidebar-item "Remove from Quick Access" menu action). */
+function loadQuickAccess() {
+  const list = window.__fpKnownFolderList || [];
+  const hidden = new Set(quickAccessHiddenIds());
+
+  const sidebar = document.getElementById('sb-quick-access-folders');
+  if (sidebar) {
+    const visible = QUICK_ACCESS_IDS
+      .map(id => list.find(f => f && f.id === id))
+      .filter(f => f && !hidden.has(f.id));
+    sidebar.innerHTML = visible.map(renderQuickAccessItem).join('');
+  }
+
+  renderQuickAccessSettings(list, hidden);
+}
+
+function renderQuickAccessItem(f) {
+  const symbol = QUICK_ACCESS_ICON[f.id] || 'folder';
+  const label = f.name || pathBaseName(f.path) || f.id;
+  return `<button class="fp-sidebar__item" data-screen="browser" data-path="${escapeHtml(f.path)}"
+          data-known-id="${escapeHtml(f.id)}" data-action="navigate-path" title="${escapeHtml(label)}">
+    ${icon(symbol, 'fp-icon--16')}
+    <span class="fp-sidebar__item__label">${escapeHtml(label)}</span>
+  </button>`;
+}
+
+/** Settings › Personalization › Quick Access: one checkbox per known folder
+ * that can appear in Quick Access, checked = currently shown. `list` is the
+ * raw GET /known-folders result, `hiddenIds` the Set of currently-hidden ids
+ * (both already computed by loadQuickAccess(), the sole caller). */
+function renderQuickAccessSettings(list, hiddenIds) {
+  const container = document.getElementById('settings-quick-access-list');
+  if (!container) return;
+  const items = QUICK_ACCESS_IDS.map(id => list.find(f => f && f.id === id)).filter(Boolean);
+  if (!items.length) {
+    container.innerHTML = '<div class="settings-row__desc">No known folders detected on this PC.</div>';
+    return;
+  }
+  container.innerHTML = items.map((f, i) => `
+    <div class="settings-row">
+      <div class="settings-row__label">${escapeHtml(f.name || pathBaseName(f.path) || f.id)}</div>
+      <label class="fp-toggle">
+        <input type="checkbox" data-action="settings-quick-access-toggle" data-known-id="${escapeHtml(f.id)}" ${hiddenIds.has(f.id) ? '' : 'checked'} />
+        <span class="fp-toggle__track"></span>
+        <span class="fp-toggle__thumb"></span>
+      </label>
+    </div>${i < items.length - 1 ? '<div class="settings-sep"></div>' : ''}`).join('');
+}
+
+/** Adds or removes `id` from ui.quick_access_hidden and re-renders both the
+ * sidebar Quick Access list and the Settings checkboxes. Shared by the
+ * Settings checkbox (change listener, below) and the sidebar-item context
+ * menu's "Remove from Quick Access" action (the click switch, above). */
+async function setQuickAccessHidden(id, hide) {
+  const hidden = new Set(quickAccessHiddenIds());
+  if (hide) hidden.add(id); else hidden.delete(id);
+  await saveSetting('ui.quick_access_hidden', [...hidden]);
+  loadQuickAccess();
+}
+
+// ── This PC collapse (Task 9) ───────────────────────────────────────────────
+/** Expands/collapses the "This PC" sidebar section: rotates the chevron,
+ * shows/hides #sb-drives, and (unless {persist:false}, used when restoring
+ * from config at startup) saves ui.sidebar_thispc_open. */
+function setThisPcOpen(open, { persist = true } = {}) {
+  const chevron = document.querySelector('#sb-thispc .fp-sidebar__chevron');
+  const body = document.getElementById('sb-drives');
+  if (chevron) {
+    chevron.setAttribute('aria-expanded', String(open));
+    chevron.setAttribute('aria-label', open ? 'Collapse This PC' : 'Expand This PC');
+  }
+  if (body) body.hidden = !open;
+  if (persist) saveSetting('ui.sidebar_thispc_open', open);
 }
 
 // ── Window controls (Electron IPC) ───────────────────────────────────────────
@@ -1320,9 +1851,11 @@ function initUnderlineTabs(container) {
 // In-scope actions are handled here; out-of-scope show "not implemented" stub.
 const IN_SCOPE_ACTIONS = new Set([
   'navigate-screen', 'navigate-path', 'switch-tab', 'close-tab', 'new-tab', 'scan',
-  'toggle-sidebar', 'toggle-inspector', 'toggle-theme', 'set-view-mode',
+  'toggle-sidebar', 'toggle-inspector', 'toggle-theme',
   'focus-search', 'filter-by-tag', 'open-tag-canvas', 'close-tag-canvas',
   'tag-canvas-select',
+  // Ask File+ (Task 15) — shell only, no model wired until Stage 3.
+  'ask-open', 'ask-close', 'ask-example',
   'nav-back', 'nav-forward', 'nav-up', 'navigate-crumb', 'nav-retry',
   // 'sort-by' is handled by initColumnSort()'s own listener (browser.js);
   // 'select-file' only appears on the static placeholder rows in index.html,
@@ -1336,23 +1869,39 @@ const IN_SCOPE_ACTIONS = new Set([
   'inspector-open', 'inspector-reveal', 'inspector-remove-tag', 'inspector-undo-op',
   'unfavorite-file', 'open-recent-file',
   'open-file', 'reveal-file', 'copy-path', 'home-toggle-favorite',
-  'palette-open-file', 'palette-open-folder',
+  'palette-open-file', 'palette-open-folder', 'palette-search-files',
   'open-palette', 'close-palette', 'palette-set-mode',
+  // Toolbar search (Task 14)
+  'search-clear', 'search-remove-chip', 'search-expand-filter', 'search-pick-filter',
+  'search-more-filters', 'search-more-apply', 'search-more-cancel',
+  'search-history-run', 'search-history-clear', 'search-index-drives',
+  // Settings › Scan & Index (Task 14)
+  'settings-index-add', 'settings-index-reindex', 'settings-index-remove',
   'modal-cancel', 'modal-confirm', 'modal-confirm-type',
   'ef-filter', 'ef-sort', 'ef-toggle-pause-ai', 'ef-toggle-moving-card',
   'scan-config-switch-mode', 'scan-baseline-confirm',
   'settings-nav', 'settings-set-theme', 'settings-set-density', 'settings-set-accent',
   'settings-set-accent-hex', 'settings-reset-accent',
   'settings-set-show-notifications', 'settings-toggle', 'settings-set-click-mode',
+  'settings-set-icon-source', 'settings-quick-access-toggle', 'settings-set-backspace-deletes',
   'settings-empty-trash',
   'settings-set-font-scale', 'settings-reset-shortcuts',
   'zoom-reset',
   // File operations (Task 4) — context-menu actions wired in the switch below.
   'cm-open', 'cm-open-with', 'cm-reveal-explorer',
   'cm-cut', 'cm-copy', 'cm-paste', 'cm-paste-here', 'cm-rename', 'cm-delete',
-  'cm-new-folder', 'cm-new-file', 'cm-refresh',
+  'cm-new-folder', 'cm-new-file', 'cm-refresh', 'refresh-directory',
   'cm-favorite', 'cm-pin-sidebar', 'cm-index-folder', 'cm-properties', 'cm-toggle-hidden',
   'cm-view-list', 'cm-view-grid', 'cm-sort-name', 'cm-sort-modified',
+  // View/Sort toolbar dropdowns + their checked items (Task 10)
+  'open-view-menu', 'open-sort-menu',
+  'view-xl', 'view-large', 'view-medium', 'view-small', 'view-list', 'view-details',
+  'toggle-show-hidden', 'toggle-show-extensions', 'toggle-dynamic-media',
+  'sort-name', 'sort-modified', 'sort-type', 'sort-size', 'sort-asc', 'sort-desc',
+  // Properties panel (Task 13)
+  'inspector-more', 'inspector-properties', 'switch-properties-tab',
+  'props-apply', 'props-close', 'props-open-with', 'props-advanced',
+  'props-attr-toggle', 'props-folder-type-select', 'settings-set-properties-mode',
 ]);
 
 /** Activates the Inspector tab named `name` ('preview' | 'tags' | 'history') —
@@ -1366,9 +1915,25 @@ function switchInspectorTab(name) {
   inspector.querySelectorAll('.fp-inspector__tab').forEach(t => {
     t.classList.toggle('fp-tabs__item--active', t === targetTab);
   });
+  // hidden (not inline display) so the panes container's own fixed
+  // min-height (styles.css .inspector__panes) is what keeps geometry from
+  // jittering between a short pane (e.g. "Select a file") and a tall one.
   inspector.querySelectorAll('.fp-inspector__pane').forEach(p => {
-    p.style.display = p.dataset.pane === name ? '' : 'none';
+    p.hidden = p.dataset.pane !== name;
   });
+}
+
+/** Flips ui.show_hidden — shared by the empty-area menu's "Show hidden
+ * files" (cm-toggle-hidden) and the View menu's checked item of the same
+ * name (toggle-show-hidden), so both stay in sync with each other and with
+ * the Settings › Personalization checkbox. */
+function toggleShowHidden() {
+  const next = !browserState.showHidden;
+  browserState.showHidden = next;
+  refreshDirectory();
+  saveSetting('ui.show_hidden', next);
+  const hiddenToggle = document.querySelector('[data-action="settings-toggle"][data-setting="show-hidden"]');
+  if (hiddenToggle) hiddenToggle.checked = next;
 }
 
 document.addEventListener('click', e => {
@@ -1381,23 +1946,23 @@ document.addEventListener('click', e => {
       switchScreen(btn.dataset.screen || btn.dataset.target);
       break;
     case 'navigate-path': {
-      const navPath = btn.dataset.path;
-      // Mark the clicked item as visually active immediately (don't wait for fetch).
-      // Set data-manual-active so updateSidebarActive() won't override it until a real path loads.
-      document.querySelectorAll('.fp-sidebar__item').forEach(it => {
-        it.classList.remove('fp-sidebar__item--active');
-        it.removeAttribute('data-manual-active');
-      });
-      btn.classList.add('fp-sidebar__item--active');
-      btn.setAttribute('data-manual-active', 'true');
-      // Pre-set the tab label to the sidebar item's text (e.g. "Downloads",
-      // "Projects") or the path's basename — so the tab never flashes "Files"
-      // before the async loadDirectory() call lands.
-      const sidebarLabelEl = btn.querySelector('.fp-sidebar__item__label');
-      const initialLabel = (sidebarLabelEl?.textContent || '').trim()
-                        || pathBaseName(navPath || '')
-                        || undefined;
-      openBrowserAt(navPath, initialLabel);
+      // openBrowserAt() → loadDirectory() → onNavigated() sets the tab label
+      // and the sidebar highlight synchronously, before the fetch even
+      // lands — no manual pre-marking needed here any more.
+      openBrowserAt(btn.dataset.path);
+      break;
+    }
+    // This PC (Task 9): thispc-open sits on the section-head row itself and
+    // opens the drives listing (openBrowserAt(null), tab label "This PC");
+    // thispc-toggle sits on the nested chevron button, so a click there is
+    // caught by this case first (closest() returns the innermost match) and
+    // never falls through to thispc-open.
+    case 'thispc-open':
+      openBrowserAt(null);
+      break;
+    case 'thispc-toggle': {
+      const expanded = btn.getAttribute('aria-expanded') !== 'false';
+      setThisPcOpen(!expanded);
       break;
     }
     case 'nav-back':
@@ -1415,16 +1980,21 @@ document.addEventListener('click', e => {
     case 'nav-retry':
       retryLoad();
       break;
+    case 'refresh-directory':
+      refreshDirectory();
+      break;
     case 'switch-tab':
-      // User explicitly clicked a tab — activate THAT tab specifically.
-      switchToTab(btn);
+      // btn IS the .fp-tab itself — it's the only data-action="switch-tab"
+      // element in the subtree (the close span carries its own 'close-tab'
+      // action, so a click there never reaches this case).
+      activateTab(btn.dataset.tabId);
       break;
     case 'close-tab': {
       e.stopPropagation();
       // The X button is a child of a .fp-tab — close THAT tab, not whichever
       // happens to be active.
       const targetTab = btn.closest('.fp-tab');
-      if (targetTab) closeTab(targetTab);
+      if (targetTab) closeTabById(targetTab.dataset.tabId);
       break;
     }
     case 'new-tab':
@@ -1445,16 +2015,73 @@ document.addEventListener('click', e => {
     case 'toggle-theme':
       toggleTheme();
       break;
-    case 'set-view-mode':
-      setViewMode(btn.dataset.view);
-      break;
     case 'focus-search':
-      openPalette();
+      // The bar is the search surface now (Task 14) — focusing it opens its
+      // own Filters/History dropdown; ⌘K stays the command palette.
+      focusSearchInput();
       break;
-    case 'filter-by-tag':
-      switchScreen('browser');
-      // INTEGRATION: apply tag filter
+    case 'filter-by-tag': {
+      // A sidebar tag chip: search This PC for everything carrying that tag.
+      const tag = btn.dataset.tag;
+      if (!tag) break;
+      searchResetBar();
+      searchState.chips = [
+        { key: 'in', value: 'pc', label: 'This PC' },
+        { key: 'tag', value: tag, label: tag },
+      ];
+      searchState.scope = 'pc';
+      renderSearchChips();
+      runSearch();
       break;
+    }
+    // ── Toolbar search (Task 14) ──────────────────────────────────
+    case 'search-clear':
+      clearSearch();
+      break;
+    case 'search-remove-chip':
+      removeChip(Number(btn.dataset.chipIndex));
+      break;
+    case 'search-expand-filter':
+      toggleSearchFilterRow(btn.dataset.filter);
+      break;
+    case 'search-pick-filter':
+      pickSearchFilter(btn.dataset.filter, btn.dataset.value, btn.dataset.label);
+      break;
+    case 'search-more-filters':
+      openMoreFilters();
+      break;
+    case 'search-more-apply':
+      applyMoreFilters();
+      break;
+    case 'search-more-cancel':
+      closeMoreFilters();
+      break;
+    case 'search-history-run':
+      restoreSearchHistoryEntry(Number(btn.dataset.index));
+      break;
+    case 'search-history-clear':
+      clearSearchHistory();
+      break;
+    case 'search-index-drives':
+      indexMissingDrives();
+      break;
+    // ── Settings › Scan & Index (Task 14) ────────────────────────────────────
+    case 'settings-index-add':
+      pickFolderToIndex();
+      break;
+    case 'settings-index-reindex':
+      startIndexOf(btn.dataset.root);
+      break;
+    case 'settings-index-remove':
+      removeIndexRoot(btn.dataset.root);
+      break;
+    case 'palette-search-files': {
+      const q = btn.dataset.query || '';
+      closePalette();
+      setSearchText(q);
+      runSearch();
+      break;
+    }
     case 'open-tag-canvas':
       openTagCanvas();
       break;
@@ -1464,6 +2091,21 @@ document.addEventListener('click', e => {
     case 'tag-canvas-select':
       // INTEGRATION: highlight tag in canvas, filter file grid
       break;
+    case 'ask-open':
+      // Same toggle as Ctrl+J: clicking the sidebar CTA again closes it.
+      toggleAskPopout();
+      break;
+    case 'ask-close':
+      closeAskPopout();
+      break;
+    case 'ask-example': {
+      const input = document.getElementById('ask-input');
+      if (input) {
+        input.value = btn.dataset.text || '';
+        input.focus();
+      }
+      break;
+    }
     case 'palette-set-mode':
       setPaletteMode(btn.dataset.mode || 'search');
       break;
@@ -1528,6 +2170,7 @@ document.addEventListener('click', e => {
     case 'settings-nav':
       switchSettingsPane(btn.dataset.pane);
       if (btn.dataset.pane === 'data') updateWritesStatusLine();
+      if (btn.dataset.pane === 'scan-index') loadIndexStatus();
       break;
     case 'settings-set-theme':
       applyTheme(btn.dataset.theme || btn.dataset.val);
@@ -1554,6 +2197,12 @@ document.addEventListener('click', e => {
         b.classList.toggle('active', b.dataset.val === mode);
       });
       saveSetting('ui.click_mode', mode);
+      break;
+    }
+    case 'settings-set-icon-source': {
+      const source = applyIconSource(btn.dataset.val);
+      saveSetting('ui.icon_source', source);
+      refreshIconSurfaces();
       break;
     }
     case 'settings-empty-trash':
@@ -1651,7 +2300,7 @@ document.addEventListener('click', e => {
       if (!path) break;
       closePalette();
       const parent = parentOfPath(path);
-      const loaded = openBrowserAt(parent, pathBaseName(parent) || undefined);
+      const loaded = openBrowserAt(parent);
       Promise.resolve(loaded).then(() => selectRow(path));
       break;
     }
@@ -1659,40 +2308,43 @@ document.addEventListener('click', e => {
       const path = btn.dataset.path;
       if (!path) break;
       closePalette();
-      openBrowserAt(path, pathBaseName(path) || undefined);
+      openBrowserAt(path);
       break;
     }
-    // Tab context menu (A.10.4) — only new-tab/close-tab are built; duplicate/
-    // pin/rename/close-other-tabs have no underlying tab-state support yet
-    // and fall through to the stub toast below (see scripts/check_menu_cases.js).
+    // Tab context menu (A.10.4)
     case 'cm-new-tab':
       openNewTab();
       break;
-    case 'cm-close-tab': {
+    case 'cm-duplicate-tab': {
       const tab = contextMenuTarget?.closest ? contextMenuTarget.closest('.fp-tab') : null;
-      if (tab) closeTab(tab);
+      if (tab) duplicateTab(tab.dataset.tabId);
       break;
     }
-    // Sidebar pinned-item context menu (A.10.5). These are only reachable
-    // through the 'sidebar-item' menu type (see getMenuTypeForTarget), which
-    // is raised solely for elements with data-pin-id — so any other menu
-    // (file/folder/tab/empty-area) still falls through to the stub below.
+    case 'cm-close-tab': {
+      const tab = contextMenuTarget?.closest ? contextMenuTarget.closest('.fp-tab') : null;
+      if (tab) closeTabById(tab.dataset.tabId);
+      break;
+    }
+    case 'cm-close-other-tabs': {
+      const tab = contextMenuTarget?.closest ? contextMenuTarget.closest('.fp-tab') : null;
+      if (tab) closeOtherTabs(tab.dataset.tabId);
+      break;
+    }
+    // Sidebar item context menu (A.10.5) — pins and Quick Access known
+    // folders both reach here (see getMenuTypeForTarget); both carry
+    // data-path. Any other menu (file/folder/tab/empty-area) still falls
+    // through to the stub below.
     case 'cm-open-new-tab': {
       if (contextMenuType === 'sidebar-item' && contextMenuTarget) {
-        const pinPath = contextMenuTarget.dataset.path;
-        if (pinPath) {
-          const labelEl = contextMenuTarget.querySelector('.fp-sidebar__item__label');
-          const label = (labelEl?.textContent || '').trim() || pathBaseName(pinPath) || undefined;
-          openNewTab();
-          openBrowserAt(pinPath, label);
-        }
+        const itemPath = contextMenuTarget.dataset.path;
+        if (itemPath) { openNewTab(); openBrowserAt(itemPath); }
       } else if (contextMenuType === 'file' || contextMenuType === 'folder') {
         // Folder → open that folder; file → open its parent folder.
         const path = contextTargetPath();
         if (path) {
           const targetDir = contextMenuType === 'folder' ? path : parentOfPath(path);
           openNewTab();
-          openBrowserAt(targetDir, pathBaseName(targetDir) || undefined);
+          openBrowserAt(targetDir);
         }
       } else {
         console.log(`[FilePlus] data-action stub: ${action}`, btn.dataset);
@@ -1744,22 +2396,82 @@ document.addEventListener('click', e => {
       }
       break;
     }
-    // ── File operations context-menu wiring (Task 4) ─────────────────────────
-    case 'cm-open': {
-      const path = contextTargetPath();
-      if (!path) break;
-      if (contextMenuType === 'folder') { loadDirectory(path); break; }
-      const openPath = window.electronAPI?.openPath;
-      if (openPath) {
-        Promise.resolve(openPath(path)).then(result => { if (result) showToast(result, 'error'); })
-          .catch(err => showToast(formatApiError(err), 'error'));
+    // Quick Access known-folder removal (Task 9) — only reachable for
+    // sidebar items carrying data-known-id (see getMenuTypeForTarget); adds
+    // the id to ui.quick_access_hidden and re-renders both the sidebar list
+    // and the Settings checkboxes (setQuickAccessHidden -> loadQuickAccess).
+    case 'cm-quick-access-remove': {
+      if (contextMenuType === 'sidebar-item' && contextMenuTarget) {
+        const knownId = contextMenuTarget.dataset.knownId;
+        if (knownId) setQuickAccessHidden(knownId, true);
+      } else {
+        console.log(`[FilePlus] data-action stub: ${action}`, btn.dataset);
+        showToast(`Action "${action}" — not yet implemented`, 'action');
       }
-      API.post('/recent', { path, action: 'opened' }).catch(() => { /* best-effort logging */ });
+      break;
+    }
+    // ── File operations context-menu wiring (Task 4) ─────────────────────────
+    // Task 11: also handles a same-extension multi-file selection (only
+    // reachable when cmOpenEnabled(ctx) allowed the click at all — a folder
+    // never appears here for more than one selected item, since a folder in
+    // the mix always fails that predicate).
+    case 'cm-open': {
+      if (contextMenuType === 'folder') {
+        const path = contextTargetPath();
+        if (path) loadDirectory(path);
+        break;
+      }
+      const paths = getSelectedPaths();
+      if (paths.length <= 1) {
+        const path = contextTargetPath();
+        if (!path) break;
+        const openPath = window.electronAPI?.openPath;
+        if (openPath) {
+          Promise.resolve(openPath(path)).then(result => { if (result) showToast(result, 'error'); })
+            .catch(err => showToast(formatApiError(err), 'error'));
+        }
+        API.post('/recent', { path, action: 'opened' }).catch(() => { /* best-effort logging */ });
+        break;
+      }
+      // Sequential, not fire-and-forget-in-parallel — 20 simultaneous shell
+      // launches is exactly the kind of thing the cap+confirm exists to
+      // avoid in the first place (Task 11 fix round 1).
+      const cappedPaths = paths.slice(0, 20);
+      const openMany = async () => {
+        const openPath = window.electronAPI?.openPath;
+        for (const p of cappedPaths) {
+          if (openPath) {
+            try {
+              const result = await openPath(p);
+              if (result) showToast(result, 'error');
+            } catch (err) {
+              showToast(formatApiError(err), 'error');
+            }
+          }
+          API.post('/recent', { path: p, action: 'opened' }).catch(() => { /* best-effort logging */ });
+        }
+        showToast(`Opened ${cappedPaths.length} of ${paths.length}`, 'default');
+      };
+      if (paths.length > 10) {
+        // Honest about the cap: "Open 20 of 25 files?" once the selection
+        // actually exceeds it, not just "Open 25 files?" when only 20 will
+        // really open.
+        const title = paths.length > 20
+          ? `Open ${cappedPaths.length} of ${paths.length} files?`
+          : `Open ${paths.length} files?`;
+        openModal('warn', { title, confirmLabel: 'Open', onConfirm: openMany });
+      } else {
+        openMany();
+      }
       break;
     }
     case 'cm-open-with': {
       const path = contextTargetPath();
-      if (path) window.electronAPI?.openWith?.(path);
+      if (path) {
+        Promise.resolve(window.electronAPI?.openWithDialog?.(path)).then(ok => {
+          if (!ok) showToast('Failed to open the Open With dialog', 'error');
+        });
+      }
       break;
     }
     case 'cm-reveal-explorer': {
@@ -1794,12 +2506,32 @@ document.addEventListener('click', e => {
     case 'cm-refresh':
       refreshDirectory();
       break;
+    // Task 11: toggles the WHOLE selection (design spec §4.2 — "any count").
+    // "Remove" only when every selected path is already favorited (matching
+    // cmFavoriteLabel's own predicate, which decided which label the user
+    // just clicked); otherwise every not-yet-favorited path is added
+    // (POST /favorites is idempotent for one already favorited, so adding
+    // the whole selection unconditionally on the "Add" branch is safe).
+    // favoritesReload() resyncs favoritesSet/the Favorites pane;
+    // refreshDirectory() re-renders Browser rows so the star appears/clears.
     case 'cm-favorite': {
-      const path = contextTargetPath();
-      if (!path) break;
-      API.post('/favorites', { path })
-        .then(() => showToast('Added to Favorites', 'default'))
-        .catch(err => showToast(`Failed to favorite: ${formatApiError(err)}`, 'error'));
+      const paths = getSelectedPaths();
+      if (!paths.length) break;
+      const allFav = paths.every(p => favoritesHas(p));
+      // favoritesReload() MUST finish before refreshDirectory() re-renders —
+      // renderFsRow reads favoritesHas() at render time, and the two fetches
+      // (/favorites, /fs/list) race independently, so firing them merely in
+      // parallel could re-render the row from a still-stale favoritesSet.
+      const settle = async () => { await favoritesReload(); await refreshDirectory(); };
+      if (allFav) {
+        Promise.all(paths.map(p => API.del('/favorites', { path: p })))
+          .then(() => { showToast('Removed from Favorites', 'default'); settle(); })
+          .catch(err => showToast(`Failed to remove favorite: ${formatApiError(err)}`, 'error'));
+      } else {
+        Promise.all(paths.map(p => API.post('/favorites', { path: p })))
+          .then(() => { showToast('Added to Favorites', 'default'); settle(); })
+          .catch(err => showToast(`Failed to favorite: ${formatApiError(err)}`, 'error'));
+      }
       break;
     }
     case 'cm-add-tag': {
@@ -1833,44 +2565,135 @@ document.addEventListener('click', e => {
     }
     case 'cm-properties': {
       const path = contextMenuType === 'empty-area' ? browserState.path : contextTargetPath();
-      if (!path) break;
-      API.get('/file', { path })
-        .then(data => {
-          const rows = [
-            ['Kind', data.kind || '—'],
-            ['Size', data.size != null ? formatSize(data.size) : '—'],
-            ['Modified', data.modified ? formatModified(data.modified) : '—'],
-            ['Created', data.created ? formatModified(data.created) : '—'],
-            ['Hash', data.hash || '—'],
-            ['Path', data.path || path],
-          ];
-          openModal('warn', {
-            title: pathBaseName(path) || 'Properties',
-            body: rows.map(([k, v]) => `${k}: ${v}`).join('\n'),
-            confirmLabel: 'Close',
-          });
-        })
-        .catch(err => showToast(`Failed to load properties: ${formatApiError(err)}`, 'error'));
+      if (path) openProperties(path);
       break;
     }
-    case 'cm-toggle-hidden': {
-      const next = !browserState.showHidden;
-      browserState.showHidden = next;
-      refreshDirectory();
-      saveSetting('ui.show_hidden', next);
+    case 'inspector-more':
+      showContextMenu(0, 0, INSPECTOR_MORE_MENU_ITEMS, { anchor: btn });
+      break;
+    case 'inspector-properties': {
+      const path = browserState.selection.size === 1 ? [...browserState.selection][0] : null;
+      if (path) openProperties(path);
       break;
     }
+    case 'switch-properties-tab':
+      switchPropertiesTab(btn.dataset.tab);
+      break;
+    case 'props-apply':
+      propertiesApply();
+      break;
+    case 'props-close':
+      closeProperties();
+      break;
+    case 'props-open-with': {
+      const path = propertiesCurrentPath();
+      if (path) {
+        Promise.resolve(window.electronAPI?.openWithDialog?.(path)).then(ok => {
+          if (!ok) showToast('Failed to open the Open With dialog', 'error');
+        });
+      }
+      break;
+    }
+    case 'props-advanced': {
+      const path = propertiesCurrentPath();
+      if (path) {
+        Promise.resolve(window.electronAPI?.showProperties?.(path)).then(ok => {
+          if (!ok) showToast('Failed to open Properties', 'error');
+        });
+      }
+      break;
+    }
+    case 'settings-set-properties-mode': {
+      const mode = applyPropertiesMode(btn.dataset.val);
+      saveSetting('ui.properties_mode', mode);
+      break;
+    }
+    case 'cm-toggle-hidden':
+      toggleShowHidden();
+      break;
     case 'cm-view-list':
-      setViewMode('list');
+      // Empty-area menu's "View → Details" — maps to the View menu's own
+      // Details item (the renamed columns view).
+      setViewMode('details', { manual: true });
       break;
     case 'cm-view-grid':
-      setViewMode('grid');
+      // Empty-area menu's "View → Grid" — maps to the View menu's Medium
+      // icons (the grid default scale).
+      setListScale(1);
+      setViewMode('grid', { manual: true });
       break;
     case 'cm-sort-name':
       applySort('name', (browserState.sort.key === 'name' && browserState.sort.dir === 'asc') ? 'desc' : 'asc');
       break;
     case 'cm-sort-modified':
       applySort('modified', (browserState.sort.key === 'modified' && browserState.sort.dir === 'asc') ? 'desc' : 'asc');
+      break;
+
+    // ── View / Sort toolbar menus (Task 10) ─────────────────────────────
+    case 'open-view-menu':
+      showContextMenu(0, 0, VIEW_MENU_ITEMS, { anchor: btn, ctx: menuContext() });
+      break;
+    case 'open-sort-menu':
+      showContextMenu(0, 0, SORT_MENU_ITEMS, { anchor: btn, ctx: menuContext() });
+      break;
+    case 'view-xl':
+      setListScale(2);
+      setViewMode('grid', { manual: true });
+      break;
+    case 'view-large':
+      setListScale(1.5);
+      setViewMode('grid', { manual: true });
+      break;
+    case 'view-medium':
+      setListScale(1);
+      setViewMode('grid', { manual: true });
+      break;
+    case 'view-small':
+      setListScale(0.75);
+      setViewMode('grid', { manual: true });
+      break;
+    case 'view-list':
+      setViewMode('list', { manual: true });
+      break;
+    case 'view-details':
+      setViewMode('details', { manual: true });
+      break;
+    case 'toggle-show-hidden':
+      toggleShowHidden();
+      break;
+    case 'toggle-show-extensions': {
+      const next = !browserState.showExtensions;
+      browserState.showExtensions = next;
+      saveSetting('ui.show_extensions', next);
+      renderDirectory(); // re-render cached entries locally — no re-fetch needed
+      const extToggle = document.querySelector('[data-action="settings-toggle"][data-setting="show-extensions"]');
+      if (extToggle) extToggle.checked = next;
+      break;
+    }
+    case 'toggle-dynamic-media': {
+      const next = !((window.__fpConfig || {})['ui.dynamic_media_view'] !== false);
+      saveSetting('ui.dynamic_media_view', next);
+      const dmToggle = document.querySelector('[data-action="settings-toggle"][data-setting="dynamic-media-view"]');
+      if (dmToggle) dmToggle.checked = next;
+      break;
+    }
+    case 'sort-name':
+      applySort('name', browserState.sort.dir);
+      break;
+    case 'sort-modified':
+      applySort('modified', browserState.sort.dir);
+      break;
+    case 'sort-type':
+      applySort('type', browserState.sort.dir);
+      break;
+    case 'sort-size':
+      applySort('size', browserState.sort.dir);
+      break;
+    case 'sort-asc':
+      applySort(browserState.sort.key, 'asc');
+      break;
+    case 'sort-desc':
+      applySort(browserState.sort.key, 'desc');
       break;
 
     default:
@@ -1890,6 +2713,8 @@ document.addEventListener('input', e => {
     // value ("#4C") shouldn't overwrite the last-good saved accent.
     if (applyAccentHex(t.value)) saveSetting('ui.accent_hex', t.value.trim());
   }
+  // Properties panel's editable name field — any keystroke enables Apply.
+  if (t && t.id === 'properties-name-input') propertiesMarkDirty();
 });
 
 document.addEventListener('change', e => {
@@ -1912,6 +2737,26 @@ document.addEventListener('change', e => {
     refreshDirectory();
     return;
   }
+  if (t.dataset.action === 'settings-toggle' && t.dataset.setting === 'dynamic-media-view') {
+    saveSetting('ui.dynamic_media_view', t.checked);
+    return;
+  }
+  if (t.dataset.action === 'settings-quick-access-toggle') {
+    const id = t.dataset.knownId;
+    if (id) setQuickAccessHidden(id, !t.checked);
+    return;
+  }
+  if (t.dataset.action === 'settings-set-backspace-deletes') {
+    saveSetting('ui.backspace_deletes', t.checked);
+    return;
+  }
+  // Properties panel — an attribute checkbox or the folder-type select was
+  // touched; propertiesApply() re-reads the live DOM state itself, so this
+  // only needs to enable Apply, not track the new value.
+  if (t.dataset.action === 'props-attr-toggle' || t.dataset.action === 'props-folder-type-select') {
+    propertiesMarkDirty();
+    return;
+  }
 });
 
 function setNotificationsEnabled(enabled) {
@@ -1920,101 +2765,9 @@ function setNotificationsEnabled(enabled) {
   if (checkbox) checkbox.checked = !!enabled;
 }
 
-// ── Tab management (A.1.2) ────────────────────────────────────────────────────
-let _closedTabs = []; // stack of { screen, label, icon }
-let _tabIdSeq   = 1;  // unique id generator (HTML seeds the first tab as tab-1)
-
-function nextTabId() {
-  _tabIdSeq += 1;
-  return `tab-${_tabIdSeq}`;
-}
-
-function buildTabHtml(screen) {
-  // Close affordance is a <span role="button"> — see HTML for the seed tab
-  // for why nesting <button> would silently break the layout.
-  return `${getScreenIcon(screen)}<span class="fp-tab__label">${getScreenLabel(screen)}</span><span class="fp-tab__close" role="button" data-action="close-tab" title="Close tab" tabindex="-1" aria-label="Close tab"><svg width="10" height="10" viewBox="0 0 10 10"><path d="M2 2l6 6M8 2l-6 6" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg></span>`;
-}
-
-function createTabElement(screen) {
-  const btn = document.createElement('button');
-  btn.className = 'fp-tab';
-  btn.setAttribute('role', 'tab');
-  btn.setAttribute('aria-selected', 'false');
-  btn.setAttribute('data-tab-id', nextTabId());
-  btn.setAttribute('data-tab-screen', screen);
-  btn.setAttribute('data-action', 'switch-tab');
-  btn.setAttribute('title', getScreenLabel(screen));
-  btn.setAttribute('draggable', 'true');
-  btn.innerHTML = buildTabHtml(screen);
-  return btn;
-}
-
-function openNewTab() {
-  const tabbar = document.getElementById('tabbar');
-  if (!tabbar) return;
-  const newBtn = createTabElement('home');
-  const newTabBtn = document.getElementById('btn-new-tab');
-  tabbar.insertBefore(newBtn, newTabBtn);
-  initTabDrag(newBtn);
-  switchToTab(newBtn);
-  showSnackbar('New tab opened', null, null);
-}
-
-function closeTab(tab) {
-  if (!tab) return;
-  _closedTabs.push({
-    screen: tab.dataset.tabScreen,
-    label:  tab.querySelector('.fp-tab__label')?.textContent,
-    icon:   tab.querySelector(':scope > svg')?.outerHTML,
-  });
-  const tabbar = document.getElementById('tabbar');
-  const allTabs = tabbar?.querySelectorAll('.fp-tab') || [];
-  // Last remaining tab → quit the app entirely (per spec: closing the only
-  // tab closes the window).
-  if (allTabs.length <= 1) {
-    if (window.electronAPI?.close) {
-      window.electronAPI.close();
-    } else {
-      window.close();
-    }
-    return;
-  }
-  const wasActive = tab.classList.contains('fp-tab--active');
-  const prev = tab.previousElementSibling;
-  const next = tab.nextElementSibling;
-  const neighbor = (prev && prev.classList.contains('fp-tab')) ? prev
-                 : (next && next.classList.contains('fp-tab')) ? next : null;
-  tab.remove();
-  if (wasActive && neighbor) switchToTab(neighbor);
-  showSnackbar('Tab closed · Ctrl+Shift+T to reopen', null, null);
-}
-
-// Backwards compat — keyboard shortcut(s) call this name.
-function closeCurrentTab() { closeTab(getActiveTab()); }
-
-function reopenLastTab() {
-  if (!_closedTabs.length) { showToast('No recently closed tabs', 'warn'); return; }
-  const last = _closedTabs.pop();
-  const screen = last.screen || 'home';
-  const newBtn = createTabElement(screen);
-  // Use the closed tab's saved label/icon if they differed from the screen default.
-  if (last.label) {
-    const labelEl = newBtn.querySelector('.fp-tab__label');
-    if (labelEl) labelEl.textContent = last.label;
-    newBtn.setAttribute('title', last.label);
-  }
-  if (last.icon) {
-    const firstSvg = newBtn.querySelector(':scope > svg');
-    if (firstSvg) firstSvg.outerHTML = last.icon;
-  }
-  const tabbar = document.getElementById('tabbar');
-  const newTabBtn = document.getElementById('btn-new-tab');
-  tabbar?.insertBefore(newBtn, newTabBtn);
-  initTabDrag(newBtn);
-  switchToTab(newBtn);
-}
-
-// Tab drag-reorder (A.1.2)
+// Tab drag-reorder (A.1.2) — DOM-only (tabs.list's order is never read for
+// anything order-sensitive; closeTabById() picks its fallback-active
+// neighbor off the DOM for exactly this reason).
 let _dragTab = null;
 
 function initTabDrag(tab) {
@@ -2072,6 +2825,8 @@ document.addEventListener('keydown', e => {
   if ((e.metaKey || e.ctrlKey) && e.key === 'b') { e.preventDefault(); toggleSidebar(); }
   // ⌘I / Ctrl+I — inspector
   if ((e.metaKey || e.ctrlKey) && e.key === 'i') { e.preventDefault(); toggleInspector(); }
+  // Ctrl+J — Ask File+ (Task 15)
+  if ((e.metaKey || e.ctrlKey) && e.key === 'j') { e.preventDefault(); toggleAskPopout(); }
   // Ctrl+= or Ctrl++ — zoom in (with or without Shift; standard browser convention)
   if ((e.metaKey || e.ctrlKey) && (e.key === '=' || e.key === '+')) { e.preventDefault(); zoomIn(); }
   // Ctrl+- or Ctrl+_ — zoom out
@@ -2093,15 +2848,28 @@ document.addEventListener('keydown', e => {
     hideContextMenu();
     closeModal();
     closeTagCanvas();
+    closeProperties();
+    closeAskPopout();
   }
   // Browser-screen keyboard nav (selection, sort-order arrows, Enter, F5,
   // Ctrl+A, Alt+arrows) only applies when that screen is active and the
   // user isn't typing into an input/textarea/contenteditable element.
+  // Fix round 1: narrowly exclude only Enter/Space while focus sits on a
+  // sidebar element — a sidebar row/button (This PC's chevron included)
+  // owns its own Enter/Space activation (native <button> click, or a
+  // dedicated keydown listener) and must not also have Enter reinterpreted
+  // as "open the focused FILE LIST row" (browserState.focus has nothing to
+  // do with sidebar focus). Every OTHER shortcut (F2, Delete, F5, Ctrl+Z/Y/
+  // X/C/V, arrow navigation, …) must keep reaching browserKeydown
+  // regardless of where DOM focus happens to be — excluding the whole
+  // sidebar for every key (the original fix) went too far and silently
+  // killed all of those the moment the user clicked any sidebar control.
   const activeEl = document.activeElement;
   const activeTag = activeEl && activeEl.tagName;
   const isEditableTarget = activeTag === 'INPUT' || activeTag === 'TEXTAREA' || (activeEl && activeEl.isContentEditable);
+  const sidebarKeyActivation = (e.key === 'Enter' || e.key === ' ') && activeEl?.closest?.('#sidebar');
   const browserScreenActive = document.getElementById('screen-browser')?.classList.contains('active');
-  if (browserScreenActive && !isEditableTarget && typeof browserKeydown === 'function') {
+  if (browserScreenActive && !isEditableTarget && !sidebarKeyActivation && typeof browserKeydown === 'function') {
     browserKeydown(e);
   }
   const homeScreenActive = document.getElementById('screen-home')?.classList.contains('active');
@@ -2110,31 +2878,53 @@ document.addEventListener('keydown', e => {
   }
 });
 
-// Ctrl + scroll wheel — step through ZOOM_STEPS, one step per gesture.
-// Throttled because trackpads (and high-resolution wheels) emit dozens of
-// wheel events per swipe; without a cooldown a single flick would jump
-// straight to the min/max zoom. ~80ms matches the natural pacing of one
-// "notch" of a physical wheel without making intentional fast scrolls
-// feel sluggish.
+// Middle-click (auxclick, button 1) on a tab closes it — matches every
+// browser's tab strip. 'click' never fires for the middle button, so this
+// needs its own listener rather than a data-action case.
+document.addEventListener('auxclick', e => {
+  if (e.button !== 1) return;
+  const tabEl = e.target.closest('.fp-tab');
+  if (!tabEl) return;
+  e.preventDefault();
+  closeTabById(tabEl.dataset.tabId);
+});
+
+// Ctrl + scroll wheel over the file list — steps --list-scale (Task 10,
+// explorer-only zoom of just the listing), one step per gesture; anywhere
+// else it's now ignored entirely — application zoom is keyboard-only
+// (Ctrl+=/-/0 above). Throttled because trackpads (and high-resolution
+// wheels) emit dozens of wheel events per swipe; without a cooldown a single
+// flick would jump straight to the min/max scale. ~80ms matches the natural
+// pacing of one "notch" of a physical wheel without making intentional fast
+// scrolls feel sluggish.
 {
   let lastWheelAt = 0;
   const COOLDOWN_MS = 80;
   document.addEventListener('wheel', e => {
     if (!(e.ctrlKey || e.metaKey)) return;
-    e.preventDefault(); // suppress the default page-scroll while zooming
+    if (!e.target.closest('#list-scroll')) return; // outside the list: ignore
+    e.preventDefault(); // suppress the default page-scroll while scaling
     const now = performance.now();
     if (now - lastWheelAt < COOLDOWN_MS) return;
     lastWheelAt = now;
-    if (e.deltaY < 0)      zoomIn();
-    else if (e.deltaY > 0) zoomOut();
+    stepListScale(e.deltaY < 0 ? 1 : -1);
   }, { passive: false });
 }
 
 // ── Context menu event listener (A.10) ────────────────────────────────────────
 document.addEventListener('contextmenu', e => {
   e.preventDefault();
+  // Right-click on open space clears the active selection too (design spec
+  // §3.5), same rule as the mousedown handler above — checked directly
+  // against the target rather than gated on contextMenuType === 'empty-area'
+  // below, since e.g. an unpinned sidebar item (Home, a drive) resolves to
+  // the empty-area MENU but is still an interactive row that must stay
+  // excluded from deselect.
+  deselectOnOpenSpace(e.target);
   contextMenuType = getMenuTypeForTarget(e.target);
-  contextMenuTarget = contextMenuType === 'sidebar-item' ? e.target.closest('.fp-sidebar__item[data-pin-id]') : e.target;
+  contextMenuTarget = contextMenuType === 'sidebar-item'
+    ? e.target.closest('.fp-sidebar__item[data-pin-id], .fp-sidebar__item[data-known-id]')
+    : e.target;
   // Right-click on a row that isn't already selected selects it alone before
   // the menu opens; right-click within an existing multi-selection leaves it
   // untouched so batch actions (Task 4) apply to the whole selection.
@@ -2142,35 +2932,42 @@ document.addEventListener('contextmenu', e => {
     const row = e.target.closest('.fp-row[data-path]');
     if (row && typeof ensureRowSelected === 'function') ensureRowSelected(row.dataset.path);
   }
-  let items = CONTEXT_MENUS[contextMenuType] || CONTEXT_MENUS.file;
 
-  // Home row menu: select the row (mirrors the plain-click select+inspect
-  // behavior) and relabel the favorite toggle to reflect current membership.
+  // Home row menu: select the row first (mirrors the plain-click
+  // select+inspect behavior) so buildMenuContext below reads the row that's
+  // actually about to be highlighted.
   if (contextMenuType === 'home-row') {
     const row = e.target.closest('.fp-row[data-path]');
     if (row) {
       const pane = row.closest('.home-pane');
       pane?.querySelectorAll('.fp-row--selected').forEach(r => { if (r !== row) r.classList.remove('fp-row--selected'); });
       row.classList.add('fp-row--selected');
-      const isFav = typeof favoritesSet !== 'undefined' && favoritesSet.has(row.dataset.path);
-      items = items.map(i => (i !== 'sep' && i.action === 'home-toggle-favorite')
-        ? { ...i, label: isFav ? 'Remove from Favorites' : 'Add to Favorites' }
-        : i);
     }
   }
 
-  // Empty-area menu's "Show hidden files" reflects current state.
-  if (contextMenuType === 'empty-area') {
-    items = items.map(i => (i !== 'sep' && i.action === 'cm-toggle-hidden')
-      ? { ...i, label: browserState.showHidden ? 'Hide hidden files' : 'Show hidden files' }
-      : i);
-  }
-
-  showContextMenu(e.clientX, e.clientY, items);
+  const items = CONTEXT_MENUS[contextMenuType] || CONTEXT_MENUS.file;
+  // Every dynamic label (favorites toggle, hidden-files toggle, sidebar-item
+  // kind) and every applicability rule (§4.2) now goes through this one
+  // ctx, read by the items' own enabled(ctx)/label(ctx) — replacing the
+  // per-menu-type filtering/relabeling this listener used to do inline.
+  const ctx = buildMenuContext(e.target);
+  showContextMenu(e.clientX, e.clientY, items, { ctx });
 });
 
 // ── Init ───────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
+  // Idempotent belt-and-braces: icons.js already installs the sprite
+  // synchronously at parse time (see its own DOMContentLoaded fallback for
+  // the case this script somehow ran before <body> existed); calling again
+  // here is a guaranteed no-op unless that path was somehow skipped.
+  fpInstallSprite();
+
+  // Register the statically-authored seed tab into the tabs model — every
+  // other tab is created through createTab(). Must run before anything else
+  // touches activeTab()/nav (switchScreen('home') at the end of this handler
+  // included).
+  seedInitialTab();
+
   // Restore theme from localStorage
   const savedTheme = localStorage.getItem('fp-theme');
   if (THEME_MODES.includes(savedTheme)) document.documentElement.dataset.theme = resolveTheme(savedTheme);
@@ -2178,9 +2975,16 @@ document.addEventListener('DOMContentLoaded', async () => {
   initWindowControls();
   initResizer();
   initInspectorTagInput();
+  // Paint the inspector's real "No file selected" empty state immediately —
+  // otherwise its static placeholder markup (a sample filename/size/etc.)
+  // would show through until the first selection change, and the inspector
+  // is open by default now (ui.inspector_open, applied below once config
+  // loads) instead of starting closed.
+  updateInspector('none');
   initSidebarResize();
   restoreSidebarState();
-  initToolbarResponsive();
+  initSearch();
+  initToolbarNarrowMode();
   checkBackend();
   const _backendPollId = setInterval(checkBackend, 30_000);
   window.addEventListener('beforeunload', () => clearInterval(_backendPollId), { once: true });
@@ -2188,15 +2992,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   // NOTE: sidebar-collapse and theme-toggle are wired via data-action delegation
   // (see the click switch above). Direct addEventListener calls were removed
   // because they fired in addition to the delegated handler, causing each click
-  // to toggle twice (visible no-op).
-
-  // View mode via segmented control (new)
-  document.querySelectorAll('.fp-segmented__opt[data-view]').forEach(btn => {
-    btn.addEventListener('click', () => setViewMode(btn.dataset.view));
-  });
-
-  // Palette — open when search focused
-  searchInput?.addEventListener('focus', e => { e.preventDefault(); openPalette(); });
+  // to toggle twice (visible no-op). The View/Sort toolbar buttons (Task 10)
+  // are data-action="open-view-menu"/"open-sort-menu" for the same reason —
+  // no separate listener needed here.
 
   // Palette backdrop click closes
   paletteScrim?.addEventListener('click', e => {
@@ -2213,6 +3011,24 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (e.target === document.getElementById('modal-scrim')) closeModal();
   });
 
+  // Properties panel backdrop click closes
+  document.getElementById('properties-modal-scrim')?.addEventListener('click', e => {
+    if (e.target === document.getElementById('properties-modal-scrim')) closeProperties();
+  });
+
+  // Ask File+ popout (Task 15) has no scrim — it's a lightweight anchored
+  // popover, not a modal — so "click outside closes it" is a mousedown
+  // listener that ignores anything inside the popout or the button that
+  // opens it (that click's own 'ask-open' case toggles it instead; if this
+  // listener also closed it on mousedown, the following click would just
+  // reopen it and the button would appear to do nothing).
+  document.addEventListener('mousedown', e => {
+    if (!askPopoutOpen()) return;
+    const popout = document.getElementById('ask-popout');
+    if (popout?.contains(e.target) || e.target.closest('.fp-ask')) return;
+    closeAskPopout();
+  });
+
   // Palette item clicks
   document.querySelectorAll('.fp-palette__item, .palette__item').forEach(btn => {
     btn.addEventListener('click', () => handlePaletteAction(btn));
@@ -2224,6 +3040,19 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Sidebar device name — load saved name or fall back to OS hostname
   initDeviceName();
 
+  // This PC section head is a <div role="button"> (its click already routes
+  // through the delegated data-action switch above) — Enter/Space need their
+  // own listener since a div, unlike a real <button>, never activates on a
+  // key press by itself.
+  document.querySelector('#sb-thispc .fp-sidebar__section-head')?.addEventListener('keydown', e => {
+    // Enter/Space on the nested chevron button (data-action="thispc-toggle")
+    // must toggle collapse, not also open This PC — only act when this
+    // listener's own element (the section-head row itself), not a
+    // descendant, was the real key target (Task 9 review, fix round 1).
+    if (e.target !== e.currentTarget) return;
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openBrowserAt(null); }
+  });
+
   // Sync the status-bar zoom pill with Electron's persisted zoom factor
   updateZoomPill();
 
@@ -2232,18 +3061,19 @@ document.addEventListener('DOMContentLoaded', async () => {
   initMarqueeSelection();
   initRowInteractions();
 
-  // Drag and drop: rows onto folder rows / sidebar items / breadcrumb crumbs (Task 4)
-  initRowDragDrop();
-  initSidebarDragDrop();
-  initBreadcrumbDragDrop();
+  // Drag and drop: rows onto folder rows / sidebar items / breadcrumb crumbs /
+  // the Up button, on pointer events (Task 12 — dragdrop.js; the three HTML5
+  // initialisers this replaced are gone).
+  initDragDrop();
 
   // Home: double-click to open (Task 6) + Favorites drag-to-reorder
   initHomeRowInteractions();
   initFavoritesDragDrop();
 
-  // Restore saved view mode
-  const savedView = sessionStorage.getItem('fp-view-mode');
-  if (savedView) setViewMode(savedView);
+  // View mode is no longer restored from sessionStorage here — ui.view_mode/
+  // ui.list_scale (config) are applied by applySettingsFromConfig() below,
+  // and every real navigation re-decides the view itself (loadDirectory()'s
+  // dynamic-media-view check, Task 10).
 
   // Init underline tabs in any pre-existing tab containers
   document.querySelectorAll('.fp-tabs').forEach(initUnderlineTabs);
@@ -2257,15 +3087,20 @@ document.addEventListener('DOMContentLoaded', async () => {
   // each step degrades to a harmless no-op on backend failure.
   await loadConfig();
   applySettingsFromConfig();
-  applyDownloadsPath();
+  // Before the first listing renders: iconFor() decides the special folder
+  // icons (Desktop, Downloads, …) by matching a path against this map, and
+  // falls back to guessing from the folder's name until it has loaded.
+  await fpLoadKnownFolders();
   await loadDrives();
   await loadPins();
+  await loadSidebarTags();
+  loadQuickAccess();
   await checkCrashRecovery();
 
   // Always start on Home — the previous "restore last active screen"
   // behaviour landed users on whatever they last visited (often Browser),
   // which was disorienting on cold start. Tabs preserve their own state
-  // through `switchToTab()`; this only sets the initial paint.
+  // through `activateTab()`; this only sets the initial paint.
   switchScreen('home');
 
   // ── A.17 Edge case INTEGRATION stubs ──────────────────────────────────────

@@ -23,8 +23,17 @@ let _inspectorHistoryPath = null;
 // Revoked before a new one replaces it so blob: URLs don't leak.
 let _inspectorPreviewUrl = null;
 
+// The entry currently in the header, in the {name, path, ext, is_dir} shape
+// iconFor() wants — so the "No preview" placeholder shows the file's own
+// file-type icon (or its Windows shell icon) rather than a generic page.
+// Cleared whenever the header leaves single-selection mode.
+let _inspectorEntry = null;
+
 // ── Inspector update (A.3.2) — pane swap + header text only; data fetching
 // and per-field rendering live in showInspectorFor/showInspectorMulti below.
+// The panel's own visibility is never touched here — selection changes
+// content only; setInspectorOpen (below) is the sole writer of
+// .inspector--open (design spec §3.4: "selection never opens or closes it").
 function updateInspector(mode, data = {}) {
   const inspector = document.getElementById('inspector');
   if (!inspector) return;
@@ -37,20 +46,20 @@ function updateInspector(mode, data = {}) {
   const filepathEl  = document.getElementById('inspector-filepath');
 
   if (mode === 'multi') {
+    _inspectorEntry = null;
     // Show multi-select aggregate; hide single-file UI
-    singlePanes.forEach(p => { p.style.display = 'none'; });
-    if (tabBar)   tabBar.style.display = 'none';
-    if (preview)  preview.style.display = 'none';
-    if (filenameEl) filenameEl.textContent = `${data.count} items selected`;
+    singlePanes.forEach(p => { p.hidden = true; });
+    if (tabBar)   tabBar.hidden = true;
+    if (preview)  preview.hidden = true;
+    if (filenameEl) { filenameEl.textContent = `${data.count} items selected`; filenameEl.removeAttribute('title'); }
     if (filepathEl) filepathEl.textContent = '';
     if (multiPane) {
-      multiPane.style.display = '';
+      multiPane.hidden = false;
       const countEl = multiPane.querySelector('#inspector-multi-count');
       const sizeEl  = multiPane.querySelector('#inspector-multi-size');
       if (countEl) countEl.textContent = data.count || 0;
       if (sizeEl)  sizeEl.textContent  = data.totalSize || '—';
     }
-    if (!inspector.classList.contains('inspector--open')) toggleInspector();
   } else if (mode === 'single') {
     // Restore single-file UI. Panes are shown one at a time by tab (Preview/
     // Tags/History) — never un-hide every pane here (that stacks Preview
@@ -58,20 +67,33 @@ function updateInspector(mode, data = {}) {
     // whichever tab is currently active (default Preview) via the shared
     // switchInspectorTab helper (app.js, canonical — loaded after this file
     // so it wins), which also re-hides the multi pane.
-    if (multiPane) multiPane.style.display = 'none';
-    if (tabBar)    tabBar.style.display = '';
-    if (preview)   preview.style.display = '';
-    if (data.name && filenameEl) filenameEl.textContent = data.name;
+    if (multiPane) multiPane.hidden = true;
+    if (tabBar)    tabBar.hidden = false;
+    if (preview)   preview.hidden = false;
+    if (data.name && filenameEl) { filenameEl.textContent = data.name; filenameEl.title = data.name; }
     if (data.path && filepathEl) filepathEl.textContent = data.path;
     const activeTab = inspector.querySelector('.fp-inspector__tab.fp-tabs__item--active')?.dataset.tab || 'preview';
     switchInspectorTab(activeTab);
-    if (!inspector.classList.contains('inspector--open')) toggleInspector();
   } else {
-    // Empty selection — collapse inspector. Also revoke any preview blob:
-    // URL here (not just in browser.js's onSelectionChanged) since
-    // updateInspector('none') can be reached from other callers too.
-    renderPreviewNone();
-    if (inspector.classList.contains('inspector--open')) toggleInspector();
+    // Empty selection — render the "No file selected" state in place (same
+    // fixed geometry as a real file: header/preview/meta never resize).
+    _inspectorEntry = null;
+    _inspectorFileId = null;
+    _inspectorHistoryPath = null;
+    if (multiPane) multiPane.hidden = true;
+    if (tabBar)    tabBar.hidden = false;
+    if (preview)   preview.hidden = false;
+    if (filenameEl) { filenameEl.textContent = 'No file selected'; filenameEl.removeAttribute('title'); }
+    if (filepathEl) filepathEl.textContent = '';
+    renderInspectorEmptyPreview();
+    renderInspectorMeta(null);
+    const emptyHint = '<p style="font:400 var(--t-body) var(--font-ui);color:var(--text-tertiary);padding:8px 0">Select a file</p>';
+    const tagsEl = document.getElementById('inspector-tags');
+    if (tagsEl) tagsEl.innerHTML = emptyHint;
+    const historyEl = document.getElementById('inspector-history');
+    if (historyEl) historyEl.innerHTML = emptyHint;
+    const activeTab = inspector.querySelector('.fp-inspector__tab.fp-tabs__item--active')?.dataset.tab || 'preview';
+    switchInspectorTab(activeTab);
   }
 }
 
@@ -87,6 +109,8 @@ async function showInspectorFor(path) {
   const entry = typeof entryForPath === 'function' ? entryForPath(path) : null;
   const name = entry ? entry.name : path.split(/[\\/]/).filter(Boolean).pop();
   updateInspector('single', { name, path });
+  // Set AFTER updateInspector — its 'multi'/'none' branches null this out.
+  _inspectorEntry = { ...(entry || {}), name, path };
 
   let data;
   try {
@@ -106,7 +130,13 @@ async function showInspectorFor(path) {
   renderInspectorMeta(data);
   renderTagChips(data.tags || []);
 
-  await loadInspectorPreview(path, seq);
+  // GET /preview 400s for a directory by design (backend/api.py) — Task 13
+  // surfaced this via a folder's own Properties command, which selects it
+  // the same way a click does. A folder never has a preview to show, so skip
+  // the doomed fetch entirely rather than let it round-trip into a console
+  // error every time a folder is selected.
+  if (data.kind === 'Folder') renderPreviewNone();
+  else await loadInspectorPreview(path, seq);
   if (seq !== _inspectorSeq) return;
 
   await loadInspectorHistory(path, seq);
@@ -140,6 +170,19 @@ function renderInspectorMeta(data) {
 // ── Preview ───────────────────────────────────────────────────────────────────
 function previewContainer() { return document.getElementById('inspector-preview'); }
 
+/** Preview box for updateInspector('none') — a generic, dimmed file glyph.
+ * Distinct from renderPreviewNone() below (used when an actual selected
+ * file simply has nothing to preview, which keeps that file's own
+ * type icon at full opacity): here there is no file at all. */
+function renderInspectorEmptyPreview() {
+  const el = previewContainer();
+  if (!el) return;
+  if (_inspectorPreviewUrl) { URL.revokeObjectURL(_inspectorPreviewUrl); _inspectorPreviewUrl = null; }
+  el.style.display = 'flex';
+  el.style.flexDirection = 'row';
+  el.innerHTML = `<span style="opacity:.4;display:flex">${icon('file', 'fp-icon--40')}</span>`;
+}
+
 function renderPreviewNone() {
   const el = previewContainer();
   if (!el) return;
@@ -147,7 +190,7 @@ function renderPreviewNone() {
   el.style.display = 'flex';
   el.style.flexDirection = 'row'; // back to the container's default centering (a text preview sets 'column')
   el.innerHTML = `<div style="display:flex;flex-direction:column;align-items:center;gap:8px;color:var(--text-tertiary)">
-    <svg width="40" height="40" viewBox="0 0 40 40" fill="none" aria-hidden="true"><rect x="5" y="3" width="23" height="33" rx="3" fill="var(--bg-raised)" stroke="var(--border-subtle)" stroke-width="1.2"/><path d="M28 3v10h10" stroke="var(--border-subtle)" stroke-width="1.2" stroke-linejoin="round"/><path d="M12 17h16M12 22h16M12 27h10" stroke="var(--text-tertiary)" stroke-width="1.5" stroke-linecap="round"/></svg>
+    ${iconFor(_inspectorEntry, 40)}
     <span style="font:400 var(--t-compact) var(--font-ui)">No preview</span>
   </div>`;
 }
@@ -232,6 +275,10 @@ async function addInspectorTag(name) {
   try {
     await API.post(`/files/${_inspectorFileId}/tags`, { name });
     await refreshInspectorTags();
+    // The sidebar's Tags section and search.js's Tag filter both read the
+    // same GET /tags counts (Task 14) — re-fetch so a tag added here shows up
+    // there without a restart.
+    if (typeof loadSidebarTags === 'function') loadSidebarTags();
   } catch (err) {
     showToast(`Failed to add tag: ${formatApiError(err)}`, 'error');
   }
@@ -242,6 +289,7 @@ async function inspectorRemoveTag(tagId) {
   try {
     await API.del(`/files/${_inspectorFileId}/tags/${tagId}`);
     await refreshInspectorTags();
+    if (typeof loadSidebarTags === 'function') loadSidebarTags();
   } catch (err) {
     showToast(`Failed to remove tag: ${formatApiError(err)}`, 'error');
   }
@@ -459,18 +507,29 @@ function inspectorRevealSelected() {
 
 // ── Inspector tabs ────────────────────────────────────────────────────────────
 // switchInspectorTab itself lives in app.js (toggles fp-tabs__item--active +
-// inline pane display) — that's the version loaded last and the one every
-// click and updateInspector('single') actually runs; no divergent copy here.
+// each pane's `hidden` attribute) — that's the version loaded last and the
+// one every click and updateInspector('single'/'none') actually runs; no
+// divergent copy here.
 
-// ── Inspector toggle ───────────────────────────────────────────────────────────
-function toggleInspector() {
+// ── Inspector toggle (a switch — design spec §3.4) ───────────────────────────
+// setInspectorOpen is the ONLY writer of .inspector--open: ui.inspector_open
+// (config, default on — see settings.js's applySettingsFromConfig, which
+// calls this with {persist: false} on startup) plus Ctrl+I / the toolbar
+// button (via toggleInspector) are the only things that open or close the
+// panel. Selection changes (updateInspector above) never do.
+function setInspectorOpen(open, { persist = true } = {}) {
   const inspector = document.getElementById('inspector');
   const toggleBtn = document.getElementById('btn-inspector-toggle');
   if (!inspector) return;
-  const isOpen = inspector.classList.toggle('inspector--open');
-  toggleBtn?.classList.toggle('fp-icon-btn--active', isOpen);
-  // Notify: used by Browser screen to compact columns
-  document.dispatchEvent(new CustomEvent('fp:inspector-toggle', { detail: { open: isOpen } }));
+  inspector.classList.toggle('inspector--open', open);
+  toggleBtn?.classList.toggle('fp-icon-btn--active', open);
+  if (persist && typeof saveSetting === 'function') saveSetting('ui.inspector_open', open);
+}
+
+function toggleInspector() {
+  const inspector = document.getElementById('inspector');
+  if (!inspector) return;
+  setInspectorOpen(!inspector.classList.contains('inspector--open'));
 }
 
 

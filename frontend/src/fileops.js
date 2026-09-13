@@ -109,6 +109,12 @@ const fileops = {
   copySelection() { this.clipboard = { mode: 'copy', paths: getSelectedPaths() }; },
   cutSelection()  { this.clipboard = { mode: 'cut',  paths: getSelectedPaths() }; },
 
+  /** Number of paths currently on the clipboard — the Paste context-menu
+   * item's enabled(ctx) predicate (Task 11, playtest pass 1 §4.2) reads this
+   * via buildMenuContext(target)'s ctx.clipboard rather than reaching into
+   * fileops.clipboard.paths itself. */
+  clipboardCount() { return this.clipboard.paths.length; },
+
   async pasteInto(dir) {
     const { mode, paths } = this.clipboard;
     if (!mode || !paths.length || !dir) return;
