@@ -107,6 +107,26 @@ test.describe('isSafeLocalPath', () => {
     expect(isSafeLocalPath('C:\\a\\..\\b')).toBe(false);
   });
 
+  test('rejects a forward-slash ".." component in the middle', () => {
+    expect(isSafeLocalPath('C:/a/../b')).toBe(false);
+  });
+
+  test('rejects a forward-slash ".." component at the end', () => {
+    expect(isSafeLocalPath('C:/a/..')).toBe(false);
+  });
+
+  test('rejects an embedded NUL character', () => {
+    expect(isSafeLocalPath('C:\\a\\b' + String.fromCharCode(0) + '.txt')).toBe(false);
+  });
+
+  test('rejects an embedded newline', () => {
+    expect(isSafeLocalPath('C:\\a\\b\n.txt')).toBe(false);
+  });
+
+  test('rejects an embedded tab', () => {
+    expect(isSafeLocalPath('C:\\a\\b\t.txt')).toBe(false);
+  });
+
   test('rejects the \\\\?\\ extended-length prefix', () => {
     expect(isSafeLocalPath('\\\\?\\C:\\a')).toBe(false);
   });

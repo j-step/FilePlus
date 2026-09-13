@@ -68,11 +68,15 @@ function iconCacheKey(path, ext, size) {
 const MAX_PATH_LENGTH = 32767;
 
 /** True iff `p` is an absolute Windows drive-letter path with no `..`
- *  component, no `\\?\` extended prefix, and no UNC (`\\server\share`) form.
- *  Gates every path the main process passes to `app.getFileIcon`,
- *  `nativeImage.createThumbnailFromPath`, or a spawned shell verb. */
+ *  component, no `\\?\` extended prefix, no UNC (`\\server\share`) form, and
+ *  no control characters. Gates every path the main process passes to
+ *  `app.getFileIcon`, `nativeImage.createThumbnailFromPath`, or a spawned
+ *  shell verb. */
 function isSafeLocalPath(p) {
   if (typeof p !== 'string' || p.length === 0 || p.length >= MAX_PATH_LENGTH) return false;
+  // Reject C0 control characters and DEL -- a NUL, newline, or tab embedded
+  // in a path has no legitimate reason to reach a spawned shell verb.
+  if (/[\x00-\x1f\x7f]/.test(p)) return false;
   // Extended-length (`\\?\...`) and UNC (`\\server\share`) paths both start
   // with a double separator — reject before the drive-letter check so the
   // reason is explicit rather than incidental.

@@ -173,6 +173,7 @@ app.whenReady().then(() => {
     try {
       const iconSize = size >= 32 ? 'large' : 'normal';
       const image = await app.getFileIcon(filePath, { size: iconSize });
+      if (!image || image.isEmpty()) return null;
       const dataUrl = image.resize({ width: size, height: size }).toDataURL();
       iconCache.set(key, dataUrl);
       return dataUrl;
@@ -192,6 +193,7 @@ app.whenReady().then(() => {
     return runQueuedThumbnail(async () => {
       try {
         const image = await nativeImage.createThumbnailFromPath(filePath, { width: size, height: size });
+        if (!image || image.isEmpty()) return null;
         const dataUrl = image.toDataURL();
         thumbnailCache.set(key, dataUrl);
         return dataUrl;
