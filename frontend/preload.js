@@ -35,4 +35,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openWith:          (p) => ipcRenderer.send('shell-open-with', p),
   pickFolder:        (defaultPath) => ipcRenderer.invoke('dialog-pick-folder', defaultPath),
   clipboardWriteText: (text) => ipcRenderer.send('clipboard-write-text', text),
+  // Icons / thumbnails / native dialogs (Stage 2C Task 4; Tasks 6 and 13 wire renderer callers)
+  fileIcon:          (path, ext, size) => ipcRenderer.invoke('get-file-icon', path, ext, size),
+  thumbnail:         (path, size, mtime) => ipcRenderer.invoke('get-thumbnail', path, size, mtime),
+  showProperties:    (path) => ipcRenderer.invoke('show-properties', path),
+  openWithDialog:    (path) => ipcRenderer.invoke('open-with-dialog', path),
 });
