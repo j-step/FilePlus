@@ -82,9 +82,12 @@ $filetypesTmp = Join-Path $filetypesTmpDir 'filetypes-parity.js'
 try {
   py -3 scripts/build_filetypes.py $filetypesTmp
   if ($LASTEXITCODE -ne 0) { Write-Host 'build_filetypes.py failed' -ForegroundColor Red; exit 1 }
-  $filetypesGenHash = (Get-FileHash $filetypesTmp -Algorithm SHA256).Hash
-  $filetypesCurHash = (Get-FileHash frontend/src/filetypes.js -Algorithm SHA256).Hash
-  if ($filetypesGenHash -ne $filetypesCurHash) {
+  # Compare with line endings normalised: git autocrlf checks the committed
+  # file out with CRLF while the generator writes LF (pytest compares in text
+  # mode for the same reason).
+  $filetypesGen = ([IO.File]::ReadAllText($filetypesTmp)) -replace "`r`n", "`n"
+  $filetypesCur = ([IO.File]::ReadAllText((Join-Path $root 'frontend/src/filetypes.js'))) -replace "`r`n", "`n"
+  if ($filetypesGen -ne $filetypesCur) {
     Write-Host 'frontend/src/filetypes.js is stale -- run: py -3 scripts/build_filetypes.py' -ForegroundColor Red
     exit 1
   }
