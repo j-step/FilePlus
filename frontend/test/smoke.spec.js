@@ -45,7 +45,16 @@ test('every screen renders with no renderer errors', async () => {
   const errors = [];
   try {
     page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
-    page.on('console', (m) => { if (m.type() === 'error') errors.push(`console: ${m.text()}`); });
+    // location() gives {url, lineNumber, columnNumber} for a console entry —
+    // included so a "Failed to load resource: 404" (Chromium's own message,
+    // which never carries the URL in m.text()) actually names the route that
+    // 404'd instead of leaving it a mystery.
+    page.on('console', (m) => {
+      if (m.type() !== 'error') return;
+      const loc = m.location();
+      const where = loc && loc.url ? ` (${loc.url}:${loc.lineNumber})` : '';
+      errors.push(`console: ${m.text()}${where}`);
+    });
 
     await page.waitForSelector('#shell');
 
@@ -223,6 +232,8 @@ test('every screen renders with no renderer errors', async () => {
     // this is a single fetch, matching a real sidebar/breadcrumb navigation.
     await page.evaluate((p) => openBrowserAt(p), picsDir);
     await expect(page.locator('.fp-tab.fp-tab--active .fp-tab__label')).toHaveText('Pictures');
+    const tab2Id = await page.evaluate(() => tabs.activeId);
+    const picsRowCount = await page.locator('#list-scroll .fp-row').count();
 
     // Clicking tab 1 must restore ITS OWN state — the Documents listing,
     // untouched by tab 2's navigation — not re-fetch an empty/root listing.
@@ -234,6 +245,29 @@ test('every screen renders with no renderer errors', async () => {
     // Two tabs visible: tab 1 active (bordered, accent underline), tab 2
     // inactive (filled background) — see Task 7's tab styling.
     await page.screenshot({ path: path.join(SHOTS, 'tabs.png') });
+
+    // --- Race guard (fix round 1) ---
+    // Fire an UNAWAITED loadDirectory() on tab 1 (already active, already on
+    // Documents — a redundant reload, not a real navigation), then
+    // immediately switch to tab 2 before that fetch can resolve. Without the
+    // reqTabId/reqSeq guard in loadDirectory(), the late Documents response
+    // would paint over tab 2's live Pictures listing — and silently push
+    // "Documents" onto tab 2's OWN history stack, since activateTab() has by
+    // then repointed nav.history at tab 2's array by reference.
+    const tab2HistoryLenBefore = await page.evaluate(
+      (id) => tabs.list.find((t) => t.id === id).history.length, tab2Id);
+    await page.evaluate((p) => { loadDirectory(p); /* deliberately not awaited */ }, docsDir);
+    await page.evaluate((id) => activateTab(id), tab2Id);
+    await page.waitForTimeout(1000); // let the abandoned fetch resolve (and, unfixed, wrongly apply)
+    await expect(page.locator('#breadcrumb .fp-breadcrumb__crumb--current')).toHaveText('Pictures');
+    await expect(page.locator('#list-scroll .fp-row')).toHaveCount(picsRowCount);
+    const tab2HistoryLenAfter = await page.evaluate(
+      (id) => tabs.list.find((t) => t.id === id).history.length, tab2Id);
+    expect(tab2HistoryLenAfter).toBe(tab2HistoryLenBefore);
+
+    await tab1.click();
+    await expect(page.locator('#breadcrumb .fp-breadcrumb__crumb--current')).toHaveText('Documents');
+    await expect(page.locator('#list-scroll .fp-row')).toHaveCount(docsRowCount);
 
     // Middle-click (auxclick, button 1) on tab 2 closes it without activating it.
     const tab2 = page.locator('.fp-tab').nth(1);

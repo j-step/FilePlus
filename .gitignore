@@ -41,6 +41,8 @@ FilePlusTestSandbox - Backup/
 
 # Test artefacts (screenshots, Playwright output)
 artifacts/
+test-results/
+frontend/test-results/
 
 # Git worktrees for stage runs (spec section 6)
 .worktrees/

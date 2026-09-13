@@ -368,6 +368,7 @@ function duplicateTab(id) {
   });
   copy.view = source.view;
   copy.selection = source.selection.slice();
+  copy.scrollTop = source.scrollTop;
   // Place the duplicate right after its source, matching a browser's
   // "Duplicate tab" placement, instead of at the end of the strip.
   const copyEl = document.querySelector(`.fp-tab[data-tab-id="${copy.id}"]`);

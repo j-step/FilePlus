@@ -45,6 +45,12 @@ const browserState = {
   // root) — whatever the load's outcome. Used by the error banner's "Retry"
   // action so it can re-attempt the exact same load that just failed.
   lastAttemptedPath: null,
+  // Monotonic counter, bumped by every loadDirectory() call before its
+  // fetch — lets a call whose fetch resolves late detect it's been
+  // superseded (by a tab switch OR a newer navigation in the same tab) and
+  // bail out instead of painting stale data over whatever's current. See
+  // loadDirectory()'s reqTabId/reqSeq guard.
+  _loadSeq: 0,
 };
 
 /** Reads the saved view mode from sessionStorage, defaulting to list. */
@@ -285,9 +291,18 @@ function parentOfPath(p) {
  * only for paths still present in the refreshed listing). Mutually exclusive
  * with opts.preserveSelection — activateTab() is the only restore caller and
  * it always passes addToHistory:false too.
+ *
+ * reqTabId/reqSeq (fix round 1) guard against the fetch resolving after this
+ * call has been superseded — either by a tab switch (tabs.activeId no longer
+ * reqTabId) or by a newer navigation in the same tab (browserState._loadSeq
+ * moved on). Without this, an unawaited loadDirectory() left running while
+ * the user switches tabs (or fires a second navigation before the first
+ * lands) could paint a stale listing over whatever's actually current.
  */
 async function loadDirectory(absPath, opts = {}) {
   const { addToHistory = true, preserveSelection = false, restore = null } = opts;
+  const reqTabId = tabs.activeId;
+  const reqSeq = ++browserState._loadSeq;
   browserState.lastAttemptedPath = absPath;
   // Sets the active tab's label/icon, the sidebar highlight, and (when
   // absPath is a real path) the breadcrumb — synchronously, before the
@@ -300,9 +315,11 @@ async function loadDirectory(absPath, opts = {}) {
       ? await API.get('/fs/list', { path: absPath, show_hidden: browserState.showHidden })
       : await API.get('/fs/list/root', { show_hidden: browserState.showHidden });
   } catch (err) {
+    if (tabs.activeId !== reqTabId || browserState._loadSeq !== reqSeq) return;
     handleLoadError(err, absPath);
     return;
   }
+  if (tabs.activeId !== reqTabId || browserState._loadSeq !== reqSeq) return;
 
   const prevSelection = preserveSelection ? new Set(browserState.selection) : null;
   const prevAnchor    = preserveSelection ? browserState.anchor : null;
