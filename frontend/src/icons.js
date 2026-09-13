@@ -52,9 +52,8 @@ function fpIconSource() {
   return v === 'windows' ? 'windows' : 'fileplus';
 }
 
-// Folder name (lower-cased) -> its own sprite symbol. Everything else is the
-// plain folder. The names are Windows' own shell-folder names, which is what
-// makes the special icons recognisable in the first place.
+// Known-folder id -> its own sprite symbol. Everything else is the plain
+// folder. The ids come straight from GET /known-folders (backend/winshell.py).
 const FP_FOLDER_SPECIALS = {
   desktop: 'ft-folder-desktop',
   downloads: 'ft-folder-downloads',
@@ -65,8 +64,55 @@ const FP_FOLDER_SPECIALS = {
   screenshots: 'ft-folder-screenshots',
 };
 
-/** Sprite symbol name for a directory entry. */
+/** Comparison form for a Windows path: forward slashes folded to back, any
+ * trailing separator dropped, lower-cased (NTFS is case-insensitive). */
+function fpNormalizePath(p) {
+  return String(p || '').replace(/\//g, '\\').replace(/\\+$/, '').toLowerCase();
+}
+
+/** Known-folder id ('desktop', 'downloads', …) for an absolute path, or null.
+ * Null until fpLoadKnownFolders() has answered. */
+function fpKnownFolderIdFor(path) {
+  const map = window.__fpKnownFolders;
+  if (!map || !path) return null;
+  return map.get(fpNormalizePath(path)) || null;
+}
+
+/** Fetches GET /known-folders once and caches it as window.__fpKnownFolders,
+ * a Map of normalised path -> known-folder id. app.js's init awaits this
+ * before the first listing renders. On failure the map is left unset, which
+ * keeps _folderSymbol on its name heuristic rather than flattening every
+ * special folder to the plain icon. */
+async function fpLoadKnownFolders() {
+  if (window.__fpKnownFolders) return window.__fpKnownFolders;
+  let folders;
+  try {
+    const data = await API.get('/known-folders');
+    folders = (data && data.folders) || [];
+  } catch (_) {
+    return null; // backend down / older build — name heuristic stays in force
+  }
+  const map = new Map();
+  for (const f of folders) {
+    if (f && f.path && f.id) map.set(fpNormalizePath(f.path), f.id);
+  }
+  window.__fpKnownFolders = map;
+  return map;
+}
+
+/** Sprite symbol name for a directory entry.
+ *
+ * Identity is the PATH, not the name: only the user's real Desktop gets the
+ * monitor glyph, and a project folder that happens to be called "Desktop"
+ * gets the plain folder. The name heuristic is the fallback used only in the
+ * window before GET /known-folders has answered (or if it never does), where
+ * guessing from the name beats showing nothing special at all. */
 function _folderSymbol(entry) {
+  const path = entry && entry.path;
+  if (window.__fpKnownFolders) {
+    const id = fpKnownFolderIdFor(path);
+    return (id && FP_FOLDER_SPECIALS[id]) || 'ft-folder';
+  }
   const name = (entry && entry.name ? String(entry.name) : '').toLowerCase();
   return FP_FOLDER_SPECIALS[name] || 'ft-folder';
 }
@@ -165,11 +211,40 @@ function fpFolderPeekBox(entry, cls = '') {
  * element is within 200px of the viewport. Scrolling an element back out
  * before the shell answers cancels it: _fpSeq no longer matches, the answer
  * is dropped, and the element stays registered so the request is retried if
- * it comes back. Answers are memoised per key in a Map on top of main.js's
- * own LRU caches, so a re-render (sort, theme switch, view toggle) repaints
- * from memory with no IPC at all. */
-const _fpWinIconCache = new Map();
-const _fpThumbCache = new Map();
+ * it comes back. Answers are memoised per key on top of main.js's own LRU
+ * caches, so a re-render (sort, theme switch, view toggle) repaints from
+ * memory with no IPC at all. */
+
+/** Bounded LRU: get() refreshes recency, set() evicts the oldest once full.
+ * A deliberate twin of LruCache in frontend/iconCache.js — that file is a
+ * CommonJS module for the main process, and the renderer has no require().
+ * Unbounded Maps here would grow without limit across a long session of
+ * browsing large folders, pinning every data: URL ever fetched in memory. */
+class FpLru {
+  constructor(max) { this.max = max; this._m = new Map(); }
+  has(key) { return this._m.has(key); }
+  get(key) {
+    if (!this._m.has(key)) return undefined;
+    const value = this._m.get(key);
+    this._m.delete(key); // delete + re-insert moves the key to the newest end
+    this._m.set(key, value);
+    return value;
+  }
+  set(key, value) {
+    if (this._m.has(key)) this._m.delete(key);
+    else if (this._m.size >= this.max) this._m.delete(this._m.keys().next().value);
+    this._m.set(key, value);
+  }
+}
+
+// Sized to match main.js's own caches (500 icons / 500 thumbnails there): a
+// renderer only ever holds what it has actually painted, and a data: URL for
+// a 96px thumbnail is a few KB.
+const _fpWinIconCache = new FpLru(300);
+const _fpThumbCache = new FpLru(500);
+// key -> in-flight Promise, so two tiles of the same file (or the same tile
+// re-observed after scrolling back) share one IPC round trip.
+const _fpThumbInFlight = new Map();
 let _fpLazySeq = 0;
 let _fpLazyObserver = null;
 
@@ -278,37 +353,49 @@ function _fpResolveWinIcon(el, seq) {
 function fpRequestThumbnail(imgEl, path, size, mtime, seq) {
   if (seq === undefined) { seq = ++_fpLazySeq; imgEl._fpSeq = seq; imgEl.dataset.fpLazy = 'pending'; }
   const key = `${path}|${size}|${mtime}`;
+  if (_fpThumbCache.has(key)) { _fpApplyThumb(imgEl, seq, _fpThumbCache.get(key)); return; }
+  _fpFetchThumb(key, path, size, mtime, imgEl.dataset.ext || '')
+    .then((url) => _fpApplyThumb(imgEl, seq, url));
+}
+
+/** One shell round trip per key, shared by every element waiting on it and
+ * memoised in _fpThumbCache when it settles. Resolves to a data: URL or null;
+ * never rejects. */
+function _fpFetchThumb(key, path, size, mtime, ext) {
+  const pending = _fpThumbInFlight.get(key);
+  if (pending) return pending;
   const api = window.electronAPI;
-  const fail = () => { if (_fpSettle(imgEl, seq, true)) imgEl.classList.add('fp-thumb--failed'); };
-  const win = (url) => {
-    _fpThumbCache.set(key, url);
-    if (!_fpSettle(imgEl, seq, true)) return;
-    imgEl.src = url;
-    imgEl.classList.add('fp-thumb--ready');
-    // A real thumbnail replaces the placeholder icon outright — but a folder
-    // preview's mini pictures are fanned OVER the folder icon, which has to
-    // stay put, so only the tile's own full-size thumbnail retires it.
-    if (!imgEl.classList.contains('fp-thumb--mini') && imgEl.parentElement) {
-      imgEl.parentElement.classList.add('fp-thumb-box--has-thumb');
-    }
-  };
-  if (_fpThumbCache.has(key)) {
-    const cached = _fpThumbCache.get(key);
-    if (cached) win(cached); else fail();
-    return;
-  }
-  if (!api || typeof api.thumbnail !== 'function') { fail(); return; }
-  api.thumbnail(path, size, mtime).then((url) => {
-    if (url) { win(url); return; }
-    // No content thumbnail (a .txt, an unreadable image, a folder with
-    // nothing to show) — the shell's per-type icon is still better than
-    // nothing at tile size.
-    if (typeof api.fileIcon !== 'function') { _fpThumbCache.set(key, null); fail(); return; }
-    return api.fileIcon(path, imgEl.dataset.ext || '', size).then((iconUrl) => {
-      _fpThumbCache.set(key, iconUrl || null);
-      if (iconUrl) win(iconUrl); else fail();
+  const request = (!api || typeof api.thumbnail !== 'function')
+    ? Promise.resolve(null)
+    : Promise.resolve(api.thumbnail(path, size, mtime)).then((url) => {
+      if (url) return url;
+      // No content thumbnail (a .txt, an unreadable image, a folder with
+      // nothing to show) — the shell's per-type icon is still better than
+      // nothing at tile size.
+      return typeof api.fileIcon === 'function' ? api.fileIcon(path, ext, size) : null;
     });
-  }).catch(fail);
+  const settled = request.catch(() => null).then((url) => {
+    _fpThumbCache.set(key, url || null);
+    _fpThumbInFlight.delete(key);
+    return url || null;
+  });
+  _fpThumbInFlight.set(key, settled);
+  return settled;
+}
+
+/** Paints one resolved thumbnail onto its <img>, unless that element has
+ * since been superseded, removed, or scrolled out of view. */
+function _fpApplyThumb(imgEl, seq, url) {
+  if (!_fpSettle(imgEl, seq, true)) return;
+  if (!url) { imgEl.classList.add('fp-thumb--failed'); return; }
+  imgEl.src = url;
+  imgEl.classList.add('fp-thumb--ready');
+  // A real thumbnail replaces the placeholder icon outright — but a folder
+  // preview's mini pictures are fanned OVER the folder icon, which has to
+  // stay put, so only the tile's own full-size thumbnail retires it.
+  if (!imgEl.classList.contains('fp-thumb--mini') && imgEl.parentElement) {
+    imgEl.parentElement.classList.add('fp-thumb-box--has-thumb');
+  }
 }
 
 async function _fpResolveFolderPeek(el, seq) {

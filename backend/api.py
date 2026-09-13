@@ -593,10 +593,18 @@ async def fs_peek(
 
     Used for folder preview thumbnails (e.g. a fanned pair of images on a
     folder tile). Read-only, so any real path is allowed (D2).
+
+    A path that is missing or is not a directory answers 200 with an empty
+    list, not 404: a preview is a decoration, and the caller (a grid tile
+    whose folder was deleted between the listing and the peek) has nothing to
+    do with a 404 except swallow it -- while the browser still logs the failed
+    request as a console error. Malformed input is still a hard error: a
+    relative/driveless path raises BadPathError (400) and a guarded path
+    raises ProtectedPathError (403) from path_guard above.
     """
     resolved = path_guard(Path(path), "read")  # relative/driveless -> BadPathError -> 400
     if not resolved.is_dir():
-        raise HTTPException(status_code=404, detail=f"Not a directory: {path}")
+        return {"items": []}
     items = await asyncio.to_thread(_peek_entries, resolved, n)
     return {"items": items}
 

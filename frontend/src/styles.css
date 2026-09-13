@@ -230,9 +230,12 @@
   /* ---------- File-type family colours (Stage 2C Task 6) ----------
      Restated in full so the light theme owns its own copy of the palette
      rather than inheriting a dark-theme value by omission (a future tweak to
-     one theme then cannot silently move the other). Identical to :root
-     except --ft-folder, which is darkened so a large solid yellow shape
-     still reads against a white page. */
+     one theme then cannot silently move the other). Identical to :root except
+     the four hues that are too pale to hold their own against a white page:
+     --ft-folder (a large solid shape), and --ft-code-js / --ft-svg /
+     --ft-code-rust, each darkened until its tab clears 3:1 against
+     --bg-content #FFFFFF (3.18, 3.46 and 4.67 respectively; the :root values
+     sit at 9.24, 8.57 and 7.25 against the dark #232428). */
   --ft-text:        #8A8F98;
   --ft-markdown:    #6C8EBF;
   --ft-pdf:         #E5484D;
@@ -240,7 +243,7 @@
   --ft-excel:       #217346;
   --ft-powerpoint:  #D24726;
   --ft-csv:         #3E9C6A;
-  --ft-code-js:     #E8C547;
+  --ft-code-js:     #AE8D08;
   --ft-code-ts:     #3178C6;
   --ft-code-py:     #3776AB;
   --ft-code-html:   #E44D26;
@@ -252,11 +255,11 @@
   --ft-code-c:      #5C6BC0;
   --ft-code-java:   #B07219;
   --ft-code-go:     #00ADD8;
-  --ft-code-rust:   #DEA584;
+  --ft-code-rust:   #A4653A;
   --ft-code-other:  #7C5CFF;
   --ft-image:       #3FA7D6;
   --ft-image-raw:   #2F7FA6;
-  --ft-svg:         #FFB13B;
+  --ft-svg:         #C77700;
   --ft-video:       #A259FF;
   --ft-audio:       #FF7A59;
   --ft-archive:     #B08968;

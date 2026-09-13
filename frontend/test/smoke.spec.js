@@ -183,6 +183,28 @@ test('every screen renders with no renderer errors', async () => {
     await expect(page.locator('#list-scroll img.fp-icon--win')).toHaveCount(0);
     expect(await page.locator('#list-scroll use[href^="#fp-ft-"]').count()).toBeGreaterThan(0);
 
+    // Special folder icons are decided by PATH (GET /known-folders), not by
+    // name: a folder called "Desktop" that is not the user's real Desktop
+    // must render the plain folder symbol.
+    const decoyDir = `${root}\\_gen\\Desktop`;
+    const postJson = (route, body) => fetch(`${API}${route}`, {
+      method: 'POST',
+      headers: { ...apiHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    await postJson('/fs/mkdir', { dir: `${root}\\_gen`, name: 'Desktop' });
+    try {
+      await page.evaluate((p) => loadDirectory(p), `${root}\\_gen`);
+      await page.waitForFunction(() => document.querySelectorAll('.fp-row').length >= 2);
+      const decoyIcon = rowByName('Desktop').locator('use');
+      await expect(decoyIcon).toHaveAttribute('href', '#fp-ft-folder');
+      // Sanity: the sprite does carry the special symbol, so the assertion
+      // above is about identity rather than a missing icon.
+      expect(await page.evaluate(() => !!document.getElementById('fp-ft-folder-desktop'))).toBe(true);
+    } finally {
+      await postJson('/fs/trash', { paths: [decoyDir] });
+    }
+
     await page.evaluate((p) => loadDirectory(p), docsDir);
     await page.waitForFunction(() => document.querySelectorAll('.fp-row').length >= 10);
 

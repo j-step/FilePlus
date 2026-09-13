@@ -53,6 +53,25 @@ def test_fs_peek_returns_media_items_and_400_for_relative_path(client, sandbox):
     assert r2.status_code == 400
 
 
+def test_fs_peek_answers_empty_for_a_missing_path_or_a_file(client, sandbox):
+    """A preview of something that is not a directory is simply empty.
+
+    404 would make the renderer's folder tiles log a console error for a
+    folder deleted between the listing and the peek -- a decoration must not
+    be able to redden the zero-console-errors gate. Malformed input (a
+    relative path) still 400s; that is checked above.
+    """
+    missing = client.get("/fs/peek", params={"path": str(sandbox / "no-such-folder"), "n": 2})
+    assert missing.status_code == 200
+    assert missing.json() == {"items": []}
+
+    a_file = sandbox / "not-a-directory.txt"
+    a_file.write_text("hello")
+    r = client.get("/fs/peek", params={"path": str(a_file), "n": 2})
+    assert r.status_code == 200
+    assert r.json() == {"items": []}
+
+
 def test_fs_peek_skips_hidden_and_trash(client, sandbox):
     import backend.config as _config
     (sandbox / ".hidden.png").write_bytes(b"\x89PNG\r\n\x1a\n")

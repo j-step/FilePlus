@@ -2276,6 +2276,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   // each step degrades to a harmless no-op on backend failure.
   await loadConfig();
   applySettingsFromConfig();
+  // Before the first listing renders: iconFor() decides the special folder
+  // icons (Desktop, Downloads, …) by matching a path against this map, and
+  // falls back to guessing from the folder's name until it has loaded.
+  await fpLoadKnownFolders();
   applyDownloadsPath();
   await loadDrives();
   await loadPins();
