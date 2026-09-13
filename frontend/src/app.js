@@ -813,6 +813,40 @@ function closeTagCanvas() {
   scrim.setAttribute('aria-hidden', 'true');
 }
 
+// ── Ask File+ (Task 15, design spec §9) ─────────────────────────────────────
+// Visible shell only — no model wired until Stage 3. Opens a popover anchored
+// to the sidebar's .fp-ask button; Send stays permanently disabled and
+// nothing here ever calls the backend.
+function askPopoutOpen() {
+  const popout = document.getElementById('ask-popout');
+  return !!popout && popout.style.display !== 'none';
+}
+
+function openAskPopout() {
+  const popout = document.getElementById('ask-popout');
+  const btn = document.getElementById('btn-ask-fileplus');
+  if (!popout || !btn) return;
+  popout.style.display = 'flex';
+  // Anchor to the button's bottom-left, clamped to the viewport — the same
+  // getBoundingClientRect() technique showContextMenu()'s {anchor} branch
+  // uses for the View/Sort toolbar dropdowns.
+  const r = btn.getBoundingClientRect();
+  const vw = window.innerWidth, vh = window.innerHeight;
+  popout.style.left = `${Math.min(r.left, vw - popout.offsetWidth - 8)}px`;
+  popout.style.top  = `${Math.min(r.bottom + 6, vh - popout.offsetHeight - 8)}px`;
+  document.getElementById('ask-input')?.focus();
+}
+
+function closeAskPopout() {
+  const popout = document.getElementById('ask-popout');
+  if (popout) popout.style.display = 'none';
+}
+
+function toggleAskPopout() {
+  if (askPopoutOpen()) closeAskPopout();
+  else openAskPopout();
+}
+
 // ── Confirmation modal (A.11.3) ───────────────────────────────────────────────
 // The modal can close via several independent paths — the Cancel button, a
 // backdrop click, Escape, an extraActions button, or the default Confirm
@@ -1801,6 +1835,8 @@ const IN_SCOPE_ACTIONS = new Set([
   'toggle-sidebar', 'toggle-inspector', 'toggle-theme',
   'focus-search', 'filter-by-tag', 'open-tag-canvas', 'close-tag-canvas',
   'tag-canvas-select',
+  // Ask File+ (Task 15) — shell only, no model wired until Stage 3.
+  'ask-open', 'ask-close', 'ask-example',
   'nav-back', 'nav-forward', 'nav-up', 'navigate-crumb', 'nav-retry',
   // 'sort-by' is handled by initColumnSort()'s own listener (browser.js);
   // 'select-file' only appears on the static placeholder rows in index.html,
@@ -2036,6 +2072,21 @@ document.addEventListener('click', e => {
     case 'tag-canvas-select':
       // INTEGRATION: highlight tag in canvas, filter file grid
       break;
+    case 'ask-open':
+      // Same toggle as Ctrl+J: clicking the sidebar CTA again closes it.
+      toggleAskPopout();
+      break;
+    case 'ask-close':
+      closeAskPopout();
+      break;
+    case 'ask-example': {
+      const input = document.getElementById('ask-input');
+      if (input) {
+        input.value = btn.dataset.text || '';
+        input.focus();
+      }
+      break;
+    }
     case 'palette-set-mode':
       setPaletteMode(btn.dataset.mode || 'search');
       break;
@@ -2751,6 +2802,8 @@ document.addEventListener('keydown', e => {
   if ((e.metaKey || e.ctrlKey) && e.key === 'b') { e.preventDefault(); toggleSidebar(); }
   // ⌘I / Ctrl+I — inspector
   if ((e.metaKey || e.ctrlKey) && e.key === 'i') { e.preventDefault(); toggleInspector(); }
+  // Ctrl+J — Ask File+ (Task 15)
+  if ((e.metaKey || e.ctrlKey) && e.key === 'j') { e.preventDefault(); toggleAskPopout(); }
   // Ctrl+= or Ctrl++ — zoom in (with or without Shift; standard browser convention)
   if ((e.metaKey || e.ctrlKey) && (e.key === '=' || e.key === '+')) { e.preventDefault(); zoomIn(); }
   // Ctrl+- or Ctrl+_ — zoom out
@@ -2773,6 +2826,7 @@ document.addEventListener('keydown', e => {
     closeModal();
     closeTagCanvas();
     closeProperties();
+    closeAskPopout();
   }
   // Browser-screen keyboard nav (selection, sort-order arrows, Enter, F5,
   // Ctrl+A, Alt+arrows) only applies when that screen is active and the
@@ -2937,6 +2991,19 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Properties panel backdrop click closes
   document.getElementById('properties-modal-scrim')?.addEventListener('click', e => {
     if (e.target === document.getElementById('properties-modal-scrim')) closeProperties();
+  });
+
+  // Ask File+ popout (Task 15) has no scrim — it's a lightweight anchored
+  // popover, not a modal — so "click outside closes it" is a mousedown
+  // listener that ignores anything inside the popout or the button that
+  // opens it (that click's own 'ask-open' case toggles it instead; if this
+  // listener also closed it on mousedown, the following click would just
+  // reopen it and the button would appear to do nothing).
+  document.addEventListener('mousedown', e => {
+    if (!askPopoutOpen()) return;
+    const popout = document.getElementById('ask-popout');
+    if (popout?.contains(e.target) || e.target.closest('.fp-ask')) return;
+    closeAskPopout();
   });
 
   // Palette item clicks

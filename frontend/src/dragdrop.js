@@ -555,7 +555,10 @@ function initDragDrop() {
     const elsewhere = _swallowClickAt
       && Math.hypot(e.clientX - _swallowClickAt.x, e.clientY - _swallowClickAt.y) > 8;
     if (stale) { _swallowClickUntil = 0; _swallowClickAt = null; return; }
-    if (elsewhere) return;
+    // A genuine click elsewhere also disarms the swallow — otherwise a later
+    // click back at the drop site, still inside the 300ms window, would be
+    // eaten too even though it's a separate user action (Task 15 carry-over).
+    if (elsewhere) { _swallowClickUntil = 0; _swallowClickAt = null; return; }
     _swallowClickUntil = 0;
     _swallowClickAt = null;
     e.preventDefault();

@@ -74,6 +74,17 @@
         </button>
       </div>
 
+      <!-- Ask File+ (Task 15, design spec §9) — the AI entry point's visible
+           shell only; opens #ask-popout, nothing is wired to a model until
+           Stage 3. Single button for both sidebar states: the label hides
+           and the pill shrinks to an icon-only square when collapsed
+           (styles.css .fp-sidebar--collapsed .fp-ask), same as nav-home. -->
+      <button class="fp-ask" id="btn-ask-fileplus" data-action="ask-open"
+              title="Ask File+ (Ctrl+J)">
+        <svg class="fp-icon fp-icon--16" aria-hidden="true"><use href="#fp-sparkle"></use></svg>
+        <span class="fp-ask__label">Ask File+</span>
+      </button>
+
       <div class="fp-sidebar__scroll">
 
         <!-- ── QUICK ACCESS ─────────────────────────────────────── -->
@@ -3075,6 +3086,13 @@
 <div class="fp-scrim fp-scrim--strong" id="tag-canvas-scrim" aria-hidden="true" style="display:none">
   <div class="fp-modal fp-modal--tag-canvas" id="tag-canvas" role="dialog" aria-modal="true" aria-label="Tag Canvas">
 
+    <!-- Task 15 / D2C-3: still a Stage 3 placeholder. The header (title +
+         working Close button) stays live above the banner; only the mock
+         tag-tree/graph/file-grid body below is dimmed, so Close keeps
+         working instead of being caught under fp-planned-dim's
+         pointer-events:none. -->
+    <div class="fp-banner fp-banner--planned" role="status">Not built yet — planned for Stage 3.</div>
+
     <!-- 48px header -->
     <div class="fp-modal__header" style="height:48px;display:flex;align-items:center;padding:0 var(--s-20);border-bottom:1px solid var(--border-hairline)">
       <h2 style="font:600 var(--t-title-sm) var(--font-ui);color:var(--text-primary);flex:1;margin:0">
@@ -3087,8 +3105,8 @@
       </button>
     </div>
 
-    <!-- Two-pane body -->
-    <div style="display:flex;flex:1;min-height:0;overflow:hidden">
+    <!-- Two-pane body (mock data — dimmed and non-interactive until Stage 3) -->
+    <div class="fp-planned-dim" style="display:flex;flex:1;min-height:0;overflow:hidden">
 
       <!-- Left: tag tree (240px, bg-content) -->
       <div class="fp-modal__tag-tree" style="width:240px;flex-shrink:0;background:var(--bg-content);border-right:1px solid var(--border-hairline);overflow-y:auto;padding:var(--s-8)">
@@ -3338,6 +3356,28 @@
   </div>
 </div>
 -->
+
+<!-- Ask File+ popout (Task 15, design spec §9) — anchored to the sidebar's
+     .fp-ask button by openAskPopout() (app.js), which positions it fixed at
+     the button's bottom-left on open. No AI is wired yet (Stage 3): Send
+     stays disabled and nothing here ever calls the backend. -->
+<div class="fp-popover" id="ask-popout" role="dialog" aria-labelledby="ask-popout-title" style="display:none">
+  <div class="fp-ask-popout__title" id="ask-popout-title">Ask File+</div>
+  <textarea class="fp-input fp-ask-popout__textarea" id="ask-input" rows="3"
+            placeholder="Ask File+ to find, move or organise your files…" aria-label="Ask File+"></textarea>
+  <div class="fp-ask-popout__examples">
+    <button class="fp-ask-popout__example" data-action="ask-example"
+            data-text="Find last week's screenshots">Find last week's screenshots</button>
+    <button class="fp-ask-popout__example" data-action="ask-example"
+            data-text="Move these PDFs to Documents/Invoices">Move these PDFs to Documents/Invoices</button>
+    <button class="fp-ask-popout__example" data-action="ask-example"
+            data-text="What is filling my Downloads folder?">What is filling my Downloads folder?</button>
+  </div>
+  <div class="fp-ask-popout__footer">
+    <button class="fp-btn fp-btn--primary fp-btn--sm" id="ask-send" disabled title="AI arrives in Stage 3">Send</button>
+    <button class="fp-btn fp-btn--secondary fp-btn--sm" data-action="ask-close">Close</button>
+  </div>
+</div><!-- /#ask-popout -->
 
 <!-- Context menu — A.10 (single shared instance, content populated by app.js CONTEXT_MENUS map)
      Menu type determined by right-click target via getMenuTypeForTarget().

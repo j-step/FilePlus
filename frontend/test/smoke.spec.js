@@ -42,6 +42,12 @@ test('every screen renders with no renderer errors', async () => {
     env,
   });
   const page = await app.firstWindow();
+  // The app already zeroes animation/transition durations under
+  // prefers-reduced-motion (styles.css's strict policy, UI-SPEC §A.0) — force
+  // it for the whole run so every fade-in (popovers, modals) settles near-
+  // instantly instead of racing a screenshot against a live CSS transition
+  // (Task 15 carry-over: this is what properties-folder.png needed).
+  await page.emulateMedia({ reducedMotion: 'reduce' });
   const errors = [];
   try {
     page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
@@ -901,6 +907,11 @@ test('every screen renders with no renderer errors', async () => {
     await page.locator('#context-menu [data-action="cm-properties"]').click();
 
     await expect(propsModal).toBeVisible();
+    // fp-modal-in fades opacity 0 -> 1 — wait for it to fully settle before
+    // any screenshot of this modal, or the shot can land mid-fade (Task 15
+    // carry-over; reducedMotion above makes this all but instant, but the
+    // wait stays as the actual guarantee).
+    await expect(propsModal).toHaveCSS('opacity', '1');
     await expect(propsModal.locator('#properties-icon svg.fp-icon use[href="#fp-ft-text"]')).toHaveCount(1);
     await expect(fieldValue('Type of file')).toContainText('Text');
     await expect(fieldValue('Location')).toHaveText(/Documents$/);
@@ -951,6 +962,7 @@ test('every screen renders with no renderer errors', async () => {
     await browserRow('old').click({ button: 'right' });
     await page.locator('#context-menu [data-action="cm-properties"]').click();
     await expect(propsModal).toBeVisible();
+    await expect(propsModal).toHaveCSS('opacity', '1');
     await expect(generalGrid.locator('dt', { hasText: /^Contains$/ })).toHaveCount(1);
     await expect(fieldValue('Contains')).toContainText('file');
     await expect(page.locator('#properties-folder-type-select')).toBeVisible();
@@ -1157,6 +1169,59 @@ test('every screen renders with no renderer errors', async () => {
     await app.evaluate(({ BrowserWindow }) => { BrowserWindow.getAllWindows()[0].setSize(1200, 800); });
     await page.evaluate(() => document.documentElement.style.setProperty('--sidebar-width', '240px'));
     await expect(page.locator('#toolbar')).not.toHaveAttribute('data-narrow', '', { timeout: 3000 });
+
+    // 11. Ask File+ (Task 15, design spec §9): sidebar pill opens a popout
+    // shell with no model wired in — Send stays disabled, an example chip
+    // fills the textarea, and Escape / an outside click both close it.
+    const askBtn = page.locator('.fp-ask');
+    await expect(askBtn).toHaveText('Ask File+');
+    const askPopout = page.locator('#ask-popout');
+    const askSend = page.locator('#ask-send');
+    const askInput = page.locator('#ask-input');
+
+    await askBtn.click();
+    await expect(askPopout).toBeVisible();
+    await expect(askPopout).toHaveCSS('opacity', '1');
+    await expect(askSend).toBeDisabled();
+    await expect(askSend).toHaveAttribute('title', 'AI arrives in Stage 3');
+
+    const firstExample = askPopout.locator('.fp-ask-popout__example').first();
+    const exampleText = await firstExample.getAttribute('data-text');
+    await firstExample.click();
+    await expect(askInput).toHaveValue(exampleText);
+    await page.screenshot({ path: path.join(SHOTS, 'ask-popout.png') });
+
+    await page.keyboard.press('Escape');
+    await expect(askPopout).toBeHidden();
+
+    // Ctrl+J toggles it open, and a click outside (not on the button or the
+    // popout itself) closes it again — blank sidebar space below the last
+    // item, same safe "definitely not an overlay, not a drag region" spot
+    // the inspector-deselect check above already clicks.
+    await page.keyboard.press('Control+j');
+    await expect(askPopout).toBeVisible();
+    const askSidebarBox = await page.locator('#sidebar').boundingBox();
+    const askLastItemBox = await page.locator('#sidebar .fp-sidebar__item').last().boundingBox();
+    await page.mouse.click(
+      askSidebarBox.x + askSidebarBox.width / 2,
+      Math.min(askLastItemBox.y + askLastItemBox.height + 20, askSidebarBox.y + askSidebarBox.height - 8),
+    );
+    await expect(askPopout).toBeHidden();
+    await page.keyboard.press('Control+j');
+    await expect(askPopout).toBeVisible();
+    await page.keyboard.press('Control+j');
+    await expect(askPopout).toBeHidden();
+
+    // 12. Tag Canvas (D2C-3): still a Stage 3 placeholder — the banner shows,
+    // its mock tag-tree/graph body is dimmed, but the header's own Close
+    // button keeps working (it sits above the banner, not inside the dim).
+    await page.evaluate(() => openTagCanvas());
+    const tagCanvas = page.locator('#tag-canvas');
+    await expect(tagCanvas).toBeVisible();
+    await expect(tagCanvas.locator('.fp-banner--planned')).toHaveText('Not built yet — planned for Stage 3.');
+    await expect(tagCanvas.locator('.fp-planned-dim')).toHaveCount(1);
+    await page.locator('[data-action="close-tag-canvas"]').click();
+    await expect(page.locator('#tag-canvas-scrim')).toBeHidden();
 
     // Back to the Browser listing the screenshots below expect.
     await page.evaluate(() => switchScreen('browser'));
