@@ -635,11 +635,18 @@ function renderFsRow(entry, parentPath) {
   const hideExt = !entry.is_dir && browserState.showExtensions === false;
   const displayName = hideExt ? stemOf(entry.name) : entry.name;
   const nameTitleAttr = hideExt ? ` title="${escapeHtml(entry.name)}"` : '';
+  // favoritesHas is home.js's (loaded AFTER browser.js — see the module load
+  // order in CLAUDE.md) — safe here because renderFsRow's body only ever
+  // runs later, from a directory render, never at this file's own parse time.
+  const starHtml = (typeof favoritesHas === 'function' && favoritesHas(childPath))
+    ? `<span class="fp-row__star" title="In Favorites">${icon('star')}</span>`
+    : '';
   return `<div class="${rowClass}" role="option" draggable="true"
             data-path="${escapeHtml(childPath)}"
             data-type="${entry.is_dir ? 'folder' : 'file'}" tabindex="-1"${titleAttr}>
     ${iconHtml}
     <span class="fp-row__name"${nameTitleAttr}>${escapeHtml(displayName)}</span>
+    ${starHtml}
     <span class="fp-row__size mono">${sizeText}</span>
     <span class="fp-row__modified mono">${modifiedText}</span>
     <div class="fp-row__tags"></div>
@@ -1110,6 +1117,12 @@ let _inspectorDebounceTimer = null;
  * immediately, and (debounced) the inspector panel via showInspectorFor /
  * showInspectorMulti / updateInspector('none'). */
 function onSelectionChanged() {
+  // Drives the grid single-tile-only selection bar (styles.css, Task 11
+  // playtest pass 1 §4.1) — a plain string attribute rather than a boolean
+  // so CSS can target the exact count ([data-selection-count="1"]) instead
+  // of merely "any selection".
+  const listScroll = document.getElementById('list-scroll');
+  if (listScroll) listScroll.dataset.selectionCount = String(browserState.selection.size);
   updateStatusBar();
   clearTimeout(_inspectorDebounceTimer);
   _inspectorDebounceTimer = setTimeout(() => {

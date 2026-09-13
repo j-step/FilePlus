@@ -17,8 +17,41 @@
 // ── Favorites membership ──────────────────────────────────────────────────
 // Kept in sync by loadFavorites() (full refresh) and the home-row context
 // menu's add/remove toggle (optimistic single-path update). Read by
-// getMenuTypeForTarget's context-menu label (Add vs Remove from Favorites).
+// app.js's context-menu label/enabled predicates (Add vs Remove from
+// Favorites) and by browser.js's renderFsRow (the row star).
+//
+// Both favoritesSet and favoritesPathToId are keyed by favoritesNormalize(p)
+// (lowercased) so a Browser row's exact-case path (Windows paths are
+// case-insensitive but not normalized on disk) still matches a favorite
+// stored with whatever case it was first added under. Callers that need the
+// exact-case path for an API call (DELETE /favorites?path=, POST /favorites)
+// keep using the row's own dataset.path / entry.path — never a normalized one.
 const favoritesSet = new Set();
+const favoritesPathToId = new Map(); // normalized path -> favorite row id (GET /favorites)
+
+function favoritesNormalize(path) { return String(path || '').toLowerCase(); }
+
+/** True if `path` (any case) is currently favorited. The one function every
+ * other module reuses (browser.js's row star, app.js's context-menu
+ * enabled/label predicates, and per the Task 11 brief, Task 12's drag badge
+ * and Task 14's search-result rows) instead of touching favoritesSet
+ * directly. */
+function favoritesHas(path) { return favoritesSet.has(favoritesNormalize(path)); }
+
+/** The favorite row's own id for `path`, if it is favorited — sourced from
+ * the same GET /favorites response that fills favoritesSet, so a caller
+ * never needs a second fetch just to resolve a path to its favorites-table
+ * row. (This app's DELETE /favorites route takes ?path=, not an id, so nothing
+ * in this pass actually calls this for a delete — it's exposed alongside
+ * favoritesHas for parity, and because callers that already have a path
+ * shouldn't need to guess whether an id lookup requires re-fetching.) */
+function favoritesIdFor(path) { return favoritesPathToId.get(favoritesNormalize(path)); }
+
+/** Re-fetches /favorites (favoritesSet/favoritesPathToId + the Favorites
+ * pane). Thin, named alias over loadFavorites() so callers outside this file
+ * (app.js's cm-favorite handler) go through the documented contract name
+ * rather than reaching for the loader function directly. */
+function favoritesReload() { return loadFavorites(); }
 
 // ── Icons (hover-action buttons + favorite star) ──────────────────────────
 const HOME_ICON_OPEN = icon('open', 'fp-icon--14');
@@ -81,13 +114,20 @@ function renderRecentRow(entry, bucketKey) {
   const hideExt = entry.ext !== '' && browserState.showExtensions === false;
   const displayName = hideExt ? stemOf(entry.name) : entry.name;
   const nameTitleAttr = hideExt ? ` title="${escapeHtml(entry.name)}"` : '';
+  // Recent rows show the same favorite star as Browser rows (Task 11,
+  // playtest pass 1 §4.3) — rendered into .fp-row__tags (already an empty,
+  // flex-laid-out cell reserved for this row's own grid-template-columns)
+  // rather than as a new grid child, so no column count/width changes.
+  const starHtml = favoritesHas(entry.path)
+    ? `<span class="fp-row__star" title="In Favorites">${icon('star')}</span>`
+    : '';
   return `<div class="fp-row fp-row--recent" role="option" tabindex="0"
        data-path="${escapeHtml(entry.path)}" data-ext="${escapeHtml(entry.ext)}" data-action="open-recent-file">
     ${homeIconFor(entry)}
     <span class="fp-row__name"${nameTitleAttr}>${escapeHtml(displayName)}</span>
     <span class="fp-row__recent-path mono">${escapeHtml(parentDisplay)}</span>
     <span class="fp-row__recent-time mono">${escapeHtml(entry.action)} ${escapeHtml(timeLabel)}</span>
-    <div class="fp-row__tags"></div>
+    <div class="fp-row__tags">${starHtml}</div>
     <div class="fp-row__hover-actions">
       <button class="fp-icon-btn fp-icon-btn--sm" data-action="open-file" title="Open">${HOME_ICON_OPEN}</button>
       <button class="fp-icon-btn fp-icon-btn--sm" data-action="reveal-file" title="Reveal in Browser">${HOME_ICON_REVEAL}</button>
@@ -153,12 +193,18 @@ async function loadFavorites() {
     data = await API.get('/favorites');
   } catch (err) {
     favoritesSet.clear();
+    favoritesPathToId.clear();
     container.innerHTML = HOME_FAVORITES_EMPTY_HTML;
     return;
   }
   const files = (data && data.files) || [];
   favoritesSet.clear();
-  files.forEach(f => favoritesSet.add(f.path));
+  favoritesPathToId.clear();
+  files.forEach(f => {
+    const norm = favoritesNormalize(f.path);
+    favoritesSet.add(norm);
+    favoritesPathToId.set(norm, f.id);
+  });
   container.innerHTML = files.length ? files.map(renderFavoriteRow).join('') : HOME_FAVORITES_EMPTY_HTML;
 }
 
@@ -216,20 +262,21 @@ function homeCopyPath(path) {
  * item (label is set dynamically at contextmenu time — see app.js). */
 function homeToggleFavorite(path) {
   if (!path) return;
-  if (favoritesSet.has(path)) {
-    favoritesSet.delete(path);
+  const norm = favoritesNormalize(path);
+  if (favoritesSet.has(norm)) {
+    favoritesSet.delete(norm);
     API.del('/favorites', { path })
-      .then(() => { showToast('Removed from Favorites', 'default'); loadFavorites(); })
+      .then(() => { showToast('Removed from Favorites', 'default'); favoritesReload(); })
       .catch(err => {
-        favoritesSet.add(path);
+        favoritesSet.add(norm);
         showToast(`Failed to remove favorite: ${formatApiError(err)}`, 'error');
       });
   } else {
-    favoritesSet.add(path);
+    favoritesSet.add(norm);
     API.post('/favorites', { path })
-      .then(() => { showToast('Added to Favorites', 'default'); loadFavorites(); })
+      .then(() => { showToast('Added to Favorites', 'default'); favoritesReload(); })
       .catch(err => {
-        favoritesSet.delete(path);
+        favoritesSet.delete(norm);
         showToast(`Failed to favorite: ${formatApiError(err)}`, 'error');
       });
   }
@@ -256,13 +303,14 @@ function unfavoriteFile(el) {
   // pair) stands in for the old fill/stroke-attribute animation on a single
   // hand-drawn <path>.
   const starUse = el.querySelector('svg.fp-icon use');
+  const norm = favoritesNormalize(path);
 
   // Capture the full favorites order (including this row) BEFORE removal so
   // Undo can restore this row's exact position via /favorites/reorder.
   const orderSnapshot = [...document.querySelectorAll('#home-favorites .fp-row[data-path]')]
     .map(r => r.dataset.path);
 
-  favoritesSet.delete(path);
+  favoritesSet.delete(norm);
 
   if (starUse) starUse.setAttribute('href', '#fp-star');
   row.classList.add('fp-row--unfavoriting');
@@ -283,7 +331,7 @@ function unfavoriteFile(el) {
       // The server never dropped it — put it back and surface the failure
       // instead of silently leaving the UI out of sync with the backend.
       deleted = false;
-      favoritesSet.add(path);
+      favoritesSet.add(norm);
       restoreRow();
       showToast(`Failed to remove favorite: ${formatApiError(err)}`, 'error');
     });
@@ -295,7 +343,7 @@ function unfavoriteFile(el) {
   // the time this runs. Call with the 3-arg signature.
   showSnackbar(`Removed "${filename}" from favorites`, 'Undo', async () => {
     clearTimeout(removeTimer);
-    favoritesSet.add(path);
+    favoritesSet.add(norm);
     restoreRow();
     if (deleted) {
       // The DELETE may still be in flight (Undo clicked right after the

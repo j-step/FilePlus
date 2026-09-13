@@ -1195,55 +1195,94 @@ function zoomReset() {
   updateZoomPill();
 }
 
+// ── Context-menu applicability (Task 11, playtest pass 1 §4.2) ─────────────
+// Shared enabled(ctx)/label(ctx) predicates, built from buildMenuContext()'s
+// ctx = { selection, target, favoritesSet, clipboard } (defined further
+// below, next to getMenuTypeForTarget). An item with no `enabled` is always
+// enabled, matching showContextMenu's existing "unknown field is simply
+// never read" contract for `checked`.
+
+/** Open: a single item; or several items that are all files (no folders, no
+ * access-denied rows) sharing one non-empty extension. */
+function cmOpenEnabled(ctx) {
+  const sel = ctx.selection || [];
+  if (sel.length === 0) return false;
+  if (sel.length === 1) return true;
+  if (sel.some(e => !e || e.is_dir || e.error)) return false;
+  const exts = new Set(sel.map(e => String(e.ext || '').toLowerCase()));
+  return exts.size === 1 && [...exts][0] !== '';
+}
+/** Open with…, Rename, Properties: single item only. */
+function cmSingleEnabled(ctx) { return (ctx.selection || []).length === 1; }
+/** Pin to sidebar, Index for search: a single FOLDER only. */
+function cmSingleFolderEnabled(ctx) {
+  const sel = ctx.selection || [];
+  return sel.length === 1 && !!sel[0] && !!sel[0].is_dir;
+}
+/** Cut, Copy, Delete, Add tag, Add/Remove favorites: any (non-empty) count. */
+function cmAnyEnabled(ctx) { return (ctx.selection || []).length > 0; }
+/** Paste: only when the clipboard actually holds something. */
+function cmClipboardEnabled(ctx) { return (ctx.clipboard || 0) > 0; }
+/** Add/Remove Favorites label — "Remove" only when EVERY selected item (or
+ * the single Home row) is already favorited; "Add" otherwise, including an
+ * empty selection (the item is disabled then anyway, via cmAnyEnabled). */
+function cmFavoriteLabel(ctx) {
+  const sel = ctx.selection || [];
+  const allFav = sel.length > 0 && ctx.favoritesSet
+    && sel.every(e => e && ctx.favoritesSet.has(String(e.path || '').toLowerCase()));
+  return allFav ? 'Remove from Favorites' : 'Add to Favorites';
+}
+
 // ── Context menu ──────────────────────────────────────────────────────────────
 // A.10: five menu type definitions (items rendered dynamically into #context-menu)
 const CONTEXT_MENUS = {
   // A.10.1 — File context menu
   file: [
-    { label: 'Open',            action: 'cm-open',            icon: icon('open', 'fp-icon--14') },
-    { label: 'Open with…',      action: 'cm-open-with' },
+    { label: 'Open',            action: 'cm-open',            icon: icon('open', 'fp-icon--14'), enabled: cmOpenEnabled },
+    { label: 'Open with…',      action: 'cm-open-with',       enabled: cmSingleEnabled },
     { label: 'Open in new tab', action: 'cm-open-new-tab',    icon: icon('new-tab', 'fp-icon--14') },
     'sep',
-    { label: 'Cut',    action: 'cm-cut',    kbd: 'Ctrl+X' },
-    { label: 'Copy',   action: 'cm-copy',   kbd: 'Ctrl+C' },
-    { label: 'Paste',  action: 'cm-paste',  kbd: 'Ctrl+V' },
-    { label: 'Rename', action: 'cm-rename', kbd: 'F2' },
-    { label: 'Delete', action: 'cm-delete', kbd: 'Del', danger: true, icon: icon('delete', 'fp-icon--14') },
+    { label: 'Cut',    action: 'cm-cut',    kbd: 'Ctrl+X', enabled: cmAnyEnabled },
+    { label: 'Copy',   action: 'cm-copy',   kbd: 'Ctrl+C', enabled: cmAnyEnabled },
+    { label: 'Paste',  action: 'cm-paste',  kbd: 'Ctrl+V', enabled: cmClipboardEnabled },
+    { label: 'Rename', action: 'cm-rename', kbd: 'F2', enabled: cmSingleEnabled },
+    { label: 'Delete', action: 'cm-delete', kbd: 'Del', danger: true, icon: icon('delete', 'fp-icon--14'), enabled: cmAnyEnabled },
     'sep',
-    { label: 'Add tag…',         action: 'cm-add-tag',     icon: icon('tag', 'fp-icon--14') },
-    { label: 'Add to Favorites', action: 'cm-favorite' },
+    { label: 'Add tag…',         action: 'cm-add-tag',     icon: icon('tag', 'fp-icon--14'), enabled: cmAnyEnabled },
+    { label: cmFavoriteLabel,    action: 'cm-favorite',    enabled: cmAnyEnabled },
     'sep',
-    { label: 'Properties',             action: 'cm-properties' },
+    { label: 'Properties',             action: 'cm-properties', enabled: cmSingleEnabled },
     { label: 'Show in Windows Explorer', action: 'cm-reveal-explorer' },
   ],
 
   // A.10.2 — Folder context menu
   folder: [
-    { label: 'Open',             action: 'cm-open', icon: icon('folder', 'fp-icon--14') },
+    { label: 'Open',             action: 'cm-open', icon: icon('folder', 'fp-icon--14'), enabled: cmOpenEnabled },
     { label: 'Open in new tab',  action: 'cm-open-new-tab' },
     'sep',
-    { label: 'Cut',    action: 'cm-cut',    kbd: 'Ctrl+X' },
-    { label: 'Copy',   action: 'cm-copy',   kbd: 'Ctrl+C' },
-    { label: 'Paste',  action: 'cm-paste',  kbd: 'Ctrl+V' },
-    { label: 'Rename', action: 'cm-rename', kbd: 'F2' },
-    { label: 'Delete', action: 'cm-delete', kbd: 'Del', danger: true, icon: icon('delete', 'fp-icon--14') },
+    { label: 'Cut',    action: 'cm-cut',    kbd: 'Ctrl+X', enabled: cmAnyEnabled },
+    { label: 'Copy',   action: 'cm-copy',   kbd: 'Ctrl+C', enabled: cmAnyEnabled },
+    { label: 'Paste',  action: 'cm-paste',  kbd: 'Ctrl+V', enabled: cmClipboardEnabled },
+    { label: 'Rename', action: 'cm-rename', kbd: 'F2', enabled: cmSingleEnabled },
+    { label: 'Delete', action: 'cm-delete', kbd: 'Del', danger: true, icon: icon('delete', 'fp-icon--14'), enabled: cmAnyEnabled },
     'sep',
     { label: 'New folder inside', action: 'cm-new-folder' },
     { label: 'New file',          action: 'cm-new-file' },
     'sep',
-    { label: 'Add to Favorites',   action: 'cm-favorite' },
-    { label: 'Pin to sidebar',     action: 'cm-pin-sidebar' },
-    { label: 'Index for search',   action: 'cm-index-folder' },
+    { label: cmFavoriteLabel,      action: 'cm-favorite',      enabled: cmAnyEnabled },
+    { label: 'Pin to sidebar',     action: 'cm-pin-sidebar',   enabled: cmSingleFolderEnabled },
+    { label: 'Index for search',   action: 'cm-index-folder',  enabled: cmSingleFolderEnabled },
     'sep',
-    { label: 'Properties',              action: 'cm-properties' },
+    { label: 'Properties',              action: 'cm-properties', enabled: cmSingleEnabled },
     { label: 'Show in Windows Explorer', action: 'cm-reveal-explorer' },
   ],
 
-  // A.10.3 — Empty area context menu
+  // A.10.3 — Empty area context menu (targets the current folder itself, not
+  // a selection — Properties and the rest stay unconditionally enabled).
   'empty-area': [
     { label: 'New folder', action: 'cm-new-folder', icon: icon('folder-add', 'fp-icon--14') },
     { label: 'New file',   action: 'cm-new-file' },
-    { label: 'Paste',      action: 'cm-paste',      kbd: 'Ctrl+V' },
+    { label: 'Paste',      action: 'cm-paste',      kbd: 'Ctrl+V', enabled: cmClipboardEnabled },
     { label: 'Refresh',    action: 'cm-refresh',    kbd: 'F5' },
     'sep',
     { label: 'View → Details',    action: 'cm-view-list' },
@@ -1251,7 +1290,7 @@ const CONTEXT_MENUS = {
     { label: 'Sort by → name',    action: 'cm-sort-name' },
     { label: 'Sort by → modified', action: 'cm-sort-modified' },
     'sep',
-    { label: 'Show hidden files', action: 'cm-toggle-hidden' },
+    { label: ctx => browserState.showHidden ? 'Hide hidden files' : 'Show hidden files', action: 'cm-toggle-hidden' },
     { label: 'Properties',        action: 'cm-properties' },
   ],
 
@@ -1265,27 +1304,26 @@ const CONTEXT_MENUS = {
   ],
 
   // A.10.5 — Sidebar item context menu (pinned folders and Quick Access known
-  // folders — see getMenuTypeForTarget). Unpin/Rename label apply to pins
-  // only; Remove from Quick Access applies to known folders only — the
-  // contextmenu listener below filters out whichever pair doesn't match the
-  // right-clicked item (Task 11 will replace this with the general
-  // enabled(ctx) mechanism).
+  // folders — see getMenuTypeForTarget). Unpin/Rename apply to pins only;
+  // Remove from Quick Access applies to known folders only — enabled(ctx)
+  // reads ctx.target (the resolved .fp-sidebar__item element itself) rather
+  // than filtering the item array per kind, replacing the ad hoc .filter()
+  // Task 9/10 used as an interim measure.
   'sidebar-item': [
     { label: 'Open in new tab',          action: 'cm-open-new-tab' },
-    { label: 'Unpin',                    action: 'cm-unpin-sidebar' },
-    { label: 'Rename label',             action: 'cm-rename-sidebar-item' },
-    { label: 'Remove from Quick Access', action: 'cm-quick-access-remove' },
+    { label: 'Unpin',                    action: 'cm-unpin-sidebar',        enabled: ctx => !!ctx.target?.dataset?.pinId },
+    { label: 'Rename label',             action: 'cm-rename-sidebar-item',  enabled: ctx => !!ctx.target?.dataset?.pinId },
+    { label: 'Remove from Quick Access', action: 'cm-quick-access-remove',  enabled: ctx => !!ctx.target?.dataset?.knownId },
   ],
 
   // A.10.6 — Home row context menu (Recent + Favorites rows). "Add/Remove
-  // from Favorites" label is set dynamically at contextmenu time (see the
-  // listener below) based on home.js's favoritesSet.
+  // from Favorites" label reflects buildMenuContext's single-row selection.
   'home-row': [
     { label: 'Open',               action: 'open-file' },
     { label: 'Reveal in Browser',  action: 'reveal-file' },
     { label: 'Copy path',          action: 'copy-path' },
     'sep',
-    { label: 'Add to Favorites',   action: 'home-toggle-favorite' },
+    { label: cmFavoriteLabel,      action: 'home-toggle-favorite' },
   ],
 };
 
@@ -1382,6 +1420,43 @@ function contextTargetDir() {
   return browserState.path;
 }
 
+/**
+ * Builds the ctx object passed to every CONTEXT_MENUS item's enabled(ctx)/
+ * label(ctx) predicate (Task 11, playtest pass 1 §4.2): `{ selection,
+ * target, favoritesSet, clipboard }`.
+ *
+ * `selection` is the array of full entry objects (path included) the menu
+ * should judge applicability against — for 'file'/'folder'/'empty-area' that
+ * is the Browser's real multi-selection (browserState.selection, via
+ * getSelectedPaths()/entryForPath(), both browser.js); for 'home-row' it's
+ * the single right-clicked row (Home has no multi-selection); every other
+ * menu type (tab, sidebar-item) has no notion of a file selection and gets
+ * an empty array — their own items don't read ctx.selection.
+ *
+ * `target` is contextMenuTarget (already resolved by the caller below) —
+ * the sidebar-item menu's enabled() predicates read its dataset directly
+ * (data-pin-id vs data-known-id) instead of the old per-kind item filter.
+ */
+function buildMenuContext(target) {
+  const type = getMenuTypeForTarget(target);
+  let selection = [];
+  if (type === 'home-row') {
+    const row = target?.closest ? target.closest('.fp-row[data-path]') : null;
+    if (row) selection = [{ path: row.dataset.path, ext: row.dataset.ext || '', is_dir: (row.dataset.ext || '') === '' }];
+  } else if (type === 'file' || type === 'folder' || type === 'empty-area') {
+    selection = getSelectedPaths().map(p => {
+      const entry = entryForPath(p);
+      return entry ? { ...entry, path: p } : { path: p };
+    });
+  }
+  return {
+    selection,
+    target: contextMenuTarget,
+    favoritesSet,
+    clipboard: fileops.clipboardCount(),
+  };
+}
+
 const contextMenu = document.getElementById('context-menu');
 
 /**
@@ -1389,18 +1464,20 @@ const contextMenu = document.getElementById('context-menu');
  *
  * opts.anchor (the View/Sort toolbar buttons) positions the menu below that
  * element instead of at the click point `x,y`, which are then ignored.
- * opts.ctx, when present, is passed to every item's `checked(ctx)`
- * predicate and switches on a leading check-icon slot reserved on EVERY
- * item in that menu — checked or not — so labels all line up; a plain
- * right-click menu (no ctx) keeps its existing layout untouched. Task 11
- * adds `enabled(ctx)` to the same item shape; an unknown field is simply
- * never read, not an error.
+ * opts.ctx, when present, is passed to every item's `checked(ctx)`,
+ * `enabled(ctx)` and `label(ctx)` predicates (Task 11 adds the latter two;
+ * an item with no such field just always renders enabled with its own
+ * static `label`). The leading check-icon slot still only appears on a menu
+ * that actually has `checked` items (the View/Sort dropdowns) — keyed off
+ * the item list itself rather than "was ctx passed", since Task 11 now
+ * passes ctx to every right-click menu too (for enabled/label) without
+ * wanting their layout to grow that slot.
  */
 function showContextMenu(x, y, items, opts = {}) {
   if (!contextMenu) return;
   contextMenu.innerHTML = '';
   const ctx = opts.ctx;
-  const showChecks = ctx !== undefined;
+  const showChecks = items.some(item => item !== 'sep' && typeof item.checked === 'function');
   items.forEach(item => {
     if (item === 'sep') {
       const sep = document.createElement('div');
@@ -1408,24 +1485,38 @@ function showContextMenu(x, y, items, opts = {}) {
       contextMenu.appendChild(sep);
       return;
     }
+    const isEnabled = typeof item.enabled !== 'function' || !!item.enabled(ctx);
+    const label = typeof item.label === 'function' ? item.label(ctx) : item.label;
     const btn = document.createElement('button');
-    btn.className = 'fp-context-menu__item' + (item.danger ? ' fp-context-menu__item--danger' : '');
+    btn.className = 'fp-context-menu__item'
+      + (item.danger ? ' fp-context-menu__item--danger' : '')
+      + (!isEnabled ? ' fp-context-menu__item--disabled' : '');
     btn.setAttribute('data-action', item.action || '');
     btn.setAttribute('role', 'menuitem');
+    if (!isEnabled) {
+      btn.setAttribute('aria-disabled', 'true');
+      btn.setAttribute('tabindex', '-1'); // keyboard Tab order skips it too
+    }
     if (showChecks) {
       const isChecked = typeof item.checked === 'function' && !!item.checked(ctx);
       btn.innerHTML = `<span class="fp-context-menu__check">${isChecked ? icon('check', 'fp-icon--14') : ''}</span>`;
     }
     if (item.icon) btn.innerHTML += item.icon;
-    btn.innerHTML += `<span>${item.label}</span>`;
+    btn.innerHTML += `<span>${label}</span>`;
     if (item.kbd) {
       const kbd = document.createElement('span');
       kbd.className = 'fp-context-menu__kbd';
       kbd.textContent = item.kbd;
       btn.appendChild(kbd);
     }
-    if (item.onClick) btn.addEventListener('click', () => { item.onClick(); hideContextMenu(); });
-    else btn.addEventListener('click', hideContextMenu);
+    // A disabled item gets no click listener at all — CSS's pointer-events:
+    // none on .fp-context-menu__item--disabled already keeps the click from
+    // ever reaching this button (see styles.css), so this is belt-and-braces
+    // against that CSS being bypassed some other way, not the only guard.
+    if (isEnabled) {
+      if (item.onClick) btn.addEventListener('click', () => { item.onClick(); hideContextMenu(); });
+      else btn.addEventListener('click', hideContextMenu);
+    }
     contextMenu.appendChild(btn);
   });
   contextMenu.style.display = 'block';
@@ -2268,16 +2359,43 @@ document.addEventListener('click', e => {
       break;
     }
     // ── File operations context-menu wiring (Task 4) ─────────────────────────
+    // Task 11: also handles a same-extension multi-file selection (only
+    // reachable when cmOpenEnabled(ctx) allowed the click at all — a folder
+    // never appears here for more than one selected item, since a folder in
+    // the mix always fails that predicate).
     case 'cm-open': {
-      const path = contextTargetPath();
-      if (!path) break;
-      if (contextMenuType === 'folder') { loadDirectory(path); break; }
-      const openPath = window.electronAPI?.openPath;
-      if (openPath) {
-        Promise.resolve(openPath(path)).then(result => { if (result) showToast(result, 'error'); })
-          .catch(err => showToast(formatApiError(err), 'error'));
+      if (contextMenuType === 'folder') {
+        const path = contextTargetPath();
+        if (path) loadDirectory(path);
+        break;
       }
-      API.post('/recent', { path, action: 'opened' }).catch(() => { /* best-effort logging */ });
+      const paths = getSelectedPaths();
+      if (paths.length <= 1) {
+        const path = contextTargetPath();
+        if (!path) break;
+        const openPath = window.electronAPI?.openPath;
+        if (openPath) {
+          Promise.resolve(openPath(path)).then(result => { if (result) showToast(result, 'error'); })
+            .catch(err => showToast(formatApiError(err), 'error'));
+        }
+        API.post('/recent', { path, action: 'opened' }).catch(() => { /* best-effort logging */ });
+        break;
+      }
+      const openMany = () => {
+        paths.slice(0, 20).forEach(p => {
+          const openPath = window.electronAPI?.openPath;
+          if (openPath) {
+            Promise.resolve(openPath(p)).then(result => { if (result) showToast(result, 'error'); })
+              .catch(err => showToast(formatApiError(err), 'error'));
+          }
+          API.post('/recent', { path: p, action: 'opened' }).catch(() => { /* best-effort logging */ });
+        });
+      };
+      if (paths.length > 10) {
+        openModal('warn', { title: `Open ${paths.length} files?`, confirmLabel: 'Open', onConfirm: openMany });
+      } else {
+        openMany();
+      }
       break;
     }
     case 'cm-open-with': {
@@ -2317,12 +2435,32 @@ document.addEventListener('click', e => {
     case 'cm-refresh':
       refreshDirectory();
       break;
+    // Task 11: toggles the WHOLE selection (design spec §4.2 — "any count").
+    // "Remove" only when every selected path is already favorited (matching
+    // cmFavoriteLabel's own predicate, which decided which label the user
+    // just clicked); otherwise every not-yet-favorited path is added
+    // (POST /favorites is idempotent for one already favorited, so adding
+    // the whole selection unconditionally on the "Add" branch is safe).
+    // favoritesReload() resyncs favoritesSet/the Favorites pane;
+    // refreshDirectory() re-renders Browser rows so the star appears/clears.
     case 'cm-favorite': {
-      const path = contextTargetPath();
-      if (!path) break;
-      API.post('/favorites', { path })
-        .then(() => showToast('Added to Favorites', 'default'))
-        .catch(err => showToast(`Failed to favorite: ${formatApiError(err)}`, 'error'));
+      const paths = getSelectedPaths();
+      if (!paths.length) break;
+      const allFav = paths.every(p => favoritesHas(p));
+      // favoritesReload() MUST finish before refreshDirectory() re-renders —
+      // renderFsRow reads favoritesHas() at render time, and the two fetches
+      // (/favorites, /fs/list) race independently, so firing them merely in
+      // parallel could re-render the row from a still-stale favoritesSet.
+      const settle = async () => { await favoritesReload(); await refreshDirectory(); };
+      if (allFav) {
+        Promise.all(paths.map(p => API.del('/favorites', { path: p })))
+          .then(() => { showToast('Removed from Favorites', 'default'); settle(); })
+          .catch(err => showToast(`Failed to remove favorite: ${formatApiError(err)}`, 'error'));
+      } else {
+        Promise.all(paths.map(p => API.post('/favorites', { path: p })))
+          .then(() => { showToast('Added to Favorites', 'default'); settle(); })
+          .catch(err => showToast(`Failed to favorite: ${formatApiError(err)}`, 'error'));
+      }
       break;
     }
     case 'cm-add-tag': {
@@ -2687,44 +2825,26 @@ document.addEventListener('contextmenu', e => {
     const row = e.target.closest('.fp-row[data-path]');
     if (row && typeof ensureRowSelected === 'function') ensureRowSelected(row.dataset.path);
   }
-  let items = CONTEXT_MENUS[contextMenuType] || CONTEXT_MENUS.file;
 
-  // Sidebar item menu: a pin gets Unpin/Rename label, a Quick Access known
-  // folder gets Remove from Quick Access — each hidden for the other kind
-  // (Task 11 replaces this with the general enabled(ctx) mechanism).
-  if (contextMenuType === 'sidebar-item') {
-    const isKnown = !!(contextMenuTarget && contextMenuTarget.dataset.knownId);
-    items = items.filter(i => {
-      if (i === 'sep') return true;
-      if (i.action === 'cm-quick-access-remove') return isKnown;
-      if (i.action === 'cm-unpin-sidebar' || i.action === 'cm-rename-sidebar-item') return !isKnown;
-      return true;
-    });
-  }
-
-  // Home row menu: select the row (mirrors the plain-click select+inspect
-  // behavior) and relabel the favorite toggle to reflect current membership.
+  // Home row menu: select the row first (mirrors the plain-click
+  // select+inspect behavior) so buildMenuContext below reads the row that's
+  // actually about to be highlighted.
   if (contextMenuType === 'home-row') {
     const row = e.target.closest('.fp-row[data-path]');
     if (row) {
       const pane = row.closest('.home-pane');
       pane?.querySelectorAll('.fp-row--selected').forEach(r => { if (r !== row) r.classList.remove('fp-row--selected'); });
       row.classList.add('fp-row--selected');
-      const isFav = typeof favoritesSet !== 'undefined' && favoritesSet.has(row.dataset.path);
-      items = items.map(i => (i !== 'sep' && i.action === 'home-toggle-favorite')
-        ? { ...i, label: isFav ? 'Remove from Favorites' : 'Add to Favorites' }
-        : i);
     }
   }
 
-  // Empty-area menu's "Show hidden files" reflects current state.
-  if (contextMenuType === 'empty-area') {
-    items = items.map(i => (i !== 'sep' && i.action === 'cm-toggle-hidden')
-      ? { ...i, label: browserState.showHidden ? 'Hide hidden files' : 'Show hidden files' }
-      : i);
-  }
-
-  showContextMenu(e.clientX, e.clientY, items);
+  const items = CONTEXT_MENUS[contextMenuType] || CONTEXT_MENUS.file;
+  // Every dynamic label (favorites toggle, hidden-files toggle, sidebar-item
+  // kind) and every applicability rule (§4.2) now goes through this one
+  // ctx, read by the items' own enabled(ctx)/label(ctx) — replacing the
+  // per-menu-type filtering/relabeling this listener used to do inline.
+  const ctx = buildMenuContext(e.target);
+  showContextMenu(e.clientX, e.clientY, items, { ctx });
 });
 
 // ── Init ───────────────────────────────────────────────────────────────────────

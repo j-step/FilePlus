@@ -655,6 +655,105 @@ test('every screen renders with no renderer errors', async () => {
     await page.waitForFunction(() => document.querySelectorAll('.fp-row').length >= 10);
     await expect(page.locator('#list-scroll')).toHaveAttribute('data-view', 'details');
 
+    // --- Task 11: selection visuals, context-menu applicability, favorites
+    // feedback (playtest pass 1 §4.1-4.3) ---
+    // Force a known sort order first — Task 10's own cleanup above deletes
+    // ui.sort but applySettingsFromConfig() only ever reapplies a *present*
+    // config value, never resets browserState.sort to a hardcoded default
+    // when the key is absent — so it's still sitting at Size/Descending from
+    // Task 10's own sort-menu step. doc-00.txt/doc-01.txt must be adjacent,
+    // name-sorted rows for the shift-click merge check below.
+    await page.evaluate(() => applySort('name', 'asc'));
+    await page.waitForFunction(() => document.querySelectorAll('.fp-row').length >= 10);
+
+    // rowByName() is unscoped (page-wide .fp-row) — by this point in the run
+    // doc-00.txt has been selected/inspected many times above, and
+    // inspector.js logs each as a "opened" /recent action, so a Home Recent
+    // row for it now exists in the DOM alongside the Browser row (and, once
+    // this block favorites it below, a Favorites row too — home.js's
+    // .fp-row--recent covers both Home panes). Scope lookups to the Browser
+    // list itself so they stay unambiguous.
+    const browserRow = (name) => page.locator('#list-scroll .fp-row').filter({
+      has: page.locator('.fp-row__name', { hasText: new RegExp(`^${escapeRe(name)}$`) }),
+    });
+
+    // Edge-hugging + merged-border selection (§4.1): click doc-00.txt,
+    // shift-click its immediate name-sorted neighbor doc-01.txt — both
+    // select, and the SECOND row's own top border goes transparent (styles.css
+    // ".fp-row--selected + .fp-row--selected") so only the first row's bottom
+    // border shows at the seam, reading as one merged block.
+    await browserRow('doc-00.txt').click();
+    await browserRow('doc-01.txt').click({ modifiers: ['Shift'] });
+    await expect(browserRow('doc-00.txt')).toHaveClass(/fp-row--selected/);
+    await expect(browserRow('doc-01.txt')).toHaveClass(/fp-row--selected/);
+    await expect(page.locator('#list-scroll')).toHaveAttribute('data-selection-count', '2');
+    const doc00TopBorder = await browserRow('doc-00.txt').evaluate((el) => getComputedStyle(el).borderTopColor);
+    const doc01TopBorder = await browserRow('doc-01.txt').evaluate((el) => getComputedStyle(el).borderTopColor);
+    expect(doc01TopBorder).toBe('rgba(0, 0, 0, 0)');
+    expect(doc00TopBorder).not.toBe('rgba(0, 0, 0, 0)');
+
+    // Right-clicking WITHIN that existing multi-selection leaves it intact
+    // (ensureRowSelected) — the file menu judges the whole 2-item selection:
+    // Open is enabled (both .txt, one shared extension), Rename/Properties
+    // are single-item-only rules and render aria-disabled + the disabled class.
+    await browserRow('doc-01.txt').click({ button: 'right' });
+    await expect(page.locator('#context-menu')).toBeVisible();
+    const openItem = page.locator('#context-menu [data-action="cm-open"]');
+    const renameItem = page.locator('#context-menu [data-action="cm-rename"]');
+    const propsItem = page.locator('#context-menu [data-action="cm-properties"]');
+    await expect(openItem).not.toHaveClass(/fp-context-menu__item--disabled/);
+    await expect(renameItem).toHaveAttribute('aria-disabled', 'true');
+    await expect(renameItem).toHaveClass(/fp-context-menu__item--disabled/);
+    await expect(propsItem).toHaveAttribute('aria-disabled', 'true');
+    await page.screenshot({ path: path.join(SHOTS, 'browser-multiselect.png') });
+    await page.keyboard.press('Escape');
+
+    // Mixed-extension multi-selection (.txt + .md): Open has no shared
+    // extension to open with, so it's disabled.
+    await browserRow('doc-00.txt').click();
+    await browserRow('readme.md').click({ modifiers: ['Control'] });
+    await browserRow('readme.md').click({ button: 'right' });
+    await expect(page.locator('#context-menu [data-action="cm-open"]')).toHaveAttribute('aria-disabled', 'true');
+    await page.keyboard.press('Escape');
+
+    // Favorites feedback (§4.3): Add to Favorites -> star appears on the row;
+    // reopening the menu now offers Remove -> star disappears and the
+    // backend no longer lists the path.
+    //
+    // doc-00.txt may already be favorited: the earlier Home deselect-anywhere
+    // step (Task 8, above) favorites it directly via POST /favorites as its
+    // fallback source of a Home row whenever this run's Recent list happened
+    // to be empty at that point, and never unfavorites it again. Reset to a
+    // known "not favorited" state first so the Add -> Remove sequence below
+    // holds regardless of that earlier step's outcome.
+    await fetch(`${API}/favorites?path=${encodeURIComponent(`${docsDir}\\doc-00.txt`)}`, {
+      method: 'DELETE', headers: apiHeaders,
+    });
+    await page.evaluate(async () => { await favoritesReload(); await refreshDirectory(); });
+    await expect(browserRow('doc-00.txt').locator('.fp-row__star')).toHaveCount(0);
+
+    await browserRow('doc-00.txt').click();
+    await browserRow('doc-00.txt').click({ button: 'right' });
+    const favItem = page.locator('#context-menu [data-action="cm-favorite"]');
+    await expect(favItem).toHaveText('Add to Favorites');
+    await favItem.click();
+    await expect(browserRow('doc-00.txt').locator('.fp-row__star')).toBeVisible();
+
+    await browserRow('doc-00.txt').click({ button: 'right' });
+    const favItem2 = page.locator('#context-menu [data-action="cm-favorite"]');
+    await expect(favItem2).toHaveText('Remove from Favorites');
+    await favItem2.click();
+    await expect(browserRow('doc-00.txt').locator('.fp-row__star')).toHaveCount(0);
+    await expect.poll(async () => {
+      const favs = await (await fetch(`${API}/favorites`, { headers: apiHeaders })).json();
+      return favs.files.some((f) => f.path === `${docsDir}\\doc-00.txt`);
+    }).toBe(false);
+
+    // Reset the sort this block forced so later smoke steps (and the next
+    // verify run) see the documented default again.
+    await fetch(`${API}/config/ui.sort`, { method: 'DELETE', headers: apiHeaders });
+    await page.evaluate(async () => { await loadConfig(); applySettingsFromConfig(); });
+
     await page.evaluate(() => applyTheme('light'));
     for (const id of ['home', 'browser', 'settings']) {
       await page.evaluate((s) => switchScreen(s), id);

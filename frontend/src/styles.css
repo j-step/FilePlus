@@ -2182,10 +2182,14 @@ svg { flex-shrink: 0; }
   background: var(--accent-wash);
   border-color: var(--accent-edge);
 }
+/* Edge-hugging accent bar (Task 11, playtest pass 1 §4.1) — flush with the
+   list's left edge (.list-scroll carries no horizontal padding) rather than
+   inset inside the row, so it reads as one continuous rail against adjacent
+   selected rows below. */
 .fp-row--selected::before {
   content: '';
   position: absolute;
-  left: 4px;
+  left: 0;
   top: 0;
   bottom: 0;
   width: 2px;
@@ -2193,6 +2197,23 @@ svg { flex-shrink: 0; }
   border-radius: 2px;
 }
 .fp-row--selected .fp-row__icon { color: var(--accent); }
+
+/* Merged borders for a contiguous run of selected rows (Task 11): the lower
+   row of an adjacent pair drops its own top border/radius so only the upper
+   row's bottom edge shows at the seam, and the upper row squares its bottom
+   corners to match — the pair (and any longer run) reads as one block with
+   one accent bar spanning it. Scoped away from grid tiles, whose "adjacent"
+   DOM siblings are not necessarily adjacent visually (they can land in
+   different grid rows). */
+#list-scroll:not([data-view="grid"]) .fp-row--selected + .fp-row--selected {
+  border-top-color: transparent;
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
+#list-scroll:not([data-view="grid"]) .fp-row--selected:has(+ .fp-row--selected) {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
 
 .fp-row--focused {
   outline: 1px solid var(--accent);
@@ -2273,6 +2294,19 @@ svg { flex-shrink: 0; }
   min-width: 120px;
   display: flex;
   gap: 4px;
+}
+
+/* Favorites star (Task 11, playtest pass 1 §4.3) — small accent indicator
+   right of the name on a favorited Browser row (browser.js renderFsRow) and
+   a Home Recent row (home.js renderRecentRow, rendered into the row's own
+   .fp-row__tags cell so it needs no change to that row's grid columns). The
+   Favorites list itself never renders one (every row there is already a
+   favorite — see home.js's renderFavoriteRow). */
+.fp-row__star {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  color: var(--accent);
 }
 
 /* Compact density (22px) — class-based (list container) */
@@ -3703,6 +3737,9 @@ svg { flex-shrink: 0; }
   flex: 1;
   overflow-y: auto;
   outline: none;
+  /* No inset — lets .fp-row--selected::before's accent bar hug the true
+     list edge (Task 11, playtest pass 1 §4.1). */
+  padding-left: 0;
 }
 
 /* ── 40f. BROWSER GRID VIEW (A.3.1) ──────────────────────────────────────── */
@@ -3736,6 +3773,23 @@ svg { flex-shrink: 0; }
   background: var(--accent-wash);
   border-color: var(--accent-edge);
 }
+/* Grid selection bar (Task 11, playtest pass 1 §4.1): a single selected tile
+   gets an accent bar along its bottom edge; several selected tiles show only
+   the wash/border above, no bar. #list-scroll's own data-selection-count
+   (browser.js onSelectionChanged) is the source of truth for "single" since
+   it counts the WHOLE selection, not this tile alone. */
+#list-scroll[data-view="grid"] .fp-row--selected::before {
+  display: none;
+}
+#list-scroll[data-view="grid"][data-selection-count="1"] .fp-row--selected::before {
+  display: block;
+  left: 0;
+  right: 0;
+  top: auto;
+  bottom: 0;
+  height: 2px;
+  width: auto;
+}
 /* Grid tiles carry .fp-tile__thumb (see §57b) instead of the list view's
    16px .fp-row__icon — the tile's whole point is a thumbnail area big
    enough to show the file's actual content. */
@@ -3755,6 +3809,7 @@ svg { flex-shrink: 0; }
 #list-scroll[data-view="grid"] .fp-row__size,
 #list-scroll[data-view="grid"] .fp-row__modified,
 #list-scroll[data-view="grid"] .fp-row__tags,
+#list-scroll[data-view="grid"] .fp-row__star,
 #list-scroll[data-view="list"] .fp-row__size,
 #list-scroll[data-view="list"] .fp-row__modified,
 #list-scroll[data-view="list"] .fp-row__tags { display: none; }
@@ -4702,6 +4757,19 @@ button.fp-pill:hover {
 .fp-context-menu__item--danger .fp-context-menu__item__icon,
 .fp-context-menu__item--danger svg { color: var(--bad); }
 .fp-context-menu__item--danger:hover { background: var(--bad-wash); color: var(--bad); }
+/* Inapplicable item (Task 11, playtest pass 1 §4.2 — showContextMenu's
+   enabled(ctx)). pointer-events: none does double duty: it blocks the click
+   (the event falls through to .fp-context-menu itself, which has no
+   data-action, so nothing dispatches and the menu stays open) and, since
+   :hover can never match an element the pointer can't reach, suppresses the
+   hover highlight too — no separate :hover override needed. */
+.fp-context-menu__item--disabled {
+  color: var(--text-tertiary);
+  cursor: default;
+  pointer-events: none;
+}
+.fp-context-menu__item--disabled .fp-context-menu__item__icon,
+.fp-context-menu__item--disabled svg { color: var(--text-tertiary); }
 /* separator — canonical name + legacy alias */
 .fp-context-menu__sep,
 .fp-context-menu__separator {
