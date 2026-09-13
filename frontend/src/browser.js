@@ -16,28 +16,53 @@
 // app.js's seedInitialTab() at boot.
 const nav = { history: [], index: -1 };
 
+// ── List/grid scale (Task 10) ────────────────────────────────────────────────
+// Ctrl+wheel over #list-scroll and the View menu's icon-size presets both
+// step/set this — it drives --list-scale on #list-scroll (see styles.css:
+// row height/icon/font in list & details view, tile/thumb size in grid).
+const LIST_SCALE_STEPS = [0.75, 0.875, 1, 1.125, 1.25, 1.5, 1.75, 2];
+
+// Per-path manual view override, this session only (Map, never persisted) —
+// set by setViewMode(mode, {manual: true}) (View menu items, the empty-area
+// menu's View → Details/Grid). Read by loadDirectory()'s dynamic-media-view
+// check (decideViewAndScale, below) so a folder the user has explicitly
+// switched away from its auto-decided view stays that way for the rest of
+// the session, even if its media share still qualifies it for the other view.
+const manualViewByPath = new Map();
+
 // ── Browser state ─────────────────────────────────────────────────────────────
 // The last-loaded directory listing. `parent`/`isRoot` come straight from the
 // /fs/list response so navUp() and the up-button never need to re-derive a
 // parent by string-slicing the path. `showHidden` is seeded from
 // config['ui.show_hidden'] by app.js's init sequence, before the first load.
-// `sort` persists per session (sessionStorage['fp-sort']). `selection` is the
-// set of absolute paths currently selected; `anchor` is the shift-range
-// origin, `focus` is the last row acted on (keyboard/click).
+// `sort`/`view`/`listScale` are re-applied from ui.sort/ui.view_mode/
+// ui.list_scale by settings.js's applySettingsFromConfig() once GET /config
+// has answered — the literal defaults below only cover the brief window
+// before that first resolves. `selection` is the set of absolute paths
+// currently selected; `anchor` is the shift-range origin, `focus` is the
+// last row acted on (keyboard/click).
 const browserState = {
   path: null,
   entries: [],
-  sort: readSavedSort(),
+  sort: { key: 'name', dir: 'asc' },
   selection: new Set(),
   anchor: null,
   focus: null,
   showHidden: false,
   showExtensions: true,
-  // 'list' | 'grid' — mirrors #list-scroll[data-view] / sessionStorage
-  // ['fp-view-mode'], read by renderFsRow to pick row vs tile markup (a tile
-  // carries a thumbnail area a row has no place for). setViewMode() is the
-  // only writer, and re-renders the listing after changing it.
-  view: readSavedView(),
+  // 'details' (the old 'list' — columns) | 'list' (name-only, single
+  // column) | 'grid' — mirrors #list-scroll[data-view], read by renderFsRow
+  // to pick row vs tile markup (a tile carries a thumbnail area a row has no
+  // place for). setViewMode() is the only writer, and re-renders the
+  // listing after changing it.
+  view: 'details',
+  // Current --list-scale value (a LIST_SCALE_STEPS member) applied to
+  // #list-scroll; setListScale() is the only writer.
+  listScale: 1,
+  // Reserved for Task 14's search-results screen — loadDirectory()'s
+  // dynamic-media-view check never runs while this isn't 'browse', so a
+  // future search mode won't have its own view choice fought over.
+  mode: 'browse',
   parent: null,
   isRoot: false,
   truncated: false,
@@ -53,44 +78,31 @@ const browserState = {
   _loadSeq: 0,
 };
 
-/** Reads the saved view mode from sessionStorage, defaulting to list. */
-function readSavedView() {
-  return sessionStorage.getItem('fp-view-mode') === 'grid' ? 'grid' : 'list';
-}
-
-/** Reads a validated {key, dir} sort spec from sessionStorage, defaulting to name/asc. */
-function readSavedSort() {
-  try {
-    const raw = sessionStorage.getItem('fp-sort');
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (parsed && ['name', 'size', 'modified'].includes(parsed.key) && (parsed.dir === 'asc' || parsed.dir === 'desc')) {
-        return { key: parsed.key, dir: parsed.dir };
-      }
-    }
-  } catch (_) { /* corrupt/missing — fall through to default */ }
-  return { key: 'name', dir: 'asc' };
-}
-
 // ── View modes ────────────────────────────────────────────────────────────────
-function setViewMode(mode) {
-  browserState.view = mode === 'grid' ? 'grid' : 'list';
-  // v2 segmented opts
-  document.querySelectorAll('.fp-segmented__opt[data-view]').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.view === mode);
-  });
-  // legacy buttons
-  document.querySelectorAll('.tool-group__btn[data-view]').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.view === mode);
-  });
+/**
+ * Sets the active view + syncs every DOM surface that reflects it (list vs
+ * grid layout, the column header's visibility, Home's Recent/Favorites
+ * panes) and re-renders the listing (row and tile markup differ).
+ *
+ * `manual` (View menu items, the empty-area menu's View → Details/Grid,
+ * Task 11's future callers) records the choice into manualViewByPath for the
+ * CURRENT folder and persists it as the ui.view_mode default; an automatic
+ * choice (loadDirectory()'s dynamic-media-view check, via decideViewAndScale)
+ * does neither, so it never clobbers a default the user picked deliberately,
+ * nor a future folder's own auto-decision.
+ */
+function setViewMode(mode, { manual = false } = {}) {
+  const v = (mode === 'list' || mode === 'grid') ? mode : 'details';
+  browserState.view = v;
   const listScroll = document.getElementById('list-scroll');
   const listHead   = document.getElementById('list-head');
   if (listScroll) {
     // Suppress layout flicker by hiding briefly during the layout swap
     listScroll.style.opacity = '0';
-    listScroll.dataset.view = mode;
-    // Show/hide column header in grid mode (A.3.1)
-    if (listHead) listHead.classList.toggle('list-head--grid-hidden', mode === 'grid');
+    listScroll.dataset.view = v;
+    // Only 'details' shows the column header — 'list' (name-only) and
+    // 'grid' both hide it (A.3.1's rule extended to the new name-only view).
+    if (listHead) listHead.classList.toggle('list-head--grid-hidden', v !== 'details');
     // Restore opacity on next paint — batches DOM updates before repaint
     requestAnimationFrame(() => {
       listScroll.style.opacity = '';
@@ -98,13 +110,72 @@ function setViewMode(mode) {
   }
   // Home — Recent and Favorites panes share the same view-mode toggle
   document.querySelectorAll('.home-pane').forEach(pane => {
-    pane.dataset.view = mode;
+    pane.dataset.view = v;
   });
-  sessionStorage.setItem('fp-view-mode', mode);
+  if (manual) {
+    if (browserState.path) manualViewByPath.set(browserState.path, v);
+    saveSetting('ui.view_mode', v);
+  }
   // Rows and tiles are different markup (a tile has a 96px thumbnail area
   // that requests a real shell thumbnail; a row has a 16px icon), so the
   // listing has to be re-rendered rather than just re-styled.
   if (browserState.entries && browserState.entries.length) renderDirectory();
+}
+
+/**
+ * Sets --list-scale on #list-scroll (list row height/icon/font, grid
+ * tile/thumb size — see styles.css) and, by default, persists it as
+ * ui.list_scale. loadDirectory()'s dynamic-media-view check passes
+ * {persist: false} to apply a listing-scoped scale (the auto-grid default,
+ * or just re-syncing the already-persisted value) without touching the
+ * user's actual saved preference.
+ */
+function setListScale(v, { persist = true } = {}) {
+  const scale = LIST_SCALE_STEPS.includes(v) ? v : 1;
+  browserState.listScale = scale;
+  const listScroll = document.getElementById('list-scroll');
+  if (listScroll) listScroll.style.setProperty('--list-scale', String(scale));
+  if (persist) saveSetting('ui.list_scale', scale);
+}
+
+/** Steps --list-scale by one LIST_SCALE_STEPS entry in `direction` (+1/-1) —
+ * Ctrl+wheel over #list-scroll (app.js). Persists like any other manual
+ * scale change (setListScale's default). */
+function stepListScale(direction) {
+  const idx = LIST_SCALE_STEPS.indexOf(browserState.listScale);
+  const curIdx = idx === -1 ? LIST_SCALE_STEPS.indexOf(1) : idx;
+  const nextIdx = Math.max(0, Math.min(LIST_SCALE_STEPS.length - 1, curIdx + direction));
+  setListScale(LIST_SCALE_STEPS[nextIdx]);
+}
+
+/**
+ * Dynamic media view (playtest pass 1, Task 10): decides the view + scale
+ * for `path`'s freshly-fetched `entries`. Called by loadDirectory() after
+ * every real navigation — never for a tab-switch restore, which reapplies
+ * whatever that tab last showed instead (see loadDirectory()'s restore.view
+ * handling), and never in a future search-results mode (browserState.mode).
+ *
+ * A manual override recorded for this exact path this session wins outright,
+ * at the persisted scale. Otherwise, unless ui.dynamic_media_view is
+ * explicitly false, a folder whose own non-hidden files are more than half
+ * pictures/video opens in grid at scale 1 — not persisted, since this is a
+ * per-listing default, not a change to the user's actual preference.
+ * Anything else falls back to the persisted ui.view_mode/ui.list_scale.
+ */
+function decideViewAndScale(path, entries) {
+  const cfg = window.__fpConfig || {};
+  const persistedScale = LIST_SCALE_STEPS.includes(cfg['ui.list_scale']) ? cfg['ui.list_scale'] : 1;
+  const defaultView = ['details', 'list', 'grid'].includes(cfg['ui.view_mode']) ? cfg['ui.view_mode'] : 'details';
+  const manualPicked = manualViewByPath.get(path);
+  if (manualPicked) return { view: manualPicked, scale: persistedScale };
+  if (cfg['ui.dynamic_media_view'] !== false) {
+    const files = entries.filter(e => !e.is_dir && !e.is_hidden);
+    const mediaShare = files.length
+      ? files.filter(e => typeof fpIsMedia === 'function' && fpIsMedia(e.ext)).length / files.length
+      : 0;
+    if (mediaShare > 0.5) return { view: 'grid', scale: 1 };
+  }
+  return { view: defaultView, scale: persistedScale };
 }
 
 // ── Column sort cycling (A.3.1 / Task 3) ────────────────────────────────────
@@ -134,10 +205,11 @@ function updateSortHeaderUI() {
   });
 }
 
-/** Sets the active sort, persists it, and re-renders the current directory. */
+/** Sets the active sort, persists it (ui.sort — replaces the old
+ * sessionStorage['fp-sort']), and re-renders the current directory. */
 function applySort(key, dir) {
   browserState.sort = { key, dir };
-  try { sessionStorage.setItem('fp-sort', JSON.stringify(browserState.sort)); } catch (_) { /* storage unavailable */ }
+  saveSetting('ui.sort', browserState.sort);
   updateSortHeaderUI();
   renderDirectory();
 }
@@ -145,17 +217,20 @@ function applySort(key, dir) {
 /**
  * Returns browserState.entries sorted for display: folders always precede
  * files (regardless of direction), then each group is ordered by the active
- * sort key — name (natural, case-insensitive), size, or modified (numeric).
+ * sort key — name (natural, case-insensitive), size, modified (numeric), or
+ * type (file-type family, filetypes.js's fpFamilyFor, then name).
  */
 function sortedEntries() {
   const { key, dir } = browserState.sort;
   const sign = dir === 'desc' ? -1 : 1;
+  const byName = (a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
   return [...browserState.entries].sort((a, b) => {
     if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
     let cmp;
     if (key === 'size') cmp = (a.size ?? 0) - (b.size ?? 0);
     else if (key === 'modified') cmp = (a.modified ?? 0) - (b.modified ?? 0);
-    else cmp = a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
+    else if (key === 'type') cmp = fpFamilyFor(a.ext).localeCompare(fpFamilyFor(b.ext)) || byName(a, b);
+    else cmp = byName(a, b);
     return cmp * sign;
   });
 }
@@ -329,7 +404,14 @@ async function loadDirectory(absPath, opts = {}) {
   browserState.entries = data.entries;
   browserState.parent = data.parent;
   browserState.isRoot = data.is_root;
+  // Dynamic media view (Task 10): decided fresh on every real navigation —
+  // never for a tab-switch restore (restore.view below reapplies whatever
+  // that tab last showed instead), and never in a future search-results mode.
+  const decidedView = (!(restore && restore.view) && browserState.mode !== 'search')
+    ? decideViewAndScale(data.path, data.entries)
+    : null;
   if (restore && restore.view) browserState.view = restore.view;
+  else if (decidedView) browserState.view = decidedView.view;
 
   // Keep the active tab's own record continuously pointed at the real
   // (resolved) path — this is what lets switchScreen() tell "this tab has
@@ -360,7 +442,12 @@ async function loadDirectory(absPath, opts = {}) {
   }
 
   renderDirectory(data);
-  if (restore && restore.view) setViewMode(restore.view);
+  if (restore && restore.view) {
+    setViewMode(restore.view);
+  } else if (decidedView) {
+    setListScale(decidedView.scale, { persist: false });
+    setViewMode(decidedView.view, { manual: false });
+  }
   if (addToHistory) pushHistory(data.path);
   else refreshNavButtons();
   updateAddressBar(data.path);

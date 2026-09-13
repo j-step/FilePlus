@@ -1246,7 +1246,7 @@ const CONTEXT_MENUS = {
     { label: 'Paste',      action: 'cm-paste',      kbd: 'Ctrl+V' },
     { label: 'Refresh',    action: 'cm-refresh',    kbd: 'F5' },
     'sep',
-    { label: 'View → List',       action: 'cm-view-list' },
+    { label: 'View → Details',    action: 'cm-view-list' },
     { label: 'View → Grid',       action: 'cm-view-grid' },
     { label: 'Sort by → name',    action: 'cm-sort-name' },
     { label: 'Sort by → modified', action: 'cm-sort-modified' },
@@ -1288,6 +1288,56 @@ const CONTEXT_MENUS = {
     { label: 'Add to Favorites',   action: 'home-toggle-favorite' },
   ],
 };
+
+// ── View / Sort toolbar dropdowns (Task 10) ─────────────────────────────────
+// Windows-Explorer-style menus opened below the toolbar's View/Sort buttons
+// (data-action="open-view-menu"/"open-sort-menu"), replacing the old
+// List/Grid segmented toggle. Both share showContextMenu() with the rest of
+// the app — {anchor} positions the menu below the button instead of at a
+// click point, and {ctx: menuContext()} drives each item's checked(ctx)
+// predicate (Task 11 adds enabled(ctx) to the same item shape — unknown
+// fields are simply ignored by showContextMenu, not an error).
+const VIEW_MENU_ITEMS = [
+  { label: 'Extra large icons', action: 'view-xl',      checked: ctx => ctx.view === 'grid' && ctx.scale === 2 },
+  { label: 'Large icons',       action: 'view-large',   checked: ctx => ctx.view === 'grid' && ctx.scale === 1.5 },
+  { label: 'Medium icons',      action: 'view-medium',  checked: ctx => ctx.view === 'grid' && ctx.scale === 1 },
+  { label: 'Small icons',       action: 'view-small',   checked: ctx => ctx.view === 'grid' && ctx.scale === 0.75 },
+  'sep',
+  // "List" is deliberately not Explorer's multi-column flowing list — ours
+  // is a single-column, name-only row (see browser.js's setViewMode).
+  { label: 'List',              action: 'view-list',    checked: ctx => ctx.view === 'list' },
+  { label: 'Details',           action: 'view-details', checked: ctx => ctx.view === 'details' },
+  'sep',
+  { label: 'Show hidden files',    action: 'toggle-show-hidden',     checked: ctx => ctx.showHidden },
+  { label: 'Show file extensions', action: 'toggle-show-extensions', checked: ctx => ctx.showExtensions },
+  { label: 'Dynamic media view',   action: 'toggle-dynamic-media',   checked: ctx => ctx.dynamicMediaView },
+];
+
+const SORT_MENU_ITEMS = [
+  { label: 'Name',          action: 'sort-name',     checked: ctx => ctx.sortKey === 'name' },
+  { label: 'Date modified', action: 'sort-modified', checked: ctx => ctx.sortKey === 'modified' },
+  { label: 'Type',          action: 'sort-type',     checked: ctx => ctx.sortKey === 'type' },
+  { label: 'Size',          action: 'sort-size',     checked: ctx => ctx.sortKey === 'size' },
+  'sep',
+  { label: 'Ascending',     action: 'sort-asc',      checked: ctx => ctx.sortDir === 'asc' },
+  { label: 'Descending',    action: 'sort-desc',     checked: ctx => ctx.sortDir === 'desc' },
+];
+
+/** Snapshot of the state the View/Sort menus' checked(ctx) predicates read —
+ * built fresh each time either menu opens (the menu itself is rebuilt from
+ * scratch on every open, so there is nothing to keep in sync between opens). */
+function menuContext() {
+  const cfg = window.__fpConfig || {};
+  return {
+    view: browserState.view,
+    scale: browserState.listScale,
+    showHidden: browserState.showHidden,
+    showExtensions: browserState.showExtensions,
+    dynamicMediaView: cfg['ui.dynamic_media_view'] !== false,
+    sortKey: browserState.sort.key,
+    sortDir: browserState.sort.dir,
+  };
+}
 
 function getMenuTypeForTarget(target) {
   if (target.closest('.fp-tab')) return 'tab';
@@ -1334,9 +1384,23 @@ function contextTargetDir() {
 
 const contextMenu = document.getElementById('context-menu');
 
-function showContextMenu(x, y, items) {
+/**
+ * Renders `items` into the shared #context-menu and shows it.
+ *
+ * opts.anchor (the View/Sort toolbar buttons) positions the menu below that
+ * element instead of at the click point `x,y`, which are then ignored.
+ * opts.ctx, when present, is passed to every item's `checked(ctx)`
+ * predicate and switches on a leading check-icon slot reserved on EVERY
+ * item in that menu — checked or not — so labels all line up; a plain
+ * right-click menu (no ctx) keeps its existing layout untouched. Task 11
+ * adds `enabled(ctx)` to the same item shape; an unknown field is simply
+ * never read, not an error.
+ */
+function showContextMenu(x, y, items, opts = {}) {
   if (!contextMenu) return;
   contextMenu.innerHTML = '';
+  const ctx = opts.ctx;
+  const showChecks = ctx !== undefined;
   items.forEach(item => {
     if (item === 'sep') {
       const sep = document.createElement('div');
@@ -1348,7 +1412,11 @@ function showContextMenu(x, y, items) {
     btn.className = 'fp-context-menu__item' + (item.danger ? ' fp-context-menu__item--danger' : '');
     btn.setAttribute('data-action', item.action || '');
     btn.setAttribute('role', 'menuitem');
-    if (item.icon) btn.innerHTML = item.icon;
+    if (showChecks) {
+      const isChecked = typeof item.checked === 'function' && !!item.checked(ctx);
+      btn.innerHTML = `<span class="fp-context-menu__check">${isChecked ? icon('check', 'fp-icon--14') : ''}</span>`;
+    }
+    if (item.icon) btn.innerHTML += item.icon;
     btn.innerHTML += `<span>${item.label}</span>`;
     if (item.kbd) {
       const kbd = document.createElement('span');
@@ -1363,8 +1431,14 @@ function showContextMenu(x, y, items) {
   contextMenu.style.display = 'block';
   // Position within viewport
   const vw = window.innerWidth, vh = window.innerHeight;
-  contextMenu.style.left = `${Math.min(x, vw - 200)}px`;
-  contextMenu.style.top  = `${Math.min(y, vh - contextMenu.offsetHeight - 8)}px`;
+  if (opts.anchor) {
+    const r = opts.anchor.getBoundingClientRect();
+    contextMenu.style.left = `${Math.min(r.left, vw - 220)}px`;
+    contextMenu.style.top  = `${Math.min(r.bottom + 4, vh - contextMenu.offsetHeight - 8)}px`;
+  } else {
+    contextMenu.style.left = `${Math.min(x, vw - 200)}px`;
+    contextMenu.style.top  = `${Math.min(y, vh - contextMenu.offsetHeight - 8)}px`;
+  }
 }
 
 function hideContextMenu() {
@@ -1722,7 +1796,7 @@ function initUnderlineTabs(container) {
 // In-scope actions are handled here; out-of-scope show "not implemented" stub.
 const IN_SCOPE_ACTIONS = new Set([
   'navigate-screen', 'navigate-path', 'switch-tab', 'close-tab', 'new-tab', 'scan',
-  'toggle-sidebar', 'toggle-inspector', 'toggle-theme', 'set-view-mode',
+  'toggle-sidebar', 'toggle-inspector', 'toggle-theme',
   'focus-search', 'filter-by-tag', 'open-tag-canvas', 'close-tag-canvas',
   'tag-canvas-select',
   'nav-back', 'nav-forward', 'nav-up', 'navigate-crumb', 'nav-retry',
@@ -1756,6 +1830,11 @@ const IN_SCOPE_ACTIONS = new Set([
   'cm-new-folder', 'cm-new-file', 'cm-refresh', 'refresh-directory',
   'cm-favorite', 'cm-pin-sidebar', 'cm-index-folder', 'cm-properties', 'cm-toggle-hidden',
   'cm-view-list', 'cm-view-grid', 'cm-sort-name', 'cm-sort-modified',
+  // View/Sort toolbar dropdowns + their checked items (Task 10)
+  'open-view-menu', 'open-sort-menu',
+  'view-xl', 'view-large', 'view-medium', 'view-small', 'view-list', 'view-details',
+  'toggle-show-hidden', 'toggle-show-extensions', 'toggle-dynamic-media',
+  'sort-name', 'sort-modified', 'sort-type', 'sort-size', 'sort-asc', 'sort-desc',
 ]);
 
 /** Activates the Inspector tab named `name` ('preview' | 'tags' | 'history') —
@@ -1775,6 +1854,19 @@ function switchInspectorTab(name) {
   inspector.querySelectorAll('.fp-inspector__pane').forEach(p => {
     p.hidden = p.dataset.pane !== name;
   });
+}
+
+/** Flips ui.show_hidden — shared by the empty-area menu's "Show hidden
+ * files" (cm-toggle-hidden) and the View menu's checked item of the same
+ * name (toggle-show-hidden), so both stay in sync with each other and with
+ * the Settings › Personalization checkbox. */
+function toggleShowHidden() {
+  const next = !browserState.showHidden;
+  browserState.showHidden = next;
+  refreshDirectory();
+  saveSetting('ui.show_hidden', next);
+  const hiddenToggle = document.querySelector('[data-action="settings-toggle"][data-setting="show-hidden"]');
+  if (hiddenToggle) hiddenToggle.checked = next;
 }
 
 document.addEventListener('click', e => {
@@ -1855,9 +1947,6 @@ document.addEventListener('click', e => {
       break;
     case 'toggle-theme':
       toggleTheme();
-      break;
-    case 'set-view-mode':
-      setViewMode(btn.dataset.view);
       break;
     case 'focus-search':
       openPalette();
@@ -2287,24 +2376,92 @@ document.addEventListener('click', e => {
         .catch(err => showToast(`Failed to load properties: ${formatApiError(err)}`, 'error'));
       break;
     }
-    case 'cm-toggle-hidden': {
-      const next = !browserState.showHidden;
-      browserState.showHidden = next;
-      refreshDirectory();
-      saveSetting('ui.show_hidden', next);
+    case 'cm-toggle-hidden':
+      toggleShowHidden();
       break;
-    }
     case 'cm-view-list':
-      setViewMode('list');
+      // Empty-area menu's "View → Details" — maps to the View menu's own
+      // Details item (the renamed columns view).
+      setViewMode('details', { manual: true });
       break;
     case 'cm-view-grid':
-      setViewMode('grid');
+      // Empty-area menu's "View → Grid" — maps to the View menu's Medium
+      // icons (the grid default scale).
+      setListScale(1);
+      setViewMode('grid', { manual: true });
       break;
     case 'cm-sort-name':
       applySort('name', (browserState.sort.key === 'name' && browserState.sort.dir === 'asc') ? 'desc' : 'asc');
       break;
     case 'cm-sort-modified':
       applySort('modified', (browserState.sort.key === 'modified' && browserState.sort.dir === 'asc') ? 'desc' : 'asc');
+      break;
+
+    // ── View / Sort toolbar menus (Task 10) ─────────────────────────────
+    case 'open-view-menu':
+      showContextMenu(0, 0, VIEW_MENU_ITEMS, { anchor: btn, ctx: menuContext() });
+      break;
+    case 'open-sort-menu':
+      showContextMenu(0, 0, SORT_MENU_ITEMS, { anchor: btn, ctx: menuContext() });
+      break;
+    case 'view-xl':
+      setListScale(2);
+      setViewMode('grid', { manual: true });
+      break;
+    case 'view-large':
+      setListScale(1.5);
+      setViewMode('grid', { manual: true });
+      break;
+    case 'view-medium':
+      setListScale(1);
+      setViewMode('grid', { manual: true });
+      break;
+    case 'view-small':
+      setListScale(0.75);
+      setViewMode('grid', { manual: true });
+      break;
+    case 'view-list':
+      setViewMode('list', { manual: true });
+      break;
+    case 'view-details':
+      setViewMode('details', { manual: true });
+      break;
+    case 'toggle-show-hidden':
+      toggleShowHidden();
+      break;
+    case 'toggle-show-extensions': {
+      const next = !browserState.showExtensions;
+      browserState.showExtensions = next;
+      saveSetting('ui.show_extensions', next);
+      renderDirectory(); // re-render cached entries locally — no re-fetch needed
+      const extToggle = document.querySelector('[data-action="settings-toggle"][data-setting="show-extensions"]');
+      if (extToggle) extToggle.checked = next;
+      break;
+    }
+    case 'toggle-dynamic-media': {
+      const next = !((window.__fpConfig || {})['ui.dynamic_media_view'] !== false);
+      saveSetting('ui.dynamic_media_view', next);
+      const dmToggle = document.querySelector('[data-action="settings-toggle"][data-setting="dynamic-media-view"]');
+      if (dmToggle) dmToggle.checked = next;
+      break;
+    }
+    case 'sort-name':
+      applySort('name', browserState.sort.dir);
+      break;
+    case 'sort-modified':
+      applySort('modified', browserState.sort.dir);
+      break;
+    case 'sort-type':
+      applySort('type', browserState.sort.dir);
+      break;
+    case 'sort-size':
+      applySort('size', browserState.sort.dir);
+      break;
+    case 'sort-asc':
+      applySort(browserState.sort.key, 'asc');
+      break;
+    case 'sort-desc':
+      applySort(browserState.sort.key, 'desc');
       break;
 
     default:
@@ -2344,6 +2501,10 @@ document.addEventListener('change', e => {
     browserState.showHidden = t.checked;
     saveSetting('ui.show_hidden', t.checked);
     refreshDirectory();
+    return;
+  }
+  if (t.dataset.action === 'settings-toggle' && t.dataset.setting === 'dynamic-media-view') {
+    saveSetting('ui.dynamic_media_view', t.checked);
     return;
   }
   if (t.dataset.action === 'settings-quick-access-toggle') {
@@ -2446,13 +2607,20 @@ document.addEventListener('keydown', e => {
     closeTagCanvas();
   }
   // Browser-screen keyboard nav (selection, sort-order arrows, Enter, F5,
-  // Ctrl+A, Alt+arrows) only applies when that screen is active and the
-  // user isn't typing into an input/textarea/contenteditable element.
+  // Ctrl+A, Alt+arrows) only applies when that screen is active, the user
+  // isn't typing into an input/textarea/contenteditable element, and focus
+  // isn't inside the sidebar — a sidebar row/button (This PC's chevron
+  // included) owns its own Enter/Space activation (native <button> click, or
+  // a dedicated keydown listener) and must not also have e.g. Enter
+  // reinterpreted as "open the focused FILE LIST row" (browserState.focus
+  // has nothing to do with sidebar focus) or F5/Delete/Ctrl+C acting on
+  // whatever happens to be selected in the file list instead.
   const activeEl = document.activeElement;
   const activeTag = activeEl && activeEl.tagName;
   const isEditableTarget = activeTag === 'INPUT' || activeTag === 'TEXTAREA' || (activeEl && activeEl.isContentEditable);
+  const focusInSidebar = !!(activeEl && activeEl.closest && activeEl.closest('#sidebar'));
   const browserScreenActive = document.getElementById('screen-browser')?.classList.contains('active');
-  if (browserScreenActive && !isEditableTarget && typeof browserKeydown === 'function') {
+  if (browserScreenActive && !isEditableTarget && !focusInSidebar && typeof browserKeydown === 'function') {
     browserKeydown(e);
   }
   const homeScreenActive = document.getElementById('screen-home')?.classList.contains('active');
@@ -2472,23 +2640,25 @@ document.addEventListener('auxclick', e => {
   closeTabById(tabEl.dataset.tabId);
 });
 
-// Ctrl + scroll wheel — step through ZOOM_STEPS, one step per gesture.
-// Throttled because trackpads (and high-resolution wheels) emit dozens of
-// wheel events per swipe; without a cooldown a single flick would jump
-// straight to the min/max zoom. ~80ms matches the natural pacing of one
-// "notch" of a physical wheel without making intentional fast scrolls
-// feel sluggish.
+// Ctrl + scroll wheel over the file list — steps --list-scale (Task 10,
+// explorer-only zoom of just the listing), one step per gesture; anywhere
+// else it's now ignored entirely — application zoom is keyboard-only
+// (Ctrl+=/-/0 above). Throttled because trackpads (and high-resolution
+// wheels) emit dozens of wheel events per swipe; without a cooldown a single
+// flick would jump straight to the min/max scale. ~80ms matches the natural
+// pacing of one "notch" of a physical wheel without making intentional fast
+// scrolls feel sluggish.
 {
   let lastWheelAt = 0;
   const COOLDOWN_MS = 80;
   document.addEventListener('wheel', e => {
     if (!(e.ctrlKey || e.metaKey)) return;
-    e.preventDefault(); // suppress the default page-scroll while zooming
+    if (!e.target.closest('#list-scroll')) return; // outside the list: ignore
+    e.preventDefault(); // suppress the default page-scroll while scaling
     const now = performance.now();
     if (now - lastWheelAt < COOLDOWN_MS) return;
     lastWheelAt = now;
-    if (e.deltaY < 0)      zoomIn();
-    else if (e.deltaY > 0) zoomOut();
+    stepListScale(e.deltaY < 0 ? 1 : -1);
   }, { passive: false });
 }
 
@@ -2590,12 +2760,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   // NOTE: sidebar-collapse and theme-toggle are wired via data-action delegation
   // (see the click switch above). Direct addEventListener calls were removed
   // because they fired in addition to the delegated handler, causing each click
-  // to toggle twice (visible no-op).
-
-  // View mode via segmented control (new)
-  document.querySelectorAll('.fp-segmented__opt[data-view]').forEach(btn => {
-    btn.addEventListener('click', () => setViewMode(btn.dataset.view));
-  });
+  // to toggle twice (visible no-op). The View/Sort toolbar buttons (Task 10)
+  // are data-action="open-view-menu"/"open-sort-menu" for the same reason —
+  // no separate listener needed here.
 
   // Palette — open when search focused
   searchInput?.addEventListener('focus', e => { e.preventDefault(); openPalette(); });
@@ -2631,6 +2798,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   // own listener since a div, unlike a real <button>, never activates on a
   // key press by itself.
   document.querySelector('#sb-thispc .fp-sidebar__section-head')?.addEventListener('keydown', e => {
+    // Enter/Space on the nested chevron button (data-action="thispc-toggle")
+    // must toggle collapse, not also open This PC — only act when this
+    // listener's own element (the section-head row itself), not a
+    // descendant, was the real key target (Task 9 review, fix round 1).
+    if (e.target !== e.currentTarget) return;
     if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openBrowserAt(null); }
   });
 
@@ -2651,9 +2823,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   initHomeRowInteractions();
   initFavoritesDragDrop();
 
-  // Restore saved view mode
-  const savedView = sessionStorage.getItem('fp-view-mode');
-  if (savedView) setViewMode(savedView);
+  // View mode is no longer restored from sessionStorage here — ui.view_mode/
+  // ui.list_scale (config) are applied by applySettingsFromConfig() below,
+  // and every real navigation re-decides the view itself (loadDirectory()'s
+  // dynamic-media-view check, Task 10).
 
   // Init underline tabs in any pre-existing tab containers
   document.querySelectorAll('.fp-tabs').forEach(initUnderlineTabs);

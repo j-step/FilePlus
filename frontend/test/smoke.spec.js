@@ -175,7 +175,10 @@ test('every screen renders with no renderer errors', async () => {
     await expect(page.locator('#list-scroll img.fp-thumb[src^="data:image/png"]').first())
       .toBeVisible({ timeout: 3000 });
     await page.screenshot({ path: path.join(SHOTS, 'browser-grid.png') });
-    await page.evaluate(() => setViewMode('list'));
+    // 'list' now means the new name-only view (Task 10) — 'details' is the
+    // renamed equivalent of what used to be called 'list' (columns), which
+    // is what the Windows-icon-mode assertions below actually want back.
+    await page.evaluate(() => setViewMode('details'));
 
     // Settings ▸ Personalization ▸ File icons = Windows: rows swap to real
     // Windows shell icons (an <img>, not a sprite <use>).
@@ -479,6 +482,19 @@ test('every screen renders with no renderer errors', async () => {
     await expect(page.locator('#sb-drives')).toBeVisible();
     await expect(page.locator('#sb-thispc .fp-sidebar__chevron')).toHaveAttribute('aria-expanded', 'true');
 
+    // Task 9 review, fix round 1 (Task 10): Enter on the focused CHEVRON
+    // itself (not the section-head row it sits inside) must only toggle
+    // collapse, never also open This PC — the section-head's keydown
+    // listener's e.target !== e.currentTarget guard.
+    const pathBeforeChevronEnter = await page.evaluate(() => browserState.path);
+    await page.locator('#sb-thispc .fp-sidebar__chevron').focus();
+    await page.keyboard.press('Enter');
+    await expect(page.locator('#sb-drives')).toBeHidden();
+    expect(await page.evaluate(() => browserState.path)).toBe(pathBeforeChevronEnter);
+    await page.locator('#sb-thispc .fp-sidebar__chevron').focus();
+    await page.keyboard.press('Enter');
+    await expect(page.locator('#sb-drives')).toBeVisible();
+
     // Quick Access renders Desktop and Downloads with absolute data-path
     // (real GET /known-folders paths, not the old sandbox-relative guess).
     const qaDesktop = page.locator('#sb-quick-access-folders [data-known-id="desktop"]');
@@ -524,6 +540,78 @@ test('every screen renders with no renderer errors', async () => {
     await fetch(`${API}/config/ui.quick_access_hidden`, { method: 'DELETE', headers: apiHeaders });
     await fetch(`${API}/config/ui.backspace_deletes`, { method: 'DELETE', headers: apiHeaders });
     await page.evaluate(async () => { await loadConfig(); applySettingsFromConfig(); loadQuickAccess(); });
+
+    // --- Task 10: list scale, View/Sort toolbar menus, List view, dynamic
+    // media view (playtest pass 1) ---
+
+    // Pictures is all images (6/6 PNGs) — dynamic media view opens it in
+    // grid automatically, with no View menu interaction at all.
+    await page.evaluate((p) => loadDirectory(p), picsDir);
+    await page.waitForFunction(() => document.querySelectorAll('.fp-row').length >= 6);
+    await expect(page.locator('#list-scroll')).toHaveAttribute('data-view', 'grid');
+
+    // Documents is all text/markdown/PDF — opens in 'details' (the renamed
+    // columns view) instead.
+    await page.evaluate((p) => loadDirectory(p), docsDir);
+    await page.waitForFunction(() => document.querySelectorAll('.fp-row').length >= 10);
+    await expect(page.locator('#list-scroll')).toHaveAttribute('data-view', 'details');
+
+    // The View menu opens below the toolbar button; "List" switches
+    // Documents to the new name-only single-column view (#list-head hidden).
+    await page.locator('#btn-view-menu').click();
+    await expect(page.locator('#context-menu')).toBeVisible();
+    await page.screenshot({ path: path.join(SHOTS, 'view-menu.png') });
+    await page.locator('#context-menu .fp-context-menu__item', { hasText: 'List' }).click();
+    await expect(page.locator('#list-scroll')).toHaveAttribute('data-view', 'list');
+    await expect(page.locator('#list-head')).toBeHidden();
+
+    // The manual "List" override on Documents must not leak onto Pictures —
+    // it still opens in grid on its own (manualViewByPath is keyed by path).
+    await page.evaluate((p) => loadDirectory(p), picsDir);
+    await expect(page.locator('#list-scroll')).toHaveAttribute('data-view', 'grid');
+
+    // Sort menu: Size + Descending puts the largest file first — verified
+    // against GET /fs/list's own sizes rather than a hardcoded name.
+    const picsEntries = (await (await fetch(
+      `${API}/fs/list?path=${encodeURIComponent(picsDir)}`, { headers: apiHeaders })).json()).entries;
+    const largestPicName = [...picsEntries].sort((a, b) => b.size - a.size)[0].name;
+    await page.locator('#btn-sort-menu').click();
+    await page.locator('#context-menu .fp-context-menu__item', { hasText: 'Size' }).click();
+    await page.locator('#btn-sort-menu').click();
+    await page.locator('#context-menu .fp-context-menu__item', { hasText: 'Descending' }).click();
+    await expect(page.locator('#list-scroll .fp-row').first().locator('.fp-row__name')).toHaveText(largestPicName);
+
+    // Ctrl+wheel over the file list changes --list-scale and leaves
+    // Electron's own application zoom (Ctrl+=/-/0) completely alone.
+    const getZoom = () => page.evaluate(() => (window.electronAPI?.getZoom ? window.electronAPI.getZoom() : null));
+    const zoomBefore = await getZoom();
+    const scaleBefore = await page.evaluate(() => browserState.listScale);
+    const listScrollBoxForWheel = await page.locator('#list-scroll').boundingBox();
+    await page.mouse.move(
+      listScrollBoxForWheel.x + listScrollBoxForWheel.width / 2,
+      listScrollBoxForWheel.y + listScrollBoxForWheel.height / 2,
+    );
+    await page.keyboard.down('Control');
+    await page.mouse.wheel(0, -100);
+    await page.keyboard.up('Control');
+    await expect.poll(() => page.evaluate(() => browserState.listScale)).not.toBe(scaleBefore);
+    expect(await getZoom()).toBe(zoomBefore);
+
+    // /config holds the persisted scale, matching what the page just applied.
+    const cfgAfterScale = await (await fetch(`${API}/config`, { headers: apiHeaders })).json();
+    expect(cfgAfterScale['ui.list_scale']).toBe(await page.evaluate(() => browserState.listScale));
+
+    // Reset the config keys and in-memory manual-view map this block set,
+    // and reload Documents in 'details' so later smoke steps (and the next
+    // verify run) see the documented defaults again.
+    await fetch(`${API}/config/ui.view_mode`, { method: 'DELETE', headers: apiHeaders });
+    await fetch(`${API}/config/ui.sort`, { method: 'DELETE', headers: apiHeaders });
+    await fetch(`${API}/config/ui.list_scale`, { method: 'DELETE', headers: apiHeaders });
+    await page.evaluate(() => manualViewByPath.clear());
+    await page.evaluate(async () => { await loadConfig(); applySettingsFromConfig(); });
+    await page.evaluate((p) => loadDirectory(p), docsDir);
+    await page.waitForFunction(() => document.querySelectorAll('.fp-row').length >= 10);
+    await expect(page.locator('#list-scroll')).toHaveAttribute('data-view', 'details');
 
     await page.evaluate(() => applyTheme('light'));
     for (const id of ['home', 'browser', 'settings']) {

@@ -133,6 +133,25 @@ function applySettingsFromConfig() {
   const backspaceDeletes = !!cfg['ui.backspace_deletes'];
   const backspaceToggle = document.getElementById('settings-backspace-deletes');
   if (backspaceToggle) backspaceToggle.checked = backspaceDeletes;
+
+  // Sort / list-scale / dynamic media view (Task 10). ui.sort replaces the
+  // old sessionStorage['fp-sort'] entirely; ui.list_scale is re-applied to
+  // --list-scale with {persist: false} so reading it straight back never
+  // fires a redundant POST /config on startup (same pattern as
+  // ui.inspector_open/ui.sidebar_thispc_open above). ui.dynamic_media_view
+  // only syncs its Settings checkbox here — loadDirectory() (browser.js)
+  // reads the config key directly on every navigation.
+  const savedSort = cfg['ui.sort'];
+  if (savedSort && typeof savedSort === 'object'
+      && ['name', 'size', 'modified', 'type'].includes(savedSort.key)
+      && (savedSort.dir === 'asc' || savedSort.dir === 'desc')) {
+    browserState.sort = { key: savedSort.key, dir: savedSort.dir };
+    if (typeof updateSortHeaderUI === 'function') updateSortHeaderUI();
+  }
+  const savedScale = LIST_SCALE_STEPS.includes(cfg['ui.list_scale']) ? cfg['ui.list_scale'] : 1;
+  setListScale(savedScale, { persist: false });
+  const dmToggle = document.querySelector('[data-action="settings-toggle"][data-setting="dynamic-media-view"]');
+  if (dmToggle) dmToggle.checked = cfg['ui.dynamic_media_view'] !== false;
 }
 
 /** Syncs the Personalization "File icons" segmented control to `source` and

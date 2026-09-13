@@ -276,16 +276,18 @@
                  data-action="focus-search" />
         </div>
 
-        <!-- View toggle: List / Grid segmented control -->
-        <div class="fp-segmented" id="view-toggle" role="group" aria-label="View mode"
-             style="flex-shrink:0;height:30px">
-          <button class="fp-segmented__opt active" id="btn-view-list"
-                  data-view="list" data-action="set-view-mode" title="List view">
-            <svg class="fp-icon fp-icon--14" aria-hidden="true"><use href="#fp-view-list"></use></svg>
+        <!-- View / Sort: Windows-style dropdown menus (Task 10), replacing
+             the old List/Grid segmented toggle. Both open the shared
+             #context-menu anchored below the button (showContextMenu's
+             {anchor} option) from VIEW_MENU_ITEMS/SORT_MENU_ITEMS (app.js). -->
+        <div style="display:flex;gap:2px;flex-shrink:0">
+          <button class="fp-icon-btn" id="btn-view-menu"
+                  data-action="open-view-menu" title="View" aria-haspopup="true">
+            <svg class="fp-icon fp-icon--16" aria-hidden="true"><use href="#fp-view-grid"></use></svg>
           </button>
-          <button class="fp-segmented__opt" id="btn-view-grid"
-                  data-view="grid" data-action="set-view-mode" title="Grid view">
-            <svg class="fp-icon fp-icon--14" aria-hidden="true"><use href="#fp-view-grid"></use></svg>
+          <button class="fp-icon-btn" id="btn-sort-menu"
+                  data-action="open-sort-menu" title="Sort" aria-haspopup="true">
+            <svg class="fp-icon fp-icon--16" aria-hidden="true"><use href="#fp-sort"></use></svg>
           </button>
         </div>
 
@@ -385,7 +387,7 @@
 
               <!-- File scroll area -->
               <div class="list-scroll" id="list-scroll" role="listbox"
-                   aria-label="Files" tabindex="0" data-view="list">
+                   aria-label="Files" tabindex="0" data-view="details">
 
                 <!-- INTEGRATION: directory listing from GET /browse?path=... -->
 
@@ -1958,6 +1960,15 @@
                     <div class="settings-row__label">View hidden files</div>
                     <label class="fp-toggle">
                       <input type="checkbox" data-action="settings-toggle" data-setting="show-hidden" />
+                      <span class="fp-toggle__track"></span>
+                      <span class="fp-toggle__thumb"></span>
+                    </label>
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row">
+                    <div class="settings-row__label">Dynamic media view</div>
+                    <label class="fp-toggle">
+                      <input type="checkbox" checked data-action="settings-toggle" data-setting="dynamic-media-view" />
                       <span class="fp-toggle__track"></span>
                       <span class="fp-toggle__thumb"></span>
                     </label>

@@ -83,6 +83,10 @@
   --t-display-sm: 22px/30px;
   --t-display:    28px/34px;
 
+  /* Bare font-size (no line-height) for calc() — Task 10's --list-scale
+     multiplies this for the file-list row name in list/details view. */
+  --fs-13: 13px;
+
   --track-body:    0;
   --track-button:  0;
   --track-display: 0;
@@ -124,6 +128,7 @@
   --row-compact:     22px;
   --row-default:     26px;
   --row-comfortable: 32px;
+  --row-spacious:    40px;
   --row-height:      var(--row-default);
 
   --sidebar-item-h:  28px;
@@ -2155,7 +2160,10 @@ svg { flex-shrink: 0; }
   display: flex;
   align-items: center;
   gap: 8px;
-  height: var(--row-height, 26px);
+  /* --list-scale (Task 10, Ctrl+wheel over #list-scroll / the View menu's
+     icon-size presets) scales the row height in list & details view; grid
+     mode's own rule below (height: auto) overrides this by specificity. */
+  height: calc(var(--row-height, 26px) * var(--list-scale, 1));
   padding: 0 12px;
   background: transparent;
   border: 1px solid transparent;
@@ -2219,13 +2227,14 @@ svg { flex-shrink: 0; }
 
 .fp-row__icon {
   flex-shrink: 0;
-  width: 16px;
-  height: 16px;
+  width: calc(16px * var(--list-scale, 1));
+  height: calc(16px * var(--list-scale, 1));
   color: var(--text-secondary);
 }
 .fp-row__name {
   flex: 1;
   font: 500 var(--t-body) var(--font-ui);
+  font-size: calc(var(--fs-13, 13px) * var(--list-scale, 1));
   color: var(--text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2269,14 +2278,16 @@ svg { flex-shrink: 0; }
 /* Compact density (22px) — class-based (list container) */
 .fp-list--compact     { --row-height: var(--row-compact); }
 .fp-list--comfortable { --row-height: var(--row-comfortable); }
-/* Compact density (22px) — data-density attribute (canonical) */
-[data-density="compact"]     .fp-row { height: 22px; }
-[data-density="comfortable"] .fp-row { height: 32px; }
-/* Spacious density had a Settings button but no rule (playtest pass 1
-   §3.14) — .fp-row is shared by Browser rows and Home's Recent/Favorites
-   rows (.fp-row--recent), same as the two rules above, so one rule covers
-   both. */
-[data-density="spacious"]    .fp-row { height: 40px; }
+/* Density (data-density attribute, canonical, set on <html>) — sets
+   --row-height rather than a literal .fp-row height so the base rule above
+   (height: calc(var(--row-height) * var(--list-scale))) still scales it with
+   Ctrl+wheel/the View menu's icon-size presets. .fp-row is shared by Browser
+   rows and Home's Recent/Favorites rows (.fp-row--recent), so one set of
+   rules covers both (playtest pass 1 §3.14 — spacious had a Settings button
+   but no rule until Task 8's review). */
+[data-density="compact"]     { --row-height: var(--row-compact); }
+[data-density="comfortable"] { --row-height: var(--row-comfortable); }
+[data-density="spacious"]    { --row-height: var(--row-spacious); }
 
 /* -----------------------------------------------------------------------------
    20. LIST HEADER (Section 24)
@@ -3697,7 +3708,9 @@ svg { flex-shrink: 0; }
 /* ── 40f. BROWSER GRID VIEW (A.3.1) ──────────────────────────────────────── */
 #list-scroll[data-view="grid"] {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  /* --list-scale (Task 10): grid tile size, matching .fp-tile__thumb's own
+     calc(96px * var(--list-scale, 1)) below. */
+  grid-template-columns: repeat(auto-fill, minmax(calc(120px * var(--list-scale, 1)), 1fr));
   gap: var(--s-8);
   padding: var(--s-12);
   align-content: start;
@@ -3708,7 +3721,7 @@ svg { flex-shrink: 0; }
   align-items: center;
   text-align: center;
   height: auto;
-  min-height: 96px;
+  min-height: calc(120px * var(--list-scale, 1));
   padding: var(--s-8);
   border: 1px solid var(--border-subtle);
   border-radius: var(--r-card);
@@ -3736,10 +3749,16 @@ svg { flex-shrink: 0; }
   -webkit-box-orient: vertical;
   white-space: normal;
 }
+/* 'list' (Task 10): name-only rows — same column hiding as grid, but the
+   row stays a normal single-column flex row (no tile layout applies, since
+   every rule above this is scoped to [data-view="grid"] specifically). */
 #list-scroll[data-view="grid"] .fp-row__size,
 #list-scroll[data-view="grid"] .fp-row__modified,
-#list-scroll[data-view="grid"] .fp-row__tags { display: none; }
-/* Hide column headers in grid mode */
+#list-scroll[data-view="grid"] .fp-row__tags,
+#list-scroll[data-view="list"] .fp-row__size,
+#list-scroll[data-view="list"] .fp-row__modified,
+#list-scroll[data-view="list"] .fp-row__tags { display: none; }
+/* Hide column headers outside details view (grid and the name-only list) */
 .list-head--grid-hidden { display: none !important; }
 
 /* Marquee selection rectangle (A.3.1) */
@@ -4654,6 +4673,19 @@ button.fp-pill:hover {
   height: 14px;
   color: var(--text-secondary);
 }
+/* Leading check-icon slot (Task 10's View/Sort menus, showContextMenu's
+   {ctx} option) — reserved on every item in a checkable menu, checked or
+   not, so labels all line up regardless of which items are currently
+   checked. */
+.fp-context-menu__check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+.fp-context-menu__check svg { color: var(--accent); }
 /* kbd child — named class and legacy flat class */
 .fp-context-menu__item__kbd,
 .fp-context-menu__kbd {
