@@ -1371,18 +1371,28 @@ document.addEventListener('click', e => {
 // rows or Home rows, whichever screen the active tab is on) unless the
 // target sits inside an interactive element. Right-click on open space does
 // the same (called from the contextmenu listener below, before the
-// empty-area menu opens). Marquee selection in #list-scroll keeps working:
-// its own mousedown on the empty list background (browser.js,
-// initMarqueeSelection) starts a drag and only clears the selection itself
-// on a near-zero-distance drag (a plain click) — this handler firing first
-// and clearing eagerly on the same mousedown doesn't conflict, since the
-// marquee's mouseup always sets the FINAL selection state right after.
+// empty-area menu opens).
+//
+// #list-scroll (the file list background) is excluded entirely — it runs
+// its own marquee mousedown/mouseup handling (browser.js,
+// initMarqueeSelection), which already clears on a near-zero-distance drag
+// (a plain click) and needs browserState.selection to still hold whatever
+// was selected BEFORE this mousedown so a Ctrl/Shift-drag can keep rows
+// outside the marquee box selected (`keep = ctrlDrag &&
+// browserState.selection.has(...)`). Clearing here first — even though the
+// marquee's own mouseup runs later and would seem to override it — races
+// that read: this capture-phase handler fires and clears synchronously
+// before the marquee's bubble-phase mousedown listener ever runs, so by the
+// time it reads browserState.selection to decide what to keep, it's already
+// empty. Fix round 1 (playtest pass 1): every OTHER open space (sidebar,
+// toolbar, tab bar, inspector blank space, Home background) still clears.
 const DESELECT_INTERACTIVE_SELECTOR = 'button, a, input, select, textarea, ' +
   '[contenteditable], [role=button], .fp-row, .home-row, .fp-tab, ' +
   '.fp-sidebar__item, .fp-context-menu, .modal, .palette, .fp-inspector__tab, .fp-chip';
 
 function deselectOnOpenSpace(target) {
   if (target?.closest?.(DESELECT_INTERACTIVE_SELECTOR)) return;
+  if (target?.closest?.('#list-scroll')) return;
   const screen = activeTab()?.screen;
   if (screen === 'browser') clearSelection();
   else if (screen === 'home') homeClearSelection();

@@ -308,6 +308,33 @@ test('every screen renders with no renderer errors', async () => {
     // (a hidden pane's getBoundingClientRect() is a trivial, meaningless 0x0).
     await page.locator('.fp-inspector__tab[data-tab="preview"]').click();
 
+    // Fix round 1 [Important]: Ctrl+drag marquee must be able to ADD to an
+    // existing selection — the open-space deselect handler above must not
+    // clear browserState.selection before the marquee's own Ctrl/Shift-drag
+    // path (browser.js, initMarqueeSelection) can read it to decide which
+    // rows outside the drag box to keep. Targets the LAST TWO rows in the
+    // sorted listing (rather than a hardcoded name) and starts the drag from
+    // the confirmed-blank space below them: .fp-row rows are contiguous (no
+    // gap between them), and a mousedown starting ON a row never begins a
+    // marquee drag at all (browser.js's own exclusion), so that's the only
+    // reliably-empty point to start from.
+    await rowByName('doc-00.txt').click();
+    await rowByName('doc-01.txt').click({ modifiers: ['Control'] });
+    expect(await page.evaluate(() => browserState.selection.size)).toBe(2);
+    const rowsLocator = page.locator('#list-scroll .fp-row[data-path]');
+    const rowCount = await rowsLocator.count();
+    const lastRowBox = await rowsLocator.nth(rowCount - 1).boundingBox();
+    const secondLastRowBox = await rowsLocator.nth(rowCount - 2).boundingBox();
+    const listScrollBox = await page.locator('#list-scroll').boundingBox();
+    const dragStartY = Math.min(lastRowBox.y + lastRowBox.height + 8, listScrollBox.y + listScrollBox.height - 4);
+    await page.keyboard.down('Control');
+    await page.mouse.move(listScrollBox.x + 20, dragStartY);
+    await page.mouse.down();
+    await page.mouse.move(listScrollBox.x + 20, secondLastRowBox.y + 2, { steps: 5 });
+    await page.mouse.up();
+    await page.keyboard.up('Control');
+    expect(await page.evaluate(() => browserState.selection.size)).toBe(4);
+
     // Selecting doc-00.txt kicks off sequential /file, /preview,
     // /files/history fetches (inspector.js's showInspectorFor); the debounced
     // pipeline is guarded against a SUPERSEDED selection's fetch touching the
@@ -407,6 +434,31 @@ test('every screen renders with no renderer errors', async () => {
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
     await page.locator('#btn-theme').click();
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+
+    // Fix round 1 [Minor]: Home rows get the same deselect-anywhere
+    // coverage as Browser rows. Prefer a real Recent row (populated by an
+    // earlier "opened" action in this run); fall back to creating a
+    // Favorites row directly, since nothing in this test performs an Open
+    // action that would log one.
+    await page.evaluate(() => switchScreen('home'));
+    const homeRecentCount = await page.locator('#home-recent .fp-row').count();
+    let homeRow;
+    if (homeRecentCount > 0) {
+      homeRow = page.locator('#home-recent .fp-row').first();
+    } else {
+      await postJson('/favorites', { path: `${docsDir}\\doc-00.txt` });
+      await page.evaluate(() => loadFavorites());
+      await page.waitForFunction(() => document.querySelectorAll('#home-favorites .fp-row').length > 0);
+      // The Favorites pane itself is display:none until its sub-tab is
+      // activated (initUnderlineTabs, app.js) — Recent starts active.
+      await page.locator('#home-tabs .fp-tabs__item[data-tab="favorites"]').click();
+      homeRow = page.locator('#home-favorites .fp-row').first();
+    }
+    await homeRow.click();
+    await expect(homeRow).toHaveClass(/fp-row--selected/);
+    const homeScreenBox = await page.locator('#screen-home').boundingBox();
+    await page.mouse.click(homeScreenBox.x + homeScreenBox.width / 2, homeScreenBox.y + homeScreenBox.height - 20);
+    await expect(page.locator('#screen-home .fp-row--selected')).toHaveCount(0);
 
     await page.evaluate(() => applyTheme('light'));
     for (const id of ['home', 'browser', 'settings']) {

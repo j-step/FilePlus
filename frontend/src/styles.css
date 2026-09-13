@@ -5443,13 +5443,40 @@ button.fp-pill:hover {
 .inspector__body { min-height: 0; flex: 1; overflow: auto; }
 /* Panes container: fixed min-height so the shortest pane (Tags/History's
    "Select a file"/"No history available yet." one-liners) reserves the same
-   space as the tallest (Preview's 6-row meta grid). */
+   space as the tallest (Preview's 5-row meta grid). */
 .inspector__panes { min-height: 160px; }
-.inspector__meta { display: grid; grid-template-rows: repeat(6, 24px); }
+/* 5 rows: Kind, Size, Modified, Created, Hash — the only fields
+   renderInspectorMeta() (inspector.js) ever writes. */
+.inspector__meta { display: grid; grid-template-rows: repeat(5, 24px); }
 .inspector__filename {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+/* Fix round 1: the path used to hard-clip mid-word against
+   .inspector__header's overflow:hidden once that fixed-height wrapper
+   existed. Self-truncate instead, ellipsis at the START so the filename end
+   of the path (the part that actually identifies the file, e.g.
+   "...doc-00.txt") stays visible — the classic rtl + text-align:left trick:
+   direction:rtl moves the browser's overflow/ellipsis truncation to the
+   left edge, text-align:left keeps the (still LTR-read) text flush against
+   the box's left edge instead of following rtl's own default right
+   alignment. unicode-bidi:isolate (NOT plaintext — plaintext recomputes the
+   effective paragraph direction from the content's own first strong
+   character, which for a "C:\..." path is the drive letter, silently
+   cancelling the explicit direction:rtl above and putting the ellipsis back
+   on the wrong end; confirmed empirically against inspector-file.png)
+   contains the content's own bidi resolution — so the drive-letter path's
+   backslashes/colons (bidi-neutral) still resolve against their
+   strong-LTR neighbours and read left-to-right as normal — without
+   touching which end direction:rtl truncates from. */
+#inspector-filepath {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: rtl;
+  text-align: left;
+  unicode-bidi: isolate;
 }
 
 /* ── Reduced motion: see canonical block appended below (UI-SPEC §A.0) ─────── */
