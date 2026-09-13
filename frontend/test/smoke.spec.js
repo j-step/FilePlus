@@ -208,6 +208,62 @@ test('every screen renders with no renderer errors', async () => {
     await page.evaluate((p) => loadDirectory(p), docsDir);
     await page.waitForFunction(() => document.querySelectorAll('.fp-row').length >= 10);
 
+    // --- Tabs (Task 7): real per-tab browser state ---
+    // Tab 1 (the only tab so far) is showing _gen\Documents from the
+    // rename/undo pass above — capture its row count as the baseline for
+    // "did tab 1's own state survive a round trip through another tab".
+    const docsRowCount = await page.locator('#list-scroll .fp-row').count();
+
+    await page.keyboard.press('Control+t');
+    await expect(page.locator('.fp-tab')).toHaveCount(2);
+    await expect(page.locator('#screen-home')).toBeVisible();
+
+    // Navigate tab 2 (now active) to Pictures — a different folder from
+    // tab 1's Documents. openBrowserAt (not switchScreen+loadDirectory) so
+    // this is a single fetch, matching a real sidebar/breadcrumb navigation.
+    await page.evaluate((p) => openBrowserAt(p), picsDir);
+    await expect(page.locator('.fp-tab.fp-tab--active .fp-tab__label')).toHaveText('Pictures');
+
+    // Clicking tab 1 must restore ITS OWN state — the Documents listing,
+    // untouched by tab 2's navigation — not re-fetch an empty/root listing.
+    const tab1 = page.locator('.fp-tab[data-tab-id="tab-1"]');
+    await tab1.click();
+    await expect(page.locator('#breadcrumb .fp-breadcrumb__crumb--current')).toHaveText('Documents');
+    await expect(page.locator('#list-scroll .fp-row')).toHaveCount(docsRowCount);
+
+    // Two tabs visible: tab 1 active (bordered, accent underline), tab 2
+    // inactive (filled background) — see Task 7's tab styling.
+    await page.screenshot({ path: path.join(SHOTS, 'tabs.png') });
+
+    // Middle-click (auxclick, button 1) on tab 2 closes it without activating it.
+    const tab2 = page.locator('.fp-tab').nth(1);
+    await tab2.click({ button: 'middle' });
+    await expect(page.locator('.fp-tab')).toHaveCount(1);
+
+    // Ctrl+Shift+T reopens the closed tab at exactly the folder it was showing.
+    await page.keyboard.press('Control+Shift+T');
+    await expect(page.locator('.fp-tab')).toHaveCount(2);
+    await expect(page.locator('.fp-tab.fp-tab--active .fp-tab__label')).toHaveText('Pictures');
+
+    // Navigating the (now active, reopened) tab to the sandbox root gives it
+    // the "This PC" label rather than a folder name.
+    await page.evaluate(() => loadDirectory(null));
+    await expect(page.locator('.fp-tab.fp-tab--active .fp-tab__label')).toHaveText('This PC');
+
+    // The tab context menu no longer offers Pin tab / Rename tab (Task 7
+    // removes them; Duplicate tab / Close other tabs replace them).
+    await page.locator('.fp-tab.fp-tab--active').click({ button: 'right' });
+    await expect(page.locator('#context-menu')).toBeVisible();
+    await expect(page.locator('#context-menu button', { hasText: 'Pin tab' })).toHaveCount(0);
+    await expect(page.locator('#context-menu button', { hasText: 'Rename tab' })).toHaveCount(0);
+    await page.keyboard.press('Escape');
+
+    // Close the reopened tab (Ctrl+W) so we're back to a single tab showing
+    // Documents, matching what the light-theme screenshots below expect.
+    await page.keyboard.press('Control+w');
+    await expect(page.locator('.fp-tab')).toHaveCount(1);
+    await expect(page.locator('#breadcrumb .fp-breadcrumb__crumb--current')).toHaveText('Documents');
+
     await page.evaluate(() => applyTheme('light'));
     for (const id of ['home', 'browser', 'settings']) {
       await page.evaluate((s) => switchScreen(s), id);

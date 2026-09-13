@@ -4215,7 +4215,11 @@ svg { flex-shrink: 0; }
   height: 28px;
   padding: 0 var(--s-8) 0 var(--s-10);
   border-radius: var(--r-button) var(--r-button) 0 0;
-  background: transparent;
+  /* Inactive tabs are visibly filled (not transparent) so the strip reads as
+     a row of tabs rather than a row of labels — the active one is then
+     legible by CONTRAST (border + lighter fill + accent underline) instead
+     of being the only tab with any chrome at all. */
+  background: var(--bg-raised);
   border: 1px solid transparent;
   border-bottom: none;
   margin-right: 2px;
@@ -4236,23 +4240,18 @@ svg { flex-shrink: 0; }
   max-width: 240px;
   cursor: default;
   transition: background var(--dur-flash) var(--ease-snap),
-              color var(--dur-flash) var(--ease-snap);
+              color var(--dur-flash) var(--ease-snap),
+              border-color var(--dur-flash) var(--ease-snap);
 }
-.fp-tab:hover { background: var(--bg-raised); color: var(--text-primary); }
+.fp-tab:hover { background: var(--bg-pressed); color: var(--text-primary); }
 .fp-tab--active,
 .fp-tab.fp-tab--active {
   background: var(--bg-content);
   color: var(--text-primary);
   border-color: var(--border-hairline);
-}
-.fp-tab--active::after,
-.fp-tab.fp-tab--active::after {
-  content: "";
-  position: absolute;
-  bottom: 0; left: 4px; right: 4px;
-  height: 2px;
-  background: var(--accent);
-  border-radius: 999px;
+  /* Accent underline via inset box-shadow rather than a ::after pseudo —
+     respects the tab's own border-radius and needs no extra positioning. */
+  box-shadow: inset 0 -2px 0 var(--accent);
 }
 .fp-tab__label {
   flex: 1 1 0;            /* fills space between icon and the close (X) button */

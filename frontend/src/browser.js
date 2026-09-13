@@ -2,10 +2,19 @@
  * FilePlus browser screen: folder navigation via /fs/list, directory list
  * rendering, view-mode/column-sort/marquee-selection UI, the selection model
  * + keyboard navigation, and the small formatting helpers (icons, size,
- * modified date, HTML escaping) the row renderer needs. Navigation history
- * (navHistory) stays in app.js — it is also read by the sidebar active-state
- * and dispatch code there.
+ * modified date, HTML escaping) the row renderer needs.
+ *
+ * Navigation history is per-tab (Stage 2C Task 7): `nav` below is just an
+ * ACCESSOR — app.js's activateTab() repoints nav.history/nav.index at the
+ * active tab's own arrays (by reference) on every tab switch, so
+ * pushHistory()/navBack()/navForward() here always mutate whichever tab is
+ * currently active without needing to know the tabs model exists.
  */
+
+// ── Per-tab navigation history accessor ───────────────────────────────────────
+// Swapped by app.js's activateTab(); seeded for the initial tab by
+// app.js's seedInitialTab() at boot.
+const nav = { history: [], index: -1 };
 
 // ── Browser state ─────────────────────────────────────────────────────────────
 // The last-loaded directory listing. `parent`/`isRoot` come straight from the
@@ -270,9 +279,21 @@ function parentOfPath(p) {
   return idx > 0 ? norm.slice(0, idx) : norm;
 }
 
+/**
+ * opts.restore (Stage 2C Task 7) — {scrollTop, selection, view} from a tab
+ * record being reactivated: applied after the fresh render lands (selection
+ * only for paths still present in the refreshed listing). Mutually exclusive
+ * with opts.preserveSelection — activateTab() is the only restore caller and
+ * it always passes addToHistory:false too.
+ */
 async function loadDirectory(absPath, opts = {}) {
-  const { addToHistory = true, preserveSelection = false } = opts;
+  const { addToHistory = true, preserveSelection = false, restore = null } = opts;
   browserState.lastAttemptedPath = absPath;
+  // Sets the active tab's label/icon, the sidebar highlight, and (when
+  // absPath is a real path) the breadcrumb — synchronously, before the
+  // fetch below, so none of them wait on the network or get rewritten a
+  // second time once it resolves.
+  onNavigated(absPath);
   let data;
   try {
     data = absPath
@@ -291,8 +312,25 @@ async function loadDirectory(absPath, opts = {}) {
   browserState.entries = data.entries;
   browserState.parent = data.parent;
   browserState.isRoot = data.is_root;
+  if (restore && restore.view) browserState.view = restore.view;
 
-  if (preserveSelection && prevSelection) {
+  // Keep the active tab's own record continuously pointed at the real
+  // (resolved) path — this is what lets switchScreen() tell "this tab has
+  // never loaded a folder" (path still null, createTab()'s default) apart
+  // from "this tab is sitting at the sandbox root" (a real resolved path).
+  const tab = activeTab();
+  if (tab) { tab.path = data.path; tab.screen = 'browser'; }
+  // onNavigated(null) (the sandbox-root request) couldn't build breadcrumb
+  // crumbs from nothing — finalize them now that the real path is known.
+  if (!absPath) updateBreadcrumb(data.path);
+
+  if (restore) {
+    const validPaths = new Set(data.entries.map(e => joinPath(data.path, e.name)));
+    const restoredSelection = (restore.selection || []).filter(p => validPaths.has(p));
+    browserState.selection = new Set(restoredSelection);
+    browserState.anchor = restoredSelection.length ? restoredSelection[0] : null;
+    browserState.focus  = restoredSelection.length ? restoredSelection[restoredSelection.length - 1] : null;
+  } else if (preserveSelection && prevSelection) {
     // Keep only paths that still exist in the refreshed listing.
     const validPaths = new Set(data.entries.map(e => joinPath(data.path, e.name)));
     browserState.selection = new Set([...prevSelection].filter(p => validPaths.has(p)));
@@ -305,13 +343,14 @@ async function loadDirectory(absPath, opts = {}) {
   }
 
   renderDirectory(data);
+  if (restore && restore.view) setViewMode(restore.view);
   if (addToHistory) pushHistory(data.path);
   else refreshNavButtons();
-  updateBreadcrumb(data.path);
   updateAddressBar(data.path);
-  updateSidebarActive();
-  syncActiveTabPath(data.path);
   onSelectionChanged();
+
+  const listScroll = document.getElementById('list-scroll');
+  if (listScroll) listScroll.scrollTop = restore ? (restore.scrollTop || 0) : 0;
 }
 
 /** Re-fetches the current directory, keeping selection/anchor/focus where the paths still exist.
@@ -359,27 +398,30 @@ function retryLoad() {
 }
 
 function pushHistory(path) {
-  // If we navigated forward from a non-tail position, drop the forward stack.
-  if (navHistory.idx < navHistory.stack.length - 1) {
-    navHistory.stack = navHistory.stack.slice(0, navHistory.idx + 1);
+  // If we navigated forward from a non-tail position, drop the forward
+  // stack — truncate nav.history IN PLACE (never reassign it to a new
+  // array) so it stays the same object activateTab() pointed the active
+  // tab's own record.history at.
+  if (nav.index < nav.history.length - 1) {
+    nav.history.length = nav.index + 1;
   }
-  if (navHistory.stack[navHistory.idx] !== path) {
-    navHistory.stack.push(path);
-    navHistory.idx = navHistory.stack.length - 1;
+  if (nav.history[nav.index] !== path) {
+    nav.history.push(path);
+    nav.index = nav.history.length - 1;
   }
   refreshNavButtons();
 }
 
 function navBack() {
-  if (navHistory.idx <= 0) return;
-  navHistory.idx -= 1;
-  loadDirectory(navHistory.stack[navHistory.idx], { addToHistory: false });
+  if (nav.index <= 0) return;
+  nav.index -= 1;
+  loadDirectory(nav.history[nav.index], { addToHistory: false });
 }
 
 function navForward() {
-  if (navHistory.idx >= navHistory.stack.length - 1) return;
-  navHistory.idx += 1;
-  loadDirectory(navHistory.stack[navHistory.idx], { addToHistory: false });
+  if (nav.index >= nav.history.length - 1) return;
+  nav.index += 1;
+  loadDirectory(nav.history[nav.index], { addToHistory: false });
 }
 
 function navUp() {
@@ -391,8 +433,8 @@ function refreshNavButtons() {
   const back = document.querySelector('[data-action="nav-back"]');
   const fwd  = document.querySelector('[data-action="nav-forward"]');
   const up   = document.querySelector('[data-action="nav-up"]');
-  if (back) back.disabled = navHistory.idx <= 0;
-  if (fwd)  fwd.disabled  = navHistory.idx >= navHistory.stack.length - 1;
+  if (back) back.disabled = nav.index <= 0;
+  if (fwd)  fwd.disabled  = nav.index >= nav.history.length - 1;
   if (up)   up.disabled   = !browserState.path || browserState.isRoot || !browserState.parent;
 }
 
@@ -500,15 +542,19 @@ function updateAddressBar(path) {
 
 function updateBreadcrumb(path) {
   const crumb = document.getElementById('breadcrumb');
-  if (!crumb) return;
+  if (!crumb || !path) return;
   // Split on \ or /, drop empties. First part is drive letter (e.g. "C:") — keep with backslash for nav.
-  const parts = path.split(/[\\\/]+/).filter(Boolean);
+  const parts = String(path).split(/[\\\/]+/).filter(Boolean);
   let cumulative = '';
   const html = parts.map((part, i) => {
     cumulative = i === 0 ? part + '\\' : cumulative + part + '\\';
     const isLast = i === parts.length - 1;
     const cls = isLast ? 'fp-breadcrumb__crumb fp-breadcrumb__crumb--current' : 'fp-breadcrumb__crumb';
-    return `<button class="${cls}" data-action="navigate-crumb" data-path="${escapeHtml(cumulative)}">${escapeHtml(part)}</button>`;
+    // First crumb of a drive path shows the real drive label (Task 7) — the
+    // button's own data-path stays the literal "D:\\" for navigation either way.
+    const isDriveRoot = i === 0 && /^[A-Za-z]:$/.test(part);
+    const label = isDriveRoot ? driveDisplayLabel(part) : part;
+    return `<button class="${cls}" data-action="navigate-crumb" data-path="${escapeHtml(cumulative)}">${escapeHtml(label)}</button>`;
   }).join('<span class="fp-breadcrumb__sep">·</span>');
   crumb.innerHTML = html;
 }

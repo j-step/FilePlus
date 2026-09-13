@@ -20,25 +20,46 @@ const STUB_SCREENS = {
   'scan-results':   4,
 };
 
-// Per-tab UI state model
-// ─────────────────────
-// Each tab is an independent state container — its current screen is held on
-// the tab DOM element via data-tab-screen, and its label/title reflect that
-// screen. Two tabs on the same screen are still distinct: clicking one only
-// activates that single tab.
+// Per-tab UI state model (Stage 2C Task 7)
+// ─────────────────────────────────────────
+// `tabs.list` holds one record per open tab; `tabs.activeId` names the active
+// one. Each record owns its screen, its folder path, its own back/forward
+// history, and (for the browser screen) the bits of browserState worth
+// restoring — selection, scroll position, view mode. Two tabs on the same
+// screen are still distinct: activating one never touches another.
 //
-//   switchScreen(id)   — change the ACTIVE tab's screen in place. Sidebar
-//                        navigation, keyboard shortcuts, and any other "go to
-//                        screen X" entry point should call this. Tabs do NOT
-//                        switch on their own.
-//   switchToTab(tab)   — user clicked a tab; activate that specific tab and
-//                        restore its screen. Other tabs are deactivated; their
-//                        screen state is preserved on their DOM nodes.
+//   activeTab()          — the active tab's record.
+//   createTab(opts)       — builds a record + DOM element, does NOT activate it.
+//   activateTab(id)       — saves the outgoing tab's live state into its own
+//                          record, then restores the incoming one (re-fetching
+//                          its folder for the browser screen — #list-scroll is
+//                          shared DOM, so switching tabs always repaints it).
+//   switchScreen(id)      — change the ACTIVE tab's screen in place. Sidebar
+//                          navigation, keyboard shortcuts, and any other "go
+//                          to screen X" entry point should call this.
+//   openBrowserAt(path, {tab}) — point a tab (default: the active one) at a
+//                          folder; only fetches immediately if that tab is
+//                          the active one, otherwise just stages the path.
+const tabs = { list: [], activeId: null };
+let _tabIdSeq = 1; // unique id generator (HTML seeds the first tab as tab-1)
+let _closedTabs = []; // stack of full tab records, most-recently-closed last
 
-// NOTE: 'browser' deliberately maps to 'Files' as a last-resort fallback —
-// in practice every browser-tab entry point should pass an explicit label
-// (a folder/drive name) to switchScreen(), so users see "Downloads" or
-// "D:\\" or "Projects" rather than the meta-label "Browser".
+function nextTabId() {
+  _tabIdSeq += 1;
+  return `tab-${_tabIdSeq}`;
+}
+
+function activeTab() {
+  return tabs.list.find(t => t.id === tabs.activeId) || null;
+}
+
+function tabRecordFor(id) {
+  return tabs.list.find(t => t.id === id) || null;
+}
+
+// NOTE: 'browser' has no fixed label here — a browser tab's title always
+// comes from tabLabelFor(path) (computed from the folder itself), never from
+// this map. Non-browser screens still use it as-is.
 const SCREEN_LABELS = {
   home:            'Home',
   browser:         'Files',
@@ -52,17 +73,12 @@ const SCREEN_LABELS = {
 };
 
 const SCREEN_ICONS = {
-  home:    icon('home', 'fp-icon--14'),
-  browser: icon('folder', 'fp-icon--14'),
+  home: icon('home', 'fp-icon--14'),
 };
 const DEFAULT_TAB_ICON = icon('file', 'fp-icon--14');
 
 function getScreenLabel(id) { return SCREEN_LABELS[id] || id; }
 function getScreenIcon(id)  { return SCREEN_ICONS[id]  || DEFAULT_TAB_ICON; }
-
-function getActiveTab() {
-  return document.querySelector('.fp-tab.fp-tab--active');
-}
 
 function pathBaseName(p) {
   if (!p) return '';
@@ -71,121 +87,366 @@ function pathBaseName(p) {
   return parts[parts.length - 1] || String(p);
 }
 
-function updateTabAppearance(tab, screenId, labelOverride) {
+/** Tab label for a browser-screen path: 'This PC' for the sandbox root
+ * (loadDirectory(null)'s target — never a folder name), the bare drive
+ * letter for a drive root ('D:'), the folder's basename otherwise. (A Home
+ * tab's label comes from createTab's own 'Home' default, not from here —
+ * this only ever runs for the browser screen, from onNavigated().) */
+function tabLabelFor(path) {
+  if (!path) return 'This PC';
+  const norm = String(path).replace(/[\\/]+$/, '');
+  if (/^[A-Za-z]:$/.test(norm)) return norm.toUpperCase();
+  return pathBaseName(norm) || 'This PC';
+}
+
+/** 'Seagate Barracuda 4tb HDD (D:)' from the cached /drives list
+ * (window.__fpDrives, populated by loadDrives()) — 'Local Disk (D:)' when the
+ * drive has no label, or the bare letter when the drive isn't in the cache
+ * yet (e.g. a breadcrumb painted before loadDrives() has resolved). */
+function driveDisplayLabel(letter) {
+  const norm = String(letter || '').replace(/[\\/]+$/, '').toUpperCase();
+  const drives = window.__fpDrives || [];
+  const d = drives.find(x => String(x.letter || '').replace(/[\\/]+$/, '').toUpperCase() === norm);
+  if (!d) return norm;
+  const label = (d.label || '').trim();
+  return label ? `${label} (${norm})` : `Local Disk (${norm})`;
+}
+
+/** Tab element icon: home for the Home screen, a drive glyph for a browser
+ * tab sitting at a drive root, a plain folder for every other browser tab,
+ * and the screen's own icon (falling back to a generic file glyph) for
+ * anything else. */
+function tabIconFor(record) {
+  if (record.screen === 'browser') {
+    const norm = String(record.path || '').replace(/[\\/]+$/, '');
+    return /^[A-Za-z]:$/.test(norm) ? icon('drive', 'fp-icon--14') : icon('folder', 'fp-icon--14');
+  }
+  return getScreenIcon(record.screen);
+}
+
+/** Syncs one tab's DOM element (icon, label, title) to its record. Never
+ * touches active/aria-selected state — that belongs solely to activateTab(). */
+function updateTabElementAppearance(record) {
+  const el = document.querySelector(`.fp-tab[data-tab-id="${record.id}"]`);
+  if (!el) return;
+  const labelEl = el.querySelector('.fp-tab__label');
+  if (labelEl) labelEl.textContent = record.label;
+  const firstSvg = el.querySelector(':scope > svg');
+  if (firstSvg) firstSvg.outerHTML = tabIconFor(record);
+  el.setAttribute('title', record.label);
+}
+
+function buildTabHtml(record) {
+  // Close affordance is a <span role="button">, NOT a nested <button> —
+  // nesting buttons is invalid HTML and Chromium silently splits the inner
+  // one out as a sibling (see index.html's seed-tab comment for the fallout).
+  return `${tabIconFor(record)}<span class="fp-tab__label">${escapeHtml(record.label)}</span><span class="fp-tab__close" role="button" data-action="close-tab" title="Close tab" tabindex="-1" aria-label="Close tab">${icon('close', 'fp-icon--10')}</span>`;
+}
+
+function createTabElement(record) {
+  const el = document.createElement('div');
+  el.className = 'fp-tab';
+  el.setAttribute('role', 'tab');
+  el.setAttribute('aria-selected', 'false');
+  el.setAttribute('data-tab-id', record.id);
+  el.setAttribute('data-action', 'switch-tab');
+  el.setAttribute('title', record.label);
+  el.setAttribute('draggable', 'true');
+  el.innerHTML = buildTabHtml(record);
+  return el;
+}
+
+/** Builds a tab record + DOM element and inserts it into the tab strip.
+ * Does NOT activate it — callers that want the new tab visible call
+ * activateTab(record.id) themselves. */
+function createTab({ screen = 'home', path = null, history = [], historyIndex = -1, label = 'Home' } = {}) {
+  const record = {
+    id: nextTabId(),
+    screen, label, path,
+    history: history.slice(),
+    historyIndex,
+    view: null,
+    scrollTop: 0,
+    selection: [],
+  };
+  tabs.list.push(record);
+  const el = createTabElement(record);
+  const tabbar = document.getElementById('tabbar');
+  const newTabBtn = document.getElementById('btn-new-tab');
+  if (tabbar) tabbar.insertBefore(el, newTabBtn);
+  initTabDrag(el);
+  return record;
+}
+
+/** Copies the live browserState/nav into the currently active tab's own
+ * record — the record is the only place that state lives once this tab
+ * stops being active (switched away from, closed, or duplicated). */
+function syncActiveTabRecord() {
+  const tab = activeTab();
   if (!tab) return;
-  const label = labelOverride || getScreenLabel(screenId);
-  const labelEl = tab.querySelector('.fp-tab__label');
-  if (labelEl) labelEl.textContent = label;
-  // Replace the leading SVG icon (first child) with the screen's icon.
-  const firstSvg = tab.querySelector(':scope > svg');
-  if (firstSvg) firstSvg.outerHTML = getScreenIcon(screenId);
-  tab.setAttribute('title', label);
+  tab.path = browserState.path;
+  tab.view = browserState.view;
+  tab.selection = [...browserState.selection];
+  tab.historyIndex = nav.index;
+  const listScroll = document.getElementById('list-scroll');
+  if (listScroll) tab.scrollTop = listScroll.scrollTop;
 }
 
-// Called whenever the active tab's path changes — keeps the tab title in
-// sync with the current folder so each tab's label reflects its real state.
-function syncActiveTabPath(path) {
-  const active = getActiveTab();
-  if (!active || active.dataset.tabScreen !== 'browser') return;
-  const folderName = pathBaseName(path) || getScreenLabel('browser');
-  updateTabAppearance(active, 'browser', folderName);
+/** Activates tab `id`: saves the outgoing tab's live state into its own
+ * record, swaps browser.js's nav accessor over to the incoming tab's own
+ * history (by reference), and restores the incoming tab — re-fetching its
+ * folder for the browser screen, since #list-scroll is DOM shared by every
+ * tab and has to be repainted on every switch either way. */
+function activateTab(id) {
+  const incoming = tabRecordFor(id);
+  if (!incoming || incoming.id === tabs.activeId) return;
+
+  if (tabs.activeId) syncActiveTabRecord();
+
+  tabs.activeId = id;
+  document.querySelectorAll('.fp-tab').forEach(t => {
+    const isActive = t.dataset.tabId === id;
+    t.classList.toggle('fp-tab--active', isActive);
+    t.setAttribute('aria-selected', isActive ? 'true' : 'false');
+  });
+
+  nav.history = incoming.history;
+  nav.index = incoming.historyIndex;
+
+  if (incoming.screen === 'browser') {
+    showScreenDom('browser');
+    loadDirectory(incoming.path, {
+      // Empty history means this tab was staged in the background (openBrowserAt
+      // on an inactive tab) and is only now getting its first real fetch — treat
+      // that as a real navigation (push it) rather than a pure restore.
+      addToHistory: incoming.history.length === 0,
+      restore: { scrollTop: incoming.scrollTop, selection: incoming.selection, view: incoming.view },
+    });
+  } else {
+    showScreenDom(incoming.screen);
+    updateSidebarActive(incoming.screen);
+  }
+  updateTabElementAppearance(incoming);
 }
 
-// Load a screen's DOM into view (no tab-state changes — caller owns those).
+// Load a screen's DOM into view (no tab-state changes, no data fetch —
+// callers own both; the browser screen's own auto-load-root fallback lives
+// in switchScreen(), the one caller that can tell "never loaded" from "just
+// showing what's already in #list-scroll" apart).
 function showScreenDom(id) {
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
   const target = document.getElementById(`screen-${id}`);
   if (target) target.classList.add('active');
-  if (id === 'browser' && navHistory.stack.length === 0) {
-    loadDirectory(null);
-  }
   if (id === 'home') {
     loadRecent();
     loadFavorites();
   }
-  sessionStorage.setItem('fp-active-screen', id);
-  updateSidebarActive();
 }
 
 function switchScreen(id, labelOverride) {
   // Mutate the ACTIVE tab's screen state — never switch tabs from here.
-  // labelOverride lets callers pin the tab title to a meaningful string
-  // (e.g. the folder/drive name) so browser tabs don't briefly read "Files".
-  const active = getActiveTab();
-  if (active) {
-    active.dataset.tabScreen = id;
-    updateTabAppearance(active, id, labelOverride);
-  }
-  showScreenDom(id);
-}
-
-// Shared by the 'navigate-path' dispatch case and the sidebar pin's "Open in
-// new tab" context-menu action: pre-seed navHistory before switching to the
-// browser screen, so showScreenDom's automatic loadDirectory(null) (sandbox
-// root, fired when navHistory.stack is still empty) can never race this
-// call's own explicit loadDirectory(path) for a real target path. Extracted
-// so the guard can't be forgotten by a future third caller.
-function openBrowserAt(path, label) {
-  if (path && navHistory.stack.length === 0) navHistory.stack.push(null);
-  switchScreen('browser', label);
-  if (path) return loadDirectory(path);
-}
-
-function switchToTab(tab) {
+  const tab = activeTab();
   if (!tab) return;
-  document.querySelectorAll('.fp-tab').forEach(t => {
-    const isActive = t === tab;
-    t.classList.toggle('fp-tab--active', isActive);
-    t.setAttribute('aria-selected', isActive ? 'true' : 'false');
+  tab.screen = id;
+  if (id === 'browser') {
+    if (tab.path === null) {
+      // This tab has never shown Browser before — load the sandbox root,
+      // same fallback the old global navHistory-empty check used to give.
+      showScreenDom('browser');
+      loadDirectory(null);
+    } else {
+      // Already has a folder loaded, still sitting in #list-scroll from
+      // earlier in this tab's life (screens are hidden, not torn down) — just
+      // reveal it, no re-fetch.
+      tab.label = labelOverride || tabLabelFor(tab.path);
+      updateTabElementAppearance(tab);
+      showScreenDom('browser');
+      updateSidebarActive(tab.path);
+    }
+    return;
+  }
+  tab.label = labelOverride || getScreenLabel(id);
+  updateTabElementAppearance(tab);
+  showScreenDom(id);
+  updateSidebarActive(id);
+}
+
+/**
+ * Points tab `opts.tab` (default: the active tab) at `path`. If that tab is
+ * the active one, switches to the Browser screen and loads it now (through
+ * loadDirectory()/onNavigated(), which set the label/sidebar/breadcrumb
+ * synchronously before the fetch). Otherwise just stages screen/path/label
+ * on the (inactive) tab's own record — activateTab() does the real fetch
+ * once the user actually switches to it, so a background tab is never
+ * loaded before it's seen.
+ */
+function openBrowserAt(path, { tab } = {}) {
+  const target = tab || activeTab();
+  if (!target) return;
+  if (target.id !== tabs.activeId) {
+    target.screen = 'browser';
+    target.path = path ?? null;
+    target.label = tabLabelFor(target.path);
+    updateTabElementAppearance(target);
+    return Promise.resolve();
+  }
+  showScreenDom('browser');
+  return loadDirectory(path);
+}
+
+function openNewTab() {
+  const record = createTab({ screen: 'home', label: 'Home' });
+  activateTab(record.id);
+  showSnackbar('New tab opened', null, null);
+  return record;
+}
+
+/** Closes tab `id`. Closing the last remaining tab opens a fresh Home tab
+ * instead of quitting the app. Every closed record (full state included)
+ * goes onto the _closedTabs stack for reopenLastTab(). */
+function closeTabById(id) {
+  const idx = tabs.list.findIndex(t => t.id === id);
+  if (idx === -1) return;
+  if (id === tabs.activeId) syncActiveTabRecord();
+  const record = tabs.list[idx];
+  const el = document.querySelector(`.fp-tab[data-tab-id="${id}"]`);
+  const wasActive = tabs.activeId === id;
+  // Neighbor is read off the DOM (not tabs.list's order, which drag-reorder
+  // never touches) so the fallback active tab always matches what the user
+  // actually sees next to the one they closed.
+  const prevEl = el?.previousElementSibling;
+  const nextEl = el?.nextElementSibling;
+  const neighborEl = (prevEl && prevEl.classList.contains('fp-tab')) ? prevEl
+                    : (nextEl && nextEl.classList.contains('fp-tab')) ? nextEl : null;
+
+  tabs.list.splice(idx, 1);
+  el?.remove();
+  _closedTabs.push(record);
+
+  if (tabs.list.length === 0) {
+    const fresh = createTab({ screen: 'home', label: 'Home' });
+    activateTab(fresh.id);
+  } else if (wasActive) {
+    activateTab(neighborEl ? neighborEl.dataset.tabId : tabs.list[0].id);
+  }
+  showSnackbar('Tab closed · Ctrl+Shift+T to reopen', null, null);
+}
+
+// Backwards compat — the Ctrl+W keyboard shortcut calls this name.
+function closeCurrentTab() {
+  const tab = activeTab();
+  if (tab) closeTabById(tab.id);
+}
+
+function reopenLastTab() {
+  if (!_closedTabs.length) { showToast('No recently closed tabs', 'warn'); return; }
+  const record = _closedTabs.pop();
+  const restored = createTab({
+    screen: record.screen,
+    path: record.path,
+    history: record.history,
+    historyIndex: record.historyIndex,
+    label: record.label,
   });
-  showScreenDom(tab.dataset.tabScreen || 'home');
+  restored.view = record.view;
+  restored.scrollTop = record.scrollTop;
+  restored.selection = record.selection;
+  activateTab(restored.id);
+}
+
+function duplicateTab(id) {
+  const source = tabRecordFor(id);
+  if (!source) return;
+  if (source.id === tabs.activeId) syncActiveTabRecord();
+  const sourceEl = document.querySelector(`.fp-tab[data-tab-id="${id}"]`);
+  const copy = createTab({
+    screen: source.screen,
+    path: source.path,
+    history: source.history.slice(),
+    historyIndex: source.historyIndex,
+    label: source.label,
+  });
+  copy.view = source.view;
+  copy.selection = source.selection.slice();
+  // Place the duplicate right after its source, matching a browser's
+  // "Duplicate tab" placement, instead of at the end of the strip.
+  const copyEl = document.querySelector(`.fp-tab[data-tab-id="${copy.id}"]`);
+  if (sourceEl && copyEl) sourceEl.insertAdjacentElement('afterend', copyEl);
+  activateTab(copy.id);
+}
+
+function closeOtherTabs(id) {
+  if (!tabRecordFor(id)) return;
+  if (tabs.activeId !== id) activateTab(id);
+  [...tabs.list].forEach(t => { if (t.id !== id) closeTabById(t.id); });
+}
+
+/** Registers the statically-authored seed tab (index.html's tab-1) into the
+ * tabs model at boot — every other tab is created through createTab(). */
+function seedInitialTab() {
+  const el = document.querySelector('.fp-tab[data-tab-id]');
+  const id = el ? el.dataset.tabId : 'tab-1';
+  const record = { id, screen: 'home', label: 'Home', path: null, history: [], historyIndex: -1, view: null, scrollTop: 0, selection: [] };
+  tabs.list.push(record);
+  tabs.activeId = id;
+  nav.history = record.history;
+  nav.index = record.historyIndex;
+}
+
+/**
+ * Runs synchronously at the START of loadDirectory(), before the network
+ * fetch — updates everything derivable from the path STRING alone (tab
+ * label/icon, sidebar highlight, breadcrumb) so none of it waits on the
+ * network, and none of it gets rewritten a second time once the fetch
+ * resolves (the old syncActiveTabPath()/data-manual-active flash). Only ever
+ * called from inside loadDirectory() — never at module load time.
+ */
+function onNavigated(path) {
+  const tab = activeTab();
+  if (tab) {
+    tab.screen = 'browser';
+    tab.label = tabLabelFor(path);
+    updateTabElementAppearance(tab);
+  }
+  updateSidebarActive(path);
+  if (path) updateBreadcrumb(path);
 }
 
 // ── Sidebar active-state machinery ────────────────────────────────────────────
-// Exactly ONE sidebar item carries --active at any time.
+// Exactly ONE sidebar item carries --active at any time — this is the single
+// place that decides which one, called synchronously from onNavigated() (a
+// browser-screen path, including null for the sandbox root) and from
+// activateTab()/switchScreen() (a non-browser screen id). No other code
+// touches .fp-sidebar__item--active.
 //
 // Two modes:
-//   Screen-only items  — active when data-screen matches the current screen
-//                        AND they have no data-path (they are not path-bound).
-//   Path-bound items   — active when the current screen is "browser" AND their
-//                        data-path is the longest prefix of the current nav path.
-//
-// All --active classes are cleared first so only one item can be set.
-function updateSidebarActive() {
+//   Screen-only items  — active when data-screen matches pathOrScreen AND
+//                        they have no data-path (they are not path-bound).
+//   Path-bound items   — active when pathOrScreen is a real path and their
+//                        data-path is its longest matching prefix.
+function updateSidebarActive(pathOrScreen) {
   const items = document.querySelectorAll('.fp-sidebar__item');
-  const screen = sessionStorage.getItem('fp-active-screen') || 'home';
+  items.forEach(it => {
+    it.classList.remove('fp-sidebar__item--active');
+    it.classList.remove('active');
+  });
 
-  if (screen !== 'browser') {
-    // Screen-based: clear all (including manual-active flag) then highlight the current screen item.
+  const isKnownScreen = typeof pathOrScreen === 'string'
+    && pathOrScreen !== 'browser'
+    && Object.prototype.hasOwnProperty.call(SCREEN_LABELS, pathOrScreen);
+  if (isKnownScreen) {
     items.forEach(it => {
-      it.classList.remove('fp-sidebar__item--active');
-      it.classList.remove('active');
-      it.removeAttribute('data-manual-active');
-    });
-    items.forEach(it => {
-      if (it.dataset.screen === screen && !it.dataset.path) {
+      if (it.dataset.screen === pathOrScreen && !it.dataset.path) {
         it.classList.add('fp-sidebar__item--active');
       }
     });
     return;
   }
 
-  // Browser screen: highlight the path-bound item that is the longest prefix of currentPath.
-  // If data-manual-active is set (from a recent navigate-path click), it stays
-  // until a real path is loaded and prefix-matching runs below.
-  const currentPath = (navHistory.stack[navHistory.idx] || '').toLowerCase();
-  // If we have no real path yet, keep the manual click-active state (if any).
-  if (!currentPath) {
-    // Nothing loaded yet — manual active (if set) remains; nothing else to do.
-    return;
-  }
-
-  // We have a real path — clear manual flag and re-match by path prefix.
-  items.forEach(it => {
-    it.classList.remove('fp-sidebar__item--active');
-    it.classList.remove('active');
-    it.removeAttribute('data-manual-active');
-  });
+  // A real filesystem path (or null/'' for the sandbox root, which has no
+  // sidebar entry to highlight) — match the longest data-path prefix.
+  const currentPath = String(pathOrScreen || '').toLowerCase();
+  if (!currentPath) return;
 
   let bestMatch = null;
   let bestMatchLen = 0;
@@ -985,11 +1246,9 @@ const CONTEXT_MENUS = {
   tab: [
     { label: 'New tab',            action: 'cm-new-tab' },
     { label: 'Duplicate tab',      action: 'cm-duplicate-tab' },
+    'sep',
     { label: 'Close tab',          action: 'cm-close-tab',  kbd: 'Ctrl+W' },
     { label: 'Close other tabs',   action: 'cm-close-other-tabs' },
-    'sep',
-    { label: 'Pin tab',            action: 'cm-pin-tab' },
-    { label: 'Rename tab',         action: 'cm-rename-tab' },
   ],
 
   // A.10.5 — Sidebar item context menu (pinned folders only — see getMenuTypeForTarget)
@@ -1149,17 +1408,12 @@ function showToast(message, variant = '') {
   container.appendChild(el);
 }
 
-// ── Folder navigation via /fs/list (read-only) ────────────────────────────────
-// Maintains a client-side history stack for back/forward.
-const navHistory = { stack: [], idx: -1 };
-
 async function triggerScan(path) {
   showToast('Scanning…', 'default');
   try {
     const data = await API.post('/scan', path ? { path } : {}, { signal: AbortSignal.timeout(60000) });
     showSnackbar(`Scan complete — ${data.count} file${data.count !== 1 ? 's' : ''} indexed`);
-    switchScreen('browser', pathBaseName(data.path) || undefined);
-    await loadDirectory(data.path);
+    await openBrowserAt(data.path);
   } catch (err) {
     showToast(`Scan failed: ${formatApiError(err)}`, 'error');
   }
@@ -1219,6 +1473,7 @@ async function loadDrives() {
     console.warn('[fp-drives] failed to load drives:', formatApiError(err));
     return;
   }
+  window.__fpDrives = driveList; // driveDisplayLabel() reads this synchronously
   container.innerHTML = driveList.map(renderDriveItem).join('');
 }
 
@@ -1388,23 +1643,10 @@ document.addEventListener('click', e => {
       switchScreen(btn.dataset.screen || btn.dataset.target);
       break;
     case 'navigate-path': {
-      const navPath = btn.dataset.path;
-      // Mark the clicked item as visually active immediately (don't wait for fetch).
-      // Set data-manual-active so updateSidebarActive() won't override it until a real path loads.
-      document.querySelectorAll('.fp-sidebar__item').forEach(it => {
-        it.classList.remove('fp-sidebar__item--active');
-        it.removeAttribute('data-manual-active');
-      });
-      btn.classList.add('fp-sidebar__item--active');
-      btn.setAttribute('data-manual-active', 'true');
-      // Pre-set the tab label to the sidebar item's text (e.g. "Downloads",
-      // "Projects") or the path's basename — so the tab never flashes "Files"
-      // before the async loadDirectory() call lands.
-      const sidebarLabelEl = btn.querySelector('.fp-sidebar__item__label');
-      const initialLabel = (sidebarLabelEl?.textContent || '').trim()
-                        || pathBaseName(navPath || '')
-                        || undefined;
-      openBrowserAt(navPath, initialLabel);
+      // openBrowserAt() → loadDirectory() → onNavigated() sets the tab label
+      // and the sidebar highlight synchronously, before the fetch even
+      // lands — no manual pre-marking needed here any more.
+      openBrowserAt(btn.dataset.path);
       break;
     }
     case 'nav-back':
@@ -1423,15 +1665,17 @@ document.addEventListener('click', e => {
       retryLoad();
       break;
     case 'switch-tab':
-      // User explicitly clicked a tab — activate THAT tab specifically.
-      switchToTab(btn);
+      // btn IS the .fp-tab itself — it's the only data-action="switch-tab"
+      // element in the subtree (the close span carries its own 'close-tab'
+      // action, so a click there never reaches this case).
+      activateTab(btn.dataset.tabId);
       break;
     case 'close-tab': {
       e.stopPropagation();
       // The X button is a child of a .fp-tab — close THAT tab, not whichever
       // happens to be active.
       const targetTab = btn.closest('.fp-tab');
-      if (targetTab) closeTab(targetTab);
+      if (targetTab) closeTabById(targetTab.dataset.tabId);
       break;
     }
     case 'new-tab':
@@ -1664,7 +1908,7 @@ document.addEventListener('click', e => {
       if (!path) break;
       closePalette();
       const parent = parentOfPath(path);
-      const loaded = openBrowserAt(parent, pathBaseName(parent) || undefined);
+      const loaded = openBrowserAt(parent);
       Promise.resolve(loaded).then(() => selectRow(path));
       break;
     }
@@ -1672,18 +1916,26 @@ document.addEventListener('click', e => {
       const path = btn.dataset.path;
       if (!path) break;
       closePalette();
-      openBrowserAt(path, pathBaseName(path) || undefined);
+      openBrowserAt(path);
       break;
     }
-    // Tab context menu (A.10.4) — only new-tab/close-tab are built; duplicate/
-    // pin/rename/close-other-tabs have no underlying tab-state support yet
-    // and fall through to the stub toast below (see scripts/check_menu_cases.js).
+    // Tab context menu (A.10.4)
     case 'cm-new-tab':
       openNewTab();
       break;
+    case 'cm-duplicate-tab': {
+      const tab = contextMenuTarget?.closest ? contextMenuTarget.closest('.fp-tab') : null;
+      if (tab) duplicateTab(tab.dataset.tabId);
+      break;
+    }
     case 'cm-close-tab': {
       const tab = contextMenuTarget?.closest ? contextMenuTarget.closest('.fp-tab') : null;
-      if (tab) closeTab(tab);
+      if (tab) closeTabById(tab.dataset.tabId);
+      break;
+    }
+    case 'cm-close-other-tabs': {
+      const tab = contextMenuTarget?.closest ? contextMenuTarget.closest('.fp-tab') : null;
+      if (tab) closeOtherTabs(tab.dataset.tabId);
       break;
     }
     // Sidebar pinned-item context menu (A.10.5). These are only reachable
@@ -1693,19 +1945,14 @@ document.addEventListener('click', e => {
     case 'cm-open-new-tab': {
       if (contextMenuType === 'sidebar-item' && contextMenuTarget) {
         const pinPath = contextMenuTarget.dataset.path;
-        if (pinPath) {
-          const labelEl = contextMenuTarget.querySelector('.fp-sidebar__item__label');
-          const label = (labelEl?.textContent || '').trim() || pathBaseName(pinPath) || undefined;
-          openNewTab();
-          openBrowserAt(pinPath, label);
-        }
+        if (pinPath) { openNewTab(); openBrowserAt(pinPath); }
       } else if (contextMenuType === 'file' || contextMenuType === 'folder') {
         // Folder → open that folder; file → open its parent folder.
         const path = contextTargetPath();
         if (path) {
           const targetDir = contextMenuType === 'folder' ? path : parentOfPath(path);
           openNewTab();
-          openBrowserAt(targetDir, pathBaseName(targetDir) || undefined);
+          openBrowserAt(targetDir);
         }
       } else {
         console.log(`[FilePlus] data-action stub: ${action}`, btn.dataset);
@@ -1933,101 +2180,9 @@ function setNotificationsEnabled(enabled) {
   if (checkbox) checkbox.checked = !!enabled;
 }
 
-// ── Tab management (A.1.2) ────────────────────────────────────────────────────
-let _closedTabs = []; // stack of { screen, label, icon }
-let _tabIdSeq   = 1;  // unique id generator (HTML seeds the first tab as tab-1)
-
-function nextTabId() {
-  _tabIdSeq += 1;
-  return `tab-${_tabIdSeq}`;
-}
-
-function buildTabHtml(screen) {
-  // Close affordance is a <span role="button"> — see HTML for the seed tab
-  // for why nesting <button> would silently break the layout.
-  return `${getScreenIcon(screen)}<span class="fp-tab__label">${getScreenLabel(screen)}</span><span class="fp-tab__close" role="button" data-action="close-tab" title="Close tab" tabindex="-1" aria-label="Close tab">${icon('close', 'fp-icon--10')}</span>`;
-}
-
-function createTabElement(screen) {
-  const btn = document.createElement('button');
-  btn.className = 'fp-tab';
-  btn.setAttribute('role', 'tab');
-  btn.setAttribute('aria-selected', 'false');
-  btn.setAttribute('data-tab-id', nextTabId());
-  btn.setAttribute('data-tab-screen', screen);
-  btn.setAttribute('data-action', 'switch-tab');
-  btn.setAttribute('title', getScreenLabel(screen));
-  btn.setAttribute('draggable', 'true');
-  btn.innerHTML = buildTabHtml(screen);
-  return btn;
-}
-
-function openNewTab() {
-  const tabbar = document.getElementById('tabbar');
-  if (!tabbar) return;
-  const newBtn = createTabElement('home');
-  const newTabBtn = document.getElementById('btn-new-tab');
-  tabbar.insertBefore(newBtn, newTabBtn);
-  initTabDrag(newBtn);
-  switchToTab(newBtn);
-  showSnackbar('New tab opened', null, null);
-}
-
-function closeTab(tab) {
-  if (!tab) return;
-  _closedTabs.push({
-    screen: tab.dataset.tabScreen,
-    label:  tab.querySelector('.fp-tab__label')?.textContent,
-    icon:   tab.querySelector(':scope > svg')?.outerHTML,
-  });
-  const tabbar = document.getElementById('tabbar');
-  const allTabs = tabbar?.querySelectorAll('.fp-tab') || [];
-  // Last remaining tab → quit the app entirely (per spec: closing the only
-  // tab closes the window).
-  if (allTabs.length <= 1) {
-    if (window.electronAPI?.close) {
-      window.electronAPI.close();
-    } else {
-      window.close();
-    }
-    return;
-  }
-  const wasActive = tab.classList.contains('fp-tab--active');
-  const prev = tab.previousElementSibling;
-  const next = tab.nextElementSibling;
-  const neighbor = (prev && prev.classList.contains('fp-tab')) ? prev
-                 : (next && next.classList.contains('fp-tab')) ? next : null;
-  tab.remove();
-  if (wasActive && neighbor) switchToTab(neighbor);
-  showSnackbar('Tab closed · Ctrl+Shift+T to reopen', null, null);
-}
-
-// Backwards compat — keyboard shortcut(s) call this name.
-function closeCurrentTab() { closeTab(getActiveTab()); }
-
-function reopenLastTab() {
-  if (!_closedTabs.length) { showToast('No recently closed tabs', 'warn'); return; }
-  const last = _closedTabs.pop();
-  const screen = last.screen || 'home';
-  const newBtn = createTabElement(screen);
-  // Use the closed tab's saved label/icon if they differed from the screen default.
-  if (last.label) {
-    const labelEl = newBtn.querySelector('.fp-tab__label');
-    if (labelEl) labelEl.textContent = last.label;
-    newBtn.setAttribute('title', last.label);
-  }
-  if (last.icon) {
-    const firstSvg = newBtn.querySelector(':scope > svg');
-    if (firstSvg) firstSvg.outerHTML = last.icon;
-  }
-  const tabbar = document.getElementById('tabbar');
-  const newTabBtn = document.getElementById('btn-new-tab');
-  tabbar?.insertBefore(newBtn, newTabBtn);
-  initTabDrag(newBtn);
-  switchToTab(newBtn);
-}
-
-// Tab drag-reorder (A.1.2)
+// Tab drag-reorder (A.1.2) — DOM-only (tabs.list's order is never read for
+// anything order-sensitive; closeTabById() picks its fallback-active
+// neighbor off the DOM for exactly this reason).
 let _dragTab = null;
 
 function initTabDrag(tab) {
@@ -2123,6 +2278,17 @@ document.addEventListener('keydown', e => {
   }
 });
 
+// Middle-click (auxclick, button 1) on a tab closes it — matches every
+// browser's tab strip. 'click' never fires for the middle button, so this
+// needs its own listener rather than a data-action case.
+document.addEventListener('auxclick', e => {
+  if (e.button !== 1) return;
+  const tabEl = e.target.closest('.fp-tab');
+  if (!tabEl) return;
+  e.preventDefault();
+  closeTabById(tabEl.dataset.tabId);
+});
+
 // Ctrl + scroll wheel — step through ZOOM_STEPS, one step per gesture.
 // Throttled because trackpads (and high-resolution wheels) emit dozens of
 // wheel events per swipe; without a cooldown a single flick would jump
@@ -2189,6 +2355,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   // the case this script somehow ran before <body> existed); calling again
   // here is a guaranteed no-op unless that path was somehow skipped.
   fpInstallSprite();
+
+  // Register the statically-authored seed tab into the tabs model — every
+  // other tab is created through createTab(). Must run before anything else
+  // touches activeTab()/nav (switchScreen('home') at the end of this handler
+  // included).
+  seedInitialTab();
 
   // Restore theme from localStorage
   const savedTheme = localStorage.getItem('fp-theme');
@@ -2288,7 +2460,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Always start on Home — the previous "restore last active screen"
   // behaviour landed users on whatever they last visited (often Browser),
   // which was disorienting on cold start. Tabs preserve their own state
-  // through `switchToTab()`; this only sets the initial paint.
+  // through `activateTab()`; this only sets the initial paint.
   switchScreen('home');
 
   // ── A.17 Edge case INTEGRATION stubs ──────────────────────────────────────

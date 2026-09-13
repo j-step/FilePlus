@@ -29,10 +29,13 @@ if (switchCases.size === 0) {
   process.exit(1);
 }
 
-// Known, accepted gaps (Stage 2B Task 8b) — update alongside
-// docs/superpowers/runs/2026-09-11-stage-2b.md if this set changes. Anything
-// else showing up in the diff is a regression, not a documented debt.
-const KNOWN_MISSING_CASE = new Set(['cm-duplicate-tab', 'cm-close-other-tabs', 'cm-pin-tab', 'cm-rename-tab']);
+// Known, accepted gaps — update alongside the run summary if this set
+// changes. Anything else showing up in the diff is a regression, not a
+// documented debt. Stage 2C Task 7 implemented cm-duplicate-tab/
+// cm-close-other-tabs and removed cm-pin-tab/cm-rename-tab from the tab menu
+// entirely (so neither shows up as a menu action any more) — nothing is left
+// to allowlist.
+const KNOWN_MISSING_CASE = new Set();
 const KNOWN_EXTRA_CASE = new Set(['cm-paste-here']); // shares cm-paste's case on purpose
 
 const missingCase = [...menuActions].filter(a => !switchCases.has(a) && !KNOWN_MISSING_CASE.has(a)).sort();

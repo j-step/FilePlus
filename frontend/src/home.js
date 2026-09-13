@@ -183,7 +183,7 @@ function resolveHomeRowTarget(btn) {
 function homeOpenPath(path, ext) {
   if (!path) return;
   if (ext === '') {
-    openBrowserAt(path, pathBaseName(path) || undefined);
+    openBrowserAt(path);
     return;
   }
   const openPath = window.electronAPI?.openPath;
@@ -200,7 +200,7 @@ function homeOpenPath(path, ext) {
 function homeRevealInBrowser(path) {
   if (!path) return;
   const parent = parentOfPath(path);
-  const loaded = openBrowserAt(parent, pathBaseName(parent) || undefined);
+  const loaded = openBrowserAt(parent);
   Promise.resolve(loaded).then(() => selectRow(path));
 }
 

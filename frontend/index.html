@@ -188,27 +188,27 @@
       <!-- ═════════════════════════════════════════════════════════
            A.1.2  TAB BAR  (32px) — explorer-style tabs
            Lives inside .main so its left edge snaps to the sidebar's
-           right edge. Each tab carries its OWN screen state via
-           data-tab-screen — switching tabs restores that tab's state;
-           navigating within a tab updates that tab's state in place.
+           right edge. Each tab's real state (screen, path, history,
+           selection, scroll…) lives in app.js's `tabs.list` records, not on
+           this markup — this seed element is registered into that model at
+           boot by seedInitialTab(); every other tab is built by createTab().
       ══════════════════════════════════════════════════════════════ -->
       <div class="fp-tabbar" id="tabbar" role="tablist">
         <!-- Initial Home tab (active by default).
              NOTE: the close affordance is a <span role="button">, NOT a nested
-             <button>. Nesting buttons is invalid HTML — Chromium silently
-             splits the inner one out as a sibling, which left the seed tab's
-             X visually orphaned (no longer a descendant of .fp-tab--active,
-             so the opacity:1 rule didn't apply) and produced a phantom 16px
-             gap between tabs in the row. -->
-        <button class="fp-tab fp-tab--active" role="tab" aria-selected="true"
-                data-tab-id="tab-1" data-tab-screen="home" data-action="switch-tab"
-                title="Home" draggable="true">
+             <button> — nesting buttons is invalid HTML and Chromium silently
+             splits the inner one out as a sibling. The tab itself is a <div>
+             (not a <button>) for the same reason: it hosts the close span as
+             a real descendant with no nested-interactive-content trouble. -->
+        <div class="fp-tab fp-tab--active" role="tab" aria-selected="true"
+             data-tab-id="tab-1" data-action="switch-tab"
+             title="Home" draggable="true">
           <svg class="fp-icon fp-icon--14" aria-hidden="true"><use href="#fp-home"></use></svg>
           <span class="fp-tab__label">Home</span>
           <span class="fp-tab__close" role="button" data-action="close-tab" title="Close tab" tabindex="-1" aria-label="Close tab">
             <svg class="fp-icon fp-icon--10" aria-hidden="true"><use href="#fp-close"></use></svg>
           </span>
-        </button>
+        </div>
         <!-- New tab button -->
         <button class="fp-icon-btn fp-icon-btn--sm" id="btn-new-tab" data-action="new-tab" title="New tab (Ctrl+T)" style="margin-left:2px;flex-shrink:0;-webkit-app-region:no-drag">
           <svg class="fp-icon fp-icon--14" aria-hidden="true"><use href="#fp-new-tab"></use></svg>
