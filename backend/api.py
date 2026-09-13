@@ -647,6 +647,98 @@ async def fs_search(
 
 
 # ---------------------------------------------------------------------------
+# Properties — Explorer-style Properties dialog: file-type association, size
+# (logical and on-disk), a recursive folder summary, timestamps, Windows
+# attributes, and the desktop.ini-backed "folder type". Backed by
+# backend.winshell; consumed verbatim by the frontend Properties panel.
+# ---------------------------------------------------------------------------
+
+def _created_time(st) -> float:
+    """st_birthtime when the platform provides it (Python 3.12+ on Windows), else st_ctime."""
+    return getattr(st, "st_birthtime", None) or st.st_ctime
+
+
+def _immediate_child_names(directory: Path) -> list[tuple[str, bool]]:
+    try:
+        with os.scandir(directory) as entries:
+            return [(e.name, e.is_dir(follow_symlinks=False)) for e in entries]
+    except OSError:
+        return []
+
+
+@app.get("/fs/properties")
+async def fs_properties(path: str = Query(..., description="Absolute path of the file or folder")):
+    """Explorer-style Properties for a single file or folder.
+
+    Read-only (path_guard "read" — D2: browsing/inspecting any real path is
+    allowed). `contains` is populated (and `folder_type`/`folder_type_detected`
+    computed) only for a directory; a file gets `contains: null` and both
+    folder-type fields null. size_on_disk and, for a directory, the whole
+    `contains` walk are budgeted blocking I/O, so both run in a thread.
+    """
+    resolved = path_guard(Path(path), "read")
+    if not resolved.exists():
+        raise HTTPException(status_code=404, detail=f"Not found: {path}")
+    st = resolved.stat()
+    attrs = winshell.get_attributes(resolved)
+    is_dir = resolved.is_dir()
+    if is_dir:
+        assoc_info = {"type_description": "File folder", "opens_with": None, "opens_with_exe": None}
+        counts = await asyncio.to_thread(winshell.contains_counts, resolved)
+        size = size_on_disk = counts["bytes"]
+        contains = {"files": counts["files"], "folders": counts["folders"], "truncated": counts["truncated"]}
+        folder_type = winshell.read_folder_type(resolved)
+        names = await asyncio.to_thread(_immediate_child_names, resolved)
+        folder_type_detected = winshell.detect_folder_type(names)
+    else:
+        ext = resolved.suffix.lstrip(".").lower()
+        assoc_info = winshell.assoc(ext)
+        size = st.st_size
+        size_on_disk = await asyncio.to_thread(winshell.size_on_disk, resolved)
+        contains = None
+        folder_type = None
+        folder_type_detected = None
+    return {
+        "path": str(resolved),
+        "name": resolved.name or str(resolved),
+        "is_dir": is_dir,
+        "type_description": assoc_info["type_description"],
+        "opens_with": assoc_info["opens_with"],
+        "opens_with_exe": assoc_info["opens_with_exe"],
+        "location": str(resolved.parent),
+        "size": size,
+        "size_on_disk": size_on_disk,
+        "contains": contains,
+        "created": _created_time(st),
+        "modified": st.st_mtime,
+        "accessed": st.st_atime,
+        "attributes": {
+            "read_only": attrs["read_only"], "hidden": attrs["hidden"],
+            "archive": attrs["archive"], "system": attrs["system"],
+        },
+        "folder_type": folder_type,
+        "folder_type_detected": folder_type_detected,
+    }
+
+
+@app.get("/fs/properties/details")
+async def fs_properties_details(path: str = Query(..., description="Absolute path of the file or folder")):
+    """Extended Windows property list (pywin32 propsys) for the Properties "Details" tab.
+
+    503 (not 500) when pywin32 isn't installed -- backend.winshell.property_details
+    imports it lazily and raises RuntimeError for exactly that case.
+    """
+    resolved = path_guard(Path(path), "read")
+    if not resolved.exists():
+        raise HTTPException(status_code=404, detail=f"Not found: {path}")
+    try:
+        details = await asyncio.to_thread(winshell.property_details, resolved)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    return {"details": details}
+
+
+# ---------------------------------------------------------------------------
 # File-type taxonomy and Windows known folders
 # ---------------------------------------------------------------------------
 
@@ -869,6 +961,18 @@ class PathsReq(BaseModel):
     paths: list[str]
 
 
+class AttributesReq(BaseModel):
+    path: str
+    read_only: Optional[bool] = None
+    hidden: Optional[bool] = None
+    archive: Optional[bool] = None
+
+
+class FolderTypeReq(BaseModel):
+    path: str
+    type: Literal["Generic", "Documents", "Pictures", "Videos", "Music"]
+
+
 def _single(res: dict) -> dict:
     """Wrap a single-item mover result in the same shape as the batch routes."""
     return {
@@ -896,6 +1000,34 @@ async def fs_touch(body: DirName):
 async def fs_rename(body: RenameReq):
     async with _db() as conn:
         return _single(await mover.rename(conn, Path(body.path), body.new_name, batch_id=ol.new_batch_id()))
+
+
+@app.post("/fs/attributes")
+async def fs_attributes(body: AttributesReq):
+    """Set read-only/hidden/archive on a file or folder (logged, undoable: op_type attr-set).
+
+    Any of the three flags left as null leaves that attribute unchanged;
+    SetFileAttributesW is called once with the merged bitmask, so it never
+    touches a bit the caller didn't ask about (a folder's contents are never
+    touched either way — attr-set only ever calls SetFileAttributesW on
+    *path* itself).
+    """
+    async with _db() as conn:
+        op = await mover.set_attributes(conn, Path(body.path), read_only=body.read_only, hidden=body.hidden,
+                                        archive=body.archive, batch_id=ol.new_batch_id())
+    return {"batch_id": op["batch_id"], "op": op}
+
+
+@app.post("/fs/folder-type")
+async def fs_folder_type(body: FolderTypeReq):
+    """Set a folder's Explorer "optimize this folder for" type (logged, undoable: op_type folder-type-set).
+
+    *type* is one of the five Explorer folder types (Pydantic Literal ->
+    automatic 422 for anything else, before this ever reaches mover).
+    """
+    async with _db() as conn:
+        op = await mover.set_folder_type(conn, Path(body.path), body.type, batch_id=ol.new_batch_id())
+    return {"batch_id": op["batch_id"], "op": op}
 
 
 @app.post("/fs/move")
