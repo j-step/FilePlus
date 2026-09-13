@@ -840,6 +840,10 @@ function openAskPopout() {
 function closeAskPopout() {
   const popout = document.getElementById('ask-popout');
   if (popout) popout.style.display = 'none';
+  // Carried fix (Task 16): closing (Escape, outside click, the Close button,
+  // or toggling) must not strand focus on a hidden element -- return it to
+  // the sidebar pill that owns the popout.
+  document.getElementById('btn-ask-fileplus')?.focus();
 }
 
 function toggleAskPopout() {

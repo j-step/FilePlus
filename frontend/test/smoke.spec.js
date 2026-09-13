@@ -1193,6 +1193,9 @@ test('every screen renders with no renderer errors', async () => {
 
     await page.keyboard.press('Escape');
     await expect(askPopout).toBeHidden();
+    // Carried fix (Task 16): focus returns to the button that opened it
+    // rather than being stranded on the now-hidden popout.
+    await expect(page.locator('#btn-ask-fileplus')).toBeFocused();
 
     // Ctrl+J toggles it open, and a click outside (not on the button or the
     // popout itself) closes it again — blank sidebar space below the last
