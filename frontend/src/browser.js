@@ -1078,8 +1078,11 @@ function browserKeydown(e) {
   // not also undo the last file op behind it, and typing in the palette
   // search box must not trigger F2/Delete/etc.
   const modalScrim = document.getElementById('modal-scrim');
+  const propertiesScrim = document.getElementById('properties-modal-scrim');
   const paletteOpen = paletteScrim && paletteScrim.style.display !== 'none';
-  if ((modalScrim && modalScrim.style.display !== 'none') || paletteOpen) return;
+  if ((modalScrim && modalScrim.style.display !== 'none')
+      || (propertiesScrim && propertiesScrim.style.display !== 'none')
+      || paletteOpen) return;
 
   const key = e.key;
   const ctrl = e.ctrlKey || e.metaKey;
@@ -1088,6 +1091,14 @@ function browserKeydown(e) {
     if (key === 'ArrowUp')         { e.preventDefault(); navUp(); }
     else if (key === 'ArrowLeft')  { e.preventDefault(); navBack(); }
     else if (key === 'ArrowRight') { e.preventDefault(); navForward(); }
+    // Alt+Enter — Properties for the focused/selected single item (Task 13;
+    // canRenameSelection()'s single-selection rule doubles as "Properties is
+    // single-item only in this pass", design spec §5.1). Same target as F2's
+    // Rename below: browserState.focus.
+    else if (key === 'Enter' && canRenameSelection() && browserState.focus) {
+      e.preventDefault();
+      if (typeof openProperties === 'function') openProperties(browserState.focus);
+    }
     return;
   }
 

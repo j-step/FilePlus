@@ -883,6 +883,81 @@ test('every screen renders with no renderer errors', async () => {
     await page.mouse.up();
     expect(await latestOpId()).toBe(opIdBeforeRight);
 
+    // --- Task 13: Properties panel (playtest pass 1 §5) ---
+    await page.evaluate((p) => loadDirectory(p), docsDir);
+    await page.waitForFunction(() => document.querySelectorAll('.fp-row').length >= 10);
+
+    const propsModal = page.locator('#properties-modal');
+    const generalGrid = propsModal.locator('#properties-general-grid');
+    const applyBtn = page.locator('#properties-apply');
+    // dt/dd are siblings inside #properties-general-grid's <dl> — the value
+    // next to a given label, matched on the dt's EXACT text so "Size" never
+    // also matches "Size on disk".
+    const fieldValue = (label) => generalGrid.locator('dt', { hasText: new RegExp(`^${label}$`) })
+      .locator('xpath=following-sibling::dd[1]');
+
+    await browserRow('doc-00.txt').click();
+    await browserRow('doc-00.txt').click({ button: 'right' });
+    await page.locator('#context-menu [data-action="cm-properties"]').click();
+
+    await expect(propsModal).toBeVisible();
+    await expect(propsModal.locator('#properties-icon svg.fp-icon use[href="#fp-ft-text"]')).toHaveCount(1);
+    await expect(fieldValue('Type of file')).toContainText('Text');
+    await expect(fieldValue('Location')).toHaveText(/Documents$/);
+    for (const label of ['Size', 'Created', 'Modified', 'Accessed']) {
+      await expect(generalGrid.locator('dt', { hasText: new RegExp(`^${label}$`) })).toHaveCount(1);
+    }
+    // Footer: exactly Close + a disabled Apply — no Cancel (design spec §5.1).
+    await expect(propsModal.locator('.properties__footer button')).toHaveCount(2);
+    await expect(propsModal.locator('.properties__footer button', { hasText: 'Close' })).toHaveCount(1);
+    await expect(applyBtn).toBeDisabled();
+    await page.screenshot({ path: path.join(SHOTS, 'properties-file.png') });
+
+    // Read-only round trip: tick → Apply → backend reports true; untick →
+    // Apply → false. Together these leave the fixture exactly as they found
+    // it, so no separate undo call is needed afterward.
+    const docPropsUrl = `${API}/fs/properties?path=${encodeURIComponent(`${docsDir}\\doc-00.txt`)}`;
+    const readOnlyRow = propsModal.locator('.properties__attr', { hasText: 'Read-only' });
+    const readOnlyInput = propsModal.locator('input[data-action="props-attr-toggle"][data-attr="read_only"]');
+
+    await readOnlyRow.click();
+    await expect(readOnlyInput).toBeChecked();
+    await expect(applyBtn).toBeEnabled();
+    await applyBtn.click();
+    await expect.poll(async () => (await (await fetch(docPropsUrl, { headers: apiHeaders })).json()).attributes.read_only)
+      .toBe(true);
+    await expect(applyBtn).toBeDisabled();
+
+    await readOnlyRow.click();
+    await expect(readOnlyInput).not.toBeChecked();
+    await expect(applyBtn).toBeEnabled();
+    await applyBtn.click();
+    await expect.poll(async () => (await (await fetch(docPropsUrl, { headers: apiHeaders })).json()).attributes.read_only)
+      .toBe(false);
+    await expect(applyBtn).toBeDisabled();
+
+    // Details tab lazy-loads on first activation: either grouped property
+    // rows or the pywin32-missing message — never blank.
+    await page.locator('#properties-tabs [data-tab="details"]').click();
+    await expect.poll(async () => (await page.locator('#properties-details-content').innerText()).trim().length > 0)
+      .toBe(true);
+
+    await page.locator('[data-action="props-close"]').click();
+    await expect(propsModal).toBeHidden();
+
+    // A folder's Properties: Contains + the "Optimize this folder for" select
+    // (gen_sandbox.py builds exactly one folder inside _gen\Documents — "old").
+    await browserRow('old').click();
+    await browserRow('old').click({ button: 'right' });
+    await page.locator('#context-menu [data-action="cm-properties"]').click();
+    await expect(propsModal).toBeVisible();
+    await expect(generalGrid.locator('dt', { hasText: /^Contains$/ })).toHaveCount(1);
+    await expect(fieldValue('Contains')).toContainText('file');
+    await expect(page.locator('#properties-folder-type-select')).toBeVisible();
+    await page.screenshot({ path: path.join(SHOTS, 'properties-folder.png') });
+    await page.locator('[data-action="props-close"]').click();
+    await expect(propsModal).toBeHidden();
+
     // Back to a known listing for the screenshots below.
     await page.evaluate((p) => loadDirectory(p), docsDir);
     await page.waitForFunction(() => document.querySelectorAll('.fp-row').length >= 10);

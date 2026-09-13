@@ -1340,6 +1340,14 @@ const CONTEXT_MENUS = {
   ],
 };
 
+// ── Inspector "…" menu (Task 13) ──────────────────────────────────────────────
+// Single item so far — Properties, single-selection only (design spec §5.1:
+// "Properties is single-item only in this pass"). Opened below the button by
+// the same showContextMenu({anchor}) the View/Sort toolbar dropdowns use.
+const INSPECTOR_MORE_MENU_ITEMS = [
+  { label: 'Properties', action: 'inspector-properties', enabled: () => browserState.selection.size === 1 },
+];
+
 // ── View / Sort toolbar dropdowns (Task 10) ─────────────────────────────────
 // Windows-Explorer-style menus opened below the toolbar's View/Sort buttons
 // (data-action="open-view-menu"/"open-sort-menu"), replacing the old
@@ -1959,6 +1967,10 @@ const IN_SCOPE_ACTIONS = new Set([
   'view-xl', 'view-large', 'view-medium', 'view-small', 'view-list', 'view-details',
   'toggle-show-hidden', 'toggle-show-extensions', 'toggle-dynamic-media',
   'sort-name', 'sort-modified', 'sort-type', 'sort-size', 'sort-asc', 'sort-desc',
+  // Properties panel (Task 13)
+  'inspector-more', 'inspector-properties', 'switch-properties-tab',
+  'props-apply', 'props-close', 'props-open-with', 'props-advanced',
+  'props-attr-toggle', 'props-folder-type-select', 'settings-set-properties-mode',
 ]);
 
 /** Activates the Inspector tab named `name` ('preview' | 'tags' | 'history') —
@@ -2542,24 +2554,47 @@ document.addEventListener('click', e => {
     }
     case 'cm-properties': {
       const path = contextMenuType === 'empty-area' ? browserState.path : contextTargetPath();
-      if (!path) break;
-      API.get('/file', { path })
-        .then(data => {
-          const rows = [
-            ['Kind', data.kind || '—'],
-            ['Size', data.size != null ? formatSize(data.size) : '—'],
-            ['Modified', data.modified ? formatModified(data.modified) : '—'],
-            ['Created', data.created ? formatModified(data.created) : '—'],
-            ['Hash', data.hash || '—'],
-            ['Path', data.path || path],
-          ];
-          openModal('warn', {
-            title: pathBaseName(path) || 'Properties',
-            body: rows.map(([k, v]) => `${k}: ${v}`).join('\n'),
-            confirmLabel: 'Close',
-          });
-        })
-        .catch(err => showToast(`Failed to load properties: ${formatApiError(err)}`, 'error'));
+      if (path) openProperties(path);
+      break;
+    }
+    case 'inspector-more':
+      showContextMenu(0, 0, INSPECTOR_MORE_MENU_ITEMS, { anchor: btn });
+      break;
+    case 'inspector-properties': {
+      const path = browserState.selection.size === 1 ? [...browserState.selection][0] : null;
+      if (path) openProperties(path);
+      break;
+    }
+    case 'switch-properties-tab':
+      switchPropertiesTab(btn.dataset.tab);
+      break;
+    case 'props-apply':
+      propertiesApply();
+      break;
+    case 'props-close':
+      closeProperties();
+      break;
+    case 'props-open-with': {
+      const path = propertiesCurrentPath();
+      if (path) {
+        Promise.resolve(window.electronAPI?.openWithDialog?.(path)).then(ok => {
+          if (!ok) showToast('Failed to open the Open With dialog', 'error');
+        });
+      }
+      break;
+    }
+    case 'props-advanced': {
+      const path = propertiesCurrentPath();
+      if (path) {
+        Promise.resolve(window.electronAPI?.showProperties?.(path)).then(ok => {
+          if (!ok) showToast('Failed to open Properties', 'error');
+        });
+      }
+      break;
+    }
+    case 'settings-set-properties-mode': {
+      const mode = applyPropertiesMode(btn.dataset.val);
+      saveSetting('ui.properties_mode', mode);
       break;
     }
     case 'cm-toggle-hidden':
@@ -2667,6 +2702,8 @@ document.addEventListener('input', e => {
     // value ("#4C") shouldn't overwrite the last-good saved accent.
     if (applyAccentHex(t.value)) saveSetting('ui.accent_hex', t.value.trim());
   }
+  // Properties panel's editable name field — any keystroke enables Apply.
+  if (t && t.id === 'properties-name-input') propertiesMarkDirty();
 });
 
 document.addEventListener('change', e => {
@@ -2700,6 +2737,13 @@ document.addEventListener('change', e => {
   }
   if (t.dataset.action === 'settings-set-backspace-deletes') {
     saveSetting('ui.backspace_deletes', t.checked);
+    return;
+  }
+  // Properties panel — an attribute checkbox or the folder-type select was
+  // touched; propertiesApply() re-reads the live DOM state itself, so this
+  // only needs to enable Apply, not track the new value.
+  if (t.dataset.action === 'props-attr-toggle' || t.dataset.action === 'props-folder-type-select') {
+    propertiesMarkDirty();
     return;
   }
 });
@@ -2791,6 +2835,7 @@ document.addEventListener('keydown', e => {
     hideContextMenu();
     closeModal();
     closeTagCanvas();
+    closeProperties();
   }
   // Browser-screen keyboard nav (selection, sort-order arrows, Enter, F5,
   // Ctrl+A, Alt+arrows) only applies when that screen is active and the
@@ -2952,6 +2997,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Modal backdrop click closes
   document.getElementById('modal-scrim')?.addEventListener('click', e => {
     if (e.target === document.getElementById('modal-scrim')) closeModal();
+  });
+
+  // Properties panel backdrop click closes
+  document.getElementById('properties-modal-scrim')?.addEventListener('click', e => {
+    if (e.target === document.getElementById('properties-modal-scrim')) closeProperties();
   });
 
   // Palette item clicks

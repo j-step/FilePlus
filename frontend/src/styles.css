@@ -5638,6 +5638,131 @@ button.fp-pill:hover {
 .fp-palette__item-icon { flex: none; color: var(--text-secondary); }
 
 /* =============================================================================
+   PROPERTIES PANEL (Stage 2C Task 13, playtest pass 1 §5.1)
+   Own scrim/modal (#properties-modal-scrim / #properties-modal) — deliberately
+   NOT built on .fp-modal__header/__body/__footer (the shared confirm modal's
+   classes): those carry margins/backgrounds tuned for a single-message
+   dialog, and this one needs its own header (icon + editable name), tab
+   strip, scrolling body and footer. Only the outer .fp-modal chrome
+   (background/border/radius/shadow) is reused, via .fp-modal--properties.
+   ============================================================================= */
+.fp-modal--properties {
+  width: 480px;
+  max-width: calc(100vw - 48px);
+  max-height: calc(100vh - 48px);
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.properties__header {
+  display: flex;
+  align-items: center;
+  gap: var(--s-12);
+  padding: var(--s-20) var(--s-20) var(--s-12);
+  flex-shrink: 0;
+}
+.props__icon {
+  display: flex;
+  flex-shrink: 0;
+  color: var(--text-secondary);
+}
+.properties__name-input {
+  flex: 1;
+  min-width: 0;
+  font: 600 var(--t-body) var(--font-ui);
+}
+.fp-properties__tabs { flex-shrink: 0; padding: 0 var(--s-20); }
+.properties__body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--s-16) var(--s-20);
+}
+.properties__footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--s-8);
+  flex-shrink: 0;
+  padding: var(--s-12) var(--s-20) var(--s-20);
+  border-top: 1px solid var(--border-hairline);
+}
+
+/* General tab: <dt>/<dd> field grid */
+.properties__grid {
+  display: grid;
+  grid-template-columns: 140px 1fr;
+  row-gap: var(--s-12);
+  column-gap: var(--s-16);
+  margin: 0;
+}
+.properties__grid dt {
+  font: 500 var(--t-compact) var(--font-ui);
+  color: var(--text-tertiary);
+  padding-top: 2px;
+}
+.properties__grid dd {
+  margin: 0;
+  font: 400 var(--t-body) var(--font-ui);
+  color: var(--text-primary);
+  word-break: break-word;
+}
+.properties__attrs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-16);
+}
+.properties__attr {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-8);
+  cursor: pointer;
+}
+.properties__attr-label { font: 400 var(--t-body) var(--font-ui); color: var(--text-primary); }
+.properties__opens-with {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-8);
+}
+.properties__opens-with-icon {
+  display: inline-flex;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+.properties__opens-with-icon img { width: 16px; height: 16px; }
+.properties__opens-with-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 160px;
+}
+
+/* Details tab: grouped name/value rows (GET /fs/properties/details) */
+#properties-details-content .properties__details-group {
+  font: 600 var(--t-small) var(--font-ui);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-tertiary);
+  margin: var(--s-16) 0 var(--s-8);
+}
+#properties-details-content .properties__details-group:first-child { margin-top: 0; }
+#properties-details-content .properties__details-list { margin: 0; }
+#properties-details-content .properties__details-row {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--s-16);
+  padding: var(--s-6) 0;
+  border-bottom: 1px solid var(--border-hairline);
+  font: 400 var(--t-body) var(--font-ui);
+}
+#properties-details-content .properties__details-row dt { margin: 0; color: var(--text-tertiary); flex-shrink: 0; }
+#properties-details-content .properties__details-row dd { margin: 0; color: var(--text-primary); text-align: right; word-break: break-word; }
+.properties__details-empty { font: 400 var(--t-body) var(--font-ui); color: var(--text-tertiary); margin: 0; }
+
+/* =============================================================================
    INSPECTOR: FIXED GEOMETRY (Task 8, playtest pass 1 §3.4)
    Appended last so these declarations win over both earlier .inspector*
    blocks (Section 43's legacy/unused version and the docked one above) for

@@ -130,7 +130,13 @@ async function showInspectorFor(path) {
   renderInspectorMeta(data);
   renderTagChips(data.tags || []);
 
-  await loadInspectorPreview(path, seq);
+  // GET /preview 400s for a directory by design (backend/api.py) — Task 13
+  // surfaced this via a folder's own Properties command, which selects it
+  // the same way a click does. A folder never has a preview to show, so skip
+  // the doomed fetch entirely rather than let it round-trip into a console
+  // error every time a folder is selected.
+  if (data.kind === 'Folder') renderPreviewNone();
+  else await loadInspectorPreview(path, seq);
   if (seq !== _inspectorSeq) return;
 
   await loadInspectorHistory(path, seq);

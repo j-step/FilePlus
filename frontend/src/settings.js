@@ -120,6 +120,10 @@ function applySettingsFromConfig() {
   // No repaint here: this runs during init, before the first listing renders.
   applyIconSource(cfg['ui.icon_source']);
 
+  // Default 'fileplus' — matches openProperties() (properties.js), which
+  // treats anything other than the literal 'windows' as "show our own panel".
+  applyPropertiesMode(cfg['ui.properties_mode']);
+
   // Default true — "This PC" starts expanded unless the user previously
   // collapsed it. {persist: false} so restoring the value we just read back
   // never fires a redundant POST /config on startup (setThisPcOpen, app.js).
@@ -161,6 +165,18 @@ function applySettingsFromConfig() {
 function applyIconSource(source) {
   const v = source === 'windows' ? 'windows' : 'fileplus';
   document.querySelectorAll('[data-action="settings-set-icon-source"]').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.val === v);
+  });
+  return v;
+}
+
+/** Syncs the Personalization "Properties panel" segmented control to `mode`
+ * and returns the normalised value ('fileplus' | 'windows'). Read back out of
+ * window.__fpConfig by openProperties() (properties.js) on every Properties
+ * request — there is no other state to apply here. */
+function applyPropertiesMode(mode) {
+  const v = mode === 'windows' ? 'windows' : 'fileplus';
+  document.querySelectorAll('[data-action="settings-set-properties-mode"]').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.val === v);
   });
   return v;

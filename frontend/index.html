@@ -1992,6 +1992,17 @@
                       <span style="font:400 var(--t-small) var(--font-ui);color:var(--text-tertiary);margin-left:10px">FilePlus draws its own file-type icons; Windows uses the icon each file's registered app supplies.</span>
                     </div>
                   </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row">
+                    <div class="settings-row__label">Properties panel</div>
+                    <div class="settings-row__control">
+                      <div class="fp-segmented">
+                        <button class="fp-segmented__opt active" data-action="settings-set-properties-mode" data-val="fileplus">FilePlus</button>
+                        <button class="fp-segmented__opt" data-action="settings-set-properties-mode" data-val="windows">Windows</button>
+                      </div>
+                      <span style="font:400 var(--t-small) var(--font-ui);color:var(--text-tertiary);margin-left:10px">FilePlus shows its own Properties panel; Windows opens the native dialog instead.</span>
+                    </div>
+                  </div>
                 </div>
 
                 <!-- Quick Access — one checkbox per known folder (desktop/downloads/
@@ -3222,6 +3233,44 @@
   </div><!-- /.fp-modal -->
 </div><!-- /#modal-scrim -->
 
+<!-- ══════════════════════════════════════════════════════════════════════════
+     Properties panel (Stage 2C Task 13, playtest pass 1 §5.1)
+     Own scrim/modal — General/Details tabs, editable name, attribute
+     checkboxes, folder-type select. Opened via openProperties(path)
+     (frontend/src/properties.js). No Cancel button: Close discards any
+     unapplied edit the way Cancel used to; Apply is disabled until an edit.
+     ══════════════════════════════════════════════════════════════════════════ -->
+<div class="fp-scrim" id="properties-modal-scrim" aria-hidden="true" style="display:none">
+  <div class="fp-modal fp-modal--properties" id="properties-modal" role="dialog" aria-modal="true" aria-label="Properties">
+
+    <div class="properties__header">
+      <span class="props__icon" id="properties-icon"><!-- INTEGRATION: iconFor(entry, 24) --></span>
+      <input type="text" class="fp-input properties__name-input" id="properties-name-input" aria-label="Name">
+    </div>
+
+    <div class="fp-tabs fp-properties__tabs" id="properties-tabs">
+      <button class="fp-tabs__item fp-properties__tab fp-tabs__item--active" data-tab="general" data-action="switch-properties-tab">General</button>
+      <button class="fp-tabs__item fp-properties__tab" data-tab="details" data-action="switch-properties-tab">Details</button>
+      <div class="fp-tabs__indicator"></div>
+    </div>
+
+    <div class="properties__body">
+      <div class="properties__pane" id="properties-pane-general" data-pane="general">
+        <dl class="properties__grid" id="properties-general-grid"><!-- INTEGRATION: renderGeneral(props) --></dl>
+      </div>
+      <div class="properties__pane" id="properties-pane-details" data-pane="details" hidden>
+        <div id="properties-details-content"><!-- INTEGRATION: renderDetails(details), lazy-loaded --></div>
+      </div>
+    </div>
+
+    <div class="properties__footer">
+      <button class="fp-btn fp-btn--primary fp-btn--sm" id="properties-apply" data-action="props-apply" disabled>Apply</button>
+      <button class="fp-btn fp-btn--secondary fp-btn--sm" data-action="props-close">Close</button>
+    </div>
+
+  </div><!-- /.fp-modal--properties -->
+</div><!-- /#properties-modal-scrim -->
+
 <!-- Example: warn modal variant (shown when spec calls for a less severe confirmation)
 <div class="fp-scrim" ...>
   <div class="fp-modal" ...>
@@ -3344,6 +3393,7 @@
 <script src="src/inspector.js"></script>
 <script src="src/home.js"></script>
 <script src="src/settings.js"></script>
+<script src="src/properties.js"></script>
 <script src="src/app.js"></script>
 </body>
 </html>
