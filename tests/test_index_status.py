@@ -66,6 +66,38 @@ def test_fs_peek_skips_hidden_and_trash(client, sandbox):
     assert "deleted.png" not in names
 
 
+def test_fs_peek_lazy_scan_finds_early_media_without_full_sort(client, tmp_path):
+    """2500 non-media files plus 2 media files that sort (and, on NTFS,
+    enumerate) first -- a lazy, non-recursive scan finds both without ever
+    needing to sort the whole directory."""
+    d = tmp_path / "many-early"
+    d.mkdir()
+    (d / "0000-a.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+    (d / "0001-b.jpg").write_bytes(b"\xff\xd8\xff")
+    for i in range(2500):
+        (d / f"zzz-{i:05d}.txt").write_text("x")
+
+    body = client.get("/fs/peek", params={"path": str(d), "n": 2}).json()
+    names = {item["name"] for item in body["items"]}
+    assert names == {"0000-a.png", "0001-b.jpg"}
+
+
+def test_fs_peek_cap_is_real_when_only_media_file_is_near_the_end(client, tmp_path):
+    """A directory with 2500 entries whose only media file sits at position
+    2400 (past _PEEK_SCAN_CAP == 2000) must come back empty -- the entry cap
+    is a real bound on work done, not just a safety net that never bites."""
+    d = tmp_path / "many-late"
+    d.mkdir()
+    for i in range(2500):
+        if i == 2400:
+            (d / f"{i:05d}.png").write_bytes(b"x")
+        else:
+            (d / f"{i:05d}.txt").write_text("x")
+
+    body = client.get("/fs/peek", params={"path": str(d), "n": 2}).json()
+    assert body["items"] == []
+
+
 def test_index_status_lifecycle(client, tmp_path):
     """Index a root, see it in /index/status with the right file_count, then
     remove it from disk and DELETE /index?root= to de-index the stale rows."""
@@ -94,3 +126,29 @@ def test_index_status_lifecycle(client, tmp_path):
 
     status2 = client.get("/index/status").json()
     assert all(x["root"] != str(root) for x in status2["roots"])
+
+
+def test_delete_index_conflict_while_running(client, tmp_path):
+    """DELETE /index must refuse (409) while any quick-index scan is running,
+    for any root -- not just the one being deleted -- since a running scan
+    of a different root can still upsert this root's index_roots row
+    concurrently with the delete (mirrors POST /index's own 409 check)."""
+    from backend.api import app
+    root = tmp_path / "some-root"
+    root.mkdir()
+    app.state.index_state["running"] = True
+    try:
+        r = client.delete("/index", params={"root": str(root)})
+        assert r.status_code == 409
+    finally:
+        app.state.index_state["running"] = False
+
+
+def test_delete_index_protected_root_forbidden(client, tmp_path, monkeypatch):
+    """DELETE /index must refuse (403) a protected system root, mirroring
+    POST /index's own check."""
+    import backend.config as _config
+    protected = tmp_path / "Win"
+    monkeypatch.setattr(_config, "PROTECTED_WRITE_ROOTS", [protected])
+    r = client.delete("/index", params={"root": str(protected)})
+    assert r.status_code == 403

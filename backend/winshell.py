@@ -46,11 +46,15 @@ def _sh_known_folder_path(guid_str: str) -> str | None:
         path_ptr = ctypes.c_wchar_p()
         shell32 = ctypes.windll.shell32  # type: ignore[attr-defined]
         hres = shell32.SHGetKnownFolderPath(ctypes.byref(guid), 0, 0, ctypes.byref(path_ptr))
-        if hres != 0 or not path_ptr.value:
+        if hres != 0:
             return None
-        value = path_ptr.value
-        ole32.CoTaskMemFree(path_ptr)
-        return value
+        # A successful call always allocates path_ptr -- free it in a finally
+        # so an empty (falsy) result doesn't skip CoTaskMemFree and leak it.
+        try:
+            value = path_ptr.value
+            return value if value else None
+        finally:
+            ole32.CoTaskMemFree(path_ptr)
     except OSError:
         return None
 

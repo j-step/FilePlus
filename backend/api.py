@@ -460,32 +460,38 @@ def _peek_entries(directory: Path, n: int) -> list[dict]:
     Skips dot-prefixed and Windows-hidden entries, .FilePlusTrash, and
     sub-directories; gives up after _PEEK_SCAN_CAP entries even if *n* media
     hits were never reached (a huge non-media folder must not hang this).
+    Walks the scandir iterator lazily -- no eager `sorted(os.scandir(...))`
+    of the whole directory -- so a folder with thousands of entries costs
+    only the ones actually visited before either limit is hit; only the
+    (small) set of collected hits is sorted, at the end, by name.
     """
     items: list[dict] = []
     try:
-        entries = sorted(os.scandir(directory), key=lambda e: e.name.lower())
+        scandir_it = os.scandir(directory)
     except OSError:
         return items
     scanned = 0
-    for de in entries:
-        if len(items) >= n or scanned >= _PEEK_SCAN_CAP:
-            break
-        scanned += 1
-        if de.name.startswith(".") or de.name == _config.TRASH_DIRNAME:
-            continue
-        try:
-            if de.is_dir(follow_symlinks=False):
+    with scandir_it:
+        for de in scandir_it:
+            if len(items) >= n or scanned >= _PEEK_SCAN_CAP:
+                break
+            scanned += 1
+            if de.name.startswith(".") or de.name == _config.TRASH_DIRNAME:
                 continue
-            if os.name == "nt":
-                attrs = de.stat(follow_symlinks=False).st_file_attributes  # type: ignore[attr-defined]
-                if attrs & 0x2:  # FILE_ATTRIBUTE_HIDDEN
+            try:
+                if de.is_dir(follow_symlinks=False):
                     continue
-        except OSError:
-            continue
-        ext = os.path.splitext(de.name)[1].lstrip(".").lower()
-        if not ft.is_media(ext):
-            continue
-        items.append({"name": de.name, "path": str(directory / de.name), "ext": ext})
+                if os.name == "nt":
+                    attrs = de.stat(follow_symlinks=False).st_file_attributes  # type: ignore[attr-defined]
+                    if attrs & 0x2:  # FILE_ATTRIBUTE_HIDDEN
+                        continue
+            except OSError:
+                continue
+            ext = os.path.splitext(de.name)[1].lstrip(".").lower()
+            if not ft.is_media(ext):
+                continue
+            items.append({"name": de.name, "path": str(directory / de.name), "ext": ext})
+    items.sort(key=lambda item: item["name"].lower())
     return items
 
 
@@ -633,8 +639,20 @@ async def index_status():
 async def delete_index_root(root: str = Query(..., description="Absolute path of a previously-indexed root to forget")):
     """Forget an indexed root: drop its now-stale files rows and its
     index_roots bookkeeping row. *root* need not still exist on disk --
-    this is how a removed/unmounted root gets cleaned out of the index."""
+    this is how a removed/unmounted root gets cleaned out of the index.
+
+    Mirrors POST /index's guard checks: 403 for a protected system root, and
+    409 while any quick-index scan is running -- not just one scanning this
+    root, since a running scan of *any* root can re-insert an index_roots row
+    concurrently with this delete (scan_directory's upsert would otherwise
+    race the DELETE below and resurrect the very row this call means to
+    remove).
+    """
     resolved = path_guard(Path(root), "read")
+    if _config.is_protected_read(resolved):
+        raise HTTPException(status_code=403, detail="system folders are not indexed")
+    if app.state.index_state["running"]:
+        raise HTTPException(status_code=409, detail="An index is already running")
     removed = await remove_stale_entries(resolved)
     async with _db() as conn:
         await conn.execute("DELETE FROM index_roots WHERE root = ?", (str(resolved),))
