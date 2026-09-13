@@ -209,6 +209,10 @@ function activateTab(id) {
   if (!incoming || incoming.id === tabs.activeId) return;
 
   if (tabs.activeId) syncActiveTabRecord();
+  // The outgoing tab stops fetching the moment it stops being visible; its
+  // chips and text are already on its record (syncActiveTabRecord above) and
+  // re-run below if no results had landed yet.
+  if (typeof abortSearch === 'function') abortSearch();
 
   tabs.activeId = id;
   document.querySelectorAll('.fp-tab').forEach(t => {
@@ -220,7 +224,8 @@ function activateTab(id) {
   nav.history = incoming.history;
   nav.index = incoming.historyIndex;
 
-  if (incoming.screen === 'browser' && incoming.search && typeof restoreSearchResultsForTab === 'function') {
+  if (incoming.screen === 'browser' && incoming.search && incoming.search.results
+      && typeof restoreSearchResultsForTab === 'function') {
     // This tab was showing search results: repaint them from the tab's own
     // snapshot rather than re-running the walk. browserState.path stays the
     // folder the tab was in before the search, which is where the breadcrumb's
@@ -235,13 +240,20 @@ function activateTab(id) {
   } else if (incoming.screen === 'browser') {
     showScreenDom('browser');
     if (typeof searchResetBar === 'function') searchResetBar();
-    loadDirectory(incoming.path, {
+    const loaded = loadDirectory(incoming.path, {
       // Empty history means this tab was staged in the background (openBrowserAt
       // on an inactive tab) and is only now getting its first real fetch — treat
       // that as a real navigation (push it) rather than a pure restore.
       addToHistory: incoming.history.length === 0,
       restore: { scrollTop: incoming.scrollTop, selection: incoming.selection, view: incoming.view },
     });
+    // A search this tab had typed but not finished (its request was aborted
+    // when it was switched away) re-runs once the folder listing underneath it
+    // has landed — running the two concurrently would let the listing paint
+    // over the results.
+    if (incoming.search && typeof resumeSearchForTab === 'function') {
+      Promise.resolve(loaded).then(() => resumeSearchForTab(incoming.search, incoming.id));
+    }
   } else {
     showScreenDom(incoming.screen);
     updateSidebarActive(incoming.screen);
@@ -647,6 +659,41 @@ function initDeviceName() {
 // search.js's measuring-span fallback) up to 60% of the toolbar. Nothing has
 // to run per frame, and the search bar no longer collapses into a button that
 // opened the palette instead of searching.
+
+// The toolbar stays on one line at every width: the breadcrumb yields its
+// space first (it can shrink to nothing under its fade), then the search bar
+// folds into a single magnifier button, and the nav/View/Sort/Inspector/Theme
+// buttons never move. The only thing JS decides is WHEN that fold happens —
+// once per resize, never per frame.
+const TOOLBAR_SEARCH_MIN = 140;  // px the expanded search bar wants
+const TOOLBAR_PATH_MIN   = 120;  // px the breadcrumb wants before the bar folds
+
+function initToolbarNarrowMode() {
+  const toolbar = document.getElementById('toolbar');
+  if (!toolbar || typeof ResizeObserver === 'undefined') return;
+
+  function recalc() {
+    const style = getComputedStyle(toolbar);
+    const gap = parseFloat(style.gap) || 0;
+    let fixed = 0;
+    let visible = 0;
+    for (const child of toolbar.children) {
+      const width = child.getBoundingClientRect().width;
+      if (width === 0) continue;
+      visible++;
+      // The two flexible children are excluded so the measurement cannot
+      // change as a result of the mode it decides — no oscillation.
+      if (child.id === 'search-wrap' || child.id === 'breadcrumb-wrap') continue;
+      fixed += width;
+    }
+    const padding = (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0);
+    const available = toolbar.clientWidth - padding - gap * Math.max(0, visible - 1);
+    toolbar.toggleAttribute('data-narrow', available < fixed + TOOLBAR_SEARCH_MIN + TOOLBAR_PATH_MIN);
+  }
+
+  new ResizeObserver(recalc).observe(toolbar);
+  recalc();
+}
 
 // ── Command palette ───────────────────────────────���──────────────────────��─────
 function openPalette() {
@@ -2860,6 +2907,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   initSidebarResize();
   restoreSidebarState();
   initSearch();
+  initToolbarNarrowMode();
   checkBackend();
   const _backendPollId = setInterval(checkBackend, 30_000);
   window.addEventListener('beforeunload', () => clearInterval(_backendPollId), { once: true });

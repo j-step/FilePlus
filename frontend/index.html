@@ -267,6 +267,13 @@
              name query. The bar grows with its content up to 60% of the
              toolbar (styles.css) and pushes the path left. -->
         <div class="fp-search fp-toolbar__search" id="search-wrap">
+          <!-- Narrow-toolbar stand-in: the whole bar folds into this button
+               below #toolbar[data-narrow]'s threshold; clicking it expands the
+               bar again (app.js's initToolbarNarrowMode / search.js). -->
+          <button class="fp-search__collapsed" id="search-collapsed"
+                  data-action="focus-search" title="Search files" aria-label="Search files">
+            <svg class="fp-icon fp-icon--14" aria-hidden="true"><use href="#fp-search"></use></svg>
+          </button>
           <svg class="fp-icon fp-icon--14 fp-search__icon" aria-hidden="true"><use href="#fp-search"></use></svg>
           <!-- Filter chips — rendered by search.js's renderSearchChips() -->
           <div class="fp-search__chips" id="search-chips"></div>

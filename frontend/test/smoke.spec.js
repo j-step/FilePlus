@@ -1021,6 +1021,19 @@ test('every screen renders with no renderer errors', async () => {
     await expect(searchInput).toHaveValue('doc-0');
     await expect(searchHeader).toHaveText(/\d+ results/);
 
+    // 5b. Ruling (fix round 1): Backspace with ui.backspace_deletes off goes
+    //     "up" out of the results to the searched folder, like Explorer --
+    //     the same navUp() the toolbar Up button and Alt+Up call.
+    await page.locator('#list-scroll').click({ position: { x: 10, y: 10 } });
+    await page.keyboard.press('Backspace');
+    await expect(searchHeader).toBeHidden();
+    await expect(page.locator('#breadcrumb .fp-breadcrumb__crumb--current')).toHaveText('Documents');
+    await expect(page.locator('#list-scroll .fp-row mark')).toHaveCount(0);
+    await expect(searchInput).toHaveValue('');
+    // Re-run it so step 6's clear-by-x has something to clear.
+    await searchInput.fill('doc-0');
+    await expect(searchHeader).toHaveText(/\d+ results/, { timeout: 2500 });
+
     // 6. The breadcrumb's x returns to the folder the tab was showing.
     await page.locator('#breadcrumb [data-action="search-clear"]').click();
     await expect(searchHeader).toBeHidden();
@@ -1055,6 +1068,22 @@ test('every screen renders with no renderer errors', async () => {
     await expect(page.locator('#search-chips .fp-search-chip')).toContainText('ext:');
     await expect(page.locator('#list-scroll .fp-row mark').first()).toBeVisible();
     await expect(searchHeader).toHaveText(/\d+ results/);
+
+    // 6d. Race guard (fix round 1): fire an UNAWAITED search on tab 1, then
+    //     switch to tab 2 before it can resolve. The aborted response must not
+    //     paint over tab 2's Pictures listing nor write itself onto tab 2's
+    //     record; switching back re-runs it and tab 1 shows results again.
+    const tab2Search = await page.evaluate(() => tabs.list[1].id);
+    await page.evaluate(() => { setSearchText('doc-1'); runSearch(); /* deliberately not awaited */ });
+    await page.evaluate((id) => activateTab(id), tab2Search);
+    await page.waitForTimeout(1500);
+    await expect(page.locator('#list-scroll .fp-row mark')).toHaveCount(0);
+    await expect(page.locator('#breadcrumb .fp-breadcrumb__crumb--current')).toHaveText('Pictures');
+    expect(await page.evaluate((id) => tabs.list.find(t => t.id === id).search, tab2Search)).toBe(null);
+    await page.locator('.fp-tab[data-tab-id="tab-1"]').click();
+    await expect(page.locator('#list-scroll .fp-row mark').first()).toBeVisible({ timeout: 3000 });
+    await expect(searchHeader).toHaveText(/\d+ results/);
+
     await page.locator('.fp-tab').nth(1).click({ button: 'middle' });
     await expect(page.locator('.fp-tab')).toHaveCount(1);
 
@@ -1097,6 +1126,37 @@ test('every screen renders with no renderer errors', async () => {
     // Leave the index empty again so the next verify run starts from the same
     // state this one did.
     await fetch(`${API}/index?root=${encodeURIComponent(genDir)}`, { method: 'DELETE', headers: apiHeaders });
+
+    // 10. Toolbar never overflows (fix round 1). At the app's minimum window
+    //     width with the sidebar dragged to its 480px maximum, the toolbar has
+    //     ~300px for everything: the breadcrumb yields to nothing, the search
+    //     bar folds into its magnifier button, and every other control stays.
+    await page.evaluate(() => switchScreen('browser'));
+    await app.evaluate(({ BrowserWindow }) => { BrowserWindow.getAllWindows()[0].setSize(800, 600); });
+    // Same property the drag handle writes (app.js's initSidebarResize).
+    await page.evaluate(() => document.documentElement.style.setProperty('--sidebar-width', '480px'));
+    await expect(page.locator('#toolbar')).toHaveAttribute('data-narrow', '', { timeout: 3000 });
+    await expect(page.locator('#search-collapsed')).toBeVisible();
+    for (const id of ['#btn-view-menu', '#btn-sort-menu', '#btn-inspector-toggle', '#btn-theme', '#btn-up']) {
+      await expect(page.locator(id)).toBeVisible();
+    }
+    const toolbarFits = await page.evaluate(() => {
+      const t = document.getElementById('toolbar');
+      return t.scrollWidth <= t.clientWidth;
+    });
+    expect(toolbarFits, 'toolbar overflows at 800px with a 480px sidebar').toBe(true);
+    await page.screenshot({ path: path.join(SHOTS, 'toolbar-narrow.png') });
+
+    // The magnifier expands the bar again; leaving it empty folds it back.
+    await page.locator('#search-collapsed').click();
+    await expect(searchInput).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#search-collapsed')).toBeVisible();
+
+    // Restore the window and sidebar for the screenshots below.
+    await app.evaluate(({ BrowserWindow }) => { BrowserWindow.getAllWindows()[0].setSize(1200, 800); });
+    await page.evaluate(() => document.documentElement.style.setProperty('--sidebar-width', '240px'));
+    await expect(page.locator('#toolbar')).not.toHaveAttribute('data-narrow', '', { timeout: 3000 });
 
     // Back to the Browser listing the screenshots below expect.
     await page.evaluate(() => switchScreen('browser'));

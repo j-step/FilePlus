@@ -35,6 +35,11 @@ const searchState = {
   historyKey: 'fp-search-history',
   root: null,           // what the last render searched ('*' for This PC)
   query: '',            // the q that produced searchState.results
+  // Monotonic, bumped by every runSearch() before its first await. Paired
+  // with tabs.activeId it is the same supersession guard loadDirectory()
+  // carries: a response that resolves after a tab switch, or after a newer
+  // search in the same tab, must not paint over whatever is current.
+  _seq: 0,
 };
 
 const SEARCH_LIMIT = 500;
@@ -356,7 +361,16 @@ async function runSearch({ pushHistory = true } = {}) {
     return;
   }
 
+  // Same supersession guard loadDirectory() carries, for the same reason: an
+  // unawaited search left running while the user switches tabs (or types
+  // again) must not paint its results over whatever is current by then, nor
+  // write them onto the wrong tab record.
+  const reqTabId = tabs.activeId;
+  const reqSeq = ++searchState._seq;
+  const superseded = () => tabs.activeId !== reqTabId || searchState._seq !== reqSeq;
+
   await searchEnsureBrowser();
+  if (superseded()) return;
 
   const usePc = searchState.scope === 'pc';
   const params = buildParams();
@@ -375,14 +389,15 @@ async function runSearch({ pushHistory = true } = {}) {
       ? await API.get('/search', params, { signal: ctrl.signal })
       : await API.get('/fs/search', params, { signal: ctrl.signal });
   } catch (err) {
-    if (err && err.name === 'AbortError') return;   // superseded by a newer query
+    if (err && err.name === 'AbortError') return;   // superseded by a newer query, or a tab switch
     if (searchState.inflight === ctrl) searchState.inflight = null;
+    if (superseded()) return;
     showToast(`Search failed: ${formatApiError(err)}`, 'error');
     setSearchHeader('Search failed');
     return;
   }
-  if (searchState.inflight !== ctrl) return;        // a newer query landed first
-  searchState.inflight = null;
+  if (searchState.inflight === ctrl) searchState.inflight = null;
+  if (superseded()) return;        // a newer query, or another tab, owns the list now
 
   const normalized = usePc ? normalizeIndexResults(payload, query) : payload;
   searchState.results = normalized.results || [];
@@ -391,9 +406,21 @@ async function runSearch({ pushHistory = true } = {}) {
   searchState.query = query;
 
   renderSearchResults(normalized, { query, root: searchState.root });
-  if (usePc) await renderUnindexedDrivesHint(normalized.indexed_roots || []);
   if (pushHistory) pushSearchHistory();
   syncSearchToTab();
+  if (usePc) {
+    await renderUnindexedDrivesHint(normalized.indexed_roots || []);
+  }
+}
+
+/** Cancels whatever request is in flight without touching the bar — called by
+ * activateTab()'s deactivate path, so a tab the user has switched away from
+ * stops fetching. Its chips and text survive on the tab record and re-run on
+ * re-activation (resumeSearchForTab) if no results had landed yet. */
+function abortSearch() {
+  if (!searchState.inflight) return;
+  searchState.inflight.abort();
+  searchState.inflight = null;
 }
 
 /** Wipes the bar and returns the Browser to the folder the tab was showing. */
@@ -767,6 +794,7 @@ let _searchSuppressDropdown = false;
 function focusSearchInput({ keepDropdownClosed = false } = {}) {
   const input = document.getElementById('search-input');
   if (!input) return;
+  expandSearchBar();           // no-op unless the toolbar is in narrow mode
   _searchSuppressDropdown = keepDropdownClosed;
   input.focus();               // dispatches 'focus' synchronously
   _searchSuppressDropdown = false;
@@ -779,7 +807,11 @@ function focusSearchInput({ keepDropdownClosed = false } = {}) {
  * when no search is showing. Stored on the tab record (app.js) so switching
  * tabs and back repaints the same results without re-walking the tree. */
 function captureSearchState() {
-  if (!searchState.results) return null;
+  // A search whose request was still in flight when the tab was switched away
+  // has no results yet but is still a search: keep the chips and text so
+  // re-activating the tab can re-run it rather than silently dropping it.
+  const hasQuery = !!(searchState.text.trim() || searchState.chips.length);
+  if (!searchState.results && !hasQuery) return null;
   return {
     chips: searchState.chips.map(c => ({ ...c })),
     text: searchState.text,
@@ -815,6 +847,33 @@ function restoreSearchResultsForTab(snapshot) {
     { results: searchState.results, truncated: searchState.truncated },
     { query: searchState.query, root: searchState.root },
   );
+}
+
+/** Re-runs a tab's unfinished search after its folder listing has landed.
+ * Called by activateTab() only for a snapshot with no cached results; bails if
+ * the user has switched tabs again while the listing was loading. */
+function resumeSearchForTab(snapshot, tabId) {
+  if (!snapshot || tabs.activeId !== tabId) return;
+  searchState.chips = (snapshot.chips || []).map(c => ({ ...c }));
+  searchState.scope = snapshot.scope || 'current';
+  setSearchText(snapshot.text || '');
+  renderSearchChips();
+  runSearch({ pushHistory: false });
+}
+
+// ── Narrow-toolbar collapse ───────────────────────────────────────────────────
+// Below the toolbar's narrow threshold (app.js's initToolbarNarrowMode sets
+// #toolbar[data-narrow]) the bar shrinks to a single magnifier button so the
+// View/Sort/Inspector/Theme buttons stay reachable. Clicking it (the
+// data-action="focus-search" button inside the bar) expands it again; leaving
+// it with nothing typed and no chips collapses it back.
+function expandSearchBar() {
+  document.getElementById('search-wrap')?.classList.add('fp-search--expanded');
+}
+
+function maybeCollapseSearchBar() {
+  if (searchState.text.trim() || searchState.chips.length) return;
+  document.getElementById('search-wrap')?.classList.remove('fp-search--expanded');
 }
 
 // ── Wiring ────────────────────────────────────────────────────────────────────
@@ -866,6 +925,11 @@ function initSearch() {
       e.preventDefault();
       e.stopPropagation();
       closeSearchDropdown();
+      // In narrow mode an empty bar folds back into its icon button.
+      if (!searchState.text.trim() && !searchState.chips.length) {
+        maybeCollapseSearchBar();
+        input.blur();
+      }
       return;
     }
     // Backspace with the caret at the very start (an empty field included)
@@ -886,6 +950,14 @@ function initSearch() {
     if (!dropdown || dropdown.hidden) return;
     if (wrap.contains(e.target)) return;
     closeSearchDropdown();
+  });
+
+  input.addEventListener('blur', () => {
+    // Never fold the bar away while its own dropdown is open — blur fires on
+    // the way to a dropdown choice, which still needs the bar to exist.
+    const dropdown = searchDropdownEl();
+    if (dropdown && !dropdown.hidden) return;
+    maybeCollapseSearchBar();
   });
 
   renderSearchChips();

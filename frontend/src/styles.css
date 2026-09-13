@@ -750,6 +750,56 @@ svg { flex-shrink: 0; }
   overflow: visible;
 }
 
+/* Order of yielding as the toolbar narrows: the breadcrumb gives first (it
+   shrinks to nothing under its own fade), then the search bar folds into the
+   magnifier button below; the button groups never move or clip. Fix round 1
+   restores the no-overflow guarantee the deleted per-frame JS used to give,
+   with one ResizeObserver toggle (app.js's initToolbarNarrowMode) instead. */
+#toolbar > * { min-width: 0; }
+#toolbar[data-narrow] {
+  gap: var(--s-4);
+}
+#toolbar[data-narrow] .fp-breadcrumb-wrap {
+  min-width: 0;
+}
+/* Collapsed: a 28px icon button, exactly like its toolbar neighbours. */
+#toolbar[data-narrow] .fp-toolbar__search:not(.fp-search--expanded) {
+  flex: 0 0 auto;
+  width: 28px;
+  min-width: 28px;
+  max-width: 28px;
+  padding: 0;
+  border-color: transparent;
+  background: transparent;
+  justify-content: center;
+}
+#toolbar[data-narrow] .fp-toolbar__search:not(.fp-search--expanded) .fp-search__icon,
+#toolbar[data-narrow] .fp-toolbar__search:not(.fp-search--expanded) .fp-search__chips,
+#toolbar[data-narrow] .fp-toolbar__search:not(.fp-search--expanded) .fp-search__input {
+  display: none;
+}
+#toolbar[data-narrow] .fp-toolbar__search.fp-search--expanded {
+  min-width: 140px;
+  max-width: 70%;
+}
+.fp-search__collapsed {
+  display: none;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  border-radius: var(--r-icon-btn);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  align-items: center;
+  justify-content: center;
+}
+#toolbar[data-narrow] .fp-toolbar__search:not(.fp-search--expanded) .fp-search__collapsed {
+  display: inline-flex;
+}
+.fp-search__collapsed:hover { background: var(--bg-raised); color: var(--text-primary); }
+
 /* -----------------------------------------------------------------------------
    8. APPROVALS PILL (Section 13)
    ----------------------------------------------------------------------------- */

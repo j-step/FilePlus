@@ -579,9 +579,11 @@ function navForward() {
 }
 
 function navUp() {
-  // Search results have no parent folder to climb to — the breadcrumb's ×
-  // (search-clear) is the way out of a results listing.
-  if (browserState.mode === 'search') return;
+  // Explorer's rule: Up out of a results listing goes back to the folder that
+  // was searched, not to that folder's parent. This is the one path behind the
+  // toolbar Up button, Alt+Up and Backspace (browserKeydown, when
+  // ui.backspace_deletes is off), so all three agree by construction.
+  if (browserState.mode === 'search') { exitSearchResults(); return; }
   if (browserState.isRoot || !browserState.parent) return;
   loadDirectory(browserState.parent);
 }
@@ -592,8 +594,10 @@ function refreshNavButtons() {
   const up   = document.querySelector('[data-action="nav-up"]');
   if (back) back.disabled = nav.index <= 0;
   if (fwd)  fwd.disabled  = nav.index >= nav.history.length - 1;
-  if (up)   up.disabled   = browserState.mode === 'search'
-    || !browserState.path || browserState.isRoot || !browserState.parent;
+  // In search mode Up always has somewhere to go (back to the searched
+  // folder), regardless of whether that folder has a parent of its own.
+  if (up)   up.disabled   = browserState.mode !== 'search'
+    && (!browserState.path || browserState.isRoot || !browserState.parent);
 }
 
 function renderDirectory(data) {
