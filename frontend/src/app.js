@@ -1212,7 +1212,10 @@ function cmOpenEnabled(ctx) {
   const exts = new Set(sel.map(e => String(e.ext || '').toLowerCase()));
   return exts.size === 1 && [...exts][0] !== '';
 }
-/** Open with…, Rename, Properties: single item only. */
+/** Open with…, Properties: single item only. (Rename has its own identical-
+ * by-construction rule, browser.js's canRenameSelection() — kept separate so
+ * it stays the one shared source of truth with the F2 keyboard shortcut,
+ * Task 11 fix round 1, rather than incidentally matching this one.) */
 function cmSingleEnabled(ctx) { return (ctx.selection || []).length === 1; }
 /** Pin to sidebar, Index for search: a single FOLDER only. */
 function cmSingleFolderEnabled(ctx) {
@@ -1237,15 +1240,21 @@ function cmFavoriteLabel(ctx) {
 // A.10: five menu type definitions (items rendered dynamically into #context-menu)
 const CONTEXT_MENUS = {
   // A.10.1 — File context menu
+  // "Open in new tab" is folder-only (Task 11 fix round 1 ruling) — it never
+  // appears here at all (visible, not merely disabled: a file's own "open in
+  // a new tab" concept doesn't exist), and stays unconditional on the folder
+  // menu below.
   file: [
     { label: 'Open',            action: 'cm-open',            icon: icon('open', 'fp-icon--14'), enabled: cmOpenEnabled },
     { label: 'Open with…',      action: 'cm-open-with',       enabled: cmSingleEnabled },
-    { label: 'Open in new tab', action: 'cm-open-new-tab',    icon: icon('new-tab', 'fp-icon--14') },
     'sep',
     { label: 'Cut',    action: 'cm-cut',    kbd: 'Ctrl+X', enabled: cmAnyEnabled },
     { label: 'Copy',   action: 'cm-copy',   kbd: 'Ctrl+C', enabled: cmAnyEnabled },
     { label: 'Paste',  action: 'cm-paste',  kbd: 'Ctrl+V', enabled: cmClipboardEnabled },
-    { label: 'Rename', action: 'cm-rename', kbd: 'F2', enabled: cmSingleEnabled },
+    // Same rule, same predicate as the F2 keyboard shortcut
+    // (browser.js's browserKeydown) — canRenameSelection() is the one
+    // shared source of truth for both (Task 11 fix round 1).
+    { label: 'Rename', action: 'cm-rename', kbd: 'F2', enabled: () => canRenameSelection() },
     { label: 'Delete', action: 'cm-delete', kbd: 'Del', danger: true, icon: icon('delete', 'fp-icon--14'), enabled: cmAnyEnabled },
     'sep',
     { label: 'Add tag…',         action: 'cm-add-tag',     icon: icon('tag', 'fp-icon--14'), enabled: cmAnyEnabled },
@@ -1263,7 +1272,7 @@ const CONTEXT_MENUS = {
     { label: 'Cut',    action: 'cm-cut',    kbd: 'Ctrl+X', enabled: cmAnyEnabled },
     { label: 'Copy',   action: 'cm-copy',   kbd: 'Ctrl+C', enabled: cmAnyEnabled },
     { label: 'Paste',  action: 'cm-paste',  kbd: 'Ctrl+V', enabled: cmClipboardEnabled },
-    { label: 'Rename', action: 'cm-rename', kbd: 'F2', enabled: cmSingleEnabled },
+    { label: 'Rename', action: 'cm-rename', kbd: 'F2', enabled: () => canRenameSelection() },
     { label: 'Delete', action: 'cm-delete', kbd: 'Del', danger: true, icon: icon('delete', 'fp-icon--14'), enabled: cmAnyEnabled },
     'sep',
     { label: 'New folder inside', action: 'cm-new-folder' },
@@ -1305,15 +1314,19 @@ const CONTEXT_MENUS = {
 
   // A.10.5 — Sidebar item context menu (pinned folders and Quick Access known
   // folders — see getMenuTypeForTarget). Unpin/Rename apply to pins only;
-  // Remove from Quick Access applies to known folders only — enabled(ctx)
-  // reads ctx.target (the resolved .fp-sidebar__item element itself) rather
-  // than filtering the item array per kind, replacing the ad hoc .filter()
-  // Task 9/10 used as an interim measure.
+  // Remove from Quick Access applies to known folders only; a drive gets
+  // neither (its sidebar item carries neither data-pin-id nor data-known-id,
+  // so both predicates read false for it) — visible(ctx) reads ctx.target
+  // (the resolved .fp-sidebar__item element itself) and OMITS whichever pair
+  // doesn't match the right-clicked item's kind (Task 11 fix round 1 ruling:
+  // never-applicable-to-this-kind is a hide, not a grey — replacing both the
+  // ad hoc .filter() Task 9/10 used and Task 11's own initial enabled(ctx)
+  // pass, which greyed these instead of hiding them).
   'sidebar-item': [
     { label: 'Open in new tab',          action: 'cm-open-new-tab' },
-    { label: 'Unpin',                    action: 'cm-unpin-sidebar',        enabled: ctx => !!ctx.target?.dataset?.pinId },
-    { label: 'Rename label',             action: 'cm-rename-sidebar-item',  enabled: ctx => !!ctx.target?.dataset?.pinId },
-    { label: 'Remove from Quick Access', action: 'cm-quick-access-remove',  enabled: ctx => !!ctx.target?.dataset?.knownId },
+    { label: 'Unpin',                    action: 'cm-unpin-sidebar',        visible: ctx => !!ctx.target?.dataset?.pinId },
+    { label: 'Rename label',             action: 'cm-rename-sidebar-item',  visible: ctx => !!ctx.target?.dataset?.pinId },
+    { label: 'Remove from Quick Access', action: 'cm-quick-access-remove',  visible: ctx => !!ctx.target?.dataset?.knownId },
   ],
 
   // A.10.6 — Home row context menu (Recent + Favorites rows). "Add/Remove
@@ -1381,9 +1394,7 @@ function getMenuTypeForTarget(target) {
   if (target.closest('.fp-tab')) return 'tab';
   // User pins (data-pin-id) and Quick Access known folders (data-known-id)
   // both get the sidebar-item menu — Home and drives are neither and fall
-  // through to the empty-area menu instead. The menu's own item list is
-  // filtered per kind (Unpin/Rename for pins, Remove from Quick Access for
-  // known folders) by the contextmenu listener below.
+  // through to the empty-area menu instead.
   if (target.closest('.fp-sidebar__item[data-pin-id], .fp-sidebar__item[data-known-id]')) return 'sidebar-item';
   // Home's Recent/Favorites rows get their own menu — checked before the
   // generic folder/file checks below so a Home row never falls into those.
@@ -1465,20 +1476,42 @@ const contextMenu = document.getElementById('context-menu');
  * opts.anchor (the View/Sort toolbar buttons) positions the menu below that
  * element instead of at the click point `x,y`, which are then ignored.
  * opts.ctx, when present, is passed to every item's `checked(ctx)`,
- * `enabled(ctx)` and `label(ctx)` predicates (Task 11 adds the latter two;
- * an item with no such field just always renders enabled with its own
- * static `label`). The leading check-icon slot still only appears on a menu
- * that actually has `checked` items (the View/Sort dropdowns) — keyed off
- * the item list itself rather than "was ctx passed", since Task 11 now
- * passes ctx to every right-click menu too (for enabled/label) without
- * wanting their layout to grow that slot.
+ * `enabled(ctx)`, `label(ctx)` and `visible(ctx)` predicates (Task 11 adds
+ * the latter three; an item with no such field just always renders, enabled,
+ * with its own static `label`). The leading check-icon slot still only
+ * appears on a menu that actually has `checked` items (the View/Sort
+ * dropdowns) — keyed off the item list itself rather than "was ctx passed",
+ * since Task 11 now passes ctx to every right-click menu too (for
+ * enabled/label/visible) without wanting their layout to grow that slot.
+ *
+ * `visible(ctx) === false` OMITS the item entirely — distinct from
+ * `enabled(ctx) === false`, which keeps it in place but greys it out. Use
+ * `visible` for an item that structurally can never apply to the target
+ * kind (Task 11 fix round 1: a pin's menu never even shows "Remove from
+ * Quick Access", rather than showing it permanently disabled); use `enabled`
+ * for a state-dependent rule that could flip the other way for the very
+ * same kind of target (single- vs multi-selection, empty vs non-empty
+ * clipboard, …). A separator left with nothing but hidden items on one or
+ * both sides is dropped too, so a menu never shows a leading, trailing, or
+ * doubled-up divider.
  */
 function showContextMenu(x, y, items, opts = {}) {
   if (!contextMenu) return;
   contextMenu.innerHTML = '';
   const ctx = opts.ctx;
-  const showChecks = items.some(item => item !== 'sep' && typeof item.checked === 'function');
-  items.forEach(item => {
+  const shown = [];
+  for (const item of items) {
+    if (item === 'sep') {
+      if (shown.length === 0 || shown[shown.length - 1] === 'sep') continue;
+      shown.push(item);
+      continue;
+    }
+    if (typeof item.visible === 'function' && !item.visible(ctx)) continue;
+    shown.push(item);
+  }
+  while (shown.length && shown[shown.length - 1] === 'sep') shown.pop();
+  const showChecks = shown.some(item => item !== 'sep' && typeof item.checked === 'function');
+  shown.forEach(item => {
     if (item === 'sep') {
       const sep = document.createElement('div');
       sep.className = 'fp-context-menu__sep';
@@ -2381,18 +2414,33 @@ document.addEventListener('click', e => {
         API.post('/recent', { path, action: 'opened' }).catch(() => { /* best-effort logging */ });
         break;
       }
-      const openMany = () => {
-        paths.slice(0, 20).forEach(p => {
-          const openPath = window.electronAPI?.openPath;
+      // Sequential, not fire-and-forget-in-parallel — 20 simultaneous shell
+      // launches is exactly the kind of thing the cap+confirm exists to
+      // avoid in the first place (Task 11 fix round 1).
+      const cappedPaths = paths.slice(0, 20);
+      const openMany = async () => {
+        const openPath = window.electronAPI?.openPath;
+        for (const p of cappedPaths) {
           if (openPath) {
-            Promise.resolve(openPath(p)).then(result => { if (result) showToast(result, 'error'); })
-              .catch(err => showToast(formatApiError(err), 'error'));
+            try {
+              const result = await openPath(p);
+              if (result) showToast(result, 'error');
+            } catch (err) {
+              showToast(formatApiError(err), 'error');
+            }
           }
           API.post('/recent', { path: p, action: 'opened' }).catch(() => { /* best-effort logging */ });
-        });
+        }
+        showToast(`Opened ${cappedPaths.length} of ${paths.length}`, 'default');
       };
       if (paths.length > 10) {
-        openModal('warn', { title: `Open ${paths.length} files?`, confirmLabel: 'Open', onConfirm: openMany });
+        // Honest about the cap: "Open 20 of 25 files?" once the selection
+        // actually exceeds it, not just "Open 25 files?" when only 20 will
+        // really open.
+        const title = paths.length > 20
+          ? `Open ${cappedPaths.length} of ${paths.length} files?`
+          : `Open ${paths.length} files?`;
+        openModal('warn', { title, confirmLabel: 'Open', onConfirm: openMany });
       } else {
         openMany();
       }

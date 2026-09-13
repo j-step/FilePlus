@@ -711,6 +711,13 @@ function showErrorBanner(message, opts = {}) {
 /** Returns the current selection as an array of absolute paths. */
 function getSelectedPaths() { return [...browserState.selection]; }
 
+/** Rename applies to exactly one item — the single shared rule behind both
+ * the Rename context-menu item (app.js's CONTEXT_MENUS 'cm-rename' entries,
+ * file and folder menus both call this directly) and the F2 keyboard
+ * shortcut (browserKeydown below), so the two can never drift apart
+ * (Task 11 fix round 1). */
+function canRenameSelection() { return browserState.selection.size === 1; }
+
 /** Looks up the entry object for an absolute path in the current directory, or null. */
 function entryForPath(path) {
   if (!browserState.path) return null;
@@ -1234,7 +1241,7 @@ function browserKeydown(e) {
   if (ctrl && key.toLowerCase() === 'x') { e.preventDefault(); fileops.cutSelection(); return; }
   if (ctrl && key.toLowerCase() === 'c') { e.preventDefault(); fileops.copySelection(); return; }
   if (ctrl && key.toLowerCase() === 'v') { e.preventDefault(); if (browserState.path) fileops.pasteInto(browserState.path); return; }
-  if (key === 'F2') { e.preventDefault(); if (browserState.focus) startInlineRename(browserState.focus); return; }
+  if (key === 'F2') { e.preventDefault(); if (canRenameSelection() && browserState.focus) startInlineRename(browserState.focus); return; }
   if (key === 'Delete') { e.preventDefault(); fileops.trashSelection(); return; }
 
   switch (key) {

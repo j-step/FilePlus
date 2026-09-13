@@ -692,6 +692,19 @@ test('every screen renders with no renderer errors', async () => {
     expect(doc01TopBorder).toBe('rgba(0, 0, 0, 0)');
     expect(doc00TopBorder).not.toBe('rgba(0, 0, 0, 0)');
 
+    // Settle the inspector's own 120ms debounce (onSelectionChanged ->
+    // showInspectorMulti) before relying on anything downstream of this
+    // selection — closes a race the multiselect screenshot below could
+    // otherwise win against a still-stale inspector header (fix round 1).
+    await expect(page.locator('#inspector-filename')).toHaveText(/2 items/);
+
+    // F2 with two items selected must no-op (fix round 1 [Important]) —
+    // canRenameSelection() (browser.js) is the one shared predicate behind
+    // both this key and the menu's own Rename item below, so they can never
+    // drift apart.
+    await page.keyboard.press('F2');
+    await expect(page.locator('.fp-row__rename')).toHaveCount(0);
+
     // Right-clicking WITHIN that existing multi-selection leaves it intact
     // (ensureRowSelected) — the file menu judges the whole 2-item selection:
     // Open is enabled (both .txt, one shared extension), Rename/Properties
@@ -705,6 +718,9 @@ test('every screen renders with no renderer errors', async () => {
     await expect(renameItem).toHaveAttribute('aria-disabled', 'true');
     await expect(renameItem).toHaveClass(/fp-context-menu__item--disabled/);
     await expect(propsItem).toHaveAttribute('aria-disabled', 'true');
+    // "Open in new tab" is folder-only (fix round 1 ruling) — hidden, not
+    // merely disabled, on the file menu.
+    await expect(page.locator('#context-menu [data-action="cm-open-new-tab"]')).toHaveCount(0);
     await page.screenshot({ path: path.join(SHOTS, 'browser-multiselect.png') });
     await page.keyboard.press('Escape');
 
