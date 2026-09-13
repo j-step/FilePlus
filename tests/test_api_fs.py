@@ -211,3 +211,21 @@ def test_fs_search_tag_filter(sandbox, db):
 
         r = client.get("/fs/search", params={"root": str(sandbox), "tag": "keep"})
         assert [x["name"] for x in r.json()["results"]] == ["tagged.txt"]
+
+
+def test_fs_search_tag_filter_survives_case_only_rename(sandbox, db):
+    """Windows is case-preserving but case-insensitive: renaming a file to
+    change only its case doesn't update the files-table row (written once,
+    at whatever case existed when it was indexed). tag= must still find the
+    file during a live walk, which sees the *current* on-disk casing."""
+    from backend.api import app
+    with TestClient(app) as client:
+        original = sandbox / "Doc.txt"; original.write_text("x")
+        fid = client.get("/file", params={"path": str(original)}).json()["id"]
+        client.post(f"/files/{fid}/tags", json={"name": "keep"})
+
+        renamed = sandbox / "doc.txt"
+        os.rename(str(original), str(renamed))
+
+        r = client.get("/fs/search", params={"root": str(sandbox), "tag": "keep"})
+        assert [x["name"] for x in r.json()["results"]] == ["doc.txt"]

@@ -76,6 +76,29 @@ def test_budget_truncates(tree):
     assert r["truncated"] is True
 
 
+def test_budget_truncates_mid_directory_with_many_entries(tmp_path):
+    """A single directory with thousands of entries and no subdirectories to
+    requeue must still get its budget re-checked *inside* the entry loop --
+    otherwise the per-directory check (at the top of the while loop) would
+    only fire again after the whole directory had already been scanned,
+    defeating the budget for exactly the shape of directory it matters most
+    for."""
+    d = tmp_path / "many"
+    d.mkdir()
+    for i in range(3000):
+        (d / f"f{i:05d}.txt").write_text("x")
+
+    calls = {"n": 0}
+
+    def clock():
+        calls["n"] += 1
+        return 0.0 if calls["n"] < 100 else 10.0
+
+    r = search_tree(d, SearchFilters(q=""), budget_s=1.0, clock=clock)
+    assert r["truncated"] is True
+    assert r["walked"] < 3000
+
+
 def test_limit_truncates(tree):
     r = search_tree(tree, SearchFilters(q=""), limit=2)
     assert len(r["results"]) == 2 and r["truncated"] is True
@@ -117,11 +140,26 @@ def test_skips_reparse_points(tmp_path, monkeypatch):
         def stat(self, follow_symlinks=False):
             return FakeStat()
 
+    class FakeScandirIterator:
+        """Mimics the context-manager protocol real os.scandir() returns,
+        since search_tree does `with os.scandir(directory) as entries:`."""
+        def __init__(self, entries):
+            self._entries = entries
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc_info):
+            return False
+
+        def __iter__(self):
+            return iter(self._entries)
+
     real_scandir = os.scandir
 
     def fake_scandir(path):
         if str(path) == str(real_dir):
-            return iter([FakeEntry()])
+            return FakeScandirIterator([FakeEntry()])
         return real_scandir(path)
 
     monkeypatch.setattr(searcher.os, "scandir", fake_scandir)

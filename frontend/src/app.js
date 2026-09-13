@@ -593,7 +593,8 @@ async function runPaletteSearch(q) {
   if (!resultsEl) return;
   let hits = [];
   try {
-    hits = await API.get('/search', { q, limit: 30 });
+    const res = await API.get('/search', { q, limit: 30 });
+    hits = Array.isArray(res) ? res : (res && res.results) || []; // Stage 2C Task 2 wraps the response in {results, indexed_roots}; Task 14 replaces this call entirely
   } catch (err) {
     hits = [];
   }

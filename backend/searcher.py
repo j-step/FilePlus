@@ -41,7 +41,22 @@ class SearchFilters:
     max_size: int | None = None
     hidden: bool = False
     whole_word: bool = False
-    tag_paths: set[str] | None = None     # pre-resolved by the route when tag= is given
+    tag_paths: set[str] | None = None     # pre-resolved by the route when tag= is given;
+                                           # already normcase+normpath'd -- see normalize_path
+
+
+def normalize_path(path: str) -> str:
+    """Case/separator-fold *path* for membership comparisons against `tag_paths`.
+
+    Windows filenames are case-preserving but case-insensitive: a file can be
+    renamed to change only its case (`Doc.txt` -> `doc.txt`) without the
+    files-table row (written once, at whatever case existed then) ever being
+    updated. Both the set built by the route and the live path compared
+    against it in `_match`/`GET /search` must go through this same
+    normalisation or a case drift like that silently breaks the `tag=`
+    filter.
+    """
+    return os.path.normcase(os.path.normpath(path))
 
 
 def match_spans(name: str, words: list[str], whole_word: bool) -> list[tuple[int, int]] | None:
@@ -105,7 +120,7 @@ def _match(*, name: str, is_dir: bool, ext: str, size: int, modified: float,
         return None
     if filters.created_before is not None and created > filters.created_before:
         return None
-    if filters.tag_paths is not None and path_str not in filters.tag_paths:
+    if filters.tag_paths is not None and normalize_path(path_str) not in filters.tag_paths:
         return None
     return match_spans(name, words, filters.whole_word)
 
@@ -119,7 +134,11 @@ def search_tree(root: Path, filters: SearchFilters, *, budget_s: float = 4.0,
     `clock() - start` exceeds *budget_s*; either way `truncated` comes back
     True (there is no cheap way to tell "hit the cap" apart from "there was
     truly nothing left" without finishing the walk, so both are reported the
-    same way).
+    same way). The budget is checked both when a directory is dequeued
+    *and* once per entry inside it -- a single huge directory (thousands of
+    entries, no subdirectories to requeue) would otherwise never re-check
+    the clock until it finished scanning that one directory, defeating the
+    budget entirely.
 
     Skipped, always: `.FilePlusTrash`; any directory `config.is_protected_read`
     refuses (checked when the directory is dequeued for scanning, so a
@@ -135,6 +154,9 @@ def search_tree(root: Path, filters: SearchFilters, *, budget_s: float = 4.0,
     Returns:
         {"results": [...], "truncated": bool, "elapsed_ms": int, "walked": int}
         Each result: {path, name, is_dir, size, modified, created, ext, match}.
+        `walked` counts entries that passed the trash/reparse/hidden skip
+        checks (i.e. were actually considered against the filters) -- not
+        the (generally smaller) number that ended up in `results`.
     """
     start = clock()
     words = filters.q.split() if filters.q else []
@@ -151,59 +173,63 @@ def search_tree(root: Path, filters: SearchFilters, *, budget_s: float = 4.0,
         if config.is_protected_read(directory):
             continue
         try:
-            entries = os.scandir(directory)
+            scandir_ctx = os.scandir(directory)
         except OSError:
             continue
-        for entry in entries:
-            if entry.name == config.TRASH_DIRNAME:
-                continue
-            is_hidden = entry.name.startswith(".")
-            try:
-                is_reparse = entry.is_symlink()
-            except OSError:
-                continue
-            try:
-                st = entry.stat(follow_symlinks=False)
-            except OSError:
-                continue
-            if os.name == "nt":
-                attrs = getattr(st, "st_file_attributes", 0)
-                is_reparse = is_reparse or bool(attrs & _FILE_ATTRIBUTE_REPARSE_POINT)
-                is_hidden = is_hidden or bool(attrs & _FILE_ATTRIBUTE_HIDDEN)
-            if is_reparse:
-                continue
-            if is_hidden and not filters.hidden:
-                continue
+        with scandir_ctx as entries:
+            for entry in entries:
+                if clock() - start > budget_s:
+                    truncated = True
+                    break
+                if entry.name == config.TRASH_DIRNAME:
+                    continue
+                is_hidden = entry.name.startswith(".")
+                try:
+                    is_reparse = entry.is_symlink()
+                except OSError:
+                    continue
+                try:
+                    st = entry.stat(follow_symlinks=False)
+                except OSError:
+                    continue
+                if os.name == "nt":
+                    attrs = getattr(st, "st_file_attributes", 0)
+                    is_reparse = is_reparse or bool(attrs & _FILE_ATTRIBUTE_REPARSE_POINT)
+                    is_hidden = is_hidden or bool(attrs & _FILE_ATTRIBUTE_HIDDEN)
+                if is_reparse:
+                    continue
+                if is_hidden and not filters.hidden:
+                    continue
 
-            try:
-                is_dir = entry.is_dir(follow_symlinks=False)
-            except OSError:
-                continue
-            ext = "" if is_dir else os.path.splitext(entry.name)[1].lstrip(".").lower()
-            size = 0 if is_dir else st.st_size
-            modified = st.st_mtime
-            created = _created_time(st)
-            path_str = entry.path
-            walked += 1
+                try:
+                    is_dir = entry.is_dir(follow_symlinks=False)
+                except OSError:
+                    continue
+                ext = "" if is_dir else os.path.splitext(entry.name)[1].lstrip(".").lower()
+                size = 0 if is_dir else st.st_size
+                modified = st.st_mtime
+                created = _created_time(st)
+                path_str = entry.path
+                walked += 1
 
-            if is_dir:
-                queue.append(Path(path_str))
+                if is_dir:
+                    queue.append(Path(path_str))
 
-            spans = _match(
-                name=entry.name, is_dir=is_dir, ext=ext, size=size,
-                modified=modified, created=created, path_str=path_str,
-                words=words, filters=filters,
-            )
-            if spans is None:
-                continue
-            results.append({
-                "path": path_str, "name": entry.name, "is_dir": is_dir,
-                "size": size, "modified": modified, "created": created,
-                "ext": ext, "match": spans,
-            })
-            if len(results) >= limit:
-                truncated = True
-                break
+                spans = _match(
+                    name=entry.name, is_dir=is_dir, ext=ext, size=size,
+                    modified=modified, created=created, path_str=path_str,
+                    words=words, filters=filters,
+                )
+                if spans is None:
+                    continue
+                results.append({
+                    "path": path_str, "name": entry.name, "is_dir": is_dir,
+                    "size": size, "modified": modified, "created": created,
+                    "ext": ext, "match": spans,
+                })
+                if len(results) >= limit:
+                    truncated = True
+                    break
         if truncated:
             break
 

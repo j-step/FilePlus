@@ -344,10 +344,21 @@ async def search_files(
     'folder' never matches anything here) and `hidden` (no stored column;
     approximated from the filename the same way the indexer already avoids
     indexing dot-prefixed names) are applied in Python afterward, along
-    with `tag` (backend.tagger.paths_for_tag) and `whole_word`
-    (backend.searcher.match_spans, since SQL LIKE has no word-boundary
-    concept). `indexed_roots` is always included so the frontend's "This PC"
-    search scope can flag drives that aren't indexed yet.
+    with `tag` (backend.tagger.paths_for_tag, path membership normalised via
+    backend.searcher.normalize_path so a file renamed to change only its
+    case still matches) and `whole_word` (backend.searcher.match_spans,
+    since SQL LIKE has no word-boundary concept). `indexed_roots` is always
+    included so the frontend's "This PC" search scope can flag drives that
+    aren't indexed yet.
+
+    The SQL query itself is capped at 5000 rows (`LIMIT 5000`), well above
+    the user-facing `limit` (default 50, capped at 1000 below) -- so a
+    broad `q` can't pull the entire index into memory before the
+    Python-side filters and the real `limit` slice run. `limit` is applied
+    last, as a Python slice after every filter, not as a SQL `LIMIT ?`: a
+    `type`/`hidden`/`tag`/`whole_word` filter can only narrow rows the SQL
+    query already returned, so slicing before filtering could silently
+    return fewer than the true first N matches.
     """
     limit = min(limit, 1000)
     conditions = []
@@ -384,11 +395,13 @@ async def search_files(
         conn.row_factory = aiosqlite.Row
         cur = await conn.execute(
             f"SELECT id, path, filename, extension, size, modified, created, hash FROM files "
-            f"{where} ORDER BY filename COLLATE NOCASE",
+            f"{where} ORDER BY filename COLLATE NOCASE LIMIT 5000",
             params,
         )
         rows = [dict(r) for r in await cur.fetchall()]
-        tag_paths = await tagger.paths_for_tag(conn, tag) if tag else None
+        tag_paths = None
+        if tag:
+            tag_paths = {searcher.normalize_path(p) for p in await tagger.paths_for_tag(conn, tag)}
         cur2 = await conn.execute("SELECT root FROM index_roots ORDER BY root")
         indexed_roots = [r[0] for r in await cur2.fetchall()]
 
@@ -397,7 +410,7 @@ async def search_files(
             return False
         if type_ and ft.type_group_for(row["extension"] or "", is_dir=False) != type_:
             return False
-        if tag_paths is not None and row["path"] not in tag_paths:
+        if tag_paths is not None and searcher.normalize_path(row["path"]) not in tag_paths:
             return False
         if words and searcher.match_spans(row["filename"], words, True) is None:
             return False
@@ -612,13 +625,16 @@ async def fs_search(
     is read-guarded like every other read route (D2: reads are allowed
     anywhere). `tag=` resolves to a path set up front via
     tagger.paths_for_tag so the blocking tree walk itself never touches the
-    database. The walk runs in asyncio.to_thread since it's blocking I/O.
+    database; the set is normalised (searcher.normalize_path) so a file
+    renamed to change only its case (the files-table row keeps whatever
+    case existed when it was indexed) still matches during the live walk.
+    The walk runs in asyncio.to_thread since it's blocking I/O.
     """
     resolved = path_guard(Path(root), "read")
     tag_paths = None
     if tag:
         async with _db() as conn:
-            tag_paths = await tagger.paths_for_tag(conn, tag)
+            tag_paths = {searcher.normalize_path(p) for p in await tagger.paths_for_tag(conn, tag)}
     filters = searcher.SearchFilters(
         q=q, type=type_, ext=ext,
         modified_after=modified_after, modified_before=modified_before,
