@@ -2228,6 +2228,11 @@ svg { flex-shrink: 0; }
 /* Compact density (22px) — data-density attribute (canonical) */
 [data-density="compact"]     .fp-row { height: 22px; }
 [data-density="comfortable"] .fp-row { height: 32px; }
+/* Spacious density had a Settings button but no rule (playtest pass 1
+   §3.14) — .fp-row is shared by Browser rows and Home's Recent/Favorites
+   rows (.fp-row--recent), same as the two rules above, so one rule covers
+   both. */
+[data-density="spacious"]    .fp-row { height: 40px; }
 
 /* -----------------------------------------------------------------------------
    20. LIST HEADER (Section 24)
@@ -2836,6 +2841,12 @@ svg { flex-shrink: 0; }
 }
 .fp-spinner--lg { width: 16px; height: 16px; }
 @keyframes fp-spin { to { transform: rotate(360deg); } }
+
+/* Toolbar refresh button (Task 8, playtest pass 1 §3.6) — spins its icon
+   while refreshDirectory() is in flight. Reuses fp-spin above; the global
+   prefers-reduced-motion block (bottom of this file) already collapses
+   every animation-duration to ~0, so reduced motion needs no override here. */
+#btn-refresh.is-spinning svg { animation: fp-spin 800ms linear infinite; }
 
 /* -----------------------------------------------------------------------------
    34. LAYOUT HELPERS
@@ -5414,6 +5425,32 @@ button.fp-pill:hover {
 
 /* Command-palette result icons (iconFor at 14px). */
 .fp-palette__item-icon { flex: none; color: var(--text-secondary); }
+
+/* =============================================================================
+   INSPECTOR: FIXED GEOMETRY (Task 8, playtest pass 1 §3.4)
+   Appended last so these declarations win over both earlier .inspector*
+   blocks (Section 43's legacy/unused version and the docked one above) for
+   every property they touch, without having to untangle that history.
+   Together: the header/preview/tabs/meta never resize between "No file
+   selected" and a real file, and pane-switching (hidden attribute, not
+   inline display) never jitters the panel below them. The screenshots
+   inspector-empty.png/inspector-file.png (smoke) compare the header,
+   preview and meta blocks' bounding boxes between the two states.
+   ============================================================================= */
+.inspector__header { flex-shrink: 0; height: 56px; overflow: hidden; }
+.inspector__preview { width: 100%; aspect-ratio: 16 / 10; }
+.fp-inspector__tabs { height: 44px; flex-shrink: 0; }
+.inspector__body { min-height: 0; flex: 1; overflow: auto; }
+/* Panes container: fixed min-height so the shortest pane (Tags/History's
+   "Select a file"/"No history available yet." one-liners) reserves the same
+   space as the tallest (Preview's 6-row meta grid). */
+.inspector__panes { min-height: 160px; }
+.inspector__meta { display: grid; grid-template-rows: repeat(6, 24px); }
+.inspector__filename {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 
 /* ── Reduced motion: see canonical block appended below (UI-SPEC §A.0) ─────── */
 

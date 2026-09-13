@@ -31,6 +31,9 @@ let _inspectorEntry = null;
 
 // ── Inspector update (A.3.2) — pane swap + header text only; data fetching
 // and per-field rendering live in showInspectorFor/showInspectorMulti below.
+// The panel's own visibility is never touched here — selection changes
+// content only; setInspectorOpen (below) is the sole writer of
+// .inspector--open (design spec §3.4: "selection never opens or closes it").
 function updateInspector(mode, data = {}) {
   const inspector = document.getElementById('inspector');
   if (!inspector) return;
@@ -45,19 +48,18 @@ function updateInspector(mode, data = {}) {
   if (mode === 'multi') {
     _inspectorEntry = null;
     // Show multi-select aggregate; hide single-file UI
-    singlePanes.forEach(p => { p.style.display = 'none'; });
-    if (tabBar)   tabBar.style.display = 'none';
-    if (preview)  preview.style.display = 'none';
-    if (filenameEl) filenameEl.textContent = `${data.count} items selected`;
+    singlePanes.forEach(p => { p.hidden = true; });
+    if (tabBar)   tabBar.hidden = true;
+    if (preview)  preview.hidden = true;
+    if (filenameEl) { filenameEl.textContent = `${data.count} items selected`; filenameEl.removeAttribute('title'); }
     if (filepathEl) filepathEl.textContent = '';
     if (multiPane) {
-      multiPane.style.display = '';
+      multiPane.hidden = false;
       const countEl = multiPane.querySelector('#inspector-multi-count');
       const sizeEl  = multiPane.querySelector('#inspector-multi-size');
       if (countEl) countEl.textContent = data.count || 0;
       if (sizeEl)  sizeEl.textContent  = data.totalSize || '—';
     }
-    if (!inspector.classList.contains('inspector--open')) toggleInspector();
   } else if (mode === 'single') {
     // Restore single-file UI. Panes are shown one at a time by tab (Preview/
     // Tags/History) — never un-hide every pane here (that stacks Preview
@@ -65,21 +67,33 @@ function updateInspector(mode, data = {}) {
     // whichever tab is currently active (default Preview) via the shared
     // switchInspectorTab helper (app.js, canonical — loaded after this file
     // so it wins), which also re-hides the multi pane.
-    if (multiPane) multiPane.style.display = 'none';
-    if (tabBar)    tabBar.style.display = '';
-    if (preview)   preview.style.display = '';
-    if (data.name && filenameEl) filenameEl.textContent = data.name;
+    if (multiPane) multiPane.hidden = true;
+    if (tabBar)    tabBar.hidden = false;
+    if (preview)   preview.hidden = false;
+    if (data.name && filenameEl) { filenameEl.textContent = data.name; filenameEl.title = data.name; }
     if (data.path && filepathEl) filepathEl.textContent = data.path;
     const activeTab = inspector.querySelector('.fp-inspector__tab.fp-tabs__item--active')?.dataset.tab || 'preview';
     switchInspectorTab(activeTab);
-    if (!inspector.classList.contains('inspector--open')) toggleInspector();
   } else {
-    // Empty selection — collapse inspector. Also revoke any preview blob:
-    // URL here (not just in browser.js's onSelectionChanged) since
-    // updateInspector('none') can be reached from other callers too.
+    // Empty selection — render the "No file selected" state in place (same
+    // fixed geometry as a real file: header/preview/meta never resize).
     _inspectorEntry = null;
-    renderPreviewNone();
-    if (inspector.classList.contains('inspector--open')) toggleInspector();
+    _inspectorFileId = null;
+    _inspectorHistoryPath = null;
+    if (multiPane) multiPane.hidden = true;
+    if (tabBar)    tabBar.hidden = false;
+    if (preview)   preview.hidden = false;
+    if (filenameEl) { filenameEl.textContent = 'No file selected'; filenameEl.removeAttribute('title'); }
+    if (filepathEl) filepathEl.textContent = '';
+    renderInspectorEmptyPreview();
+    renderInspectorMeta(null);
+    const emptyHint = '<p style="font:400 var(--t-body) var(--font-ui);color:var(--text-tertiary);padding:8px 0">Select a file</p>';
+    const tagsEl = document.getElementById('inspector-tags');
+    if (tagsEl) tagsEl.innerHTML = emptyHint;
+    const historyEl = document.getElementById('inspector-history');
+    if (historyEl) historyEl.innerHTML = emptyHint;
+    const activeTab = inspector.querySelector('.fp-inspector__tab.fp-tabs__item--active')?.dataset.tab || 'preview';
+    switchInspectorTab(activeTab);
   }
 }
 
@@ -149,6 +163,19 @@ function renderInspectorMeta(data) {
 
 // ── Preview ───────────────────────────────────────────────────────────────────
 function previewContainer() { return document.getElementById('inspector-preview'); }
+
+/** Preview box for updateInspector('none') — a generic, dimmed file glyph.
+ * Distinct from renderPreviewNone() below (used when an actual selected
+ * file simply has nothing to preview, which keeps that file's own
+ * type icon at full opacity): here there is no file at all. */
+function renderInspectorEmptyPreview() {
+  const el = previewContainer();
+  if (!el) return;
+  if (_inspectorPreviewUrl) { URL.revokeObjectURL(_inspectorPreviewUrl); _inspectorPreviewUrl = null; }
+  el.style.display = 'flex';
+  el.style.flexDirection = 'row';
+  el.innerHTML = `<span style="opacity:.4;display:flex">${icon('file', 'fp-icon--40')}</span>`;
+}
 
 function renderPreviewNone() {
   const el = previewContainer();
@@ -469,18 +496,29 @@ function inspectorRevealSelected() {
 
 // ── Inspector tabs ────────────────────────────────────────────────────────────
 // switchInspectorTab itself lives in app.js (toggles fp-tabs__item--active +
-// inline pane display) — that's the version loaded last and the one every
-// click and updateInspector('single') actually runs; no divergent copy here.
+// each pane's `hidden` attribute) — that's the version loaded last and the
+// one every click and updateInspector('single'/'none') actually runs; no
+// divergent copy here.
 
-// ── Inspector toggle ───────────────────────────────────────────────────────────
-function toggleInspector() {
+// ── Inspector toggle (a switch — design spec §3.4) ───────────────────────────
+// setInspectorOpen is the ONLY writer of .inspector--open: ui.inspector_open
+// (config, default on — see settings.js's applySettingsFromConfig, which
+// calls this with {persist: false} on startup) plus Ctrl+I / the toolbar
+// button (via toggleInspector) are the only things that open or close the
+// panel. Selection changes (updateInspector above) never do.
+function setInspectorOpen(open, { persist = true } = {}) {
   const inspector = document.getElementById('inspector');
   const toggleBtn = document.getElementById('btn-inspector-toggle');
   if (!inspector) return;
-  const isOpen = inspector.classList.toggle('inspector--open');
-  toggleBtn?.classList.toggle('fp-icon-btn--active', isOpen);
-  // Notify: used by Browser screen to compact columns
-  document.dispatchEvent(new CustomEvent('fp:inspector-toggle', { detail: { open: isOpen } }));
+  inspector.classList.toggle('inspector--open', open);
+  toggleBtn?.classList.toggle('fp-icon-btn--active', open);
+  if (persist && typeof saveSetting === 'function') saveSetting('ui.inspector_open', open);
+}
+
+function toggleInspector() {
+  const inspector = document.getElementById('inspector');
+  if (!inspector) return;
+  setInspectorOpen(!inspector.classList.contains('inspector--open'));
 }
 
 

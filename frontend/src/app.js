@@ -1095,16 +1095,24 @@ function resolveTheme(mode) {
   return mode === 'system' ? (_systemDark.matches ? 'dark' : 'light') : mode;
 }
 
+// Flips the RESOLVED theme's opposite (dark <-> light) and persists that as
+// an explicit choice — never lands on 'system'. "Follow Windows" stays
+// available only in Settings (settings-set-theme, below). Root cause of the
+// old two-click bug (design spec §3.9): the previous cycle went
+// dark -> light -> system, so from "system resolving dark" the first click
+// landed on "dark" with no visible change.
 function toggleTheme() {
   const current = localStorage.getItem('fp-theme') || 'system';
-  const next = THEME_MODES[(THEME_MODES.indexOf(current) + 1) % THEME_MODES.length];
+  const next = resolveTheme(current) === 'dark' ? 'light' : 'dark';
   applyTheme(next);
+  saveSetting('ui.theme', next);
 }
 
 function applyTheme(mode) {
   if (!THEME_MODES.includes(mode)) mode = 'system';
   const html = document.documentElement;
-  html.dataset.theme = resolveTheme(mode);
+  const resolved = resolveTheme(mode);
+  html.dataset.theme = resolved;
   html.dataset.themeMode = mode;
   localStorage.setItem('fp-theme', mode);
   if (window.electronAPI?.setThemeSource) window.electronAPI.setThemeSource(mode);
@@ -1118,6 +1126,10 @@ function applyTheme(mode) {
     const v = btn.dataset.theme || btn.dataset.val;
     btn.classList.toggle('active', v === mode);
   });
+  // Toolbar toggle's icon tracks the RESOLVED theme (not the picked mode —
+  // 'system' resolves to whichever the OS currently reports).
+  const themeIconUse = document.querySelector('#btn-theme use');
+  if (themeIconUse) themeIconUse.setAttribute('href', `#fp-theme-${resolved}`);
 }
 
 // ── Zoom — uses Electron webContents.setZoomFactor when in Electron (no layout cut-off),
@@ -1353,6 +1365,32 @@ function hideContextMenu() {
 document.addEventListener('click', e => {
   if (!contextMenu?.contains(e.target)) hideContextMenu();
 });
+
+// ── Deselect anywhere (design spec §3.5) ────────────────────────────────────
+// A capture-phase mousedown on #app clears the active selection (Browser
+// rows or Home rows, whichever screen the active tab is on) unless the
+// target sits inside an interactive element. Right-click on open space does
+// the same (called from the contextmenu listener below, before the
+// empty-area menu opens). Marquee selection in #list-scroll keeps working:
+// its own mousedown on the empty list background (browser.js,
+// initMarqueeSelection) starts a drag and only clears the selection itself
+// on a near-zero-distance drag (a plain click) — this handler firing first
+// and clearing eagerly on the same mousedown doesn't conflict, since the
+// marquee's mouseup always sets the FINAL selection state right after.
+const DESELECT_INTERACTIVE_SELECTOR = 'button, a, input, select, textarea, ' +
+  '[contenteditable], [role=button], .fp-row, .home-row, .fp-tab, ' +
+  '.fp-sidebar__item, .fp-context-menu, .modal, .palette, .fp-inspector__tab, .fp-chip';
+
+function deselectOnOpenSpace(target) {
+  if (target?.closest?.(DESELECT_INTERACTIVE_SELECTOR)) return;
+  const screen = activeTab()?.screen;
+  if (screen === 'browser') clearSelection();
+  else if (screen === 'home') homeClearSelection();
+}
+
+document.getElementById('app')?.addEventListener('mousedown', e => {
+  deselectOnOpenSpace(e.target);
+}, true);
 
 // ── Snackbar ───────────────────────────────────────────────��────────────────────
 // Notifications gate (single setting controls all transient toasts/snackbars).
@@ -1613,7 +1651,7 @@ const IN_SCOPE_ACTIONS = new Set([
   // File operations (Task 4) — context-menu actions wired in the switch below.
   'cm-open', 'cm-open-with', 'cm-reveal-explorer',
   'cm-cut', 'cm-copy', 'cm-paste', 'cm-paste-here', 'cm-rename', 'cm-delete',
-  'cm-new-folder', 'cm-new-file', 'cm-refresh',
+  'cm-new-folder', 'cm-new-file', 'cm-refresh', 'refresh-directory',
   'cm-favorite', 'cm-pin-sidebar', 'cm-index-folder', 'cm-properties', 'cm-toggle-hidden',
   'cm-view-list', 'cm-view-grid', 'cm-sort-name', 'cm-sort-modified',
 ]);
@@ -1629,8 +1667,11 @@ function switchInspectorTab(name) {
   inspector.querySelectorAll('.fp-inspector__tab').forEach(t => {
     t.classList.toggle('fp-tabs__item--active', t === targetTab);
   });
+  // hidden (not inline display) so the panes container's own fixed
+  // min-height (styles.css .inspector__panes) is what keeps geometry from
+  // jittering between a short pane (e.g. "Select a file") and a tall one.
   inspector.querySelectorAll('.fp-inspector__pane').forEach(p => {
-    p.style.display = p.dataset.pane === name ? '' : 'none';
+    p.hidden = p.dataset.pane !== name;
   });
 }
 
@@ -1664,6 +1705,9 @@ document.addEventListener('click', e => {
       break;
     case 'nav-retry':
       retryLoad();
+      break;
+    case 'refresh-directory':
+      refreshDirectory();
       break;
     case 'switch-tab':
       // btn IS the .fp-tab itself — it's the only data-action="switch-tab"
@@ -2313,6 +2357,13 @@ document.addEventListener('auxclick', e => {
 // ── Context menu event listener (A.10) ────────────────────────────────────────
 document.addEventListener('contextmenu', e => {
   e.preventDefault();
+  // Right-click on open space clears the active selection too (design spec
+  // §3.5), same rule as the mousedown handler above — checked directly
+  // against the target rather than gated on contextMenuType === 'empty-area'
+  // below, since e.g. an unpinned sidebar item (Home, a drive) resolves to
+  // the empty-area MENU but is still an interactive row that must stay
+  // excluded from deselect.
+  deselectOnOpenSpace(e.target);
   contextMenuType = getMenuTypeForTarget(e.target);
   contextMenuTarget = contextMenuType === 'sidebar-item' ? e.target.closest('.fp-sidebar__item[data-pin-id]') : e.target;
   // Right-click on a row that isn't already selected selects it alone before
@@ -2370,6 +2421,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   initWindowControls();
   initResizer();
   initInspectorTagInput();
+  // Paint the inspector's real "No file selected" empty state immediately —
+  // otherwise its static placeholder markup (a sample filename/size/etc.)
+  // would show through until the first selection change, and the inspector
+  // is open by default now (ui.inspector_open, applied below once config
+  // loads) instead of starting closed.
+  updateInspector('none');
   initSidebarResize();
   restoreSidebarState();
   initToolbarResponsive();

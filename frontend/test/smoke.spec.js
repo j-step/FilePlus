@@ -298,6 +298,116 @@ test('every screen renders with no renderer errors', async () => {
     await expect(page.locator('.fp-tab')).toHaveCount(1);
     await expect(page.locator('#breadcrumb .fp-breadcrumb__crumb--current')).toHaveText('Documents');
 
+    // --- Task 8: inspector switch, deselect anywhere, refresh, theme
+    // (playtest pass 1 §3.4-3.6, 3.9) ---
+    await page.evaluate((p) => loadDirectory(p), docsDir);
+    await page.waitForFunction(() => document.querySelectorAll('.fp-row').length >= 10);
+    // The "Add tag…" step earlier in this test (cm-add-tag) left the
+    // inspector's active tab on Tags — switch back to Preview so the
+    // geometry checks below measure the meta grid they're actually meant to
+    // (a hidden pane's getBoundingClientRect() is a trivial, meaningless 0x0).
+    await page.locator('.fp-inspector__tab[data-tab="preview"]').click();
+
+    // Selecting doc-00.txt kicks off sequential /file, /preview,
+    // /files/history fetches (inspector.js's showInspectorFor); the debounced
+    // pipeline is guarded against a SUPERSEDED selection's fetch touching the
+    // DOM, but the underlying requests still run to completion — clicking
+    // the same row again before the first round trip lands starts a second
+    // overlapping set. inspector-kind is reset to a sentinel that can't
+    // naturally occur BEFORE each click, then awaited afterward, so the wait
+    // detects THIS click's own /file response landing rather than stale
+    // content a previous selection already left behind.
+    const clickDocAndSettle = async () => {
+      await page.evaluate(() => { const el = document.getElementById('inspector-kind'); if (el) el.textContent = '…'; });
+      await rowByName('doc-00.txt').click();
+      await page.waitForFunction(() => document.getElementById('inspector-kind')?.textContent !== '…');
+      await page.waitForTimeout(200); // let the chain's own remaining /preview + /files/history steps land too
+    };
+
+    // ui.inspector_open = false (real POST /config, then the same
+    // loadConfig()+applySettingsFromConfig() pipeline a real startup runs):
+    // selecting a row must NOT open the panel — selection alone never opens
+    // or closes it, only Ctrl+I / the toolbar button / this config do.
+    await postJson('/config', { key: 'ui.inspector_open', value: false });
+    await page.evaluate(async () => { await loadConfig(); applySettingsFromConfig(); });
+    await clickDocAndSettle();
+    await expect(page.locator('#inspector')).not.toHaveClass(/inspector--open/);
+
+    // Back to open — deselecting from blank sidebar space (not a sidebar
+    // item) must clear the selection and show the "No file selected" empty
+    // state, with IDENTICAL header/preview/meta geometry to the real-file
+    // state (no jitter).
+    await postJson('/config', { key: 'ui.inspector_open', value: true });
+    await page.evaluate(async () => { await loadConfig(); applySettingsFromConfig(); });
+    await clickDocAndSettle();
+    await expect(page.locator('#inspector')).toHaveClass(/inspector--open/);
+    await expect(page.locator('#inspector-filename')).toHaveText('doc-00.txt');
+    const measureInspectorBlocks = () => page.evaluate(() => {
+      const box = (sel) => {
+        const r = document.querySelector(sel).getBoundingClientRect();
+        return { width: Math.round(r.width), height: Math.round(r.height) };
+      };
+      return { header: box('.inspector__header'), preview: box('#inspector-preview'), meta: box('.inspector__meta') };
+    });
+    const fileBoxes = await measureInspectorBlocks();
+    await page.screenshot({ path: path.join(SHOTS, 'inspector-file.png') });
+
+    const sidebarBox = await page.locator('#sidebar').boundingBox();
+    const lastSidebarItemBox = await page.locator('#sidebar .fp-sidebar__item').last().boundingBox();
+    await page.mouse.click(
+      sidebarBox.x + sidebarBox.width / 2,
+      Math.min(lastSidebarItemBox.y + lastSidebarItemBox.height + 20, sidebarBox.y + sidebarBox.height - 8),
+    );
+    await expect(page.locator('#inspector-filename')).toHaveText('No file selected');
+    expect(await page.evaluate(() => browserState.selection.size)).toBe(0);
+    const emptyBoxes = await measureInspectorBlocks();
+    await page.screenshot({ path: path.join(SHOTS, 'inspector-empty.png') });
+    expect(emptyBoxes).toEqual(fileBoxes);
+
+    // Refresh, part 1: a real click on the toolbar button proves the
+    // data-action="refresh-directory" wiring reaches refreshDirectory() end
+    // to end, and that it preserves the selection and inspector content
+    // across the round trip.
+    await clickDocAndSettle();
+    const refreshAndSettle = async () => {
+      await page.evaluate(() => { const el = document.getElementById('inspector-kind'); if (el) el.textContent = '…'; });
+      await page.locator('#btn-refresh').click();
+      await expect(page.locator('#btn-refresh')).not.toHaveClass(/is-spinning/, { timeout: 5000 });
+      // refreshDirectory() preserves the selection, which re-triggers the
+      // same debounced inspector fetch clickDocAndSettle waits out above —
+      // settle that fully too before anything else re-selects doc-00.txt,
+      // for the same overlapping-request reason.
+      await page.waitForFunction(() => document.getElementById('inspector-kind')?.textContent !== '…');
+      await page.waitForTimeout(200);
+    };
+    await refreshAndSettle();
+    await expect(rowByName('doc-00.txt')).toHaveClass(/fp-row--selected/);
+    await expect(page.locator('#inspector-filename')).toHaveText('doc-00.txt');
+
+    // Refresh, part 2: refreshDirectory() itself adds .is-spinning to the
+    // button synchronously, before it ever awaits the re-list — proven by
+    // calling it and reading the class back in the SAME evaluate() (no
+    // round trip in between), since the local backend answers /fs/list fast
+    // enough that a real click's own round trip can resolve only after the
+    // whole request has already completed and the class already removed
+    // again (route interception to slow it down artificially was tried and
+    // dropped — toggling network interception mid-test made an unrelated,
+    // genuinely concurrent /preview request fail instead).
+    const spunImmediately = await page.evaluate(() => {
+      refreshDirectory();
+      return document.getElementById('btn-refresh').classList.contains('is-spinning');
+    });
+    expect(spunImmediately).toBe(true);
+    await expect(page.locator('#btn-refresh')).not.toHaveClass(/is-spinning/, { timeout: 5000 });
+
+    // Theme: one click flips dark -> light, one more flips back — the old
+    // dark -> light -> system cycle needed two clicks to see any change.
+    await page.evaluate(() => applyTheme('dark'));
+    await page.locator('#btn-theme').click();
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+    await page.locator('#btn-theme').click();
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+
     await page.evaluate(() => applyTheme('light'));
     for (const id of ['home', 'browser', 'settings']) {
       await page.evaluate((s) => switchScreen(s), id);

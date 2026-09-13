@@ -248,6 +248,13 @@
           -->
         </nav>
 
+        <!-- Refresh: re-lists the current folder (no index run), keeps
+             selection by path and scroll position, spins while in flight -->
+        <button class="fp-icon-btn" id="btn-refresh"
+                data-action="refresh-directory" title="Refresh (F5)">
+          <svg class="fp-icon fp-icon--16" aria-hidden="true"><use href="#fp-refresh"></use></svg>
+        </button>
+
         <!-- Search field (concave chrome, ⌘K hint) -->
         <div class="fp-search fp-toolbar__search" id="search-wrap">
           <!-- Collapsed-mode icon (inline SVG — no CSP data-URI issue) -->
@@ -278,9 +285,11 @@
           <svg class="fp-icon fp-icon--16" aria-hidden="true"><use href="#fp-inspector"></use></svg>
         </button>
 
-        <!-- Theme toggle (keep from old toolbar) -->
+        <!-- Theme toggle (keep from old toolbar). Icon tracks the resolved
+             theme (applyTheme swaps the <use> href); static default matches
+             <html data-theme="dark"> above. -->
         <button class="fp-icon-btn" id="btn-theme" data-action="toggle-theme" title="Toggle theme">
-          <svg class="fp-icon fp-icon--16" aria-hidden="true"><use href="#fp-theme-light"></use></svg>
+          <svg class="fp-icon fp-icon--16" aria-hidden="true"><use href="#fp-theme-dark"></use></svg>
         </button>
 
       </div><!-- /.fp-toolbar -->
@@ -2670,7 +2679,6 @@
                background:var(--bg-raised);
                border:1px solid var(--border-hairline);
                border-radius:var(--r-card);
-               aspect-ratio:16/10;
                display:flex;align-items:center;justify-content:center;
                flex-shrink:0;overflow:hidden;
              ">
@@ -2684,9 +2692,14 @@
           <svg class="fp-icon fp-icon--40" aria-hidden="true" style="color:var(--text-tertiary)"><use href="#fp-file"></use></svg>
         </div>
 
-        <!-- Filename + path -->
-        <h3 class="inspector__filename" id="inspector-filename">design-brief.md</h3>
-        <p class="inspector__filepath mono" id="inspector-filepath" style="font:400 var(--t-compact) var(--font-data);color:var(--text-tertiary);word-break:break-all;line-height:1.4;margin:0 0 8px">D:\design-brief.md</p>
+        <!-- Filename + path — fixed-height header (inspector.js/app.js only
+             ever touch the text inside, never this wrapper) so the block's
+             own geometry never jitters between "No file selected" and a
+             real filename. -->
+        <div class="inspector__header">
+          <h3 class="inspector__filename" id="inspector-filename">design-brief.md</h3>
+          <p class="inspector__filepath mono" id="inspector-filepath" style="font:400 var(--t-compact) var(--font-data);color:var(--text-tertiary);word-break:break-all;line-height:1.4;margin:0 0 8px">D:\design-brief.md</p>
+        </div>
 
         <!-- Inspector tabs: Preview / Tags / History (underline style) -->
         <div class="fp-tabs fp-inspector__tabs" style="border-bottom:1px solid var(--border-hairline);margin:0 -16px;padding:0 16px">
@@ -2700,7 +2713,13 @@
         </div>
 
         <!-- Inspector panes -->
-        <div class="inspector__body" id="inspector-body" style="flex:1;overflow-y:auto;min-height:0;padding-top:12px">
+        <div class="inspector__body" id="inspector-body" style="padding-top:12px">
+         <!-- Fixed min-height (styles.css) so switching panes — or between a
+              selection and the "No file selected" state — never jitters the
+              layout below (Task 8, playtest pass 1 §3.4). Panes are toggled
+              with the `hidden` attribute (switchInspectorTab / updateInspector
+              in app.js/inspector.js), never inline display. -->
+         <div class="inspector__panes">
 
           <!-- Preview pane (metadata) -->
           <div class="fp-inspector__pane" data-pane="preview">
@@ -2730,7 +2749,7 @@
           </div>
 
           <!-- Tags pane -->
-          <div class="fp-inspector__pane" data-pane="tags" style="display:none">
+          <div class="fp-inspector__pane" data-pane="tags" hidden>
             <div class="inspector__tags-wrap fp-chip-group" id="inspector-tags"></div>
             <input class="fp-input" id="inspector-tag-input" placeholder="Add tag…"
                    list="inspector-tag-suggestions" style="margin-top:10px;width:100%">
@@ -2738,7 +2757,7 @@
           </div>
 
           <!-- History pane -->
-          <div class="fp-inspector__pane" data-pane="history" style="display:none">
+          <div class="fp-inspector__pane" data-pane="history" hidden>
             <div id="inspector-history">
               <p style="font:400 var(--t-body) var(--font-ui);color:var(--text-tertiary);padding:8px 0">No history available yet.</p>
             </div>
@@ -2746,7 +2765,7 @@
 
           <!-- INSPECTOR: multi-select state — shown by updateInspector('multi', ...) when >1 item selected -->
           <!-- Single-file state (preview/tags/history tabs above) is the default -->
-          <div class="fp-inspector__pane" data-pane="multi" style="display:none">
+          <div class="fp-inspector__pane" data-pane="multi" hidden>
             <div style="font:500 var(--t-title-sm) var(--font-ui);color:var(--text-primary);margin-bottom:4px">
               <span id="inspector-multi-count">3</span> items selected
             </div>
@@ -2763,6 +2782,7 @@
             </div>
           </div>
 
+         </div><!-- /.inspector__panes -->
         </div><!-- /.inspector__body -->
 
         <!-- Bottom action row: 1px border-hairline top -->

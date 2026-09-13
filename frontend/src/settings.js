@@ -86,6 +86,14 @@ function applySettingsFromConfig() {
   }
   if (typeof cfg['ui.notifications'] === 'boolean') setNotificationsEnabled(cfg['ui.notifications']);
 
+  // Default true — the inspector starts open unless explicitly turned off.
+  // No localStorage fast-path (unlike theme/density/accent): config, or this
+  // documented default, is its only source (same pattern as show_extensions/
+  // show_hidden below). {persist: false} so re-applying the value we just
+  // read back never fires a redundant POST /config on startup.
+  const inspectorOpen = cfg['ui.inspector_open'] !== false;
+  if (typeof setInspectorOpen === 'function') setInspectorOpen(inspectorOpen, { persist: false });
+
   // Default true (matches the Personalization checkbox's static markup).
   const showExtensions = cfg['ui.show_extensions'] !== false;
   browserState.showExtensions = showExtensions;

@@ -370,12 +370,27 @@ async function loadDirectory(absPath, opts = {}) {
   if (listScroll) listScroll.scrollTop = restore ? (restore.scrollTop || 0) : 0;
 }
 
-/** Re-fetches the current directory, keeping selection/anchor/focus where the paths still exist.
- * Returns loadDirectory's promise so callers (fileops.run(), inline rename) can await the
- * re-render actually landing before touching the DOM again. */
+/** Re-fetches the current directory, keeping selection/anchor/focus (by path)
+ * and the list scroll position where they still apply, and spins the
+ * toolbar refresh button's icon for the duration — shared by the toolbar
+ * button (data-action="refresh-directory"), F5, and the empty-area context
+ * menu's Refresh item, all of which just call this (Task 8, playtest pass 1
+ * §3.6). Returns loadDirectory's promise so callers (fileops.run(), inline
+ * rename) can await the re-render actually landing before touching the DOM
+ * again.
+ * TODO(Task 14): in search-results mode this should re-run the search
+ * instead of re-listing browserState.path — not built yet. */
 function refreshDirectory() {
   if (!browserState.path) return;
-  return loadDirectory(browserState.path, { addToHistory: false, preserveSelection: true });
+  const btn = document.getElementById('btn-refresh');
+  const listScroll = document.getElementById('list-scroll');
+  const scrollTop = listScroll ? listScroll.scrollTop : 0;
+  btn?.classList.add('is-spinning');
+  const p = loadDirectory(browserState.path, { addToHistory: false, preserveSelection: true });
+  return p.finally(() => {
+    if (listScroll) listScroll.scrollTop = scrollTop;
+    btn?.classList.remove('is-spinning');
+  });
 }
 
 // Every load failure gets the same two recovery actions: "Go back" (real
@@ -1014,7 +1029,8 @@ function onSelectionChanged() {
     const n = browserState.selection.size;
     if (n === 0) {
       _inspectorSeq++; // invalidate any fetch still in flight from the prior selection
-      renderPreviewNone(); // revoke the blob: URL — nothing is selected to preview anymore
+      // updateInspector('none') renders the full empty state itself now
+      // (including revoking any preview blob: URL) — no separate call needed.
       updateInspector('none');
     } else if (n === 1) {
       showInspectorFor([...browserState.selection][0]);

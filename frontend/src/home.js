@@ -387,6 +387,18 @@ function initFavoritesDragDrop() {
   });
 }
 
+/** Clears the Home screen's row selection (Recent + Favorites panes both —
+ * only one row is ever selected at a time today, see the 'open-recent-file'
+ * click case in app.js) and collapses the inspector back to its "No file
+ * selected" state. Home has no selection Set of its own (a row's
+ * .fp-row--selected class IS its selection state), so this is a plain DOM
+ * sweep — the deselect-anywhere handler (app.js) calls it for the Home
+ * screen the same way browser.js's clearSelection() covers Browser. */
+function homeClearSelection() {
+  document.querySelectorAll('#screen-home .fp-row--selected').forEach(r => r.classList.remove('fp-row--selected'));
+  if (typeof updateInspector === 'function') updateInspector('none');
+}
+
 /** Double-click on any Home row (Recent or Favorites) opens it — delegated
  * on #screen-home so it survives loadRecent()/loadFavorites() re-renders. */
 function initHomeRowInteractions() {
