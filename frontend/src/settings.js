@@ -105,6 +105,38 @@ function applySettingsFromConfig() {
   document.querySelectorAll('[data-action="settings-set-click-mode"]').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.val === clickMode);
   });
+
+  // Default 'fileplus' — matches fpIconSource() (icons.js), which treats
+  // anything other than the literal 'windows' as the FilePlus family sprite.
+  // No repaint here: this runs during init, before the first listing renders.
+  applyIconSource(cfg['ui.icon_source']);
+}
+
+/** Syncs the Personalization "File icons" segmented control to `source` and
+ * returns the normalised value ('fileplus' | 'windows'). The value itself is
+ * read back out of window.__fpConfig by fpIconSource() (icons.js) on every
+ * icon render, so there is no other state to apply. */
+function applyIconSource(source) {
+  const v = source === 'windows' ? 'windows' : 'fileplus';
+  document.querySelectorAll('[data-action="settings-set-icon-source"]').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.val === v);
+  });
+  return v;
+}
+
+/** Repaints everything that renders a file icon, after ui.icon_source
+ * changed: the open directory listing, Home's Recent/Favorites rows, and the
+ * Inspector (whose "No preview" placeholder carries the selected file's
+ * icon). Palette results need nothing — they are rebuilt per query. */
+function refreshIconSurfaces() {
+  if (browserState.entries && browserState.entries.length) renderDirectory();
+  loadRecent();
+  loadFavorites();
+  // Only for a selection that is still in the current listing — re-fetching
+  // metadata for a path the user has since navigated away from would answer
+  // 404 and blank the panel that is showing something perfectly valid.
+  const selected = [...browserState.selection];
+  if (selected.length === 1 && entryForPath(selected[0])) showInspectorFor(selected[0]);
 }
 
 /** Updates the Data pane's read-only "Writes" line from the last /health

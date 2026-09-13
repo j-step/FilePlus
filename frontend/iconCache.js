@@ -56,10 +56,15 @@ function normalizeExt(ext) {
 }
 
 /** Cache key for `fileIcon(path, ext, size)` — per-path for extensions whose
- *  icon varies file-to-file, per-extension (shared) otherwise. */
+ *  icon varies file-to-file, per-extension (shared) otherwise.
+ *
+ *  The empty extension is per-path too (Stage 2C Task 6): it covers BOTH
+ *  directories and extension-less files, which the shell gives entirely
+ *  different icons, so one shared key would paint a folder over a Makefile
+ *  (or the reverse) in the same listing. */
 function iconCacheKey(path, ext, size) {
   const e = normalizeExt(ext);
-  if (PER_PATH_EXTS.has(e)) {
+  if (e === '' || PER_PATH_EXTS.has(e)) {
     return `path:${path}:${size}`;
   }
   return `ext:${e}:${size}`;

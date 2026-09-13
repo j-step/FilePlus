@@ -557,8 +557,19 @@ function closePalette() {
 // shown and search results are cleared. At 2+ chars, input is debounced
 // 150ms then GET /search?q=&limit=30 fires; results replace the Commands
 // group until the query drops back below the threshold.
-const PALETTE_FILE_ICON = `<svg class="fp-icon fp-icon--14" aria-hidden="true" style="flex-shrink:0;color:var(--text-secondary)"><use href="#fp-file"></use></svg>`;
-const PALETTE_FOLDER_ICON = `<svg class="fp-icon fp-icon--14" aria-hidden="true" style="flex-shrink:0;color:var(--text-secondary)"><use href="#fp-folder"></use></svg>`;
+// Palette result icons come from the same iconFor() the file list uses, so a
+// hit reads as the same kind of thing in both places (and follows the
+// FilePlus/Windows icon-source setting). Built per result rather than hoisted
+// into a constant: the file icon depends on the hit's own extension.
+const paletteFileIcon = (hit) => iconFor({ name: hit.filename, path: hit.path, ext: extOfPath(hit.filename), is_dir: false }, 14, 'fp-palette__item-icon');
+const paletteFolderIcon = (dirPath) => iconFor({ name: pathBaseName(dirPath), path: dirPath, is_dir: true }, 14, 'fp-palette__item-icon');
+
+/** '.txt' for 'notes.txt', '' for an extension-less name (matches the `ext`
+ * a /fs/list entry carries, which is what fpFamilyFor() expects). */
+function extOfPath(name) {
+  const dot = String(name || '').lastIndexOf('.');
+  return dot > 0 ? String(name).slice(dot) : '';
+}
 const PALETTE_MIN_CHARS = 2;
 const PALETTE_DEBOUNCE_MS = 150;
 let _paletteSearchTimer = null;
@@ -609,7 +620,7 @@ async function runPaletteSearch(q) {
 
   const fileItems = hits.map(hit => `
     <button class="fp-palette__item" role="option" data-action="palette-open-file" data-path="${escapeHtml(hit.path)}">
-      ${PALETTE_FILE_ICON}
+      ${paletteFileIcon(hit)}
       <span>${escapeHtml(hit.filename)}</span>
       <span class="fp-palette__item-meta fp-mono">${escapeHtml(parentOfPath(hit.path))}</span>
     </button>`).join('');
@@ -623,7 +634,7 @@ async function runPaletteSearch(q) {
     seenParents.add(parent);
     folderItems.push(`
       <button class="fp-palette__item" role="option" data-action="palette-open-folder" data-path="${escapeHtml(parent)}">
-        ${PALETTE_FOLDER_ICON}
+        ${paletteFolderIcon(parent)}
         <span>Open folder ${escapeHtml(pathBaseName(parent))}</span>
         <span class="fp-palette__item-meta fp-mono">${escapeHtml(parent)}</span>
       </button>`);
@@ -1339,6 +1350,7 @@ const IN_SCOPE_ACTIONS = new Set([
   'settings-nav', 'settings-set-theme', 'settings-set-density', 'settings-set-accent',
   'settings-set-accent-hex', 'settings-reset-accent',
   'settings-set-show-notifications', 'settings-toggle', 'settings-set-click-mode',
+  'settings-set-icon-source',
   'settings-empty-trash',
   'settings-set-font-scale', 'settings-reset-shortcuts',
   'zoom-reset',
@@ -1549,6 +1561,12 @@ document.addEventListener('click', e => {
         b.classList.toggle('active', b.dataset.val === mode);
       });
       saveSetting('ui.click_mode', mode);
+      break;
+    }
+    case 'settings-set-icon-source': {
+      const source = applyIconSource(btn.dataset.val);
+      saveSetting('ui.icon_source', source);
+      refreshIconSurfaces();
       break;
     }
     case 'settings-empty-trash':

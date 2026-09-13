@@ -23,6 +23,12 @@ let _inspectorHistoryPath = null;
 // Revoked before a new one replaces it so blob: URLs don't leak.
 let _inspectorPreviewUrl = null;
 
+// The entry currently in the header, in the {name, path, ext, is_dir} shape
+// iconFor() wants — so the "No preview" placeholder shows the file's own
+// file-type icon (or its Windows shell icon) rather than a generic page.
+// Cleared whenever the header leaves single-selection mode.
+let _inspectorEntry = null;
+
 // ── Inspector update (A.3.2) — pane swap + header text only; data fetching
 // and per-field rendering live in showInspectorFor/showInspectorMulti below.
 function updateInspector(mode, data = {}) {
@@ -37,6 +43,7 @@ function updateInspector(mode, data = {}) {
   const filepathEl  = document.getElementById('inspector-filepath');
 
   if (mode === 'multi') {
+    _inspectorEntry = null;
     // Show multi-select aggregate; hide single-file UI
     singlePanes.forEach(p => { p.style.display = 'none'; });
     if (tabBar)   tabBar.style.display = 'none';
@@ -70,6 +77,7 @@ function updateInspector(mode, data = {}) {
     // Empty selection — collapse inspector. Also revoke any preview blob:
     // URL here (not just in browser.js's onSelectionChanged) since
     // updateInspector('none') can be reached from other callers too.
+    _inspectorEntry = null;
     renderPreviewNone();
     if (inspector.classList.contains('inspector--open')) toggleInspector();
   }
@@ -87,6 +95,8 @@ async function showInspectorFor(path) {
   const entry = typeof entryForPath === 'function' ? entryForPath(path) : null;
   const name = entry ? entry.name : path.split(/[\\/]/).filter(Boolean).pop();
   updateInspector('single', { name, path });
+  // Set AFTER updateInspector — its 'multi'/'none' branches null this out.
+  _inspectorEntry = { ...(entry || {}), name, path };
 
   let data;
   try {
@@ -147,7 +157,7 @@ function renderPreviewNone() {
   el.style.display = 'flex';
   el.style.flexDirection = 'row'; // back to the container's default centering (a text preview sets 'column')
   el.innerHTML = `<div style="display:flex;flex-direction:column;align-items:center;gap:8px;color:var(--text-tertiary)">
-    ${icon('file', 'fp-icon--40')}
+    ${iconFor(_inspectorEntry, 40)}
     <span style="font:400 var(--t-compact) var(--font-ui)">No preview</span>
   </div>`;
 }

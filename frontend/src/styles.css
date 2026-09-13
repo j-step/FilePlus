@@ -143,6 +143,55 @@
 
   --w-sidebar:           240px;
   --w-sidebar-collapsed: 52px;
+
+  /* ---------- File-type family colours (Stage 2C Task 6) ----------
+     One token per family in backend/filetypes.py (mirrored into
+     frontend/src/filetypes.js). Each fp-ft-<family> sprite symbol paints its
+     tab — and nothing else — with its own token; the page outline and the
+     glyph stay on currentColor so they follow row/selection colour. The
+     family hues are brand hues (a PDF is red everywhere), so they are shared
+     between the two themes; only --ft-folder, which sits as a large solid
+     shape against the page, is darkened for the light theme. */
+  --ft-text:        #8A8F98;
+  --ft-markdown:    #6C8EBF;
+  --ft-pdf:         #E5484D;
+  --ft-word:        #2B579A;
+  --ft-excel:       #217346;
+  --ft-powerpoint:  #D24726;
+  --ft-csv:         #3E9C6A;
+  --ft-code-js:     #E8C547;
+  --ft-code-ts:     #3178C6;
+  --ft-code-py:     #3776AB;
+  --ft-code-html:   #E44D26;
+  --ft-code-css:    #264DE4;
+  --ft-code-json:   #8B8B8B;
+  --ft-code-xml:    #0060AC;
+  --ft-code-yaml:   #CB171E;
+  --ft-code-shell:  #4EAA25;
+  --ft-code-c:      #5C6BC0;
+  --ft-code-java:   #B07219;
+  --ft-code-go:     #00ADD8;
+  --ft-code-rust:   #DEA584;
+  --ft-code-other:  #7C5CFF;
+  --ft-image:       #3FA7D6;
+  --ft-image-raw:   #2F7FA6;
+  --ft-svg:         #FFB13B;
+  --ft-video:       #A259FF;
+  --ft-audio:       #FF7A59;
+  --ft-archive:     #B08968;
+  --ft-executable:  #4C8BF5;
+  --ft-shortcut:    #4C8BF5;
+  --ft-installer:   #4C8BF5;
+  --ft-font:        #5B5F97;
+  --ft-disk-image:  #6B7280;
+  --ft-database:    #0E7C7B;
+  --ft-ebook:       #9C6644;
+  --ft-generic:     #8A8F98;
+  --ft-folder:      #F2C94C;
+  /* Glyph painted ON the folder body (monitor, arrow, note, …) — always the
+     light end of the scale, since it sits on a saturated yellow shape in both
+     themes rather than on the page background. */
+  --ft-folder-glyph: #FFFFFF;
 }
 
 [data-theme="light"] {
@@ -177,6 +226,50 @@
 
   --shadow-popover: 0 8px 24px rgba(0, 0, 0, 0.14);
   --shadow-modal:   0 16px 48px rgba(0, 0, 0, 0.20);
+
+  /* ---------- File-type family colours (Stage 2C Task 6) ----------
+     Restated in full so the light theme owns its own copy of the palette
+     rather than inheriting a dark-theme value by omission (a future tweak to
+     one theme then cannot silently move the other). Identical to :root
+     except --ft-folder, which is darkened so a large solid yellow shape
+     still reads against a white page. */
+  --ft-text:        #8A8F98;
+  --ft-markdown:    #6C8EBF;
+  --ft-pdf:         #E5484D;
+  --ft-word:        #2B579A;
+  --ft-excel:       #217346;
+  --ft-powerpoint:  #D24726;
+  --ft-csv:         #3E9C6A;
+  --ft-code-js:     #E8C547;
+  --ft-code-ts:     #3178C6;
+  --ft-code-py:     #3776AB;
+  --ft-code-html:   #E44D26;
+  --ft-code-css:    #264DE4;
+  --ft-code-json:   #8B8B8B;
+  --ft-code-xml:    #0060AC;
+  --ft-code-yaml:   #CB171E;
+  --ft-code-shell:  #4EAA25;
+  --ft-code-c:      #5C6BC0;
+  --ft-code-java:   #B07219;
+  --ft-code-go:     #00ADD8;
+  --ft-code-rust:   #DEA584;
+  --ft-code-other:  #7C5CFF;
+  --ft-image:       #3FA7D6;
+  --ft-image-raw:   #2F7FA6;
+  --ft-svg:         #FFB13B;
+  --ft-video:       #A259FF;
+  --ft-audio:       #FF7A59;
+  --ft-archive:     #B08968;
+  --ft-executable:  #4C8BF5;
+  --ft-shortcut:    #4C8BF5;
+  --ft-installer:   #4C8BF5;
+  --ft-font:        #5B5F97;
+  --ft-disk-image:  #6B7280;
+  --ft-database:    #0E7C7B;
+  --ft-ebook:       #9C6644;
+  --ft-generic:     #8A8F98;
+  --ft-folder:      #E8B923;
+  --ft-folder-glyph: #FFFFFF;
 }
 
 /* -----------------------------------------------------------------------------
@@ -3572,14 +3665,9 @@ svg { flex-shrink: 0; }
   background: var(--accent-wash);
   border-color: var(--accent-edge);
 }
-#list-scroll[data-view="grid"] .fp-row__icon {
-  width: 40px;
-  height: 40px;
-}
-#list-scroll[data-view="grid"] .fp-row__icon svg {
-  width: 40px;
-  height: 40px;
-}
+/* Grid tiles carry .fp-tile__thumb (see §57b) instead of the list view's
+   16px .fp-row__icon — the tile's whole point is a thumbnail area big
+   enough to show the file's actual content. */
 #list-scroll[data-view="grid"] .fp-row__name {
   font: 500 var(--t-compact) var(--font-ui);
   max-width: 100%;
@@ -5239,6 +5327,91 @@ button.fp-pill:hover {
 .fp-icon--36 { width: 36px; height: 36px; }
 .fp-icon--40 { width: 40px; height: 40px; }
 .fp-icon--48 { width: 48px; height: 48px; }
+
+/* =============================================================================
+   57b. FILE-TYPE ICONS, WINDOWS SHELL ICONS, THUMBNAILS (Stage 2C Task 6)
+   The fp-ft-<family> sprite symbols paint their own family tab from an
+   --ft-* token and leave everything else on currentColor, so they inherit
+   row/selection colour like any chrome icon; these rules only cover the
+   non-sprite parts — the lazily-filled <img> elements and their containers.
+   ============================================================================= */
+
+/* Windows shell icon (ui.icon_source = 'windows'): a real bitmap, sized by
+   the same .fp-icon--N modifier the sprite <use> would have carried. */
+.fp-icon--win { object-fit: contain; }
+
+/* Unknown extension in FilePlus mode: the blank page icon carries the
+   extension itself beside it rather than pretending to know the type. */
+.fp-ext-badge {
+  flex: none;
+  font: 500 9px/1 var(--font-data);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--r-chip);
+  padding: 2px 3px;
+}
+
+/* Sprite icon with a shell thumbnail layered over it: the icon paints
+   immediately, the thumbnail fades in on top once the shell answers, and a
+   file the shell cannot picture keeps its icon (.fp-thumb--failed). */
+.fp-thumb-box {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+}
+.fp-thumb {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  max-width: 100%;
+  max-height: 100%;
+  opacity: 0;
+  border-radius: var(--r-sm);
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+.fp-thumb--ready { opacity: 1; }
+.fp-thumb--failed { display: none; }
+/* Thumbnail arrived: the placeholder icon has done its job. Hidden rather
+   than removed so a re-render doesn't have to rebuild the box. */
+.fp-thumb-box--has-thumb > .fp-icon { visibility: hidden; }
+
+/* Folder preview: up to two of the folder's own pictures (GET /fs/peek)
+   fanned out of the folder's mouth. The folder body is lifted above them so
+   they read as being INSIDE it — a folder tile must still say "folder"
+   first, and its contents second. */
+.fp-thumb-box--peeked > .fp-icon { position: relative; z-index: 1; }
+.fp-thumb--mini {
+  inset: auto;
+  left: 50%;
+  top: 13%;
+  width: 40%;
+  height: 40%;
+  z-index: 0;
+  object-fit: cover;
+  border: 1px solid var(--border-subtle);
+  border-radius: 2px;
+  background: var(--bg-content);
+}
+.fp-thumb--mini-1 { transform: translate(-90%, 0) rotate(-9deg); }
+.fp-thumb--mini-2 { transform: translate(-10%, 0) rotate(9deg); }
+
+/* Grid tile thumbnail area. Task 10 introduces --list-scale as the grid's
+   size control; until then the fallback keeps every tile at 96px. */
+.fp-tile__thumb {
+  width: calc(96px * var(--list-scale, 1));
+  height: calc(96px * var(--list-scale, 1));
+}
+.fp-tile__thumb > .fp-icon { width: 58%; height: 58%; }
+
+/* List row whose 16px icon is a thumbnail of the picture itself. */
+.fp-row__icon--thumb { overflow: hidden; border-radius: var(--r-sm); }
+
+/* Command-palette result icons (iconFor at 14px). */
+.fp-palette__item-icon { flex: none; color: var(--text-secondary); }
 
 /* ── Reduced motion: see canonical block appended below (UI-SPEC §A.0) ─────── */
 

@@ -87,6 +87,12 @@ test.describe('iconCacheKey', () => {
     expect(k1).not.toBe(k2);
   });
 
+  test('is per-path for an empty extension (a folder and an extension-less file)', () => {
+    const folder = iconCacheKey('C:\\Users\\x\\Projects', '', 16);
+    const file = iconCacheKey('C:\\Users\\x\\Makefile', '', 16);
+    expect(folder).not.toBe(file);
+  });
+
   test('extension matching is case-insensitive and dot-tolerant', () => {
     const k1 = iconCacheKey('C:\\Users\\x\\a.txt', 'txt', 32);
     const k2 = iconCacheKey('C:\\Users\\x\\a.txt', '.TXT', 32);

@@ -6,8 +6,8 @@
  *
  * Script load order is api.js → fileops.js → browser.js → inspector.js →
  * home.js → settings.js → app.js (see index.html) — this file can call
- * anything defined in api.js/browser.js at parse time (iconForExt,
- * escapeHtml, parentOfPath, formatModified, ICON_FOLDER, ApiError,
+ * anything defined in api.js/icons.js/browser.js at parse time (iconFor,
+ * escapeHtml, parentOfPath, formatModified, ApiError,
  * formatApiError), but anything defined later in app.js (showSnackbar,
  * showToast, openBrowserAt, pathBaseName, selectRow, contextMenuTarget) is
  * only safe to reference from inside functions that run after DOMContentLoaded,
@@ -32,9 +32,11 @@ const HOME_ICON_STAR = `<svg class="fp-icon fp-icon--14 fp-row__fav-star-icon" a
  * /recent nor /favorites join the files table for it) — ext === '' is the
  * best available signal that a path is a folder rather than an
  * extension-less file, so it's used consistently for icon choice and for
- * deciding Open behavior (openPath vs loadDirectory). */
-function homeIconFor(ext) {
-  return ext === '' ? ICON_FOLDER : iconForExt(ext);
+ * deciding Open behavior (openPath vs loadDirectory). Everything past that
+ * is iconFor()'s job (icons.js): the file-type family sprite, the named
+ * folder variants, or a real Windows shell icon when ui.icon_source says so. */
+function homeIconFor(entry) {
+  return iconFor({ ...entry, is_dir: entry.ext === '' }, 16, 'fp-row__icon');
 }
 
 // ── Empty states (existing .fp-empty-state pattern) ───────────────────────
@@ -81,7 +83,7 @@ function renderRecentRow(entry, bucketKey) {
   const nameTitleAttr = hideExt ? ` title="${escapeHtml(entry.name)}"` : '';
   return `<div class="fp-row fp-row--recent" role="option" tabindex="0"
        data-path="${escapeHtml(entry.path)}" data-ext="${escapeHtml(entry.ext)}" data-action="open-recent-file">
-    ${homeIconFor(entry.ext)}
+    ${homeIconFor(entry)}
     <span class="fp-row__name"${nameTitleAttr}>${escapeHtml(displayName)}</span>
     <span class="fp-row__recent-path mono">${escapeHtml(parentDisplay)}</span>
     <span class="fp-row__recent-time mono">${escapeHtml(entry.action)} ${escapeHtml(timeLabel)}</span>
@@ -110,7 +112,7 @@ function renderFavoriteRow(entry) {
   const nameTitleAttr = hideExt ? ` title="${escapeHtml(entry.name)}"` : '';
   return `<div class="fp-row fp-row--recent" role="option" tabindex="0" draggable="true"
        data-path="${escapeHtml(entry.path)}" data-ext="${escapeHtml(entry.ext)}" data-action="open-recent-file">
-    ${homeIconFor(entry.ext)}
+    ${homeIconFor(entry)}
     <span class="fp-row__name"${nameTitleAttr}>${escapeHtml(displayName)}</span>
     <span class="fp-row__recent-path mono">${escapeHtml(parentDisplay)}</span>
     <span class="fp-row__recent-time mono">${escapeHtml(addedLabel)}</span>

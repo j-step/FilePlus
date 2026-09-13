@@ -24,6 +24,11 @@ const browserState = {
   focus: null,
   showHidden: false,
   showExtensions: true,
+  // 'list' | 'grid' — mirrors #list-scroll[data-view] / sessionStorage
+  // ['fp-view-mode'], read by renderFsRow to pick row vs tile markup (a tile
+  // carries a thumbnail area a row has no place for). setViewMode() is the
+  // only writer, and re-renders the listing after changing it.
+  view: readSavedView(),
   parent: null,
   isRoot: false,
   truncated: false,
@@ -32,6 +37,11 @@ const browserState = {
   // action so it can re-attempt the exact same load that just failed.
   lastAttemptedPath: null,
 };
+
+/** Reads the saved view mode from sessionStorage, defaulting to list. */
+function readSavedView() {
+  return sessionStorage.getItem('fp-view-mode') === 'grid' ? 'grid' : 'list';
+}
 
 /** Reads a validated {key, dir} sort spec from sessionStorage, defaulting to name/asc. */
 function readSavedSort() {
@@ -49,6 +59,7 @@ function readSavedSort() {
 
 // ── View modes ────────────────────────────────────────────────────────────────
 function setViewMode(mode) {
+  browserState.view = mode === 'grid' ? 'grid' : 'list';
   // v2 segmented opts
   document.querySelectorAll('.fp-segmented__opt[data-view]').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.view === mode);
@@ -75,6 +86,10 @@ function setViewMode(mode) {
     pane.dataset.view = mode;
   });
   sessionStorage.setItem('fp-view-mode', mode);
+  // Rows and tiles are different markup (a tile has a 96px thumbnail area
+  // that requests a real shell thumbnail; a row has a 16px icon), so the
+  // listing has to be re-rendered rather than just re-styled.
+  if (browserState.entries && browserState.entries.length) renderDirectory();
 }
 
 // ── Column sort cycling (A.3.1 / Task 3) ────────────────────────────────────
@@ -208,22 +223,11 @@ function initMarqueeSelection() {
 
 // ── File list loading ─────────────────────────────────────────────────────────
 
-// ICON_TXT and ICON_FILE both collapse to the sprite's single generic
-// 'file' glyph (the hand-drawn originals differentiated "has text lines" vs
-// not; Task 6's real per-family file-type icons replace this coarse split).
-const ICON_FILE = icon('file', 'fp-icon--16 fp-row__icon');
-const ICON_IMG  = icon('image', 'fp-icon--16 fp-row__icon');
-const ICON_TXT  = icon('file', 'fp-icon--16 fp-row__icon');
-const ICON_FOLDER = icon('folder', 'fp-icon--16 fp-row__icon');
-
-const EXT_IMG   = new Set(['.jpg','.jpeg','.png','.gif','.bmp','.webp','.heic','.svg','.tiff']);
-const EXT_TXT   = new Set(['.txt','.md','.csv','.log','.json','.xml','.yaml','.yml','.toml','.ini','.cfg','.html','.css','.js','.ts','.py','.rs','.go','.java','.c','.cpp','.h']);
-
-function iconForExt(ext) {
-  if (EXT_IMG.has(ext)) return ICON_IMG;
-  if (EXT_TXT.has(ext)) return ICON_TXT;
-  return ICON_FILE;
-}
+// Row and tile icons all come from iconFor()/fpThumbBox() in icons.js — the
+// old ICON_* constants and the two hard-coded extension sets they switched on
+// are gone (Stage 2C Task 6): the family split now lives in
+// backend/filetypes.py, mirrored into frontend/src/filetypes.js, and each
+// family has its own fp-ft-<family> sprite symbol.
 
 function formatSize(bytes) {
   if (bytes == null) return '—';
@@ -426,9 +430,41 @@ function stemOf(name) {
   return dot > 0 ? name.slice(0, dot) : name;
 }
 
+/** Leading visual for one entry: a 16px family icon in list view, a 96px
+ * thumbnail area in grid view.
+ *
+ * Grid tiles show real content wherever the shell can produce it — a shell
+ * thumbnail for media files, and, for a folder in 'fileplus' mode, up to two
+ * of the folder's own pictures fanned over the folder icon (GET /fs/peek,
+ * requested only once the tile is on screen). In 'windows' mode every tile
+ * asks the shell directly, folders included, which is what Explorer shows.
+ * List view keeps the family icon everywhere except image rows, which get a
+ * 16px thumbnail of the picture itself. */
+function renderFsIcon(entry) {
+  const source = fpIconSource();
+  if (browserState.view !== 'grid') {
+    const wantsThumb = !entry.is_dir && !entry.error && source === 'fileplus'
+      && typeof fpIsMedia === 'function' && fpIsMedia(entry.ext)
+      && fpFamilyFor(entry.ext) !== 'svg'; // an SVG's own markup is its icon
+    return wantsThumb
+      ? fpThumbBox(entry, 16, 'fp-row__icon fp-row__icon--thumb')
+      : iconFor(entry, 16, 'fp-row__icon');
+  }
+  if (entry.error) return fpTileIcon(entry);
+  if (source === 'windows') return fpThumbBox(entry, 96, 'fp-tile__thumb');
+  if (entry.is_dir) return fpFolderPeekBox(entry, 'fp-tile__thumb');
+  if (typeof fpIsMedia === 'function' && fpIsMedia(entry.ext) && fpFamilyFor(entry.ext) !== 'svg') {
+    return fpThumbBox(entry, 96, 'fp-tile__thumb');
+  }
+  return fpTileIcon(entry);
+}
+
 function renderFsRow(entry, parentPath) {
   const childPath = joinPath(parentPath, entry.name);
-  const icon = entry.is_dir ? ICON_FOLDER : iconForExt(entry.ext);
+  // iconFor()/fpThumbBox() key their shell requests off an absolute path, and
+  // a /fs/list entry only carries its own name — join it on here rather than
+  // making every icon call site re-derive it.
+  const iconHtml = renderFsIcon({ ...entry, path: childPath });
   const sizeText = (entry.is_dir || entry.error) ? '—' : formatSize(entry.size);
   const modifiedText = entry.error ? '—' : formatModified(entry.modified * 1000);
   const rowClass = `fp-row${entry.is_dir ? ' fp-row--folder' : ''}${entry.error ? ' fp-row--disabled' : ''}`;
@@ -441,7 +477,7 @@ function renderFsRow(entry, parentPath) {
   return `<div class="${rowClass}" role="option" draggable="true"
             data-path="${escapeHtml(childPath)}"
             data-type="${entry.is_dir ? 'folder' : 'file'}" tabindex="-1"${titleAttr}>
-    ${icon}
+    ${iconHtml}
     <span class="fp-row__name"${nameTitleAttr}>${escapeHtml(displayName)}</span>
     <span class="fp-row__size mono">${sizeText}</span>
     <span class="fp-row__modified mono">${modifiedText}</span>
@@ -451,7 +487,7 @@ function renderFsRow(entry, parentPath) {
 
 function renderEmptyFolder() {
   return `<div class="fp-empty-state" role="status" aria-live="polite">
-    ${icon('folder', 'fp-icon--48 fp-empty-state__icon')}
+    ${icon('ft-folder-open', 'fp-icon--48 fp-empty-state__icon')}
     <h3 class="t-title-sm">This folder is empty</h3>
     <p class="t-body" style="color: var(--text-secondary)">Drop files here or right-click to create new ones.</p>
   </div>`;

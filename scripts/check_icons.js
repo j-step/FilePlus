@@ -20,8 +20,11 @@
 //     resolves to a symbol actually present in the generated sprite
 //     (frontend/src/icons-sprite.js).
 //  3. Every family in frontend/src/filetypes.js's FP_FILETYPES.families has
-//     a matching fp-ft-<family> sprite symbol. Task 6 fills in the filetype
-//     SVGs and enforces this; today it only warns (never fails the gate).
+//     a matching fp-ft-<family> sprite symbol, plus the folder symbols
+//     iconFor()/_folderSymbol() resolve to. Enforced (Task 6): adding a
+//     family to backend/filetypes.py without authoring
+//     frontend/assets/icons/filetypes/<family>.svg fails the gate rather
+//     than silently rendering a blank <use> in every row.
 'use strict';
 const fs = require('fs');
 const path = require('path');
@@ -112,7 +115,11 @@ for (const file of listSourceFiles()) {
   for (const m of text.matchAll(/href="#(fp-[\w-]+)"/g)) {
     addRef(m[1], rel, text.slice(0, m.index).split('\n').length);
   }
-  for (const m of text.matchAll(/\bicon\(\s*['"]([\w-]+)['"]/g)) {
+  // Only a call whose whole first argument is a string literal — the closing
+  // `,`/`)` is what proves it. `icon('ft-' + fam, cls)` (iconFor's dynamic
+  // family lookup) is deliberately not matched: its symbol name is only known
+  // at runtime, and check 3's family coverage is what guarantees it resolves.
+  for (const m of text.matchAll(/\bicon\(\s*['"]([\w-]+)['"]\s*[,)]/g)) {
     addRef(`fp-${m[1]}`, rel, text.slice(0, m.index).split('\n').length);
   }
 }
@@ -123,17 +130,32 @@ for (const [name, sites] of referencedNames) {
   }
 }
 
-// ---- Check 3: filetype family coverage (warn-only in Task 5) ----
+// ---- Check 3: filetype family + folder-variant coverage ----
+// The folder symbols are not families in filetypes.js (a directory has no
+// extension) but iconFor()/_folderSymbol() in frontend/src/icons.js resolve to
+// them the same way, so they are required here too.
+const REQUIRED_FOLDER_SYMBOLS = [
+  'folder', 'folder-open', 'folder-desktop', 'folder-downloads', 'folder-documents',
+  'folder-pictures', 'folder-videos', 'folder-music', 'folder-screenshots',
+];
 const filetypesPath = path.join(SRC, 'filetypes.js');
-let familyWarnings = [];
-if (fs.existsSync(filetypesPath)) {
-  const ftSrc = fs.readFileSync(filetypesPath, 'utf8');
-  const familiesMatch = ftSrc.match(/"families":\s*\{([\s\S]*?)\},\s*"groups"/);
-  if (familiesMatch) {
-    const families = [...familiesMatch[1].matchAll(/"([\w-]+)":\s*\[/g)].map(m => m[1]);
-    familyWarnings = families.filter(f => !symbolIds.has(`fp-ft-${f}`));
-  }
+let missingFamilies = [];
+if (!fs.existsSync(filetypesPath)) {
+  console.error(`check_icons: ${path.relative(ROOT, filetypesPath)} does not exist — run "py -3 scripts/build_filetypes.py" first`);
+  process.exit(1);
 }
+const ftSrc = fs.readFileSync(filetypesPath, 'utf8');
+const familiesMatch = ftSrc.match(/"families":\s*\{([\s\S]*?)\},\s*"groups"/);
+if (!familiesMatch) {
+  console.error('check_icons: could not find FP_FILETYPES.families in filetypes.js (generator reshaped?)');
+  process.exit(1);
+}
+const families = [...familiesMatch[1].matchAll(/"([\w-]+)":\s*\[/g)].map(m => m[1]);
+if (families.length === 0) {
+  console.error('check_icons: parsed 0 families out of filetypes.js — regex or generated file broke');
+  process.exit(1);
+}
+missingFamilies = [...families, ...REQUIRED_FOLDER_SYMBOLS].filter(f => !symbolIds.has(`fp-ft-${f}`));
 
 // ---- Report ----
 let failed = false;
@@ -154,9 +176,13 @@ if (unresolvedRefs.length) {
   for (const r of unresolvedRefs) console.error(`  ${r}`);
 }
 
-if (familyWarnings.length) {
-  console.warn(`check_icons: WARN — ${familyWarnings.length} filetypes.js family(ies) have no fp-ft-<family> sprite symbol yet (Task 6): ${familyWarnings.join(', ')}`);
+if (missingFamilies.length) {
+  failed = true;
+  console.error(`check_icons: ${missingFamilies.length} file-type family/folder symbol(s) have no fp-ft-<name> sprite symbol —`);
+  console.error(`  missing: ${missingFamilies.join(', ')}`);
+  console.error('  author frontend/assets/icons/filetypes/<name>.svg, then re-run "node scripts/build_icons.js"');
 }
 
 if (failed) process.exit(1);
-console.log(`check_icons: ok (${symbolIds.size} sprite symbols, ${referencedNames.size} distinct references resolved, 0 raw <svg> outside the sprite)`);
+console.log(`check_icons: ok (${symbolIds.size} sprite symbols, ${referencedNames.size} distinct references resolved, ` +
+  `${families.length} file-type families + ${REQUIRED_FOLDER_SYMBOLS.length} folder variants covered, 0 raw <svg> outside the sprite)`);

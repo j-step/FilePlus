@@ -149,6 +149,43 @@ test('every screen renders with no renderer errors', async () => {
       }
     }
 
+    // --- File-type icons, grid thumbnails, Windows icon mode (Task 6) ---
+    // gen_sandbox.py writes six PNGs into <root>\_gen\Pictures, so the grid
+    // has real image content for the shell to thumbnail.
+    const picsDir = `${root}\\_gen\\Pictures`;
+    await page.evaluate((p) => loadDirectory(p), picsDir);
+    await page.waitForFunction(() => document.querySelectorAll('.fp-row').length >= 6);
+
+    // Every list row carries a file-type family symbol from the sprite.
+    expect(await page.locator('#list-scroll use[href^="#fp-ft-"]').count()).toBeGreaterThan(0);
+
+    // Grid view: at least one tile resolves a real shell thumbnail. The blank
+    // placeholder is a data:image/gif, so matching data:image/png proves the
+    // bridge actually answered rather than the <img> merely existing.
+    await page.evaluate(() => setViewMode('grid'));
+    await expect(page.locator('#list-scroll img.fp-thumb[src^="data:image/png"]').first())
+      .toBeVisible({ timeout: 3000 });
+    await page.screenshot({ path: path.join(SHOTS, 'browser-grid.png') });
+    await page.evaluate(() => setViewMode('list'));
+
+    // Settings ▸ Personalization ▸ File icons = Windows: rows swap to real
+    // Windows shell icons (an <img>, not a sprite <use>).
+    await page.evaluate(() => switchScreen('settings'));
+    await page.locator('[data-action="settings-set-icon-source"][data-val="windows"]').click();
+    await page.evaluate(() => switchScreen('browser'));
+    await expect(page.locator('#list-scroll img.fp-icon--win[src^="data:image/png"]').first())
+      .toBeVisible({ timeout: 3000 });
+
+    // ...and back to FilePlus restores the sprite family icons.
+    await page.evaluate(() => switchScreen('settings'));
+    await page.locator('[data-action="settings-set-icon-source"][data-val="fileplus"]').click();
+    await page.evaluate(() => switchScreen('browser'));
+    await expect(page.locator('#list-scroll img.fp-icon--win')).toHaveCount(0);
+    expect(await page.locator('#list-scroll use[href^="#fp-ft-"]').count()).toBeGreaterThan(0);
+
+    await page.evaluate((p) => loadDirectory(p), docsDir);
+    await page.waitForFunction(() => document.querySelectorAll('.fp-row').length >= 10);
+
     await page.evaluate(() => applyTheme('light'));
     for (const id of ['home', 'browser', 'settings']) {
       await page.evaluate((s) => switchScreen(s), id);
