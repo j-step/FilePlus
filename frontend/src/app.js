@@ -2986,10 +2986,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   initMarqueeSelection();
   initRowInteractions();
 
-  // Drag and drop: rows onto folder rows / sidebar items / breadcrumb crumbs (Task 4)
-  initRowDragDrop();
-  initSidebarDragDrop();
-  initBreadcrumbDragDrop();
+  // Drag and drop: rows onto folder rows / sidebar items / breadcrumb crumbs /
+  // the Up button, on pointer events (Task 12 — dragdrop.js; the three HTML5
+  // initialisers this replaced are gone).
+  initDragDrop();
 
   // Home: double-click to open (Task 6) + Favorites drag-to-reorder
   initHomeRowInteractions();

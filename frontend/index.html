@@ -3319,6 +3319,14 @@
   z-index:900;pointer-events:none
 "></div>
 
+<!-- Drag badge (Task 12) — follows the pointer during a pointer-event drag
+     session, reading "Move file" / "Copy 3 files". pointer-events:none is
+     load-bearing: dragdrop.js resolves the drop target with
+     elementFromPoint(), and this sits directly under the pointer. -->
+<div id="drag-badge" class="fp-drag-badge" hidden aria-hidden="true">
+  <span class="fp-drag-badge__icon"></span><span class="fp-drag-badge__text"></span>
+</div>
+
 <!-- Toast container (bottom-right) -->
 <div id="toast-container" style="
   position:fixed;bottom:40px;right:16px;
@@ -3332,6 +3340,7 @@
 <script src="src/icons.js"></script>
 <script src="src/fileops.js"></script>
 <script src="src/browser.js"></script>
+<script src="src/dragdrop.js"></script>
 <script src="src/inspector.js"></script>
 <script src="src/home.js"></script>
 <script src="src/settings.js"></script>

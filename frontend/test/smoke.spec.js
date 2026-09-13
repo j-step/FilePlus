@@ -770,6 +770,123 @@ test('every screen renders with no renderer errors', async () => {
     await fetch(`${API}/config/ui.sort`, { method: 'DELETE', headers: apiHeaders });
     await page.evaluate(async () => { await loadConfig(); applySettingsFromConfig(); });
 
+    // --- Task 12: pointer-event drag and drop (playtest pass 1 §4.4) ---
+    // The whole feature was rebuilt off HTML5 drag and drop onto pointer
+    // events, so every step here is driven with raw page.mouse rather than
+    // Playwright's drag helpers: a badge that re-labels itself mid-drag,
+    // modifiers that retarget the operation with no pointer movement,
+    // spring-loaded folders and a right-button climb are all things native
+    // drag and drop structurally cannot do.
+    await page.evaluate((p) => loadDirectory(p), docsDir);
+    await page.waitForFunction(() => document.querySelectorAll('.fp-row').length >= 10);
+    await page.evaluate(() => applySort('name', 'asc'));
+
+    const dragBadge = page.locator('#drag-badge');
+    const dragBadgeText = page.locator('#drag-badge .fp-drag-badge__text');
+    // gen_sandbox.py builds exactly one folder inside _gen\Documents — "old"
+    // (it holds the duplicate set's "report-2025 (1).txt").
+    const oldFolder = browserRow('old');
+    await expect(oldFolder).toBeVisible();
+
+    const centerOf = async (locator) => {
+      const b = await locator.boundingBox();
+      return { x: b.x + b.width / 2, y: b.y + b.height / 2 };
+    };
+    // The newest operation's id — "did that gesture log anything?" is asked
+    // several times below, and Escape/spring-load must both answer "no".
+    const latestOpId = async () => {
+      const ops = await (await fetch(`${API}/operations?limit=1`, { headers: apiHeaders })).json();
+      return ops[0]?.id ?? 0;
+    };
+
+    // 1. Badge + live modifiers. Select doc-01.txt alone first so the badge's
+    //    count is deterministic — the drag adopts whatever is selected.
+    await browserRow('doc-01.txt').click();
+    // Let the inspector's own 120ms selection debounce land before the drag
+    // starts — drag-badge.png below is a review artefact, and catching the
+    // panel mid-debounce would show it still captioned with the PREVIOUS
+    // step's two-item selection.
+    await expect(page.locator('#inspector-filename')).toHaveText('doc-01.txt');
+    const doc01Pt = await centerOf(browserRow('doc-01.txt'));
+    await page.mouse.move(doc01Pt.x, doc01Pt.y);
+    await page.mouse.down();
+    await page.mouse.move(doc01Pt.x + 40, doc01Pt.y, { steps: 5 });
+    await expect(dragBadge).toBeVisible();
+    await expect(dragBadgeText).toHaveText('Move file');
+
+    // Ctrl forces Copy with the pointer completely still — proving the
+    // keydown path re-renders the badge itself rather than waiting for the
+    // next move (which is the whole reason HTML5 DnD could not do this).
+    await page.keyboard.down('Control');
+    await expect(dragBadgeText).toHaveText('Copy file');
+    await page.keyboard.up('Control');
+    await expect(dragBadgeText).toHaveText('Move file');
+
+    // 2. Drop on the "old" folder row. The badge screenshot is taken on the
+    //    first arrival, then the pointer leaves and re-enters the row: that
+    //    counts as a target change, which restarts the 700ms spring timer, so
+    //    the release below cannot race a spring-load navigation no matter how
+    //    long the screenshot itself took.
+    const oldPt = await centerOf(oldFolder);
+    await page.mouse.move(oldPt.x, oldPt.y, { steps: 8 });
+    await expect(oldFolder).toHaveClass(/fp-row--drag-target/);
+    await page.screenshot({ path: path.join(SHOTS, 'drag-badge.png') });
+    await page.mouse.move(oldPt.x + 200, oldPt.y, { steps: 2 });   // off the row
+    await page.mouse.move(oldPt.x, oldPt.y, { steps: 2 });         // back on: spring timer restarts
+    await expect(oldFolder).toHaveClass(/fp-row--drag-target/);
+    await page.mouse.up();
+
+    await expect(browserRow('doc-01.txt')).toHaveCount(0);
+    const dropOps = await (await fetch(`${API}/operations?limit=1`, { headers: apiHeaders })).json();
+    expect(dropOps[0]?.op_type, JSON.stringify(dropOps)).toBe('move');
+    await page.keyboard.press('Control+z');
+    await expect(browserRow('doc-01.txt')).toBeVisible();
+
+    // 3. Spring-loaded folders: hold over "old" for a second and the drag
+    //    descends into it, badge still up and the session still live. Escape
+    //    then cancels without logging anything.
+    const doc02Pt = await centerOf(browserRow('doc-02.txt'));
+    const opIdBeforeSpring = await latestOpId();
+    await page.mouse.move(doc02Pt.x, doc02Pt.y);
+    await page.mouse.down();
+    await page.mouse.move(doc02Pt.x + 40, doc02Pt.y, { steps: 5 });
+    const oldPt2 = await centerOf(browserRow('old'));
+    await page.mouse.move(oldPt2.x, oldPt2.y, { steps: 8 });
+    // 700ms hover + a 250ms pulse + the /fs/list round trip.
+    await expect(page.locator('#breadcrumb .fp-breadcrumb__crumb--current'))
+      .toHaveText('old', { timeout: 5000 });
+    await expect(dragBadge).toBeVisible();
+
+    await page.keyboard.press('Escape');
+    await expect(dragBadge).toBeHidden();
+    await page.mouse.up();
+    expect(await latestOpId()).toBe(opIdBeforeSpring);
+    // The spring navigated and nothing else: "old" still holds only its own
+    // file, and doc-02.txt never left Documents.
+    await expect(browserRow('report-2025 (1).txt')).toBeVisible();
+    await expect(browserRow('doc-02.txt')).toHaveCount(0);
+
+    // 4. Right button during a drag climbs one folder — the counterpart to
+    //    springing down, and the other thing a native drag cannot offer
+    //    (the OS drag loop owns the right button for the duration).
+    const reportPt = await centerOf(browserRow('report-2025 (1).txt'));
+    const opIdBeforeRight = await latestOpId();
+    await page.mouse.move(reportPt.x, reportPt.y);
+    await page.mouse.down();
+    await page.mouse.move(reportPt.x + 40, reportPt.y, { steps: 5 });
+    await expect(dragBadge).toBeVisible();
+    await page.mouse.down({ button: 'right' });
+    await page.mouse.up({ button: 'right' });
+    await expect(page.locator('#breadcrumb .fp-breadcrumb__crumb--current'))
+      .toHaveText('Documents', { timeout: 5000 });
+    await page.keyboard.press('Escape');
+    await page.mouse.up();
+    expect(await latestOpId()).toBe(opIdBeforeRight);
+
+    // Back to a known listing for the screenshots below.
+    await page.evaluate((p) => loadDirectory(p), docsDir);
+    await page.waitForFunction(() => document.querySelectorAll('.fp-row').length >= 10);
+
     await page.evaluate(() => applyTheme('light'));
     for (const id of ['home', 'browser', 'settings']) {
       await page.evaluate((s) => switchScreen(s), id);

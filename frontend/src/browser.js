@@ -641,7 +641,11 @@ function renderFsRow(entry, parentPath) {
   const starHtml = (typeof favoritesHas === 'function' && favoritesHas(childPath))
     ? `<span class="fp-row__star" title="In Favorites">${icon('star')}</span>`
     : '';
-  return `<div class="${rowClass}" role="option" draggable="true"
+  // No draggable="true": Stage 2C Task 12 replaced HTML5 drag and drop with a
+  // pointer-event drag session (dragdrop.js). The native attribute would now
+  // only get in the way — a native drag starting under our own pointermove
+  // handler swallows the rest of the session.
+  return `<div class="${rowClass}" role="option"
             data-path="${escapeHtml(childPath)}"
             data-type="${entry.is_dir ? 'folder' : 'file'}" tabindex="-1"${titleAttr}>
     ${iconHtml}
@@ -974,142 +978,6 @@ function startInlineRename(path) {
   });
   input.addEventListener('blur', commitFromBlur);
   input.addEventListener('click', e => e.stopPropagation());
-}
-
-// ── Drag and drop (Task 4) ─────────────────────────────────────────────────────
-// Rows are drag SOURCES (dragstart, set in renderFsRow via draggable="true");
-// folder rows, sidebar drives/pins/Downloads, and breadcrumb crumbs are drop
-// TARGETS. The MIME type carries the whole selection as JSON so a drag of a
-// multi-selection moves/copies every selected item, not just the row that
-// was physically dragged.
-const FP_DRAG_MIME = 'application/x-fileplus-paths';
-
-// The dragged selection, tracked separately from dataTransfer: per the HTML5
-// DnD spec, dataTransfer.getData() only returns real data during the 'drop'
-// event — during 'dragover'/'dragenter' it reads back empty for security
-// reasons, even within the same page. dragover needs to know what's being
-// dragged (to skip highlighting an invalid target), so dragstart mirrors the
-// paths here too; dragend clears it.
-let _draggingPaths = [];
-
-/** Why `destDir` is not a valid drop target for `paths`, or null if it's fine.
- *  'self'       — destDir is (case-insensitively) one of the dragged paths
- *  'current'    — destDir is the directory already open
- *  'descendant' — destDir is nested inside one of the dragged folders */
-function dropViolation(destDir, paths) {
-  if (!destDir || !paths || !paths.length) return 'self';
-  const norm = p => String(p).replace(/[\\\/]+$/, '').toLowerCase();
-  const destLower = norm(destDir);
-  if (paths.some(p => norm(p) === destLower)) return 'self';
-  if (destLower === norm(browserState.path || '')) return 'current';
-  if (paths.some(p => destLower.startsWith(norm(p) + '\\'))) return 'descendant';
-  return null;
-}
-
-/** Shared drop handler for every drop target (folder rows, sidebar items,
- * breadcrumb crumbs). */
-function handleFsDrop(e, destDir) {
-  let paths;
-  try { paths = JSON.parse(e.dataTransfer.getData(FP_DRAG_MIME) || '[]'); }
-  catch (_) { paths = []; }
-  const violation = dropViolation(destDir, paths);
-  if (violation === 'descendant') { showToast('Cannot move a folder into itself', 'error'); return; }
-  if (violation) return; // 'self' (dropped onto a dragged item) / 'current' (the open folder) — silent no-op
-  fileops.moveTo(paths, destDir, e.ctrlKey);
-}
-
-/** Shared dragover handler. A 'self'/'current' violation is not a drop
- * target at all — skip preventDefault() entirely so the browser shows its
- * native "not allowed" cursor and 'drop' never fires (nothing to refuse; a
- * dragged item never paints as its own drop target). A 'descendant'
- * violation DOES need preventDefault() — 'drop' must still fire so
- * handleFsDrop can refuse it with the "Cannot move a folder into itself"
- * toast — but it's never highlighted, matching the "not highlighted" rule
- * for a target that will just bounce. */
-function dragOverTarget(e, el, destDir, dragTargetClass) {
-  const violation = dropViolation(destDir, _draggingPaths);
-  if (violation === 'self' || violation === 'current') return;
-  e.preventDefault();
-  e.dataTransfer.dropEffect = e.ctrlKey ? 'copy' : 'move';
-  if (!violation) el.classList.add(dragTargetClass);
-}
-
-function initRowDragDrop() {
-  const listScroll = document.getElementById('list-scroll');
-  if (!listScroll) return;
-
-  listScroll.addEventListener('dragstart', e => {
-    const row = e.target.closest('.fp-row[data-path]');
-    if (!row) { e.preventDefault(); return; }
-    if (!browserState.selection.has(row.dataset.path)) selectRow(row.dataset.path, {});
-    const paths = getSelectedPaths();
-    _draggingPaths = paths;
-    e.dataTransfer.effectAllowed = 'copyMove';
-    e.dataTransfer.setData(FP_DRAG_MIME, JSON.stringify(paths));
-    e.dataTransfer.setData('text/plain', paths.join('\n'));
-  });
-  listScroll.addEventListener('dragend', () => { _draggingPaths = []; });
-
-  listScroll.addEventListener('dragover', e => {
-    const row = e.target.closest('.fp-row[data-type="folder"][data-path]');
-    if (!row) return;
-    dragOverTarget(e, row, row.dataset.path, 'fp-row--drag-target');
-  });
-  listScroll.addEventListener('dragleave', e => {
-    const row = e.target.closest('.fp-row[data-type="folder"][data-path]');
-    if (row && !row.contains(e.relatedTarget)) row.classList.remove('fp-row--drag-target');
-  });
-  listScroll.addEventListener('drop', e => {
-    const row = e.target.closest('.fp-row[data-type="folder"][data-path]');
-    if (!row) return;
-    e.preventDefault();
-    row.classList.remove('fp-row--drag-target');
-    handleFsDrop(e, row.dataset.path);
-  });
-}
-
-function initSidebarDragDrop() {
-  const sidebarEl = document.getElementById('sidebar');
-  if (!sidebarEl) return;
-
-  sidebarEl.addEventListener('dragover', e => {
-    const item = e.target.closest('.fp-sidebar__item[data-path]');
-    if (!item) return;
-    dragOverTarget(e, item, item.dataset.path, 'fp-sidebar__item--drag-target');
-  });
-  sidebarEl.addEventListener('dragleave', e => {
-    const item = e.target.closest('.fp-sidebar__item[data-path]');
-    if (item && !item.contains(e.relatedTarget)) item.classList.remove('fp-sidebar__item--drag-target');
-  });
-  sidebarEl.addEventListener('drop', e => {
-    const item = e.target.closest('.fp-sidebar__item[data-path]');
-    if (!item) return;
-    e.preventDefault();
-    item.classList.remove('fp-sidebar__item--drag-target');
-    handleFsDrop(e, item.dataset.path);
-  });
-}
-
-function initBreadcrumbDragDrop() {
-  const crumb = document.getElementById('breadcrumb');
-  if (!crumb) return;
-
-  crumb.addEventListener('dragover', e => {
-    const btn = e.target.closest('.fp-breadcrumb__crumb[data-path]');
-    if (!btn) return;
-    dragOverTarget(e, btn, btn.dataset.path, 'fp-breadcrumb__crumb--drag-target');
-  });
-  crumb.addEventListener('dragleave', e => {
-    const btn = e.target.closest('.fp-breadcrumb__crumb[data-path]');
-    if (btn && !btn.contains(e.relatedTarget)) btn.classList.remove('fp-breadcrumb__crumb--drag-target');
-  });
-  crumb.addEventListener('drop', e => {
-    const btn = e.target.closest('.fp-breadcrumb__crumb[data-path]');
-    if (!btn) return;
-    e.preventDefault();
-    btn.classList.remove('fp-breadcrumb__crumb--drag-target');
-    handleFsDrop(e, btn.dataset.path);
-  });
 }
 
 // Selection → inspector debounce: arrow-key navigation and marquee drags can
