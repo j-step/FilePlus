@@ -21,10 +21,12 @@
 const favoritesSet = new Set();
 
 // ── Icons (hover-action buttons + favorite star) ──────────────────────────
-const HOME_ICON_OPEN = `<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M11 8v3H2V2h3M8 1h4v4M5 9l5.5-5.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
-const HOME_ICON_REVEAL = `<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="1" y="3" width="12" height="9" rx="1" stroke="currentColor" stroke-width="1.2"/><path d="M1 6h12M4 3V1.5h6V3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>`;
-const HOME_ICON_COPY = `<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="4" y="4" width="8" height="9" rx="1" stroke="currentColor" stroke-width="1.2"/><path d="M2 10V2h8" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
-const HOME_ICON_STAR = `<svg width="14" height="14" viewBox="0 0 14 14" fill="var(--accent)" aria-hidden="true"><path d="M7 1l1.8 3.6L13 5.3l-3 2.9.7 4.1L7 10.4l-3.7 1.9.7-4.1-3-2.9 4.2-.7z"/></svg>`;
+const HOME_ICON_OPEN = icon('open', 'fp-icon--14');
+const HOME_ICON_REVEAL = icon('reveal', 'fp-icon--14');
+const HOME_ICON_COPY = icon('copy', 'fp-icon--14');
+// Filled star, tinted accent (favorited state) — unfavoriteFile() below swaps
+// this <use> to the outline 'star' symbol for its brief pre-removal animation.
+const HOME_ICON_STAR = `<svg class="fp-icon fp-icon--14 fp-row__fav-star-icon" aria-hidden="true" style="color:var(--accent)"><use href="#fp-star-filled"></use></svg>`;
 
 /** Recent/Favorites entries never carry an is_dir flag from the API (neither
  * /recent nor /favorites join the files table for it) — ext === '' is the
@@ -37,17 +39,12 @@ function homeIconFor(ext) {
 
 // ── Empty states (existing .fp-empty-state pattern) ───────────────────────
 const HOME_RECENT_EMPTY_HTML = `<div class="fp-empty-state" role="status" aria-live="polite">
-  <svg class="fp-empty-state__icon" viewBox="0 0 48 48" fill="none" aria-hidden="true">
-    <circle cx="24" cy="24" r="20" stroke="currentColor" stroke-width="2"/>
-    <path d="M24 14v10l6 4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-  </svg>
+  ${icon('history', 'fp-icon--48 fp-empty-state__icon')}
   <p class="fp-empty-state__title">No recent files yet</p>
 </div>`;
 
 const HOME_FAVORITES_EMPTY_HTML = `<div class="fp-empty-state" role="status" aria-live="polite">
-  <svg class="fp-empty-state__icon" viewBox="0 0 48 48" fill="none" aria-hidden="true">
-    <path d="M24 4l5.4 10.9L42 17l-9 8.7 2.1 12.3L24 32.4l-11.1 5.6L15 25.7 6 17l12.6-2.1z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
-  </svg>
+  ${icon('star', 'fp-icon--48 fp-empty-state__icon')}
   <p class="fp-empty-state__title">No favorites yet — right-click a file or folder and choose Add to Favorites</p>
 </div>`;
 
@@ -253,10 +250,10 @@ function unfavoriteFile(el) {
   const parent = row.parentElement;
   const nextSibling = row.nextElementSibling;
   const filename = row.querySelector('.fp-row__name')?.textContent || 'File';
-  const starPath = el.querySelector('svg path');
-  const origFill = starPath?.getAttribute('fill');
-  const origStroke = starPath?.getAttribute('stroke');
-  const origStrokeWidth = starPath?.getAttribute('stroke-width');
+  // Filled -> outline star swap (the sprite's two-symbol favorited/not-favorited
+  // pair) stands in for the old fill/stroke-attribute animation on a single
+  // hand-drawn <path>.
+  const starUse = el.querySelector('svg.fp-icon use');
 
   // Capture the full favorites order (including this row) BEFORE removal so
   // Undo can restore this row's exact position via /favorites/reorder.
@@ -265,21 +262,13 @@ function unfavoriteFile(el) {
 
   favoritesSet.delete(path);
 
-  if (starPath) {
-    starPath.setAttribute('fill', 'none');
-    starPath.setAttribute('stroke', 'var(--accent)');
-    starPath.setAttribute('stroke-width', '1.2');
-  }
+  if (starUse) starUse.setAttribute('href', '#fp-star');
   row.classList.add('fp-row--unfavoriting');
 
   function restoreRow() {
     if (!row.parentElement) parent.insertBefore(row, nextSibling);
     row.classList.remove('fp-row--unfavoriting');
-    if (starPath) {
-      origFill === null ? starPath.removeAttribute('fill') : starPath.setAttribute('fill', origFill);
-      origStroke === null ? starPath.removeAttribute('stroke') : starPath.setAttribute('stroke', origStroke);
-      origStrokeWidth === null ? starPath.removeAttribute('stroke-width') : starPath.setAttribute('stroke-width', origStrokeWidth);
-    }
+    if (starUse) starUse.setAttribute('href', '#fp-star-filled');
   }
 
   let deleted = false;

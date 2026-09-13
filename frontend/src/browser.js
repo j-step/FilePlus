@@ -208,10 +208,13 @@ function initMarqueeSelection() {
 
 // ── File list loading ─────────────────────────────────────────────────────────
 
-const ICON_FILE = `<svg class="fp-row__icon" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="2" y="1" width="9" height="13" rx="1.5" fill="var(--bg-raised)" stroke="var(--border-subtle)" stroke-width="0.8"/><path d="M11 1v4h3" stroke="var(--border-subtle)" stroke-width="0.8" stroke-linejoin="round"/></svg>`;
-const ICON_IMG  = `<svg class="fp-row__icon" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="1" y="2" width="14" height="12" rx="1.5" fill="var(--bg-raised)" stroke="var(--border-subtle)" stroke-width="0.8"/><circle cx="5.5" cy="7" r="1.5" stroke="var(--text-tertiary)" stroke-width="0.8"/><path d="M1 12l4-4 4 4 2-2 4 2" stroke="var(--text-tertiary)" stroke-width="0.8" stroke-linejoin="round"/></svg>`;
-const ICON_TXT  = `<svg class="fp-row__icon" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="2" y="1" width="9" height="13" rx="1.5" fill="var(--bg-raised)" stroke="var(--border-subtle)" stroke-width="0.8"/><path d="M11 1v4h3" stroke="var(--border-subtle)" stroke-width="0.8" stroke-linejoin="round"/><path d="M5 6h6M5 8.5h6M5 11h4" stroke="var(--text-tertiary)" stroke-width="0.8" stroke-linecap="round"/></svg>`;
-const ICON_FOLDER = `<svg class="fp-row__icon" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M1 4a1 1 0 0 1 1-1h4l1.5 1.5H14a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V4z" fill="var(--accent)" opacity=".75" stroke="var(--accent-edge)" stroke-width="0.8"/></svg>`;
+// ICON_TXT and ICON_FILE both collapse to the sprite's single generic
+// 'file' glyph (the hand-drawn originals differentiated "has text lines" vs
+// not; Task 6's real per-family file-type icons replace this coarse split).
+const ICON_FILE = icon('file', 'fp-icon--16 fp-row__icon');
+const ICON_IMG  = icon('image', 'fp-icon--16 fp-row__icon');
+const ICON_TXT  = icon('file', 'fp-icon--16 fp-row__icon');
+const ICON_FOLDER = icon('folder', 'fp-icon--16 fp-row__icon');
 
 const EXT_IMG   = new Set(['.jpg','.jpeg','.png','.gif','.bmp','.webp','.heic','.svg','.tiff']);
 const EXT_TXT   = new Set(['.txt','.md','.csv','.log','.json','.xml','.yaml','.yml','.toml','.ini','.cfg','.html','.css','.js','.ts','.py','.rs','.go','.java','.c','.cpp','.h']);
@@ -409,9 +412,7 @@ function renderDirectory(data) {
 
 function renderTruncatedBanner() {
   return `<div class="fp-error-banner fp-error-banner--info" role="status">
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-      <circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>
-    </svg>
+    ${icon('info', 'fp-icon--14')}
     <span class="fp-body" style="color: var(--text-primary)">Showing the first 10,000 entries</span>
   </div>`;
 }
@@ -450,9 +451,7 @@ function renderFsRow(entry, parentPath) {
 
 function renderEmptyFolder() {
   return `<div class="fp-empty-state" role="status" aria-live="polite">
-    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-      <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/>
-    </svg>
+    ${icon('folder', 'fp-icon--48 fp-empty-state__icon')}
     <h3 class="t-title-sm">This folder is empty</h3>
     <p class="t-body" style="color: var(--text-secondary)">Drop files here or right-click to create new ones.</p>
   </div>`;
@@ -493,9 +492,7 @@ function showErrorBanner(message, opts = {}) {
       ).join('')}</div>`
     : '';
   listScroll.innerHTML = `<div class="fp-error-banner" role="alert">
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-      <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
-    </svg>
+    ${icon('error', 'fp-icon--14')}
     <span class="fp-body" style="color: var(--text-primary)">${escapeHtml(message)}</span>
     ${actionsHtml}
   </div>`;

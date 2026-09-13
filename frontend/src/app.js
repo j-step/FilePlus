@@ -52,10 +52,10 @@ const SCREEN_LABELS = {
 };
 
 const SCREEN_ICONS = {
-  home:    '<svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M1 6.5L7 1l6 5.5V13H9V9H5v4H1V6.5z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>',
-  browser: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M1 4a1 1 0 0 1 1-1h4l1.5 1.5H12a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V4z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>',
+  home:    icon('home', 'fp-icon--14'),
+  browser: icon('folder', 'fp-icon--14'),
 };
-const DEFAULT_TAB_ICON = '<svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><rect x="2" y="2" width="10" height="10" rx="1.5" stroke="currentColor" stroke-width="1.2"/></svg>';
+const DEFAULT_TAB_ICON = icon('file', 'fp-icon--14');
 
 function getScreenLabel(id) { return SCREEN_LABELS[id] || id; }
 function getScreenIcon(id)  { return SCREEN_ICONS[id]  || DEFAULT_TAB_ICON; }
@@ -76,7 +76,7 @@ function updateTabAppearance(tab, screenId, labelOverride) {
   const label = labelOverride || getScreenLabel(screenId);
   const labelEl = tab.querySelector('.fp-tab__label');
   if (labelEl) labelEl.textContent = label;
-  // Replace the leading <svg> icon (first child) with the screen's icon.
+  // Replace the leading SVG icon (first child) with the screen's icon.
   const firstSvg = tab.querySelector(':scope > svg');
   if (firstSvg) firstSvg.outerHTML = getScreenIcon(screenId);
   tab.setAttribute('title', label);
@@ -557,8 +557,8 @@ function closePalette() {
 // shown and search results are cleared. At 2+ chars, input is debounced
 // 150ms then GET /search?q=&limit=30 fires; results replace the Commands
 // group until the query drops back below the threshold.
-const PALETTE_FILE_ICON = `<svg width="14" height="14" viewBox="0 0 14 14" fill="none" style="flex-shrink:0;color:var(--text-secondary)"><rect x="2" y="1" width="8" height="11" rx="1" fill="var(--bg-raised)" stroke="currentColor" stroke-width="1.1"/><path d="M10 1v3h3" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round"/><path d="M4 6h6M4 8h4" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/></svg>`;
-const PALETTE_FOLDER_ICON = `<svg width="14" height="14" viewBox="0 0 14 14" fill="none" style="flex-shrink:0;color:var(--text-secondary)"><path d="M1 3.5a1 1 0 0 1 1-1h3l1 1.5H12a1 1 0 0 1 1 1V10a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V3.5z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>`;
+const PALETTE_FILE_ICON = `<svg class="fp-icon fp-icon--14" aria-hidden="true" style="flex-shrink:0;color:var(--text-secondary)"><use href="#fp-file"></use></svg>`;
+const PALETTE_FOLDER_ICON = `<svg class="fp-icon fp-icon--14" aria-hidden="true" style="flex-shrink:0;color:var(--text-secondary)"><use href="#fp-folder"></use></svg>`;
 const PALETTE_MIN_CHARS = 2;
 const PALETTE_DEBOUNCE_MS = 150;
 let _paletteSearchTimer = null;
@@ -727,13 +727,12 @@ function openModal(type, config = {}) {
   const textInput = document.getElementById('modal-text-input');
   if (!scrim) return;
 
-  // Icon: danger uses alert-octagon in bad, warn uses alert-triangle in warn
+  // Icon: danger uses the sprite's error glyph in bad, warn uses warning in warn.
   const isDanger = type === 'danger';
   if (icon) {
     icon.style.color = isDanger ? 'var(--bad)' : 'var(--warn)';
-    icon.innerHTML = isDanger
-      ? '<path d="M7.86 2h8.28L22 7.86v8.28L16.14 22H7.86L2 16.14V7.86L7.86 2z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M12 8v4M12 16h.01" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>'
-      : '<path d="M12 3L2 21h20L12 3z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M12 10v5M12 17.5v.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>';
+    const iconUse = icon.querySelector('use');
+    if (iconUse) iconUse.setAttribute('href', `#fp-${isDanger ? 'error' : 'warning'}`);
   }
   if (title)   title.textContent  = config.title   || 'Confirm';
   if (body)    body.textContent   = config.body    || '';
@@ -916,17 +915,17 @@ function zoomReset() {
 const CONTEXT_MENUS = {
   // A.10.1 — File context menu
   file: [
-    { label: 'Open',            action: 'cm-open',            icon: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="1" y="1" width="12" height="12" rx="2" stroke="currentColor" stroke-width="1.2"/><path d="M5 5l4 2-4 2V5z" fill="currentColor"/></svg>' },
+    { label: 'Open',            action: 'cm-open',            icon: icon('open', 'fp-icon--14') },
     { label: 'Open with…',      action: 'cm-open-with' },
-    { label: 'Open in new tab', action: 'cm-open-new-tab',    icon: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="1" y="3" width="12" height="10" rx="1.5" stroke="currentColor" stroke-width="1.2"/><path d="M1 6h12" stroke="currentColor" stroke-width="1.2"/></svg>' },
+    { label: 'Open in new tab', action: 'cm-open-new-tab',    icon: icon('new-tab', 'fp-icon--14') },
     'sep',
     { label: 'Cut',    action: 'cm-cut',    kbd: 'Ctrl+X' },
     { label: 'Copy',   action: 'cm-copy',   kbd: 'Ctrl+C' },
     { label: 'Paste',  action: 'cm-paste',  kbd: 'Ctrl+V' },
     { label: 'Rename', action: 'cm-rename', kbd: 'F2' },
-    { label: 'Delete', action: 'cm-delete', kbd: 'Del', danger: true, icon: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M2 4h10M5 4V2.5h4V4M5.5 6v5M8.5 6v5M3 4l.8 8h6.4L11 4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>' },
+    { label: 'Delete', action: 'cm-delete', kbd: 'Del', danger: true, icon: icon('delete', 'fp-icon--14') },
     'sep',
-    { label: 'Add tag…',         action: 'cm-add-tag',     icon: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M2 8.5L7.5 3l3.5 3.5L5.5 12 2 8.5z" stroke="currentColor" stroke-width="1.2"/><circle cx="5" cy="5" r="1" fill="currentColor"/></svg>' },
+    { label: 'Add tag…',         action: 'cm-add-tag',     icon: icon('tag', 'fp-icon--14') },
     { label: 'Add to Favorites', action: 'cm-favorite' },
     'sep',
     { label: 'Properties',             action: 'cm-properties' },
@@ -935,14 +934,14 @@ const CONTEXT_MENUS = {
 
   // A.10.2 — Folder context menu
   folder: [
-    { label: 'Open',             action: 'cm-open', icon: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M1 3.5a1 1 0 0 1 1-1h3l1 1.5H12a1 1 0 0 1 1 1V11a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V3.5z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>' },
+    { label: 'Open',             action: 'cm-open', icon: icon('folder', 'fp-icon--14') },
     { label: 'Open in new tab',  action: 'cm-open-new-tab' },
     'sep',
     { label: 'Cut',    action: 'cm-cut',    kbd: 'Ctrl+X' },
     { label: 'Copy',   action: 'cm-copy',   kbd: 'Ctrl+C' },
     { label: 'Paste',  action: 'cm-paste',  kbd: 'Ctrl+V' },
     { label: 'Rename', action: 'cm-rename', kbd: 'F2' },
-    { label: 'Delete', action: 'cm-delete', kbd: 'Del', danger: true, icon: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M2 4h10M5 4V2.5h4V4M5.5 6v5M8.5 6v5M3 4l.8 8h6.4L11 4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>' },
+    { label: 'Delete', action: 'cm-delete', kbd: 'Del', danger: true, icon: icon('delete', 'fp-icon--14') },
     'sep',
     { label: 'New folder inside', action: 'cm-new-folder' },
     { label: 'New file',          action: 'cm-new-file' },
@@ -957,7 +956,7 @@ const CONTEXT_MENUS = {
 
   // A.10.3 — Empty area context menu
   'empty-area': [
-    { label: 'New folder', action: 'cm-new-folder', icon: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M1 3.5a1 1 0 0 1 1-1h3l1 1.5H12a1 1 0 0 1 1 1V11a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V3.5z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>' },
+    { label: 'New folder', action: 'cm-new-folder', icon: icon('folder-add', 'fp-icon--14') },
     { label: 'New file',   action: 'cm-new-file' },
     { label: 'Paste',      action: 'cm-paste',      kbd: 'Ctrl+V' },
     { label: 'Refresh',    action: 'cm-refresh',    kbd: 'F5' },
@@ -1221,10 +1220,7 @@ function renderDriveItem(d) {
   return `<div class="fp-sidebar__drive-item">
     <button class="fp-sidebar__item" data-screen="browser" data-path="${escapeHtml(d.mount)}"
             data-action="navigate-path" title="${escapeHtml(labelText)}">
-      <svg class="fp-sidebar__drive-icon" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-        <ellipse cx="8" cy="6" rx="6" ry="2.5" stroke="currentColor" stroke-width="1.2"/>
-        <path d="M2 6v4c0 1.4 2.7 2.5 6 2.5s6-1.1 6-2.5V6" stroke="currentColor" stroke-width="1.2"/>
-      </svg>
+      <svg class="fp-icon fp-icon--16 fp-sidebar__drive-icon" aria-hidden="true"><use href="#fp-drive"></use></svg>
       <span class="fp-sidebar__drive-letter" aria-hidden="true">${escapeHtml(letter)}</span>
       <span class="fp-sidebar__item__label">${escapeHtml(labelText)}</span>
     </button>
@@ -1251,9 +1247,7 @@ function renderPinItem(pin) {
   const label = pin.label || pathBaseName(pin.path) || pin.path;
   return `<button class="fp-sidebar__item" data-screen="browser" data-path="${escapeHtml(pin.path)}"
           data-pin-id="${pin.id}" data-action="navigate-path" title="${escapeHtml(pin.path)}">
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-      <path d="M1 4a1 1 0 0 1 1-1h4l1.5 1.5H14a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V4z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
-    </svg>
+    <svg class="fp-icon fp-icon--16" aria-hidden="true"><use href="#fp-folder"></use></svg>
     <span class="fp-sidebar__item__label">${escapeHtml(label)}</span>
   </button>`;
 }
@@ -1933,7 +1927,7 @@ function nextTabId() {
 function buildTabHtml(screen) {
   // Close affordance is a <span role="button"> — see HTML for the seed tab
   // for why nesting <button> would silently break the layout.
-  return `${getScreenIcon(screen)}<span class="fp-tab__label">${getScreenLabel(screen)}</span><span class="fp-tab__close" role="button" data-action="close-tab" title="Close tab" tabindex="-1" aria-label="Close tab"><svg width="10" height="10" viewBox="0 0 10 10"><path d="M2 2l6 6M8 2l-6 6" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg></span>`;
+  return `${getScreenIcon(screen)}<span class="fp-tab__label">${getScreenLabel(screen)}</span><span class="fp-tab__close" role="button" data-action="close-tab" title="Close tab" tabindex="-1" aria-label="Close tab">${icon('close', 'fp-icon--10')}</span>`;
 }
 
 function createTabElement(screen) {
@@ -2172,6 +2166,12 @@ document.addEventListener('contextmenu', e => {
 
 // ── Init ───────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
+  // Idempotent belt-and-braces: icons.js already installs the sprite
+  // synchronously at parse time (see its own DOMContentLoaded fallback for
+  // the case this script somehow ran before <body> existed); calling again
+  // here is a guaranteed no-op unless that path was somehow skipped.
+  fpInstallSprite();
+
   // Restore theme from localStorage
   const savedTheme = localStorage.getItem('fp-theme');
   if (THEME_MODES.includes(savedTheme)) document.documentElement.dataset.theme = resolveTheme(savedTheme);

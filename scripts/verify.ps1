@@ -68,6 +68,8 @@ $stubScreens = (Select-String -Path frontend/src/app.js -Pattern 'showToast\(STU
 if ($stubScreens -ne 0) { Write-Host 'showToast(STUB_SCREENS still referenced in app.js' -ForegroundColor Red; exit 1 }
 node scripts/check_menu_cases.js
 if ($LASTEXITCODE -ne 0) { Write-Host 'check_menu_cases failed' -ForegroundColor Red; exit 1 }
+node scripts/check_icons.js
+if ($LASTEXITCODE -ne 0) { Write-Host 'check_icons failed' -ForegroundColor Red; exit 1 }
 
 Write-Host '== 5/6 backend ==' -ForegroundColor Cyan
 

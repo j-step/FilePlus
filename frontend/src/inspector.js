@@ -147,7 +147,7 @@ function renderPreviewNone() {
   el.style.display = 'flex';
   el.style.flexDirection = 'row'; // back to the container's default centering (a text preview sets 'column')
   el.innerHTML = `<div style="display:flex;flex-direction:column;align-items:center;gap:8px;color:var(--text-tertiary)">
-    <svg width="40" height="40" viewBox="0 0 40 40" fill="none" aria-hidden="true"><rect x="5" y="3" width="23" height="33" rx="3" fill="var(--bg-raised)" stroke="var(--border-subtle)" stroke-width="1.2"/><path d="M28 3v10h10" stroke="var(--border-subtle)" stroke-width="1.2" stroke-linejoin="round"/><path d="M12 17h16M12 22h16M12 27h10" stroke="var(--text-tertiary)" stroke-width="1.5" stroke-linecap="round"/></svg>
+    ${icon('file', 'fp-icon--40')}
     <span style="font:400 var(--t-compact) var(--font-ui)">No preview</span>
   </div>`;
 }
