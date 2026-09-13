@@ -737,52 +737,17 @@ svg { flex-shrink: 0; }
   flex: 1;
   min-width: 0;
 }
-/* Responsive search collapse */
+/* Search bar sizing (Task 14, design §8.3). The bar is content-sized: it
+   starts at its placeholder width and grows as chips and text are added, up
+   to 60% of the toolbar, at which point the input scrolls inside it. No JS
+   runs per frame — #breadcrumb-wrap (§9) absorbs whatever the bar takes. */
 .fp-toolbar__search {
-  flex-shrink: 0;
-  width: 220px;
+  flex: 0 1 auto;
+  width: auto;
+  max-width: 60%;
+  min-width: 148px;
   position: relative;
-  /* Note: no width transition — width is updated continuously by JS each frame
-     during resize; a CSS transition would restart every frame and stutter. */
-}
-.fp-toolbar__search--narrow {
-  width: 140px;
-}
-.fp-toolbar__search--icon {
-  width: 28px !important;
-  height: 28px;
-  min-width: 28px;
-  padding: 0;
-  cursor: pointer;
   overflow: visible;
-  display: inline-flex;
-  justify-content: center;
-  align-items: center;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--r-icon-btn);
-  background: transparent;
-}
-.fp-toolbar__search--icon .fp-search__input,
-.fp-toolbar__search--icon .fp-search__kbd,
-.fp-toolbar__search--icon .fp-search__icon {
-  display: none !important;
-}
-.fp-toolbar__search--icon:hover {
-  background: var(--bg-raised);
-}
-/* Collapsed-mode inline SVG icon — always hidden in expanded mode */
-.fp-toolbar__search-collapse-icon {
-  display: none;
-  color: var(--text-secondary);
-  flex-shrink: 0;
-  width: 14px;
-  height: 14px;
-}
-.fp-toolbar__search--icon .fp-toolbar__search-collapse-icon {
-  display: block;
-}
-.fp-toolbar__search--icon:hover .fp-toolbar__search-collapse-icon {
-  color: var(--text-primary);
 }
 
 /* -----------------------------------------------------------------------------
@@ -845,32 +810,41 @@ svg { flex-shrink: 0; }
    9. BREADCRUMB (Section 14)
    ----------------------------------------------------------------------------- */
 /* === fp-breadcrumb === */
+/* The WRAPPER flexes and clips; the path inside keeps its natural width and
+   is pinned to the wrapper's right edge, so when the search bar grows the
+   START of the path slides out under the leading fade and the folder you are
+   actually in stays visible (design §8.3). */
+.fp-breadcrumb-wrap {
+  flex: 1 1 auto;
+  min-width: 120px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  -webkit-mask-image: linear-gradient(to right, transparent 0, #000 24px, #000 100%);
+          mask-image: linear-gradient(to right, transparent 0, #000 24px, #000 100%);
+}
 .fp-breadcrumb {
   display: flex;
   align-items: center;
   gap: 6px;
   font: 500 var(--t-body) var(--font-ui);
   color: var(--text-secondary);
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
+  flex: 0 0 auto;
   flex-wrap: nowrap;
   white-space: nowrap;
-  position: relative; /* required for ::before cave-fade anchor */
 }
-.fp-breadcrumb--scroll {
-  overflow-x: auto;
-  scrollbar-width: none;
-  position: relative;
-  /* Left-edge cave fade. mask-image is applied to the breadcrumb itself, so it
-     anchors to the VISIBLE viewport — not the scrollable content like an
-     ::before pseudo-element would (which scrolls with content and disappears). */
-  -webkit-mask-image: linear-gradient(to right, transparent 0, #000 24px, #000 100%);
-          mask-image: linear-gradient(to right, transparent 0, #000 24px, #000 100%);
+/* Search mode: the crumbs are replaced by "Search in <folder>" + a clear × */
+.fp-breadcrumb__search {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-6);
+  padding: 4px 6px;
+  color: var(--text-primary);
+  white-space: nowrap;
 }
-.fp-breadcrumb--scroll::-webkit-scrollbar {
-  display: none;
-}
+.fp-breadcrumb__search .fp-icon { color: var(--text-secondary); }
+.fp-breadcrumb__clear { flex-shrink: 0; }
 .fp-breadcrumb__crumb {
   background: transparent;
   color: var(--text-secondary);
@@ -906,18 +880,15 @@ svg { flex-shrink: 0; }
    ----------------------------------------------------------------------------- */
 .fp-search {
   height: var(--h-input);
-  width: 220px;
-  padding: 0 var(--s-12);
+  padding: 0 var(--s-8) 0 var(--s-12);
   background: var(--bg-raised);
   border: 1px solid var(--border-subtle);
   border-radius: var(--r-button);
   box-shadow: none;
   display: flex;
   align-items: center;
-  gap: var(--s-8);
-  /* No width transition — width is JS-driven and any easing here would
-     interpolate every JS update, producing a perceived "acceleration" smoothing
-     during continuous resize. */
+  gap: var(--s-6);
+  min-width: 0;
   transition: border-color var(--dur-flash) var(--ease-snap),
               box-shadow var(--dur-flash) var(--ease-snap);
 }
@@ -927,32 +898,166 @@ svg { flex-shrink: 0; }
 }
 .fp-search__icon { width: 14px; height: 14px; color: var(--text-tertiary); flex-shrink: 0; }
 .fp-search__input {
-  flex: 1;
+  /* field-sizing: content makes the input exactly as wide as what is typed
+     (Chromium 123+, i.e. Electron 41) — that plus .fp-search's own auto width
+     is what makes the whole bar grow with its content. search.js measures a
+     hidden ruler span instead where field-sizing is unsupported. flex-shrink
+     lets the input give way once the bar has hit its 60% cap. */
+  field-sizing: content;
+  flex: 0 1 auto;
+  width: 14ch;              /* empty-state width: enough for the placeholder */
+  min-width: 6ch;
   background: transparent;
   border: none;
   outline: none;
   font: 400 var(--t-body) var(--font-ui);
   letter-spacing: var(--track-body);
   color: var(--text-primary);
-  min-width: 0;
 }
+/* Chips live INSIDE the bar, before the input (Discord's model). */
+.fp-search__chips {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+}
+.fp-search__chips:empty { display: none; }
+.fp-search--has-chips .fp-search__input::placeholder { color: transparent; }
+/* Off-screen ruler for the field-sizing fallback — never painted. */
+.fp-search__measure {
+  position: absolute;
+  visibility: hidden;
+  white-space: pre;
+  pointer-events: none;
+  font: 400 var(--t-body) var(--font-ui);
+  letter-spacing: var(--track-body);
+}
+
+/* ── Search filter chips (Discord-style) ── */
+.fp-search-chip {
+  flex-shrink: 0;
+  height: 18px;
+  padding: 0 6px;
+  gap: 3px;
+  background: var(--bg-pressed);
+  border: 1px solid transparent;
+  border-radius: var(--r-button);
+  font: 500 var(--t-small) var(--font-ui);
+  color: var(--text-primary);
+  cursor: pointer;
+  max-width: 180px;
+  overflow: hidden;
+}
+.fp-search-chip:hover { background: var(--bg-pressed); border-color: var(--border-mid); }
+.fp-search-chip__key { color: var(--text-secondary); }
+.fp-search-chip__value {
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Search dropdown (Filters + History) ── */
+.fp-search-dd {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 340px;
+  max-width: 460px;
+  max-height: 420px;
+  overflow-y: auto;
+  padding: var(--s-4);
+  background: var(--bg-raised);
+  border: 1px solid var(--border-mid);
+  border-radius: var(--r-card);
+  box-shadow: var(--shadow-popover);
+  z-index: 300;
+}
+.fp-search-dd__section {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--s-6) var(--s-8) var(--s-4);
+  font: 500 var(--t-small) var(--font-ui);
+  text-transform: uppercase;
+  letter-spacing: var(--track-caps);
+  color: var(--text-tertiary);
+}
+.fp-search-dd__section--history { border-top: 1px solid var(--border-hairline); margin-top: var(--s-4); }
+.fp-search-dd__row,
+.fp-search-dd__history {
+  display: flex;
+  align-items: center;
+  gap: var(--s-8);
+  width: 100%;
+  padding: var(--s-6) var(--s-8);
+  background: transparent;
+  border: none;
+  border-radius: var(--r-button);
+  text-align: left;
+  cursor: pointer;
+  color: var(--text-primary);
+  font: 400 var(--t-body) var(--font-ui);
+}
+.fp-search-dd__row:hover,
+.fp-search-dd__history:hover { background: var(--bg-pressed); }
+.fp-search-dd__row--open { background: var(--bg-pressed); }
+.fp-search-dd__icon { color: var(--text-secondary); flex-shrink: 0; }
+.fp-search-dd__title { color: var(--text-primary); white-space: nowrap; }
+.fp-search-dd__hint {
+  margin-left: auto;
+  color: var(--text-tertiary);
+  font: 400 var(--t-compact) var(--font-ui);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fp-search-dd__choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: var(--s-4) var(--s-8) var(--s-8) 34px;
+}
+.fp-search-dd__choice {
+  height: 22px;
+  padding: 0 var(--s-8);
+  background: var(--bg-pressed);
+  border: 1px solid transparent;
+  border-radius: var(--r-button);
+  color: var(--text-primary);
+  font: 500 var(--t-small) var(--font-ui);
+  cursor: pointer;
+}
+.fp-search-dd__choice:hover { border-color: var(--accent-edge); background: var(--accent-wash); }
+.fp-search-dd__empty {
+  padding: var(--s-6) var(--s-8);
+  color: var(--text-tertiary);
+  font: 400 var(--t-compact) var(--font-ui);
+}
+/* Same [hidden] restatement as .fp-drag-badge — these three carry an explicit
+   display of their own, which the UA's display:none for [hidden] loses to. */
+.fp-search-dd[hidden] { display: none; }
+#sb-tags[hidden],
+#sb-tags-label[hidden] { display: none; }
+
+/* ── More filters modal body ── */
+.search-filters__grid {
+  display: grid;
+  grid-template-columns: 132px 1fr;
+  align-items: center;
+  gap: var(--s-8) var(--s-12);
+}
+.search-filters__label {
+  font: 500 var(--t-body) var(--font-ui);
+  color: var(--text-primary);
+}
+.search-filters__range { display: flex; align-items: center; gap: var(--s-6); }
+.search-filters__range .fp-input { min-width: 0; flex: 1; }
+.search-filters__dash { color: var(--text-tertiary); }
 .fp-search__input::placeholder { color: var(--text-tertiary); }
 .fp-search:focus-within .fp-search__input::placeholder { color: var(--text-secondary); }
-.fp-search__kbd {
-  min-width: 16px; height: 16px;
-  padding: 0 4px;
-  background: var(--bg-raised);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--r-chip);
-  font: 500 var(--t-small) var(--font-data);
-  font-variant-numeric: tabular-nums;
-  letter-spacing: var(--track-mono);
-  color: var(--text-tertiary);
-  display: inline-flex; align-items: center; justify-content: center;
-  flex-shrink: 0;
-}
-.fp-search__clear { width: 12px; height: 12px; color: var(--text-tertiary); cursor: default; }
-.fp-search__clear:hover { color: var(--text-primary); }
 
 /* -----------------------------------------------------------------------------
    11. COMMAND PALETTE (Section 16)
@@ -2324,6 +2429,37 @@ body.is-dragging { cursor: default; }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* Search-results rows (Task 14): the name gets a "Location" subline, so the
+   name cell stacks and the row grows. Only ever applied in search mode — a
+   folder listing's markup and geometry are untouched. */
+.fp-row__namecell {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 1px;
+}
+.fp-row__namecell .fp-row__name { flex: 0 0 auto; }
+.fp-row__location {
+  font: 400 var(--t-small) var(--font-ui);
+  color: var(--text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;            /* keep the tail of a long path visible */
+  text-align: left;
+}
+.fp-row__mark {
+  background: var(--accent-wash-strong);
+  color: var(--text-primary);
+  border-radius: 2px;
+  padding: 0 1px;
+}
+#list-scroll[data-mode="search"]:not([data-view="grid"]) .fp-row {
+  height: calc(var(--row-height, 26px) * var(--list-scale, 1) * 1.6);
+}
+
 .fp-row__size,
 .fp-row__modified {
   flex-shrink: 0;
@@ -3756,6 +3892,30 @@ body.is-dragging { cursor: default; }
   overflow: hidden;
   background: var(--bg-content);
 }
+
+/* Search-results header — "N results" / "Searching…", above the columns */
+.list-search-header {
+  display: flex;
+  align-items: center;
+  gap: var(--s-8);
+  min-height: 30px;
+  padding: 0 var(--s-12);
+  background: var(--bg-content);
+  border-bottom: 1px solid var(--border-hairline);
+  flex-shrink: 0;
+  font: 500 var(--t-compact) var(--font-ui);
+  color: var(--text-secondary);
+}
+.list-search-header__count { color: var(--text-primary); }
+.list-search-header__hint {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-6);
+  color: var(--text-tertiary);
+}
+/* [hidden]'s UA display:none loses to the display:flex above — restate it. */
+.list-search-header[hidden] { display: none; }
 
 /* Column header */
 .list-head {
@@ -5833,4 +5993,60 @@ button.fp-pill:hover {
     animation-duration: revert !important;
     transition-duration: revert !important;
   }
+}
+
+
+/* -----------------------------------------------------------------------------
+   SETTINGS › SCAN & INDEX (Task 14, design §8.7)
+   Real index state from GET /index/status — one row per indexed root.
+   ----------------------------------------------------------------------------- */
+.settings-index { width: 100%; margin-top: var(--s-8); }
+.settings-index__table {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-sm);
+  overflow: hidden;
+}
+.settings-index__row {
+  display: flex;
+  align-items: center;
+  gap: var(--s-8);
+  padding: var(--s-8);
+  background: var(--bg-content);
+  border-top: 1px solid var(--border-hairline);
+  font: 400 var(--t-compact) var(--font-ui);
+  color: var(--text-secondary);
+}
+.settings-index__row:first-child { border-top: none; }
+.settings-index__main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.settings-index__root {
+  font-size: 11px;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;            /* the tail of a long path is the useful half */
+  text-align: left;
+}
+.settings-index__meta { color: var(--text-tertiary); }
+.settings-index__actions-cell {
+  display: flex;
+  gap: var(--s-4);
+  flex-shrink: 0;
+}
+.settings-index__actions-cell .fp-btn { white-space: nowrap; }
+.settings-index__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--s-8);
+  margin-top: var(--s-8);
+}
+.settings-index__running {
+  font: 500 var(--t-compact) var(--font-ui);
+  color: var(--accent);
 }

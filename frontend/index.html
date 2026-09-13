@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en" data-theme="dark">
 <head>
   <meta charset="UTF-8" />
@@ -127,21 +127,12 @@
         </div>
 
         <!-- ── TAGS ─────────────────────────────────────────────── -->
-        <!-- INTEGRATION: top tags from GET /tags?limit=8 -->
-        <div class="fp-sidebar__section-label">Tags</div>
+        <!-- The top 8 real tags by file count (GET /tags) — app.js's
+             loadSidebarTags(). The whole section hides when nothing is
+             tagged yet; a chip runs a This PC search filtered to that tag. -->
+        <div class="fp-sidebar__section-label" id="sb-tags-label">Tags</div>
         <div id="sb-tags">
-          <button class="fp-chip fp-chip--tinted" data-action="filter-by-tag" data-tag="work" title="Filter by tag: work">
-            work <span class="fp-chip__count">42</span>
-          </button>
-          <button class="fp-chip" data-action="filter-by-tag" data-tag="photos" title="Filter by tag: photos">
-            photos <span class="fp-chip__count">214</span>
-          </button>
-          <button class="fp-chip" data-action="filter-by-tag" data-tag="docs" title="Filter by tag: docs">
-            docs <span class="fp-chip__count">88</span>
-          </button>
-          <button class="fp-chip" data-action="filter-by-tag" data-tag="code" title="Filter by tag: code">
-            code <span class="fp-chip__count">371</span>
-          </button>
+          <div id="sb-tags-chips"></div>
           <button class="fp-btn fp-btn--ghost fp-sidebar__tags-more"
                   data-action="open-tag-canvas" title="View all tags">View all →</button>
           <!-- Collapsed-mode replacement: single Tags icon + chevron — only visible when sidebar is collapsed -->
@@ -246,17 +237,22 @@
           </button>
         </div>
 
-        <!-- Breadcrumb / address bar (flex grow) -->
+        <!-- Breadcrumb / address bar. The WRAPPER is what flexes: it is
+             right-anchored with a leading fade, so as the search bar grows
+             the start of the path scrolls out of view while its end (the
+             folder you are actually in) stays put — design §8.3. -->
         <!-- middot separator, never > or / — per spec A.1.4 -->
-        <nav class="fp-breadcrumb" id="breadcrumb" aria-label="Location">
-          <button class="fp-breadcrumb__crumb" data-action="navigate-crumb" data-path="home">Home</button>
-          <!-- Sample deeper path:
-          <span class="fp-breadcrumb__sep">·</span>
-          <button class="fp-breadcrumb__crumb" data-action="navigate-crumb" data-path="D:\">D:\</button>
-          <span class="fp-breadcrumb__sep">·</span>
-          <button class="fp-breadcrumb__crumb fp-breadcrumb__crumb--current" data-action="navigate-crumb" data-path="D:\Projects">Projects</button>
-          -->
-        </nav>
+        <div class="fp-breadcrumb-wrap" id="breadcrumb-wrap">
+          <nav class="fp-breadcrumb" id="breadcrumb" aria-label="Location">
+            <button class="fp-breadcrumb__crumb" data-action="navigate-crumb" data-path="home">Home</button>
+            <!-- Sample deeper path:
+            <span class="fp-breadcrumb__sep">·</span>
+            <button class="fp-breadcrumb__crumb" data-action="navigate-crumb" data-path="D:\">D:\</button>
+            <span class="fp-breadcrumb__sep">·</span>
+            <button class="fp-breadcrumb__crumb fp-breadcrumb__crumb--current" data-action="navigate-crumb" data-path="D:\Projects">Projects</button>
+            -->
+          </nav>
+        </div>
 
         <!-- Refresh: re-lists the current folder (no index run), keeps
              selection by path and scroll position, spins while in flight -->
@@ -265,15 +261,25 @@
           <svg class="fp-icon fp-icon--16" aria-hidden="true"><use href="#fp-refresh"></use></svg>
         </button>
 
-        <!-- Search field (concave chrome, ⌘K hint) -->
+        <!-- Search field (Task 14, design §8.1). Focusing it opens
+             #search-dropdown; picked filters become .fp-search-chip chips
+             BEFORE the input, Discord-style, and the text after them is the
+             name query. The bar grows with its content up to 60% of the
+             toolbar (styles.css) and pushes the path left. -->
         <div class="fp-search fp-toolbar__search" id="search-wrap">
-          <!-- Collapsed-mode icon (inline SVG — no CSP data-URI issue) -->
-          <svg class="fp-icon fp-icon--14 fp-toolbar__search-collapse-icon" aria-hidden="true"><use href="#fp-search"></use></svg>
           <svg class="fp-icon fp-icon--14 fp-search__icon" aria-hidden="true"><use href="#fp-search"></use></svg>
-          <input class="fp-search__input" id="search-input" type="search"
+          <!-- Filter chips — rendered by search.js's renderSearchChips() -->
+          <div class="fp-search__chips" id="search-chips"></div>
+          <input class="fp-search__input" id="search-input" type="text"
                  placeholder="Search files…" aria-label="Search files"
                  spellcheck="false" autocomplete="off"
-                 data-action="focus-search" />
+                 role="combobox" aria-expanded="false" aria-controls="search-dropdown" />
+          <!-- Width ruler for the field-sizing:content fallback (search.js's
+               resizeSearchInput) — never painted. -->
+          <span class="fp-search__measure" id="search-measure" aria-hidden="true"></span>
+
+          <!-- Filters + History dropdown — body rendered by search.js -->
+          <div class="fp-search-dd" id="search-dropdown" role="menu" aria-label="Search filters" hidden></div>
         </div>
 
         <!-- View / Sort: Windows-style dropdown menus (Task 10), replacing
@@ -367,6 +373,12 @@
 
             <!-- ── File list pane ──────────────────────────── -->
             <div class="list-pane" id="list-pane">
+
+              <!-- Search-results header (Task 14) — "N results" / "First 500
+                   results — refine the search" / "Searching…", plus the This
+                   PC scope's "N drives are not indexed — Index now" hint.
+                   Hidden outside search mode. -->
+              <div class="list-search-header" id="list-search-header" role="status" aria-live="polite" hidden></div>
 
               <!-- Column header (32px, bg-content, sticky) -->
               <div class="list-head" id="list-head">
@@ -2040,53 +2052,23 @@
               <div class="settings-pane" id="settings-pane-scan-index" data-pane="scan-index" style="display:none">
                 <h2 class="settings-pane__title">Scan &amp; Index</h2>
 
+                <!-- Real index state (Task 14, design §8.7): GET /index/status,
+                     one row per indexed root with its file count and last run,
+                     Re-index (POST /index) and Remove (DELETE /index?root=) per
+                     row, plus "Index a folder…" (shell folder picker → POST
+                     /index). Rendered by settings.js's loadIndexStatus(). -->
                 <div class="fp-card settings-card">
                   <div class="settings-row settings-row--col">
                     <div class="settings-row__label">Indexed drives &amp; folders</div>
-                    <!-- INTEGRATION: list from config -->
-                    <div style="display:flex;flex-direction:column;gap:6px;margin-top:var(--s-8)">
-                      <div style="display:flex;align-items:center;gap:var(--s-8);height:32px;padding:0 var(--s-8);background:var(--bg-content);border:1px solid var(--border-subtle);border-radius:var(--r-sm)">
-                        <svg class="fp-icon fp-icon--14" aria-hidden="true" style="color:var(--text-secondary)"><use href="#fp-drive"></use></svg>
-                        <span class="fp-mono" style="font-size:11px;color:var(--text-primary);flex:1">C:\</span>
-                        <button class="fp-icon-btn fp-icon-btn--sm" data-action="settings-remove-drive" data-drive="C:">
-                          <svg class="fp-icon fp-icon--10" aria-hidden="true"><use href="#fp-close"></use></svg>
-                        </button>
-                      </div>
-                      <button class="fp-btn fp-btn--ghost fp-btn--sm" data-action="settings-add-drive" style="align-self:flex-start">+ Add drive or folder</button>
+                    <p class="settings-row__desc">
+                      The index powers the <strong>This PC</strong> search scope. Searching a single
+                      folder walks it live and needs no index.
+                    </p>
+                    <div id="settings-index-status" class="settings-index"></div>
+                    <div class="settings-index__actions">
+                      <button class="fp-btn fp-btn--secondary fp-btn--sm" data-action="settings-index-add">Index a folder…</button>
+                      <span class="settings-index__running" id="settings-index-running" hidden>Indexing…</span>
                     </div>
-                  </div>
-                  <div class="settings-sep"></div>
-                  <div class="settings-row settings-row--col">
-                    <div class="settings-row__label">Ignore patterns</div>
-                    <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:var(--s-8)">
-                      <span class="fp-chip">node_modules</span>
-                      <span class="fp-chip">.git</span>
-                      <span class="fp-chip">*.tmp</span>
-                      <span class="fp-chip">~$*</span>
-                      <button class="fp-chip" data-action="settings-add-ignore-pattern" style="background:transparent;border-style:dashed">+ Add pattern</button>
-                    </div>
-                  </div>
-                  <div class="settings-sep"></div>
-                  <div class="settings-row">
-                    <div class="settings-row__label">File content analysis</div>
-                    <label class="fp-toggle">
-                      <input type="checkbox" checked disabled title="Planned for Stage 4" data-action="settings-toggle" data-setting="content-analysis" />
-                      <span class="fp-toggle__track"></span>
-                      <span class="fp-toggle__thumb"></span>
-                    </label>
-                  </div>
-                  <div class="settings-sep"></div>
-                  <div class="settings-row">
-                    <div class="settings-row__label">Re-scan schedule</div>
-                    <div class="fp-segmented">
-                      <button class="fp-segmented__opt active" data-action="settings-set-scan-schedule" data-val="manual">Manual</button>
-                      <button class="fp-segmented__opt" data-action="settings-set-scan-schedule" data-val="daily">Daily</button>
-                      <button class="fp-segmented__opt" data-action="settings-set-scan-schedule" data-val="weekly">Weekly</button>
-                    </div>
-                  </div>
-                  <div class="settings-sep"></div>
-                  <div class="settings-row">
-                    <button class="fp-btn fp-btn--primary fp-btn--sm" data-action="navigate-screen" data-screen="scan-config">Run new scan</button>
                   </div>
                 </div>
               </div><!-- /#settings-pane-scan-index -->
@@ -3240,6 +3222,69 @@
      (frontend/src/properties.js). No Cancel button: Close discards any
      unapplied edit the way Cancel used to; Apply is disabled until an edit.
      ══════════════════════════════════════════════════════════════════════════ -->
+<!-- Search › More filters (Task 14, design §8.1) — every filter at once,
+     seeded from the chips already in the bar; Apply replaces the chip set.
+     Same scrim/modal chrome as #modal, its own body. -->
+<div class="fp-scrim" id="search-filters-scrim" aria-hidden="true" style="display:none">
+  <div class="fp-modal" id="search-filters-modal" role="dialog" aria-modal="true"
+       aria-labelledby="search-filters-title" style="width:460px">
+    <div class="fp-modal__header" style="padding:var(--s-20) var(--s-20) 0">
+      <h2 class="fp-modal__title" id="search-filters-title">More filters</h2>
+    </div>
+    <div class="fp-modal__body" style="padding:var(--s-16) var(--s-20) 0">
+      <div class="search-filters__grid">
+        <label class="search-filters__label" for="search-filter-type">Type</label>
+        <select class="fp-input" id="search-filter-type"></select>
+
+        <label class="search-filters__label" for="search-filter-ext">Extension</label>
+        <input class="fp-input" id="search-filter-ext" type="text" placeholder="pdf" spellcheck="false" autocomplete="off" />
+
+        <label class="search-filters__label" for="search-filter-modified-from">Modified</label>
+        <div class="search-filters__range">
+          <input class="fp-input" id="search-filter-modified-from" type="date" aria-label="Modified from" />
+          <span class="search-filters__dash">→</span>
+          <input class="fp-input" id="search-filter-modified-to" type="date" aria-label="Modified to" />
+        </div>
+
+        <label class="search-filters__label" for="search-filter-created-from">Created</label>
+        <div class="search-filters__range">
+          <input class="fp-input" id="search-filter-created-from" type="date" aria-label="Created from" />
+          <span class="search-filters__dash">→</span>
+          <input class="fp-input" id="search-filter-created-to" type="date" aria-label="Created to" />
+        </div>
+
+        <label class="search-filters__label" for="search-filter-min-mb">Size (MB)</label>
+        <div class="search-filters__range">
+          <input class="fp-input" id="search-filter-min-mb" type="number" min="0" step="0.1" placeholder="min" aria-label="Minimum size in MB" />
+          <span class="search-filters__dash">→</span>
+          <input class="fp-input" id="search-filter-max-mb" type="number" min="0" step="0.1" placeholder="max" aria-label="Maximum size in MB" />
+        </div>
+
+        <label class="search-filters__label" for="search-filter-tag">Tag</label>
+        <select class="fp-input" id="search-filter-tag"></select>
+
+        <span class="search-filters__label">Hidden items</span>
+        <label class="fp-toggle">
+          <input type="checkbox" id="search-filter-hidden" />
+          <span class="fp-toggle__track"></span>
+          <span class="fp-toggle__thumb"></span>
+        </label>
+
+        <span class="search-filters__label">Match whole words</span>
+        <label class="fp-toggle">
+          <input type="checkbox" id="search-filter-whole-word" />
+          <span class="fp-toggle__track"></span>
+          <span class="fp-toggle__thumb"></span>
+        </label>
+      </div>
+    </div>
+    <div class="fp-modal__footer" style="padding:0 var(--s-20) var(--s-20)">
+      <button class="fp-btn fp-btn--secondary fp-btn--sm" data-action="search-more-cancel">Cancel</button>
+      <button class="fp-btn fp-btn--primary fp-btn--sm" data-action="search-more-apply">Apply</button>
+    </div>
+  </div>
+</div><!-- /#search-filters-scrim -->
+
 <div class="fp-scrim" id="properties-modal-scrim" aria-hidden="true" style="display:none">
   <div class="fp-modal fp-modal--properties" id="properties-modal" role="dialog" aria-modal="true" aria-label="Properties">
 
@@ -3390,6 +3435,7 @@
 <script src="src/fileops.js"></script>
 <script src="src/browser.js"></script>
 <script src="src/dragdrop.js"></script>
+<script src="src/search.js"></script>
 <script src="src/inspector.js"></script>
 <script src="src/home.js"></script>
 <script src="src/settings.js"></script>

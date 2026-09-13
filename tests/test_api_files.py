@@ -163,3 +163,27 @@ def test_index_conflict_while_running(client, sandbox):
         assert r.status_code == 409
     finally:
         app.state.index_state["running"] = False
+
+
+def test_tags_listing_carries_file_count(client, sandbox):
+    """GET /tags (no q) reports how many files carry each tag — the sidebar's
+    Tags section ranks by it and hides a zero-count tag (Stage 2C Task 14)."""
+    a = sandbox / "ta.txt"; a.write_text("a")
+    b = sandbox / "tb.txt"; b.write_text("b")
+    fid_a = client.get("/file", params={"path": str(a)}).json()["id"]
+    fid_b = client.get("/file", params={"path": str(b)}).json()["id"]
+    client.post(f"/files/{fid_a}/tags", json={"name": "shared"})
+    client.post(f"/files/{fid_b}/tags", json={"name": "shared"})
+    client.post(f"/files/{fid_a}/tags", json={"name": "solo"})
+
+    counts = {t["name"]: t["count"] for t in client.get("/tags").json()}
+    assert counts == {"shared": 2, "solo": 1}
+
+    # A tag every file has since dropped still lists, at count 0.
+    tid = next(t["id"] for t in client.get(f"/files/{fid_a}/tags").json() if t["name"] == "solo")
+    client.delete(f"/files/{fid_a}/tags/{tid}")
+    assert {t["name"]: t["count"] for t in client.get("/tags").json()}["solo"] == 0
+
+    # The q= (prefix search) branch is untouched — no count, same keys as before.
+    hit = client.get("/tags", params={"q": "sha"}).json()
+    assert [t["name"] for t in hit] == ["shared"] and "count" not in hit[0]

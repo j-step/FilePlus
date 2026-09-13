@@ -962,6 +962,147 @@ test('every screen renders with no renderer errors', async () => {
     await page.evaluate((p) => loadDirectory(p), docsDir);
     await page.waitForFunction(() => document.querySelectorAll('.fp-row').length >= 10);
 
+    // --- Task 14: search overhaul (playtest pass 1 section 8) ---
+    // Everything below runs against _gen\Documents, which gen_sandbox.py fills
+    // with doc-00.txt .. doc-11.txt, three .md files and a .pdf.
+    const searchInput = page.locator('#search-input');
+    const searchDropdown = page.locator('#search-dropdown');
+    const searchHeader = page.locator('#list-search-header');
+
+    // 1. Focus opens the Filters + History dropdown.
+    await searchInput.click();
+    await expect(searchDropdown).toBeVisible();
+    await expect(searchDropdown).toContainText('Filters');
+    await expect(searchDropdown).toContainText('History');
+    await expect(searchDropdown.locator('[data-filter="in"]')).toBeVisible();
+    await page.screenshot({ path: path.join(SHOTS, 'search-dropdown.png') });
+
+    // 2. Typing searches the current folder: rows carry <mark> around the
+    //    matched substring and a Location subline, and the header counts them.
+    await searchInput.fill('doc-0');
+    await expect(page.locator('#list-scroll .fp-row mark').first()).toBeVisible({ timeout: 2500 });
+    await expect(page.locator('#list-scroll .fp-row mark').first()).toHaveText('doc-0');
+    await expect(page.locator('#list-scroll .fp-row__location').first()).toBeVisible();
+    await expect(searchHeader).toHaveText(/\d+ results/);
+    // Every result is a real .fp-row carrying its absolute path, so the menus,
+    // drag, favorites and properties from Tasks 11-13 all work unchanged.
+    expect(await page.locator('#list-scroll .fp-row[data-path]').count()).toBeGreaterThan(0);
+    const docZeroCount = await page.locator('#list-scroll .fp-row[data-path]').count();
+    await expect(page.locator('#breadcrumb [data-action="search-clear"]')).toBeVisible();
+
+    // 3. A filter row expands inline and its choice becomes a chip in the bar.
+    await searchInput.click();
+    await searchDropdown.locator('[data-action="search-expand-filter"][data-filter="type"]').click();
+    await searchDropdown.locator('[data-action="search-pick-filter"][data-value="document"]').click();
+    const typeChip = page.locator('#search-chips .fp-search-chip');
+    await expect(typeChip).toHaveCount(1);
+    await expect(typeChip).toContainText('type:');
+    await expect(typeChip).toContainText('Document');
+    // .txt files are in the document group, so the same rows are still listed.
+    await expect.poll(() => page.locator('#list-scroll .fp-row[data-path]').count())
+      .toBe(docZeroCount);
+    // Picking a filter closes the dropdown, so this shows the results listing
+    // itself: chip in the bar, <mark> highlights, Location sublines, header.
+    await expect(searchDropdown).toBeHidden();
+    await page.screenshot({ path: path.join(SHOTS, 'search-results.png') });
+
+    // 4. Backspace at the start of the text eats the last chip; a second one
+    //    is a no-op (nothing left to eat) and the results stay put.
+    await searchInput.click();
+    await page.keyboard.press('Home');
+    await page.keyboard.press('Backspace');
+    await page.keyboard.press('Backspace');
+    await expect(page.locator('#search-chips .fp-search-chip')).toHaveCount(0);
+    await expect(searchInput).toHaveValue('doc-0');
+
+    // 5. Clicking away closes the dropdown and keeps chips, text and results.
+    await page.locator('#list-scroll').click({ position: { x: 10, y: 10 } });
+    await expect(searchDropdown).toBeHidden();
+    await expect(searchInput).toHaveValue('doc-0');
+    await expect(searchHeader).toHaveText(/\d+ results/);
+
+    // 6. The breadcrumb's x returns to the folder the tab was showing.
+    await page.locator('#breadcrumb [data-action="search-clear"]').click();
+    await expect(searchHeader).toBeHidden();
+    await expect(page.locator('#breadcrumb .fp-breadcrumb__crumb--current')).toHaveText('Documents');
+    await expect(page.locator('#list-scroll .fp-row mark')).toHaveCount(0);
+    await expect(searchInput).toHaveValue('');
+
+    // 6b. More filters: the modal opens seeded from the bar, and Apply turns
+    //     its fields into chips (ext=txt keeps the same ten doc-0*.txt rows,
+    //     so this proves the modal -> chip -> query parameter path end to end).
+    await searchInput.fill('doc-0');
+    await expect(searchHeader).toHaveText(/\d+ results/, { timeout: 2500 });
+    await searchInput.click();
+    await searchDropdown.locator('[data-action="search-more-filters"]').click();
+    await expect(page.locator('#search-filters-modal')).toBeVisible();
+    await page.locator('#search-filter-ext').fill('txt');
+    await page.locator('[data-action="search-more-apply"]').click();
+    await expect(page.locator('#search-filters-modal')).toBeHidden();
+    await expect(page.locator('#search-chips .fp-search-chip')).toContainText('ext:');
+    await expect.poll(() => page.locator('#list-scroll .fp-row[data-path]').count())
+      .toBe(docZeroCount);
+
+    // 6c. Per-tab search state: a second tab shows a plain listing while tab 1
+    //     keeps its results, and coming back repaints them (no re-walk).
+    await page.keyboard.press('Control+t');
+    await expect(page.locator('.fp-tab')).toHaveCount(2);
+    await page.evaluate((p2) => openBrowserAt(p2), picsDir);
+    await expect(page.locator('#list-scroll .fp-row mark')).toHaveCount(0);
+    await expect(searchInput).toHaveValue('');
+    await page.locator('.fp-tab[data-tab-id="tab-1"]').click();
+    await expect(searchInput).toHaveValue('doc-0');
+    await expect(page.locator('#search-chips .fp-search-chip')).toContainText('ext:');
+    await expect(page.locator('#list-scroll .fp-row mark').first()).toBeVisible();
+    await expect(searchHeader).toHaveText(/\d+ results/);
+    await page.locator('.fp-tab').nth(1).click({ button: 'middle' });
+    await expect(page.locator('.fp-tab')).toHaveCount(1);
+
+    // Back out of search for the History check below.
+    await page.locator('#breadcrumb [data-action="search-clear"]').click();
+    await expect(searchHeader).toBeHidden();
+
+    // 7. The search just run is in History, ready to restore.
+    await searchInput.click();
+    await expect(searchDropdown.locator('[data-action="search-history-run"]').first())
+      .toContainText('doc-0');
+    await page.keyboard.press('Escape');
+    await expect(searchDropdown).toBeHidden();
+
+    // 8. The palette's only file command hands the text to the same search.
+    await page.keyboard.press('Control+k');
+    await page.locator('#palette-input').fill('readme');
+    const paletteSearchCmd = page.locator('#palette-search-results [data-action="palette-search-files"]');
+    await expect(paletteSearchCmd).toContainText('Search files for');
+    await expect(paletteSearchCmd).toHaveClass(/fp-palette__item--selected/);
+    await page.keyboard.press('Enter');
+    await expect(page.locator('#palette-scrim')).toBeHidden();
+    await expect(page.locator('#list-scroll .fp-row mark').first()).toBeVisible({ timeout: 2500 });
+    await expect(page.locator('#list-scroll .fp-row__name').first()).toContainText('readme');
+    await page.locator('#breadcrumb [data-action="search-clear"]').click();
+    await expect(searchHeader).toBeHidden();
+
+    // 9. Settings > Scan & Index lists real indexed roots (GET /index/status).
+    const genDir = `${root}\\_gen`;
+    await postJson('/index', { path: genDir });
+    await expect.poll(async () =>
+      (await (await fetch(`${API}/index/status`, { headers: apiHeaders })).json()).running,
+      { timeout: 30000 }).toBe(false);
+    await page.evaluate(() => switchScreen('settings'));
+    await page.locator('[data-action="settings-nav"][data-pane="scan-index"]').click();
+    await expect(page.locator('#settings-index-status')).toContainText('_gen');
+    await expect(page.locator('[data-action="settings-index-reindex"]').first()).toBeVisible();
+    await expect(page.locator('[data-action="settings-index-remove"]').first()).toBeVisible();
+    await page.screenshot({ path: path.join(SHOTS, 'settings-scan-index.png') });
+    // Leave the index empty again so the next verify run starts from the same
+    // state this one did.
+    await fetch(`${API}/index?root=${encodeURIComponent(genDir)}`, { method: 'DELETE', headers: apiHeaders });
+
+    // Back to the Browser listing the screenshots below expect.
+    await page.evaluate(() => switchScreen('browser'));
+    await page.evaluate((p2) => loadDirectory(p2), docsDir);
+    await page.waitForFunction(() => document.querySelectorAll('.fp-row').length >= 10);
+
     await page.evaluate(() => applyTheme('light'));
     for (const id of ['home', 'browser', 'settings']) {
       await page.evaluate((s) => switchScreen(s), id);

@@ -4,7 +4,6 @@ const sidebar            = document.getElementById('sidebar');
 const btnSidebarCollapse = document.getElementById('btn-sidebar-collapse');
 const paletteScrim       = document.getElementById('palette-scrim');
 const paletteInput       = document.getElementById('palette-input');
-const searchInput        = document.getElementById('search-input');
 
 // ── Screen switching ────────────────────────────────────────────────────────
 // Screens whose backend wiring is not yet complete. Each screen's HTML carries
@@ -168,6 +167,11 @@ function createTab({ screen = 'home', path = null, history = [], historyIndex = 
     view: null,
     scrollTop: 0,
     selection: [],
+    // Task 14: this tab's own search (chips + text + the rendered results),
+    // or null when it is showing a plain folder listing. Captured on every
+    // deactivation and repainted on reactivation, so switching tabs and back
+    // keeps the results without re-walking the tree.
+    search: null,
   };
   tabs.list.push(record);
   const el = createTabElement(record);
@@ -188,6 +192,9 @@ function syncActiveTabRecord() {
   tab.view = browserState.view;
   tab.selection = [...browserState.selection];
   tab.historyIndex = nav.index;
+  // The live search bar + its results, or null when this tab is showing a
+  // plain listing (search.js's captureSearchState).
+  tab.search = typeof captureSearchState === 'function' ? captureSearchState() : null;
   const listScroll = document.getElementById('list-scroll');
   if (listScroll) tab.scrollTop = listScroll.scrollTop;
 }
@@ -213,8 +220,21 @@ function activateTab(id) {
   nav.history = incoming.history;
   nav.index = incoming.historyIndex;
 
-  if (incoming.screen === 'browser') {
+  if (incoming.screen === 'browser' && incoming.search && typeof restoreSearchResultsForTab === 'function') {
+    // This tab was showing search results: repaint them from the tab's own
+    // snapshot rather than re-running the walk. browserState.path stays the
+    // folder the tab was in before the search, which is where the breadcrumb's
+    // × (exitSearchResults) returns to.
     showScreenDom('browser');
+    browserState.path = incoming.path;
+    browserState.parent = null;
+    browserState.isRoot = false;
+    restoreSearchResultsForTab(incoming.search);
+    updateSidebarActive(incoming.path);
+    refreshNavButtons();
+  } else if (incoming.screen === 'browser') {
+    showScreenDom('browser');
+    if (typeof searchResetBar === 'function') searchResetBar();
     loadDirectory(incoming.path, {
       // Empty history means this tab was staged in the background (openBrowserAt
       // on an inactive tab) and is only now getting its first real fetch — treat
@@ -387,7 +407,7 @@ function closeOtherTabs(id) {
 function seedInitialTab() {
   const el = document.querySelector('.fp-tab[data-tab-id]');
   const id = el ? el.dataset.tabId : 'tab-1';
-  const record = { id, screen: 'home', label: 'Home', path: null, history: [], historyIndex: -1, view: null, scrollTop: 0, selection: [] };
+  const record = { id, screen: 'home', label: 'Home', path: null, history: [], historyIndex: -1, view: null, scrollTop: 0, selection: [], search: null };
   tabs.list.push(record);
   tabs.activeId = id;
   nav.history = record.history;
@@ -617,185 +637,16 @@ function initDeviceName() {
   });
 }
 
-// ── Responsive toolbar search ─────────────────────────────────────────────────
-// Continuous-resize model: search bar is as wide as possible up to MAX. As the
-// breadcrumb (which has flex:1) grows, search shrinks to make room. Below the
-// short-placeholder threshold we swap the placeholder to "Search…". Below the
-// icon threshold we collapse to the magnifier icon. When room reappears, we
-// re-expand smoothly. The cave fade tracks actual breadcrumb overflow only.
-const SEARCH_MAX_WIDTH                  = 220; // px; expanded full width
-const SEARCH_MIN_FULL_PLACEHOLDER       = 170; // px; below this, swap to short placeholder "Search…"
-const SEARCH_MIN_SHORT_PLACEHOLDER      = 110; // px; below this, collapse to icon
-const SEARCH_ICON_WIDTH                 = 28;  // px; collapsed icon width
-const SEARCH_RESIZE_DEAD_ZONE           = 0;   // px; pixel-for-pixel response
-
-const PLACEHOLDER_FULL  = 'Search files…';
-const PLACEHOLDER_SHORT = 'Search…';
-
-function initToolbarResponsive() {
-  const toolbar    = document.querySelector('.fp-toolbar');
-  const breadcrumb = document.getElementById('breadcrumb');
-  const searchWrap = document.getElementById('search-wrap');
-  const input      = document.getElementById('search-input');
-  if (!toolbar || !breadcrumb || !searchWrap) return;
-
-  let moRafId = null;
-  let lastAppliedWidth = SEARCH_MAX_WIDTH;
-  let lastAppliedState = 'full'; // 'full' | 'short' | 'icon'
-  let iconEnteredAt = 0;          // performance.now() when state became 'icon'
-  let caveDelayTimer = null;      // pending setTimeout for deferred cave-show
-  const CAVE_REVEAL_DELAY_MS = 10;
-
-  function applyContinuous(width, state) {
-    // Track entry into icon state for the cave-reveal delay.
-    if (state === 'icon' && lastAppliedState !== 'icon') {
-      iconEnteredAt = performance.now();
-    }
-    if (state === 'icon') {
-      searchWrap.classList.add('fp-toolbar__search--icon');
-      searchWrap.style.width = '';
-      // Icon state: breadcrumb may be pushed into the cave. Allow it to shrink
-      // (basis:0, shrink:1) so it claims remaining space and overflow-scrolls.
-      breadcrumb.style.flex = '1 1 0';
-      breadcrumb.style.minWidth = '0';
-    } else {
-      searchWrap.classList.remove('fp-toolbar__search--icon');
-      searchWrap.style.width = width + 'px';
-      // Non-icon: PIN breadcrumb at its natural content width. shrink:0 means
-      // flex layout will NOT clip the path; grow:1 still lets it absorb empty
-      // space when the toolbar is wider than needed. Search absorbs all the
-      // shrink as the toolbar narrows — the path stays put until search has
-      // collapsed to the icon.
-      breadcrumb.style.flex = '1 0 auto';
-      breadcrumb.style.minWidth = '';
-      if (input) {
-        const desired = state === 'full' ? PLACEHOLDER_FULL : PLACEHOLDER_SHORT;
-        if (input.placeholder !== desired) input.placeholder = desired;
-      }
-    }
-    lastAppliedWidth = width;
-    lastAppliedState = state;
-  }
-
-  function actualRecalc() {
-    // Compute the toolbar's available width MINUS every fixed-width child
-    // (back/forward/up nav, view toggle, inspector toggle, theme toggle) MINUS
-    // breadcrumb's NATURAL desired width. The remainder is what search can claim.
-    //
-    // CRITICAL: breadcrumb.scrollWidth is NOT a reliable "natural width" — when
-    // content fits inside the breadcrumb container, scrollWidth == clientWidth
-    // (the full allocated flex space). To get the true natural desired width,
-    // sum the breadcrumb's children's actual rendered widths plus the gaps.
-    const breadcrumbStyle = getComputedStyle(breadcrumb);
-    const bcGap           = parseFloat(breadcrumbStyle.gap || 0);
-    let breadcrumbNatural = 0;
-    let bcVisibleChildren = 0;
-    for (const child of breadcrumb.children) {
-      const w = child.getBoundingClientRect().width;
-      if (w > 0) {
-        breadcrumbNatural += w;
-        bcVisibleChildren++;
-      }
-    }
-    if (bcVisibleChildren > 1) breadcrumbNatural += bcGap * (bcVisibleChildren - 1);
-
-    const toolbarStyle   = getComputedStyle(toolbar);
-    const toolbarPadding = parseFloat(toolbarStyle.paddingLeft || 0) + parseFloat(toolbarStyle.paddingRight || 0);
-    const toolbarGap     = parseFloat(toolbarStyle.gap || 0);
-
-    let otherWidths = 0;
-    let visibleChildren = 0;
-    for (const child of toolbar.children) {
-      if (child === searchWrap || child === breadcrumb) continue;
-      const r = child.getBoundingClientRect();
-      if (r.width > 0) {
-        otherWidths += r.width;
-        visibleChildren++;
-      }
-    }
-    // Total gaps in toolbar = (visibleChildren + 2 [search + breadcrumb]) - 1
-    const totalGaps = toolbarGap * Math.max(0, (visibleChildren + 2) - 1);
-
-    const availableForSearch = toolbar.clientWidth - toolbarPadding - otherWidths - totalGaps - breadcrumbNatural;
-
-    let targetWidth, targetState;
-    if (availableForSearch >= SEARCH_MIN_SHORT_PLACEHOLDER) {
-      targetWidth = Math.min(SEARCH_MAX_WIDTH, Math.max(SEARCH_MIN_SHORT_PLACEHOLDER, availableForSearch));
-      targetState = targetWidth >= SEARCH_MIN_FULL_PLACEHOLDER ? 'full' : 'short';
-    } else {
-      targetWidth = SEARCH_ICON_WIDTH;
-      targetState = 'icon';
-    }
-
-    // Pixel-for-pixel: apply if width or state changed at all
-    const widthChanged = targetWidth !== lastAppliedWidth;
-    const stateChanged = targetState !== lastAppliedState;
-    if (widthChanged || stateChanged) {
-      applyContinuous(targetWidth, targetState);
-    }
-
-    // Cave fade only appears when search has collapsed to the icon AND a short
-    // delay has passed since the collapse — the delay prevents same-frame
-    // visual coupling between the search shrinking and the cave appearing.
-    // Until both conditions are met, the breadcrumb is pinned and cannot show
-    // a cave. The path is only "pushed back" once the search has nowhere
-    // left to give AND the eye has registered the collapse.
-    const bcOverflow = breadcrumb.scrollWidth - breadcrumb.clientWidth;
-    const isIcon = lastAppliedState === 'icon';
-    const elapsed = isIcon ? performance.now() - iconEnteredAt : 0;
-    const delayPassed = elapsed >= CAVE_REVEAL_DELAY_MS;
-    const showCave = isIcon && delayPassed && (bcOverflow > 1);
-
-    breadcrumb.classList.toggle('fp-breadcrumb--scroll', showCave);
-    if (showCave) {
-      breadcrumb.scrollLeft = breadcrumb.scrollWidth;
-    }
-
-    // If we're in icon state and would show the cave but the delay hasn't
-    // elapsed yet, schedule a deferred recalc so the cave appears right after
-    // the delay window closes.
-    if (isIcon && !delayPassed && (bcOverflow > 1)) {
-      if (caveDelayTimer === null) {
-        const remaining = Math.max(0, CAVE_REVEAL_DELAY_MS - elapsed) + 1;
-        caveDelayTimer = setTimeout(() => {
-          caveDelayTimer = null;
-          actualRecalc();
-        }, remaining);
-      }
-    } else if (caveDelayTimer !== null && !isIcon) {
-      // Left icon state during the delay window — cancel the deferred reveal.
-      clearTimeout(caveDelayTimer);
-      caveDelayTimer = null;
-    }
-  }
-
-  // ResizeObserver fires post-layout, pre-paint — call actualRecalc directly
-  // (no rAF wrap) so the search width updates in the SAME frame as the toolbar
-  // resize. Wrapping in rAF would push the update to the NEXT frame, which the
-  // user perceives as "smoothing" / lag during fast drags.
-  const ro = new ResizeObserver(() => actualRecalc());
-  ro.observe(toolbar);
-
-  // MutationObserver can fire synchronously many times (e.g. breadcrumb rebuilds);
-  // coalesce those into one rAF to avoid layout thrashing.
-  function moRecalc() {
-    if (moRafId !== null) return;
-    moRafId = requestAnimationFrame(() => { moRafId = null; actualRecalc(); });
-  }
-  const mo = new MutationObserver(moRecalc);
-  mo.observe(breadcrumb, { childList: true, characterData: true, subtree: true });
-
-  // Click on collapsed icon → open command palette (do NOT expand inline).
-  searchWrap.addEventListener('click', e => {
-    if (searchWrap.classList.contains('fp-toolbar__search--icon')) {
-      e.preventDefault();
-      e.stopPropagation();
-      if (typeof openPalette === 'function') openPalette();
-    }
-  }, true /* capture */);
-
-  actualRecalc();
-}
+// ── Toolbar layout ─────────────────────────────────────────────────
+// The old JS resize model (initToolbarResponsive: a ResizeObserver +
+// MutationObserver pair that measured the breadcrumb every frame and wrote a
+// pixel width onto the search bar, collapsing it to an icon below a threshold)
+// is gone — Task 14's layout is pure CSS (styles.css §7/§9/§10, design §8.3):
+// #breadcrumb-wrap flexes and is right-anchored with a leading mask fade, and
+// #search-wrap grows with its own content (field-sizing: content, with
+// search.js's measuring-span fallback) up to 60% of the toolbar. Nothing has
+// to run per frame, and the search bar no longer collapses into a button that
+// opened the palette instead of searching.
 
 // ── Command palette ───────────────────────────────���──────────────────────��─────
 function openPalette() {
@@ -810,35 +661,17 @@ function closePalette() {
   if (!paletteScrim) return;
   paletteScrim.style.display = 'none';
   paletteScrim.setAttribute('aria-hidden', 'true');
-  clearTimeout(_paletteSearchTimer);
-  _paletteSearchSeq++; // invalidate any in-flight search response
 }
 
-// ── Palette search mode (A.11.1 / Task 6) ─────────────────────────────────
-// Below the 2-char threshold (including empty), the static Commands group is
-// shown and search results are cleared. At 2+ chars, input is debounced
-// 150ms then GET /search?q=&limit=30 fires; results replace the Commands
-// group until the query drops back below the threshold.
-// Palette result icons come from the same iconFor() the file list uses, so a
-// hit reads as the same kind of thing in both places (and follows the
-// FilePlus/Windows icon-source setting). Built per result rather than hoisted
-// into a constant: the file icon depends on the hit's own extension.
-const paletteFileIcon = (hit) => iconFor({ name: hit.filename, path: hit.path, ext: extOfPath(hit.filename), is_dir: false }, 14, 'fp-palette__item-icon');
-const paletteFolderIcon = (dirPath) => iconFor({ name: pathBaseName(dirPath), path: dirPath, is_dir: true }, 14, 'fp-palette__item-icon');
-
-/** '.txt' for 'notes.txt', '' for an extension-less name (matches the `ext`
- * a /fs/list entry carries, which is what fpFamilyFor() expects). */
-function extOfPath(name) {
-  const dot = String(name || '').lastIndexOf('.');
-  return dot > 0 ? String(name).slice(dot) : '';
-}
-const PALETTE_MIN_CHARS = 2;
-const PALETTE_DEBOUNCE_MS = 150;
-let _paletteSearchTimer = null;
-let _paletteSearchSeq = 0;
+// ── Palette → toolbar search (Task 14, design §8.5) ────────────────────
+// The palette no longer runs its own GET /search: one search code path, and
+// it is the toolbar bar. Typing at least one character puts a single command
+// at the top of the list — "Search files for '<text>'" — which hands the text
+// to search.js and shows the results in the Browser like any other search.
+const PALETTE_MIN_CHARS = 1;
 
 /** Every visible (not display:none-ancestor'd), non-disabled palette item —
- * whichever group (Commands or search results) is currently shown. */
+ * whichever group (the search command or Commands) is currently shown. */
 function paletteVisibleItems() {
   return [...document.querySelectorAll('#palette-search-pane .fp-palette__item:not([disabled])')]
     .filter(el => el.offsetParent !== null);
@@ -851,8 +684,6 @@ function paletteSelectFirst() {
 }
 
 function paletteResetToCommands() {
-  clearTimeout(_paletteSearchTimer);
-  _paletteSearchSeq++; // invalidate any in-flight search response
   const resultsEl = document.getElementById('palette-search-results');
   const commandsEl = document.getElementById('palette-commands');
   if (resultsEl) resultsEl.innerHTML = '';
@@ -860,63 +691,20 @@ function paletteResetToCommands() {
   paletteSelectFirst();
 }
 
-async function runPaletteSearch(q) {
-  const seq = ++_paletteSearchSeq;
-  const resultsEl = document.getElementById('palette-search-results');
-  if (!resultsEl) return;
-  let hits = [];
-  try {
-    const res = await API.get('/search', { q, limit: 30 });
-    hits = Array.isArray(res) ? res : (res && res.results) || []; // Stage 2C Task 2 wraps the response in {results, indexed_roots}; Task 14 replaces this call entirely
-  } catch (err) {
-    hits = [];
-  }
-  if (seq !== _paletteSearchSeq) return; // a newer query has since superseded this response
-
-  if (!hits || hits.length === 0) {
-    resultsEl.innerHTML = `<button class="fp-palette__item" role="option" disabled aria-disabled="true">
-      <span>No matches in the index — index folders from the sidebar (right-click a folder → Index for search)</span>
-    </button>`;
-    return;
-  }
-
-  const fileItems = hits.map(hit => `
-    <button class="fp-palette__item" role="option" data-action="palette-open-file" data-path="${escapeHtml(hit.path)}">
-      ${paletteFileIcon(hit)}
-      <span>${escapeHtml(hit.filename)}</span>
-      <span class="fp-palette__item-meta fp-mono">${escapeHtml(parentOfPath(hit.path))}</span>
-    </button>`).join('');
-
-  // One folder item per distinct parent of the first 5 hits.
-  const seenParents = new Set();
-  const folderItems = [];
-  for (const hit of hits.slice(0, 5)) {
-    const parent = parentOfPath(hit.path);
-    if (seenParents.has(parent)) continue;
-    seenParents.add(parent);
-    folderItems.push(`
-      <button class="fp-palette__item" role="option" data-action="palette-open-folder" data-path="${escapeHtml(parent)}">
-        ${paletteFolderIcon(parent)}
-        <span>Open folder ${escapeHtml(pathBaseName(parent))}</span>
-        <span class="fp-palette__item-meta fp-mono">${escapeHtml(parent)}</span>
-      </button>`);
-  }
-
-  resultsEl.innerHTML = `<div class="fp-palette__section">Files</div>${fileItems}`
-    + (folderItems.length ? `<div class="fp-palette__section">Folders</div>${folderItems.join('')}` : '');
-  paletteSelectFirst();
-}
-
 paletteInput?.addEventListener('input', () => {
   const q = paletteInput.value.trim();
-  clearTimeout(_paletteSearchTimer);
+  const resultsEl = document.getElementById('palette-search-results');
+  if (!resultsEl) return;
   if (q.length < PALETTE_MIN_CHARS) {
     paletteResetToCommands();
     return;
   }
-  const commandsEl = document.getElementById('palette-commands');
-  if (commandsEl) commandsEl.style.display = 'none';
-  _paletteSearchTimer = setTimeout(() => runPaletteSearch(q), PALETTE_DEBOUNCE_MS);
+  resultsEl.innerHTML = `<button class="fp-palette__item" role="option"
+      data-action="palette-search-files" data-query="${escapeHtml(q)}">
+      ${icon('search', 'fp-icon--14 fp-palette__item-icon')}
+      <span>Search files for “${escapeHtml(q)}”</span>
+    </button>`;
+  paletteSelectFirst();
 });
 
 paletteInput?.addEventListener('keydown', e => {
@@ -1280,7 +1068,7 @@ const CONTEXT_MENUS = {
     'sep',
     { label: cmFavoriteLabel,      action: 'cm-favorite',      enabled: cmAnyEnabled },
     { label: 'Pin to sidebar',     action: 'cm-pin-sidebar',   enabled: cmSingleFolderEnabled },
-    { label: 'Index for search',   action: 'cm-index-folder',  enabled: cmSingleFolderEnabled },
+    { label: 'Index for This PC search', action: 'cm-index-folder', enabled: cmSingleFolderEnabled },
     'sep',
     { label: 'Properties',              action: 'cm-properties', enabled: cmSingleEnabled },
     { label: 'Show in Windows Explorer', action: 'cm-reveal-explorer' },
@@ -1782,6 +1570,41 @@ function renderPinItem(pin) {
   </button>`;
 }
 
+// ── Sidebar Tags (Task 14) ─────────────────────────────────────────
+// The eight most-used real tags (GET /tags, ranked by the file count the
+// route now reports), replacing the four hardcoded sample chips. The whole
+// section — label, chips and "View all →" — hides when nothing is tagged
+// yet, rather than showing an empty shelf. The response is also cached on
+// window.__fpTags for search.js's Tag filter row and the More-filters modal,
+// so neither has to fetch again.
+const SIDEBAR_TAG_LIMIT = 8;
+
+async function loadSidebarTags() {
+  const chips = document.getElementById('sb-tags-chips');
+  const section = document.getElementById('sb-tags');
+  const label = document.getElementById('sb-tags-label');
+  if (!chips) return;
+  let tags;
+  try {
+    tags = await API.get('/tags');
+  } catch (err) {
+    console.warn('[fp-tags] failed to load tags:', formatApiError(err));
+    return;
+  }
+  window.__fpTags = Array.isArray(tags) ? tags : [];
+  const top = window.__fpTags
+    .filter(t => (t.count || 0) > 0)
+    .sort((a, b) => (b.count || 0) - (a.count || 0) || a.name.localeCompare(b.name))
+    .slice(0, SIDEBAR_TAG_LIMIT);
+  const empty = top.length === 0;
+  if (section) section.hidden = empty;
+  if (label) label.hidden = empty;
+  chips.innerHTML = top.map(t => `<button class="fp-chip" data-action="filter-by-tag"
+      data-tag="${escapeHtml(t.name)}" title="Search This PC for tag: ${escapeHtml(t.name)}">
+      ${escapeHtml(t.name)} <span class="fp-chip__count">${t.count}</span>
+    </button>`).join('');
+}
+
 // ── Quick Access known folders (Task 9) ─────────────────────────────────────
 // Known-folder ids shown in Quick Access by default: Desktop, Downloads, and
 // Screenshots (when the machine has one — GET /known-folders only returns it
@@ -1944,8 +1767,14 @@ const IN_SCOPE_ACTIONS = new Set([
   'inspector-open', 'inspector-reveal', 'inspector-remove-tag', 'inspector-undo-op',
   'unfavorite-file', 'open-recent-file',
   'open-file', 'reveal-file', 'copy-path', 'home-toggle-favorite',
-  'palette-open-file', 'palette-open-folder',
+  'palette-open-file', 'palette-open-folder', 'palette-search-files',
   'open-palette', 'close-palette', 'palette-set-mode',
+  // Toolbar search (Task 14)
+  'search-clear', 'search-remove-chip', 'search-expand-filter', 'search-pick-filter',
+  'search-more-filters', 'search-more-apply', 'search-more-cancel',
+  'search-history-run', 'search-history-clear', 'search-index-drives',
+  // Settings › Scan & Index (Task 14)
+  'settings-index-add', 'settings-index-reindex', 'settings-index-remove',
   'modal-cancel', 'modal-confirm', 'modal-confirm-type',
   'ef-filter', 'ef-sort', 'ef-toggle-pause-ai', 'ef-toggle-moving-card',
   'scan-config-switch-mode', 'scan-baseline-confirm',
@@ -2085,12 +1914,72 @@ document.addEventListener('click', e => {
       toggleTheme();
       break;
     case 'focus-search':
-      openPalette();
+      // The bar is the search surface now (Task 14) — focusing it opens its
+      // own Filters/History dropdown; ⌘K stays the command palette.
+      focusSearchInput();
       break;
-    case 'filter-by-tag':
-      switchScreen('browser');
-      // INTEGRATION: apply tag filter
+    case 'filter-by-tag': {
+      // A sidebar tag chip: search This PC for everything carrying that tag.
+      const tag = btn.dataset.tag;
+      if (!tag) break;
+      searchResetBar();
+      searchState.chips = [
+        { key: 'in', value: 'pc', label: 'This PC' },
+        { key: 'tag', value: tag, label: tag },
+      ];
+      searchState.scope = 'pc';
+      renderSearchChips();
+      runSearch();
       break;
+    }
+    // ── Toolbar search (Task 14) ──────────────────────────────────
+    case 'search-clear':
+      clearSearch();
+      break;
+    case 'search-remove-chip':
+      removeChip(Number(btn.dataset.chipIndex));
+      break;
+    case 'search-expand-filter':
+      toggleSearchFilterRow(btn.dataset.filter);
+      break;
+    case 'search-pick-filter':
+      pickSearchFilter(btn.dataset.filter, btn.dataset.value, btn.dataset.label);
+      break;
+    case 'search-more-filters':
+      openMoreFilters();
+      break;
+    case 'search-more-apply':
+      applyMoreFilters();
+      break;
+    case 'search-more-cancel':
+      closeMoreFilters();
+      break;
+    case 'search-history-run':
+      restoreSearchHistoryEntry(Number(btn.dataset.index));
+      break;
+    case 'search-history-clear':
+      clearSearchHistory();
+      break;
+    case 'search-index-drives':
+      indexMissingDrives();
+      break;
+    // ── Settings › Scan & Index (Task 14) ────────────────────────────────────
+    case 'settings-index-add':
+      pickFolderToIndex();
+      break;
+    case 'settings-index-reindex':
+      startIndexOf(btn.dataset.root);
+      break;
+    case 'settings-index-remove':
+      removeIndexRoot(btn.dataset.root);
+      break;
+    case 'palette-search-files': {
+      const q = btn.dataset.query || '';
+      closePalette();
+      setSearchText(q);
+      runSearch();
+      break;
+    }
     case 'open-tag-canvas':
       openTagCanvas();
       break;
@@ -2164,6 +2053,7 @@ document.addEventListener('click', e => {
     case 'settings-nav':
       switchSettingsPane(btn.dataset.pane);
       if (btn.dataset.pane === 'data') updateWritesStatusLine();
+      if (btn.dataset.pane === 'scan-index') loadIndexStatus();
       break;
     case 'settings-set-theme':
       applyTheme(btn.dataset.theme || btn.dataset.val);
@@ -2969,7 +2859,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   updateInspector('none');
   initSidebarResize();
   restoreSidebarState();
-  initToolbarResponsive();
+  initSearch();
   checkBackend();
   const _backendPollId = setInterval(checkBackend, 30_000);
   window.addEventListener('beforeunload', () => clearInterval(_backendPollId), { once: true });
@@ -2980,9 +2870,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   // to toggle twice (visible no-op). The View/Sort toolbar buttons (Task 10)
   // are data-action="open-view-menu"/"open-sort-menu" for the same reason —
   // no separate listener needed here.
-
-  // Palette — open when search focused
-  searchInput?.addEventListener('focus', e => { e.preventDefault(); openPalette(); });
 
   // Palette backdrop click closes
   paletteScrim?.addEventListener('click', e => {
@@ -3068,6 +2955,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   await fpLoadKnownFolders();
   await loadDrives();
   await loadPins();
+  await loadSidebarTags();
   loadQuickAccess();
   await checkCrashRecovery();
 

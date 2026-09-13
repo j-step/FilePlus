@@ -275,6 +275,10 @@ async function addInspectorTag(name) {
   try {
     await API.post(`/files/${_inspectorFileId}/tags`, { name });
     await refreshInspectorTags();
+    // The sidebar's Tags section and search.js's Tag filter both read the
+    // same GET /tags counts (Task 14) — re-fetch so a tag added here shows up
+    // there without a restart.
+    if (typeof loadSidebarTags === 'function') loadSidebarTags();
   } catch (err) {
     showToast(`Failed to add tag: ${formatApiError(err)}`, 'error');
   }
@@ -285,6 +289,7 @@ async function inspectorRemoveTag(tagId) {
   try {
     await API.del(`/files/${_inspectorFileId}/tags/${tagId}`);
     await refreshInspectorTags();
+    if (typeof loadSidebarTags === 'function') loadSidebarTags();
   } catch (err) {
     showToast(`Failed to remove tag: ${formatApiError(err)}`, 'error');
   }

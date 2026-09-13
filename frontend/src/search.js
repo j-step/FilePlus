@@ -1,0 +1,893 @@
+/**
+ * FilePlus toolbar search (Stage 2C Task 14, design §8).
+ *
+ * One search surface: the toolbar bar. Focusing it opens #search-dropdown
+ * (Filters + History); picking a filter adds a chip INSIDE the bar (Discord's
+ * model); the text after the chips is the name query. Results render in the
+ * Browser list (browser.js's renderSearchResults) with the matched substrings
+ * wrapped in <mark>, never in a popup — so every row is a real .fp-row and
+ * open / context menu / drag / favorites / properties / inspector all work on
+ * a result exactly as they do on a folder listing.
+ *
+ * Two backends, one code path: scope `current`/a picked folder walks the tree
+ * live (GET /fs/search); scope `pc` reads the index (GET /search), whose rows
+ * are normalised into the live route's shape by normalizeIndexResults() so
+ * the renderer never has to know which one answered.
+ *
+ * Load order note (CLAUDE.md): this file sits after browser.js and before
+ * app.js, so browser.js's renderSearchResults/exitSearchResults are safe to
+ * call at any time, while app.js's activeTab()/showToast()/switchScreen() are
+ * only ever reached from inside a function that runs after DOMContentLoaded.
+ */
+
+// ── State ─────────────────────────────────────────────────────────────────────
+// `scope` mirrors the `in:` chip: 'current' (browserState.path), 'pc' (the
+// index), or an absolute folder path picked through "Choose folder…".
+// `results`/`truncated`/`root`/`query` are the last rendered payload, kept here
+// (not only in the DOM) so a tab switch can repaint them without re-fetching.
+const searchState = {
+  chips: [],            // [{key, value, label}] — at most one chip per key
+  text: '',
+  scope: 'current',     // 'current' | 'pc' | '<absolute path>'
+  results: null,
+  truncated: false,
+  inflight: null,       // AbortController for the request in flight
+  historyKey: 'fp-search-history',
+  root: null,           // what the last render searched ('*' for This PC)
+  query: '',            // the q that produced searchState.results
+};
+
+const SEARCH_LIMIT = 500;
+const SEARCH_DEBOUNCE_MS = 300;
+const SEARCH_HISTORY_MAX = 10;
+
+// Chip values are always plain strings so a chip round-trips through
+// localStorage (history) and the tab record untouched. The date/size presets
+// below are resolved to real epoch/byte bounds by buildParams(), and a custom
+// range from the More-filters modal is spelled '<from>..<to>' with either side
+// allowed to be empty ('..1712345678' = "before only").
+const SEARCH_TYPE_CHOICES = [
+  'folder', 'image', 'video', 'audio', 'document', 'code', 'archive', 'executable', 'other',
+];
+const SEARCH_DATE_PRESETS = [
+  { value: 'today', label: 'Today' },
+  { value: 'week', label: 'This week' },
+  { value: 'month', label: 'This month' },
+  { value: 'year', label: 'This year' },
+];
+const SEARCH_SIZE_PRESETS = [
+  { value: 'lt1mb', label: '< 1 MB', min: null, max: 1048576 },
+  { value: '1to100mb', label: '1–100 MB', min: 1048576, max: 104857600 },
+  { value: 'gt100mb', label: '> 100 MB', min: 104857600, max: null },
+  { value: 'gt1gb', label: '> 1 GB', min: 1073741824, max: null },
+];
+
+/** Dropdown rows, in order. `choices` is resolved lazily when the row is
+ * expanded (the tag list needs a fetch); `modal: true` opens More filters
+ * instead of expanding. */
+const SEARCH_FILTER_ROWS = [
+  {
+    id: 'in', icon: 'folder', title: 'In a specific folder',
+    hint: 'in: current location / This PC / Choose folder…',
+    choices: () => [
+      { value: 'current', label: 'Current location' },
+      { value: 'pc', label: 'This PC' },
+      { value: '__pick', label: 'Choose folder…' },
+    ],
+  },
+  {
+    id: 'type', icon: 'file', title: 'Includes a specific type',
+    hint: 'type: image, video, audio, document, code, archive, folder',
+    choices: () => SEARCH_TYPE_CHOICES.map(v => ({ value: v, label: searchTitleCase(v) })),
+  },
+  {
+    id: 'modified', icon: 'history', title: 'Modified',
+    hint: 'modified: today, this week, this month, this year',
+    choices: () => SEARCH_DATE_PRESETS.slice(),
+  },
+  {
+    id: 'size', icon: 'drive', title: 'Size',
+    hint: 'size: < 1 MB, 1–100 MB, > 100 MB, > 1 GB',
+    choices: () => SEARCH_SIZE_PRESETS.map(p => ({ value: p.value, label: p.label })),
+  },
+  {
+    id: 'tag', icon: 'tag', title: 'Tag',
+    hint: 'tag: …',
+    choices: () => searchTagChoices(),
+  },
+  {
+    id: 'more', icon: 'filter', title: 'More filters',
+    hint: 'dates, hidden items, whole words',
+    modal: true,
+  },
+];
+
+let _searchDebounceTimer = null;
+let _searchExpandedRow = null;   // id of the dropdown row currently expanded
+
+// ── Small helpers ─────────────────────────────────────────────────────────────
+function searchTitleCase(s) {
+  const str = String(s || '');
+  return str.charAt(0).toUpperCase() + str.slice(1);
+}
+
+/** The tag list the Tag filter row offers — the cache the sidebar's own Tags
+ * section fills (app.js's loadSidebarTags), so expanding the row never blocks
+ * on a fetch. Only tags something actually carries are offered: a zero-count
+ * tag can only ever return an empty result set. */
+function searchTagChoices() {
+  const tags = Array.isArray(window.__fpTags) ? window.__fpTags : [];
+  return tags
+    .filter(t => (t.count || 0) > 0)
+    .slice(0, 20)
+    .map(t => ({ value: t.name, label: `${t.name} (${t.count})` }));
+}
+
+/** Epoch-seconds start of a `modified:`/`created:` preset — computed in the
+ * renderer (design §8.1) so the backend only ever sees absolute bounds. */
+function searchPresetAfter(preset) {
+  const now = new Date();
+  const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  if (preset === 'today') return Math.floor(midnight.getTime() / 1000);
+  if (preset === 'week') {
+    // ISO weeks: Monday is day 0 of the week, JS's getDay() calls Sunday 0.
+    const backToMonday = (midnight.getDay() + 6) % 7;
+    return Math.floor((midnight.getTime() - backToMonday * 86400000) / 1000);
+  }
+  if (preset === 'month') return Math.floor(new Date(now.getFullYear(), now.getMonth(), 1).getTime() / 1000);
+  if (preset === 'year') return Math.floor(new Date(now.getFullYear(), 0, 1).getTime() / 1000);
+  return null;
+}
+
+/** {after, before} epoch seconds for a date chip value — a preset name, or a
+ * custom '<fromEpoch>..<toEpoch>' range with either side optionally empty. */
+function searchDateBounds(value) {
+  const v = String(value || '');
+  if (v.includes('..')) {
+    const [from, to] = v.split('..');
+    return { after: from ? Number(from) : null, before: to ? Number(to) : null };
+  }
+  return { after: searchPresetAfter(v), before: null };
+}
+
+/** {min, max} bytes for a size chip value — a preset name, or '<min>..<max>'. */
+function searchSizeBounds(value) {
+  const v = String(value || '');
+  if (v.includes('..')) {
+    const [min, max] = v.split('..');
+    return { min: min ? Number(min) : null, max: max ? Number(max) : null };
+  }
+  const preset = SEARCH_SIZE_PRESETS.find(p => p.value === v);
+  return preset ? { min: preset.min, max: preset.max } : { min: null, max: null };
+}
+
+/** The value of the single chip with this key, or null. */
+function searchChipValue(key) {
+  const chip = searchState.chips.find(c => c.key === key);
+  return chip ? chip.value : null;
+}
+
+/** Mirror of backend.searcher.match_spans — only needed for GET /search
+ * (index) rows, which carry no spans of their own because SQL LIKE has no
+ * concept of one. Returns [] (render the name unhighlighted) rather than null
+ * when a word is missing: the backend already decided this row matches. */
+function searchMatchSpans(name, words, wholeWord) {
+  const lname = String(name || '').toLowerCase();
+  const spans = [];
+  for (const word of words) {
+    const lw = String(word).toLowerCase();
+    if (!lw) continue;
+    let start;
+    if (wholeWord) {
+      const m = new RegExp(`\\b${lw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`).exec(lname);
+      if (!m) return [];
+      start = m.index;
+    } else {
+      start = lname.indexOf(lw);
+      if (start === -1) return [];
+    }
+    spans.push([start, start + lw.length]);
+  }
+  spans.sort((a, b) => a[0] - b[0]);
+  const merged = [];
+  for (const [s, e] of spans) {
+    const last = merged[merged.length - 1];
+    if (last && s <= last[1]) last[1] = Math.max(last[1], e);
+    else merged.push([s, e]);
+  }
+  return merged;
+}
+
+// ── Chips ─────────────────────────────────────────────────────────────────────
+/** Adds (or replaces — one chip per key) a filter chip and re-runs the search.
+ * The `in` chip additionally drives searchState.scope, which is what picks
+ * between the live-walk and index routes. */
+function addChip(key, value, label) {
+  const chip = { key, value: String(value), label: String(label) };
+  const at = searchState.chips.findIndex(c => c.key === key);
+  if (at >= 0) searchState.chips[at] = chip;
+  else searchState.chips.push(chip);
+  if (key === 'in') searchState.scope = chip.value;
+  renderSearchChips();
+  focusSearchInput({ keepDropdownClosed: true });
+  runSearch();
+}
+
+/** Removes the chip at index `i` (Backspace on empty text, or a click on the
+ * chip itself). Dropping the last chip with no text left standing clears the
+ * whole search rather than firing an empty query. */
+function removeChip(i) {
+  const chip = searchState.chips[i];
+  if (!chip) return;
+  searchState.chips.splice(i, 1);
+  if (chip.key === 'in') searchState.scope = 'current';
+  renderSearchChips();
+  if (!searchState.chips.length && !searchState.text.trim()) clearSearch();
+  else runSearch();
+}
+
+function renderSearchChips() {
+  const host = document.getElementById('search-chips');
+  if (!host) return;
+  host.innerHTML = searchState.chips.map((chip, i) => `
+    <button type="button" class="fp-chip fp-search-chip" data-action="search-remove-chip"
+            data-chip-index="${i}" title="Remove filter ${escapeHtml(chip.key)}: ${escapeHtml(chip.label)}">
+      <span class="fp-search-chip__key">${escapeHtml(chip.key)}:</span>
+      <span class="fp-search-chip__value">${escapeHtml(chip.label)}</span>
+    </button>`).join('');
+  const wrap = document.getElementById('search-wrap');
+  if (wrap) wrap.classList.toggle('fp-search--has-chips', searchState.chips.length > 0);
+  resizeSearchInput();
+}
+
+// ── Query building ────────────────────────────────────────────────────────────
+/** The exact query string GET /fs/search (or GET /search) is called with.
+ * `root` is omitted for the This PC scope — that route searches the index, not
+ * a tree. Every other key maps one chip to one documented backend parameter. */
+function buildParams() {
+  const params = { q: searchState.text.trim(), limit: SEARCH_LIMIT };
+
+  if (searchState.scope !== 'pc') {
+    params.root = searchState.scope === 'current' ? (browserState.path || '') : searchState.scope;
+  }
+
+  const type = searchChipValue('type');
+  if (type) params.type = type;
+
+  const ext = searchChipValue('ext');
+  if (ext) params.ext = String(ext).replace(/^\./, '').toLowerCase();
+
+  const modified = searchChipValue('modified');
+  if (modified) {
+    const { after, before } = searchDateBounds(modified);
+    if (after != null) params.modified_after = after;
+    if (before != null) params.modified_before = before;
+  }
+
+  const created = searchChipValue('created');
+  if (created) {
+    const { after, before } = searchDateBounds(created);
+    if (after != null) params.created_after = after;
+    if (before != null) params.created_before = before;
+  }
+
+  const size = searchChipValue('size');
+  if (size) {
+    const { min, max } = searchSizeBounds(size);
+    if (min != null) params.min_size = min;
+    if (max != null) params.max_size = max;
+  }
+
+  const tag = searchChipValue('tag');
+  if (tag) params.tag = tag;
+
+  if (searchChipValue('hidden')) params.hidden = true;
+  if (searchChipValue('whole_word')) params.whole_word = true;
+
+  return params;
+}
+
+/** Folds a GET /search (index) response into the GET /fs/search shape the
+ * renderer expects: `filename`/`extension` become `name`/`ext`, the ISO
+ * date strings the indexer stores become epoch seconds (what renderFsRow's
+ * formatModified() takes), and the match spans SQL LIKE never produced are
+ * computed here from the same words the backend matched on. */
+function normalizeIndexResults(payload, query) {
+  const words = String(query || '').split(/\s+/).filter(Boolean);
+  const wholeWord = !!searchChipValue('whole_word');
+  const toEpoch = (v) => {
+    if (v == null) return null;
+    if (typeof v === 'number') return v;
+    const parsed = Date.parse(v);
+    return Number.isNaN(parsed) ? null : parsed / 1000;
+  };
+  const results = (payload.results || []).map(row => {
+    const name = row.name || row.filename || pathBaseName(row.path);
+    const ext = String(row.ext != null ? row.ext : (row.extension || '')).replace(/^\./, '');
+    return {
+      path: row.path,
+      name,
+      is_dir: !!row.is_dir,
+      size: row.size,
+      modified: toEpoch(row.modified),
+      created: toEpoch(row.created),
+      ext,
+      match: Array.isArray(row.match) ? row.match : searchMatchSpans(name, words, wholeWord),
+    };
+  });
+  return {
+    results,
+    truncated: results.length >= SEARCH_LIMIT,
+    indexed_roots: payload.indexed_roots || [],
+  };
+}
+
+// ── Running a search ──────────────────────────────────────────────────────────
+/** Search results live in the Browser list, so a search fired from Home or
+ * from the palette has to get there first (and, on a tab that has never
+ * listed anything, resolve a real folder for the `in: current location`
+ * scope). */
+async function searchEnsureBrowser() {
+  const browserActive = document.getElementById('screen-browser')?.classList.contains('active');
+  if (browserActive && browserState.path) return;
+  const tab = typeof activeTab === 'function' ? activeTab() : null;
+  if (tab) tab.screen = 'browser';
+  showScreenDom('browser');
+  if (!browserState.path) await loadDirectory(tab ? tab.path : null);
+}
+
+/**
+ * Runs the current bar (chips + text). Aborts whatever is still in flight
+ * first — typing cancels the previous request rather than racing it — and
+ * ignores a response that a newer call has already superseded.
+ *
+ * `pushHistory: false` is for a re-run that is not a new search (the Refresh
+ * button / a file operation's post-op refresh in search mode), which must not
+ * push a duplicate history entry.
+ */
+async function runSearch({ pushHistory = true } = {}) {
+  if (searchState.inflight) {
+    searchState.inflight.abort();
+    searchState.inflight = null;
+  }
+  const query = searchState.text.trim();
+  if (!query && !searchState.chips.length) {
+    clearSearch();
+    return;
+  }
+
+  await searchEnsureBrowser();
+
+  const usePc = searchState.scope === 'pc';
+  const params = buildParams();
+  if (!usePc && !params.root) {
+    showToast('Open a folder first, or pick "This PC" to search the index', 'error');
+    return;
+  }
+
+  const ctrl = new AbortController();
+  searchState.inflight = ctrl;
+  showSearchPending(query, usePc ? '*' : params.root);
+
+  let payload;
+  try {
+    payload = usePc
+      ? await API.get('/search', params, { signal: ctrl.signal })
+      : await API.get('/fs/search', params, { signal: ctrl.signal });
+  } catch (err) {
+    if (err && err.name === 'AbortError') return;   // superseded by a newer query
+    if (searchState.inflight === ctrl) searchState.inflight = null;
+    showToast(`Search failed: ${formatApiError(err)}`, 'error');
+    setSearchHeader('Search failed');
+    return;
+  }
+  if (searchState.inflight !== ctrl) return;        // a newer query landed first
+  searchState.inflight = null;
+
+  const normalized = usePc ? normalizeIndexResults(payload, query) : payload;
+  searchState.results = normalized.results || [];
+  searchState.truncated = !!normalized.truncated;
+  searchState.root = usePc ? '*' : params.root;
+  searchState.query = query;
+
+  renderSearchResults(normalized, { query, root: searchState.root });
+  if (usePc) await renderUnindexedDrivesHint(normalized.indexed_roots || []);
+  if (pushHistory) pushSearchHistory();
+  syncSearchToTab();
+}
+
+/** Wipes the bar and returns the Browser to the folder the tab was showing. */
+function clearSearch() {
+  if (searchState.inflight) {
+    searchState.inflight.abort();
+    searchState.inflight = null;
+  }
+  searchResetBar();
+  closeSearchDropdown();
+  if (typeof exitSearchResults === 'function') exitSearchResults();
+}
+
+/** Resets the bar's own state and DOM only — no listing side effects. Called
+ * by clearSearch() (which then restores the folder listing itself) and by
+ * browser.js's leaveSearchMode() (where loadDirectory is already repainting). */
+function searchResetBar() {
+  searchState.chips = [];
+  searchState.text = '';
+  searchState.scope = 'current';
+  searchState.results = null;
+  searchState.truncated = false;
+  searchState.root = null;
+  searchState.query = '';
+  const input = document.getElementById('search-input');
+  if (input) input.value = '';
+  renderSearchChips();
+}
+
+/** Sets the bar's text without running anything — the palette's "Search files
+ * for '<text>'" command's first half. */
+function setSearchText(text) {
+  searchState.text = String(text || '');
+  const input = document.getElementById('search-input');
+  if (input) input.value = searchState.text;
+  resizeSearchInput();
+}
+
+// ── Results header extras ─────────────────────────────────────────────────────
+/** This PC scope only: name the fixed drives GET /search's `indexed_roots`
+ * doesn't cover yet, with an "Index now" button that indexes them in turn. */
+async function renderUnindexedDrivesHint(indexedRoots) {
+  let drives = [];
+  try { drives = await API.get('/drives'); } catch (_) { return; }
+  const normalise = (p) => String(p || '').replace(/[\\/]+$/, '').toLowerCase();
+  const indexed = (indexedRoots || []).map(normalise);
+  const missing = (drives || [])
+    .map(d => d.mount || `${d.letter}\\`)
+    .filter(mount => !indexed.some(root => normalise(mount) === root || root.startsWith(normalise(mount) + '\\')));
+  if (!missing.length) return;
+  window.__fpUnindexedDrives = missing;
+  appendSearchHeaderHint(
+    `${missing.length} ${missing.length === 1 ? 'drive is' : 'drives are'} not indexed`,
+    'Index now', 'search-index-drives');
+}
+
+/** POST /index for every drive the hint named, one at a time — the backend
+ * refuses a second concurrent index with 409, so these cannot be fired off
+ * in parallel. */
+async function indexMissingDrives() {
+  const drives = window.__fpUnindexedDrives || [];
+  if (!drives.length) return;
+  for (let i = 0; i < drives.length; i++) {
+    showToast(`Indexing ${drives[i]} (${i + 1} of ${drives.length})…`, 'default');
+    try {
+      await API.post('/index', { path: drives[i] });
+      await waitForIndexIdle();
+    } catch (err) {
+      showToast(`Failed to index ${drives[i]}: ${formatApiError(err)}`, 'error');
+      return;
+    }
+  }
+  showToast('Indexing finished', 'default');
+  window.__fpUnindexedDrives = [];
+  if (typeof loadIndexStatus === 'function') loadIndexStatus();
+}
+
+/** Polls GET /index/status until the running scan finishes (or the cap is
+ * reached) — POST /index answers 409 while one is in flight, so a sequence of
+ * them has to wait between calls. */
+async function waitForIndexIdle({ tries = 600, intervalMs = 500 } = {}) {
+  for (let i = 0; i < tries; i++) {
+    let status;
+    try { status = await API.get('/index/status'); } catch (_) { return; }
+    if (!status || !status.running) return;
+    await new Promise(resolve => setTimeout(resolve, intervalMs));
+  }
+}
+
+// ── History ───────────────────────────────────────────────────────────────────
+function loadSearchHistory() {
+  try {
+    const raw = localStorage.getItem(searchState.historyKey);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (_) {
+    return [];
+  }
+}
+
+/** Identity of a history entry: the same chips (in any order) plus the same
+ * text is the same search, and re-running it moves it to the top rather than
+ * adding a duplicate. */
+function searchHistoryKeyOf(entry) {
+  const chips = (entry.chips || []).map(c => `${c.key}=${c.value}`).sort().join('|');
+  return `${chips}::${(entry.text || '').trim().toLowerCase()}`;
+}
+
+function pushSearchHistory() {
+  const entry = {
+    chips: searchState.chips.map(c => ({ ...c })),
+    text: searchState.text.trim(),
+    scope: searchState.scope,
+  };
+  const key = searchHistoryKeyOf(entry);
+  const next = [entry, ...loadSearchHistory().filter(e => searchHistoryKeyOf(e) !== key)]
+    .slice(0, SEARCH_HISTORY_MAX);
+  try { localStorage.setItem(searchState.historyKey, JSON.stringify(next)); } catch (_) { /* private mode */ }
+}
+
+function clearSearchHistory() {
+  try { localStorage.removeItem(searchState.historyKey); } catch (_) { /* private mode */ }
+  renderSearchDropdown();
+}
+
+function restoreSearchHistoryEntry(index) {
+  const entry = loadSearchHistory()[index];
+  if (!entry) return;
+  searchState.chips = (entry.chips || []).map(c => ({ ...c }));
+  searchState.scope = entry.scope || 'current';
+  setSearchText(entry.text || '');
+  renderSearchChips();
+  closeSearchDropdown();
+  runSearch();
+}
+
+// ── Dropdown ──────────────────────────────────────────────────────────────────
+function searchDropdownEl() { return document.getElementById('search-dropdown'); }
+
+function openSearchDropdown() {
+  const el = searchDropdownEl();
+  if (!el) return;
+  // Only (re)build while closed: re-rendering under a live pointer would
+  // replace the very button the pending click is travelling to, and the click
+  // would never land.
+  if (el.hidden) renderSearchDropdown();
+  el.hidden = false;
+  document.getElementById('search-input')?.setAttribute('aria-expanded', 'true');
+}
+
+function closeSearchDropdown() {
+  const el = searchDropdownEl();
+  if (!el) return;
+  el.hidden = true;
+  _searchExpandedRow = null;
+  document.getElementById('search-input')?.setAttribute('aria-expanded', 'false');
+}
+
+function toggleSearchFilterRow(id) {
+  _searchExpandedRow = _searchExpandedRow === id ? null : id;
+  renderSearchDropdown();
+}
+
+function renderSearchDropdown() {
+  const el = searchDropdownEl();
+  if (!el) return;
+  const rows = SEARCH_FILTER_ROWS.map(row => {
+    const expanded = _searchExpandedRow === row.id && !row.modal;
+    const choices = expanded ? (row.choices ? row.choices() : []) : [];
+    const choicesHtml = expanded
+      ? `<div class="fp-search-dd__choices">${
+          choices.length
+            ? choices.map(c => `<button type="button" class="fp-search-dd__choice"
+                 data-action="search-pick-filter" data-filter="${escapeHtml(row.id)}"
+                 data-value="${escapeHtml(c.value)}" data-label="${escapeHtml(c.label)}">${escapeHtml(c.label)}</button>`).join('')
+            : '<span class="fp-search-dd__empty">Nothing to pick yet</span>'
+        }</div>`
+      : '';
+    return `<div class="fp-search-dd__row-wrap">
+      <button type="button" class="fp-search-dd__row${expanded ? ' fp-search-dd__row--open' : ''}"
+              data-action="${row.modal ? 'search-more-filters' : 'search-expand-filter'}"
+              data-filter="${escapeHtml(row.id)}" aria-expanded="${expanded ? 'true' : 'false'}">
+        ${icon(row.icon, 'fp-icon--14 fp-search-dd__icon')}
+        <span class="fp-search-dd__title">${escapeHtml(row.title)}</span>
+        <span class="fp-search-dd__hint">${escapeHtml(row.hint)}</span>
+      </button>
+      ${choicesHtml}
+    </div>`;
+  }).join('');
+
+  const history = loadSearchHistory();
+  const historyHtml = history.length
+    ? history.map((entry, i) => {
+        const chips = (entry.chips || []).map(c => `${c.key}: ${c.label}`).join('  ');
+        const text = (entry.text || '').trim();
+        return `<button type="button" class="fp-search-dd__history"
+                  data-action="search-history-run" data-index="${i}">
+          ${icon('history', 'fp-icon--14 fp-search-dd__icon')}
+          <span class="fp-search-dd__title">${escapeHtml(text || chips || '(filters only)')}</span>
+          ${text && chips ? `<span class="fp-search-dd__hint">${escapeHtml(chips)}</span>` : ''}
+        </button>`;
+      }).join('')
+    : '<div class="fp-search-dd__empty">No recent searches</div>';
+
+  el.innerHTML = `
+    <div class="fp-search-dd__section">Filters</div>
+    ${rows}
+    <div class="fp-search-dd__section fp-search-dd__section--history">
+      <span>History</span>
+      <button type="button" class="fp-icon-btn fp-icon-btn--sm" data-action="search-history-clear"
+              title="Clear search history" aria-label="Clear search history">${icon('delete', 'fp-icon--12')}</button>
+    </div>
+    ${historyHtml}`;
+}
+
+/** A dropdown choice was clicked: turn it into a chip (or, for
+ * `in: Choose folder…`, ask the shell for one first). */
+async function pickSearchFilter(filterId, value, label) {
+  if (filterId === 'in' && value === '__pick') {
+    const picked = await (window.electronAPI?.pickFolder?.() || Promise.resolve(null));
+    if (!picked) return;
+    closeSearchDropdown();
+    addChip('in', picked, pathBaseName(picked) || picked);
+    return;
+  }
+  if (filterId === 'in' && value === 'current') {
+    // "Current location" is the default scope — drop any `in:` chip instead of
+    // pinning one that says nothing.
+    const at = searchState.chips.findIndex(c => c.key === 'in');
+    closeSearchDropdown();
+    if (at >= 0) { removeChip(at); return; }
+    searchState.scope = 'current';
+    runSearch();
+    return;
+  }
+  closeSearchDropdown();
+  addChip(filterId, value, label);
+}
+
+// ── More filters modal ────────────────────────────────────────────────────────
+/** Opens #search-filters-scrim with every filter at once, seeded from the
+ * chips already in the bar. Apply replaces the chip set wholesale. */
+function openMoreFilters() {
+  const scrim = document.getElementById('search-filters-scrim');
+  if (!scrim) return;
+  closeSearchDropdown();
+
+  const set = (id, value) => { const el = document.getElementById(id); if (el) el.value = value; };
+  const check = (id, value) => { const el = document.getElementById(id); if (el) el.checked = value; };
+  const dateOf = (chipValue, side) => {
+    const bounds = searchDateBounds(chipValue);
+    const epoch = bounds[side];
+    if (epoch == null) return '';
+    const d = new Date(epoch * 1000);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  };
+  const mbOf = (chipValue, side) => {
+    const bounds = searchSizeBounds(chipValue);
+    return bounds[side] == null ? '' : String(bounds[side] / 1048576);
+  };
+
+  const typeSelect = document.getElementById('search-filter-type');
+  if (typeSelect) {
+    typeSelect.innerHTML = '<option value="">Any</option>' +
+      SEARCH_TYPE_CHOICES.map(v => `<option value="${escapeHtml(v)}">${escapeHtml(searchTitleCase(v))}</option>`).join('');
+    typeSelect.value = searchChipValue('type') || '';
+  }
+  const tagSelect = document.getElementById('search-filter-tag');
+  if (tagSelect) {
+    tagSelect.innerHTML = '<option value="">Any</option>' +
+      searchTagChoices().map(c => `<option value="${escapeHtml(c.value)}">${escapeHtml(c.label)}</option>`).join('');
+    tagSelect.value = searchChipValue('tag') || '';
+  }
+
+  set('search-filter-ext', searchChipValue('ext') || '');
+  set('search-filter-modified-from', dateOf(searchChipValue('modified'), 'after'));
+  set('search-filter-modified-to', dateOf(searchChipValue('modified'), 'before'));
+  set('search-filter-created-from', dateOf(searchChipValue('created'), 'after'));
+  set('search-filter-created-to', dateOf(searchChipValue('created'), 'before'));
+  set('search-filter-min-mb', mbOf(searchChipValue('size'), 'min'));
+  set('search-filter-max-mb', mbOf(searchChipValue('size'), 'max'));
+  check('search-filter-hidden', !!searchChipValue('hidden'));
+  check('search-filter-whole-word', !!searchChipValue('whole_word'));
+
+  scrim.style.display = 'flex';
+  scrim.removeAttribute('aria-hidden');
+}
+
+function closeMoreFilters() {
+  const scrim = document.getElementById('search-filters-scrim');
+  if (!scrim) return;
+  scrim.style.display = 'none';
+  scrim.setAttribute('aria-hidden', 'true');
+}
+
+/** Reads the modal back into the chip set. The `in:` chip is untouched — the
+ * modal has no scope control, so a scope already picked in the dropdown
+ * survives an Apply. */
+function applyMoreFilters() {
+  const val = (id) => (document.getElementById(id)?.value || '').trim();
+  const checked = (id) => !!document.getElementById(id)?.checked;
+  const dayStart = (s) => (s ? Math.floor(new Date(`${s}T00:00:00`).getTime() / 1000) : '');
+  const dayEnd = (s) => (s ? Math.floor(new Date(`${s}T23:59:59`).getTime() / 1000) : '');
+
+  searchState.chips = searchState.chips.filter(c => c.key === 'in');
+
+  const push = (key, value, label) => searchState.chips.push({ key, value: String(value), label: String(label) });
+
+  const type = val('search-filter-type');
+  if (type) push('type', type, searchTitleCase(type));
+
+  const ext = val('search-filter-ext').replace(/^\./, '').toLowerCase();
+  if (ext) push('ext', ext, `.${ext}`);
+
+  const modFrom = val('search-filter-modified-from');
+  const modTo = val('search-filter-modified-to');
+  if (modFrom || modTo) {
+    push('modified', `${dayStart(modFrom)}..${dayEnd(modTo)}`,
+      `${modFrom || 'any'} → ${modTo || 'any'}`);
+  }
+
+  const madeFrom = val('search-filter-created-from');
+  const madeTo = val('search-filter-created-to');
+  if (madeFrom || madeTo) {
+    push('created', `${dayStart(madeFrom)}..${dayEnd(madeTo)}`,
+      `${madeFrom || 'any'} → ${madeTo || 'any'}`);
+  }
+
+  const minMb = val('search-filter-min-mb');
+  const maxMb = val('search-filter-max-mb');
+  if (minMb || maxMb) {
+    const min = minMb ? Math.round(Number(minMb) * 1048576) : '';
+    const max = maxMb ? Math.round(Number(maxMb) * 1048576) : '';
+    push('size', `${min}..${max}`, `${minMb || '0'}–${maxMb || '∞'} MB`);
+  }
+
+  const tag = val('search-filter-tag');
+  if (tag) push('tag', tag, tag);
+
+  if (checked('search-filter-hidden')) push('hidden', 'true', 'shown');
+  if (checked('search-filter-whole-word')) push('whole_word', 'true', 'on');
+
+  closeMoreFilters();
+  renderSearchChips();
+  runSearch();
+}
+
+// ── Bar sizing ────────────────────────────────────────────────────────────────
+// `field-sizing: content` does the whole job on Chromium 123+ (Electron 41).
+// The measuring-span fallback below exists for a runtime without it: the
+// input's width is set from a hidden span rendered in the same font.
+const SEARCH_INPUT_MIN_CH = 11;
+const _searchSupportsFieldSizing = typeof CSS !== 'undefined'
+  && typeof CSS.supports === 'function' && CSS.supports('field-sizing', 'content');
+
+function resizeSearchInput() {
+  if (_searchSupportsFieldSizing) return;
+  const input = document.getElementById('search-input');
+  const ruler = document.getElementById('search-measure');
+  if (!input || !ruler) return;
+  ruler.textContent = input.value || input.placeholder || '';
+  const width = Math.ceil(ruler.getBoundingClientRect().width) + 4;
+  input.style.width = `${Math.max(width, SEARCH_INPUT_MIN_CH * 7)}px`;
+}
+
+// Set for the duration of a focus() that must NOT pop the dropdown open —
+// addChip() returns the caret to the text after a pick, and having the panel
+// spring back over the results it just produced reads as a bug.
+let _searchSuppressDropdown = false;
+
+function focusSearchInput({ keepDropdownClosed = false } = {}) {
+  const input = document.getElementById('search-input');
+  if (!input) return;
+  _searchSuppressDropdown = keepDropdownClosed;
+  input.focus();               // dispatches 'focus' synchronously
+  _searchSuppressDropdown = false;
+  const end = input.value.length;
+  try { input.setSelectionRange(end, end); } catch (_) { /* not a text input */ }
+}
+
+// ── Tab persistence ───────────────────────────────────────────────────────────
+/** A serializable snapshot of the live bar + its rendered results, or null
+ * when no search is showing. Stored on the tab record (app.js) so switching
+ * tabs and back repaints the same results without re-walking the tree. */
+function captureSearchState() {
+  if (!searchState.results) return null;
+  return {
+    chips: searchState.chips.map(c => ({ ...c })),
+    text: searchState.text,
+    scope: searchState.scope,
+    results: searchState.results,
+    truncated: searchState.truncated,
+    root: searchState.root,
+    query: searchState.query,
+  };
+}
+
+/** Writes the snapshot onto whichever tab is active right now — called after
+ * every render so a tab switch never has to ask the search for its state. */
+function syncSearchToTab() {
+  const tab = typeof activeTab === 'function' ? activeTab() : null;
+  if (tab) tab.search = captureSearchState();
+}
+
+/** Repaints a tab's stored search (bar + results) with no network call. */
+function restoreSearchResultsForTab(snapshot) {
+  if (!snapshot) { searchResetBar(); return; }
+  searchState.chips = (snapshot.chips || []).map(c => ({ ...c }));
+  searchState.text = snapshot.text || '';
+  searchState.scope = snapshot.scope || 'current';
+  searchState.results = snapshot.results || [];
+  searchState.truncated = !!snapshot.truncated;
+  searchState.root = snapshot.root || null;
+  searchState.query = snapshot.query || '';
+  const input = document.getElementById('search-input');
+  if (input) input.value = searchState.text;
+  renderSearchChips();
+  renderSearchResults(
+    { results: searchState.results, truncated: searchState.truncated },
+    { query: searchState.query, root: searchState.root },
+  );
+}
+
+// ── Wiring ────────────────────────────────────────────────────────────────────
+/**
+ * Wires the bar: the dropdown opens on focus (and on a click anywhere in the
+ * bar), typing debounces a search 300 ms, Enter runs it immediately, Escape
+ * only closes the dropdown (never clears — design §8.2), and Backspace on
+ * empty text eats the last chip. Clicking outside closes the dropdown and
+ * leaves chips, text and results exactly where they are.
+ */
+function initSearch() {
+  const wrap = document.getElementById('search-wrap');
+  const input = document.getElementById('search-input');
+  if (!wrap || !input) return;
+
+  input.addEventListener('focus', () => {
+    if (_searchSuppressDropdown) return;
+    openSearchDropdown();
+  });
+  wrap.addEventListener('mousedown', e => {
+    // A click on the chrome (icon, padding) focuses the input rather than
+    // stealing focus away from it — but a click on a chip or inside the open
+    // dropdown belongs to that element's own data-action, and must not be
+    // intercepted (or have the panel re-rendered out from under it).
+    if (e.target.closest('.fp-search-chip, #search-dropdown')) return;
+    if (e.target !== input) { e.preventDefault(); focusSearchInput(); }
+    openSearchDropdown();
+  });
+
+  input.addEventListener('input', () => {
+    searchState.text = input.value;
+    resizeSearchInput();
+    clearTimeout(_searchDebounceTimer);
+    _searchDebounceTimer = setTimeout(() => runSearch(), SEARCH_DEBOUNCE_MS);
+  });
+
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      clearTimeout(_searchDebounceTimer);
+      closeSearchDropdown();
+      runSearch();
+      return;
+    }
+    if (e.key === 'Escape') {
+      // Escape in the bar closes the dropdown and nothing else — the results,
+      // chips and text all stay (design §8.2). stopPropagation keeps the
+      // global Escape handler from closing unrelated overlays behind it.
+      e.preventDefault();
+      e.stopPropagation();
+      closeSearchDropdown();
+      return;
+    }
+    // Backspace with the caret at the very start (an empty field included)
+    // eats the last chip — Discord's gesture. Every other key is left alone:
+    // the global keydown handler already skips the Browser's own shortcuts
+    // while an <input> has focus, and swallowing everything here would also
+    // kill ⌘K/⌘B/⌘I from inside the bar.
+    if (e.key === 'Backspace' && input.selectionStart === 0 && input.selectionEnd === 0
+        && searchState.chips.length) {
+      e.preventDefault();
+      removeChip(searchState.chips.length - 1);
+    }
+  });
+
+  // Clicking anywhere outside the bar closes the dropdown but keeps the search.
+  document.addEventListener('mousedown', e => {
+    const dropdown = searchDropdownEl();
+    if (!dropdown || dropdown.hidden) return;
+    if (wrap.contains(e.target)) return;
+    closeSearchDropdown();
+  });
+
+  renderSearchChips();
+  resizeSearchInput();
+}

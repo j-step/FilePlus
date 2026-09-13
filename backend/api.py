@@ -920,11 +920,27 @@ async def delete_index_root(root: str = Query(..., description="Absolute path of
 
 @app.get("/tags")
 async def list_tags(q: Optional[str] = Query(None), limit: int = Query(10)):
+    """Every tag, with the number of files carrying it.
+
+    The full (no-`q`) listing joins `file_tags` so each row carries a
+    `count` -- the sidebar's Tags section ranks the top 8 tags by it, and a
+    tag nobody has applied (count 0) is hidden there rather than offered as
+    a search filter that can only ever return nothing. The prefix-search
+    branch (`q=`, used by the Inspector's tag autocomplete) keeps
+    tagger.search_tags' own shape untouched: it feeds a name picker, which
+    has no use for a count.
+    """
     async with _db() as conn:
         if q:
             return await tagger.search_tags(conn, q, limit)
         conn.row_factory = aiosqlite.Row
-        cur = await conn.execute("SELECT * FROM tags ORDER BY name COLLATE NOCASE")
+        cur = await conn.execute(
+            "SELECT t.id, t.name, t.color, t.tag_group, t.tag_type, "
+            "       COUNT(ft.file_id) AS count "
+            "FROM tags t LEFT JOIN file_tags ft ON ft.tag_id = t.id "
+            "GROUP BY t.id, t.name, t.color, t.tag_group, t.tag_type "
+            "ORDER BY t.name COLLATE NOCASE"
+        )
         rows = await cur.fetchall()
     return [dict(row) for row in rows]
 

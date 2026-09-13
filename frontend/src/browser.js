@@ -59,10 +59,14 @@ const browserState = {
   // Current --list-scale value (a LIST_SCALE_STEPS member) applied to
   // #list-scroll; setListScale() is the only writer.
   listScale: 1,
-  // Reserved for Task 14's search-results screen — loadDirectory()'s
-  // dynamic-media-view check never runs while this isn't 'browse', so a
-  // future search mode won't have its own view choice fought over.
+  // 'browse' (a real /fs/list listing) | 'search' (a results listing from
+  // search.js — see renderSearchResults). loadDirectory()'s dynamic-media-view
+  // check never runs in 'search', so a results listing never has its own view
+  // choice fought over by a folder's media share.
   mode: 'browse',
+  // In 'search' mode: the root the results came from ('*' for the This PC
+  // index scope) — what the breadcrumb's "Search in <x>" names. null otherwise.
+  searchRoot: null,
   parent: null,
   isRoot: false,
   truncated: false,
@@ -351,6 +355,22 @@ function joinPath(parentPath, name) {
   return parentPath.replace(/[\\\/]+$/, '') + '\\' + name;
 }
 
+/**
+ * The absolute path of one browserState.entries item.
+ *
+ * A /fs/list entry carries only its own `name` and belongs to
+ * browserState.path; a search result (Task 14) carries a full `path` of its
+ * own and can live anywhere on disk. Every place that used to join
+ * browserState.path onto a name goes through this instead, so the selection
+ * model, entry lookup and keyboard navigation all work unchanged in both
+ * modes.
+ */
+function entryPath(entry) {
+  if (!entry) return null;
+  if (entry.path) return entry.path;
+  return browserState.path ? joinPath(browserState.path, entry.name) : entry.name;
+}
+
 /** Returns the parent folder of an absolute path (string-only; no filesystem
  * lookup) — used by "Open in new tab" on a file row, which may belong to a
  * directory that isn't the currently loaded one (e.g. a Home/Recent row). */
@@ -378,6 +398,10 @@ async function loadDirectory(absPath, opts = {}) {
   const { addToHistory = true, preserveSelection = false, restore = null } = opts;
   const reqTabId = tabs.activeId;
   const reqSeq = ++browserState._loadSeq;
+  // Any real navigation ends a search — opening a result folder, Back, a
+  // sidebar click, a spring-loaded drop. Done here rather than at each call
+  // site so there is exactly one exit from search mode.
+  leaveSearchMode();
   browserState.lastAttemptedPath = absPath;
   // Sets the active tab's label/icon, the sidebar highlight, and (when
   // absPath is a real path) the breadcrumb — synchronously, before the
@@ -465,9 +489,20 @@ async function loadDirectory(absPath, opts = {}) {
  * §3.6). Returns loadDirectory's promise so callers (fileops.run(), inline
  * rename) can await the re-render actually landing before touching the DOM
  * again.
- * TODO(Task 14): in search-results mode this should re-run the search
- * instead of re-listing browserState.path — not built yet. */
+ *
+ * In search-results mode there is no folder to re-list: the same call re-runs
+ * the current search instead (Task 14), which is what a file operation
+ * performed on a result row needs so the vanished/renamed row disappears from
+ * the results the same way it would from a folder listing. */
 function refreshDirectory() {
+  if (browserState.mode === 'search') {
+    const searchBtn = document.getElementById('btn-refresh');
+    searchBtn?.classList.add('is-spinning');
+    const rerun = typeof runSearch === 'function'
+      ? Promise.resolve(runSearch({ pushHistory: false }))
+      : Promise.resolve();
+    return rerun.finally(() => searchBtn?.classList.remove('is-spinning'));
+  }
   if (!browserState.path) return;
   const btn = document.getElementById('btn-refresh');
   const listScroll = document.getElementById('list-scroll');
@@ -544,6 +579,9 @@ function navForward() {
 }
 
 function navUp() {
+  // Search results have no parent folder to climb to — the breadcrumb's ×
+  // (search-clear) is the way out of a results listing.
+  if (browserState.mode === 'search') return;
   if (browserState.isRoot || !browserState.parent) return;
   loadDirectory(browserState.parent);
 }
@@ -554,7 +592,8 @@ function refreshNavButtons() {
   const up   = document.querySelector('[data-action="nav-up"]');
   if (back) back.disabled = nav.index <= 0;
   if (fwd)  fwd.disabled  = nav.index >= nav.history.length - 1;
-  if (up)   up.disabled   = !browserState.path || browserState.isRoot || !browserState.parent;
+  if (up)   up.disabled   = browserState.mode === 'search'
+    || !browserState.path || browserState.isRoot || !browserState.parent;
 }
 
 function renderDirectory(data) {
@@ -562,10 +601,13 @@ function renderDirectory(data) {
   const listScroll = document.getElementById('list-scroll');
   if (!listScroll) return;
 
-  const truncatedHtml = browserState.truncated ? renderTruncatedBanner() : '';
+  const isSearch = browserState.mode === 'search';
+  // The 10,000-entry banner belongs to a /fs/list listing; a truncated search
+  // says so in its own results header instead (renderSearchResults).
+  const truncatedHtml = (!isSearch && browserState.truncated) ? renderTruncatedBanner() : '';
 
   if (!browserState.entries || browserState.entries.length === 0) {
-    listScroll.innerHTML = truncatedHtml + renderEmptyFolder();
+    listScroll.innerHTML = truncatedHtml + (isSearch ? renderNoSearchResults() : renderEmptyFolder());
     updateStatusBar();
     return;
   }
@@ -621,7 +663,9 @@ function renderFsIcon(entry) {
 }
 
 function renderFsRow(entry, parentPath) {
-  const childPath = joinPath(parentPath, entry.name);
+  // A search result carries its own absolute path (it can live anywhere under
+  // the searched root); a /fs/list entry is joined onto the open folder.
+  const childPath = entry.path || joinPath(parentPath, entry.name);
   // iconFor()/fpThumbBox() key their shell requests off an absolute path, and
   // a /fs/list entry only carries its own name — join it on here rather than
   // making every icon call site re-derive it.
@@ -635,6 +679,15 @@ function renderFsRow(entry, parentPath) {
   const hideExt = !entry.is_dir && browserState.showExtensions === false;
   const displayName = hideExt ? stemOf(entry.name) : entry.name;
   const nameTitleAttr = hideExt ? ` title="${escapeHtml(entry.name)}"` : '';
+  // Search mode: wrap the matched substrings in <mark> and hang the parent
+  // folder under the name as a "Location" subline. entry.match's offsets index
+  // the RAW name, so highlighting is skipped when show-extensions has trimmed
+  // it — the spans would no longer line up with what is being rendered.
+  const isSearch = browserState.mode === 'search';
+  const nameHtml = (isSearch && !hideExt)
+    ? highlightMatch(displayName, entry.match)
+    : escapeHtml(displayName);
+  const location = isSearch ? (entry.location || parentOfPath(childPath)) : '';
   // favoritesHas is home.js's (loaded AFTER browser.js — see the module load
   // order in CLAUDE.md) — safe here because renderFsRow's body only ever
   // runs later, from a directory render, never at this file's own parse time.
@@ -649,7 +702,12 @@ function renderFsRow(entry, parentPath) {
             data-path="${escapeHtml(childPath)}"
             data-type="${entry.is_dir ? 'folder' : 'file'}" tabindex="-1"${titleAttr}>
     ${iconHtml}
-    <span class="fp-row__name"${nameTitleAttr}>${escapeHtml(displayName)}</span>
+    ${isSearch
+      ? `<span class="fp-row__namecell">
+          <span class="fp-row__name"${nameTitleAttr}>${nameHtml}</span>
+          <span class="fp-row__location" title="${escapeHtml(location)}">${escapeHtml(location)}</span>
+        </span>`
+      : `<span class="fp-row__name"${nameTitleAttr}>${nameHtml}</span>`}
     ${starHtml}
     <span class="fp-row__size mono">${sizeText}</span>
     <span class="fp-row__modified mono">${modifiedText}</span>
@@ -663,6 +721,156 @@ function renderEmptyFolder() {
     <h3 class="t-title-sm">This folder is empty</h3>
     <p class="t-body" style="color: var(--text-secondary)">Drop files here or right-click to create new ones.</p>
   </div>`;
+}
+
+// ── Search results listing (Task 14, design §8.2) ────────────────────────────
+// Search renders INTO the Browser list, not into a popup: every result is a
+// real .fp-row carrying its absolute path, so open / context menu / drag /
+// favorites / properties / inspector all work on a result unchanged. search.js
+// owns the query; everything below owns how the answer looks.
+
+/** Wraps every `match` span in <mark>, escaping around and inside the spans.
+ * `spans` index the RAW name, so the string is sliced first and each piece
+ * escaped afterwards — escaping first would shift every offset. */
+function highlightMatch(name, spans) {
+  const raw = String(name == null ? '' : name);
+  if (!Array.isArray(spans) || spans.length === 0) return escapeHtml(raw);
+  let html = '';
+  let cursor = 0;
+  for (const span of spans) {
+    if (!Array.isArray(span) || span.length < 2) continue;
+    const start = Math.max(0, Math.min(raw.length, span[0] | 0));
+    const end = Math.max(start, Math.min(raw.length, span[1] | 0));
+    if (start < cursor) continue;   // overlapping/unsorted — the backend merges, but never trust it blindly
+    html += escapeHtml(raw.slice(cursor, start));
+    html += `<mark class="fp-row__mark">${escapeHtml(raw.slice(start, end))}</mark>`;
+    cursor = end;
+  }
+  return html + escapeHtml(raw.slice(cursor));
+}
+
+function renderNoSearchResults() {
+  return `<div class="fp-empty-state" role="status" aria-live="polite">
+    ${icon('search', 'fp-icon--48 fp-empty-state__icon')}
+    <h3 class="t-title-sm">No matches</h3>
+    <p class="t-body" style="color: var(--text-secondary)">Try fewer filters, or search This PC instead of this folder.</p>
+  </div>`;
+}
+
+/** The one writer of #list-search-header's text ("N results" / "Searching…"). */
+function setSearchHeader(text) {
+  const el = document.getElementById('list-search-header');
+  if (!el) return;
+  el.hidden = false;
+  el.innerHTML = `<span class="list-search-header__count">${escapeHtml(text)}</span>`;
+}
+
+/** Appends a right-aligned note + action button to the results header — the
+ * This PC scope's "N drives are not indexed — Index now" (design §8.1). */
+function appendSearchHeaderHint(text, actionLabel, actionName) {
+  const el = document.getElementById('list-search-header');
+  if (!el || el.hidden) return;
+  el.insertAdjacentHTML('beforeend', `<span class="list-search-header__hint">
+      ${escapeHtml(text)} —
+      <button class="fp-btn fp-btn--ghost fp-btn--sm" data-action="${escapeHtml(actionName)}">${escapeHtml(actionLabel)}</button>
+    </span>`);
+}
+
+/** Called by search.js the moment a request goes out: enter search mode (so
+ * the breadcrumb and header already read "Search in …") and say we're walking.
+ * Rows from a previous search stay on screen until the new ones land — only
+ * the first search of a session clears the folder listing underneath. */
+function showSearchPending(query, root) {
+  const listScroll = document.getElementById('list-scroll');
+  const entering = browserState.mode !== 'search';
+  browserState.mode = 'search';
+  browserState.searchRoot = root;
+  if (listScroll) listScroll.dataset.mode = 'search';
+  if (entering) {
+    browserState.entries = [];
+    browserState.selection = new Set();
+    browserState.anchor = null;
+    browserState.focus = null;
+    if (listScroll) listScroll.innerHTML = '';
+  }
+  updateSearchBreadcrumb(root);
+  setSearchHeader('Searching…');
+  refreshNavButtons();
+}
+
+/**
+ * Paints a search payload as the Browser listing.
+ *
+ * `payload` is always in GET /fs/search's shape ({results, truncated, …}) —
+ * search.js normalises the index route's rows into it first — and each result
+ * gets a `location` (its parent folder) for the row's subline.
+ */
+function renderSearchResults(payload, { query = '', root = '' } = {}) {
+  const listScroll = document.getElementById('list-scroll');
+  if (!listScroll) return;
+  browserState.mode = 'search';
+  browserState.searchRoot = root;
+  browserState.truncated = false;
+  browserState.entries = (payload.results || []).map(r => ({ ...r, location: parentOfPath(r.path) }));
+  browserState.selection = new Set();
+  browserState.anchor = null;
+  browserState.focus = null;
+  listScroll.dataset.mode = 'search';
+
+  updateSearchBreadcrumb(root);
+  renderDirectory();
+  listScroll.scrollTop = 0;
+
+  const n = browserState.entries.length;
+  setSearchHeader(payload.truncated ? `First ${n} results — refine the search` : `${n} results`);
+  onSelectionChanged();
+  refreshNavButtons();
+}
+
+/** The breadcrumb in search mode: `Search in <folder>` plus a × that returns
+ * to the folder the tab was showing (data-action="search-clear"). */
+function updateSearchBreadcrumb(root) {
+  const crumb = document.getElementById('breadcrumb');
+  if (!crumb) return;
+  const label = root === '*'
+    ? 'This PC'
+    : (pathBaseName(root) || String(root || '') || 'this folder');
+  crumb.innerHTML = `<span class="fp-breadcrumb__search">
+      ${icon('search', 'fp-icon--14')}
+      <span>Search in ${escapeHtml(label)}</span>
+    </span>
+    <button class="fp-icon-btn fp-icon-btn--sm fp-breadcrumb__clear" data-action="search-clear"
+            title="Clear search" aria-label="Clear search">${icon('close', 'fp-icon--10')}</button>`;
+}
+
+/**
+ * Tears the search UI down WITHOUT reloading anything — called at the top of
+ * every loadDirectory() so that navigating away from results (opening a
+ * result folder, Back, a sidebar click, a spring-loaded drop) leaves search
+ * mode exactly once, in one place. exitSearchResults() is this plus the
+ * reload; splitting them is what keeps the two from recursing into each other.
+ */
+function leaveSearchMode() {
+  if (browserState.mode !== 'search') return;
+  browserState.mode = 'browse';
+  browserState.searchRoot = null;
+  const listScroll = document.getElementById('list-scroll');
+  if (listScroll) delete listScroll.dataset.mode;
+  const header = document.getElementById('list-search-header');
+  if (header) { header.hidden = true; header.innerHTML = ''; }
+  const tab = typeof activeTab === 'function' ? activeTab() : null;
+  if (tab) tab.search = null;
+  if (typeof searchResetBar === 'function') searchResetBar();
+}
+
+/** Leaves search mode and re-lists the folder the active tab was showing —
+ * the breadcrumb's × and search.js's clearSearch(). */
+function exitSearchResults() {
+  if (browserState.mode !== 'search') return undefined;
+  const tab = typeof activeTab === 'function' ? activeTab() : null;
+  const target = tab && tab.path !== undefined ? tab.path : browserState.path;
+  leaveSearchMode();
+  return loadDirectory(target, { addToHistory: false });
 }
 
 function updateAddressBar(path) {
@@ -724,8 +932,8 @@ function canRenameSelection() { return browserState.selection.size === 1; }
 
 /** Looks up the entry object for an absolute path in the current directory, or null. */
 function entryForPath(path) {
-  if (!browserState.path) return null;
-  return browserState.entries.find(e => joinPath(browserState.path, e.name) === path) || null;
+  if (!browserState.path && browserState.mode !== 'search') return null;
+  return browserState.entries.find(e => entryPath(e) === path) || null;
 }
 
 /** Finds the rendered row element for an absolute path, or null. */
@@ -767,7 +975,7 @@ function applySelectionState() {
  */
 function selectRow(path, { ctrl = false, shift = false } = {}) {
   if (!browserState.path) return;
-  const order = sortedEntries().map(e => joinPath(browserState.path, e.name));
+  const order = sortedEntries().map(entryPath);
 
   if (shift) {
     const anchorPath = browserState.anchor || path;
@@ -799,7 +1007,7 @@ function selectRow(path, { ctrl = false, shift = false } = {}) {
 /** Selects every entry in the current directory. */
 function selectAll() {
   if (!browserState.path) return;
-  const order = sortedEntries().map(e => joinPath(browserState.path, e.name));
+  const order = sortedEntries().map(entryPath);
   browserState.selection = new Set(order);
   if (order.length) {
     browserState.anchor = order[0];
@@ -828,7 +1036,7 @@ function clearSelection() {
  */
 function moveFocus(delta, { shift = false } = {}) {
   if (!browserState.path) return;
-  const order = sortedEntries().map(e => joinPath(browserState.path, e.name));
+  const order = sortedEntries().map(entryPath);
   if (!order.length) return;
 
   const curIdx = browserState.focus ? order.indexOf(browserState.focus) : -1;
@@ -1029,7 +1237,8 @@ function selectionTotalSize() {
 function updateStatusBar() {
   const countEl = document.getElementById('status-count');
   const selEl = document.getElementById('status-selected');
-  if (countEl) countEl.textContent = `${browserState.entries.length} items`;
+  const n = browserState.entries.length;
+  if (countEl) countEl.textContent = browserState.mode === 'search' ? `${n} results` : `${n} items`;
   if (selEl) {
     const n = browserState.selection.size;
     if (n === 0) selEl.textContent = 'Nothing selected';
