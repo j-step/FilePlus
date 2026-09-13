@@ -9,7 +9,7 @@ Every public function calls path_guard() before touching the filesystem.
 """
 import os
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import aiosqlite
@@ -72,6 +72,17 @@ async def scan_directory(root: Path, hash: bool = True) -> int:
                     count += 1
                 except Exception as exc:
                     logger.warning("Skipping %s: %s", filepath, exc)
+        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        await conn.execute(
+            """
+            INSERT INTO index_roots (root, file_count, last_run)
+            VALUES (?, ?, ?)
+            ON CONFLICT(root) DO UPDATE SET
+                file_count = excluded.file_count,
+                last_run   = excluded.last_run
+            """,
+            (str(root), count, now),
+        )
         await conn.commit()
 
     logger.info("Scanned %s: %d files indexed", root, count)

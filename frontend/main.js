@@ -8,7 +8,7 @@ const { app, BrowserWindow, globalShortcut, ipcMain, nativeTheme, shell, dialog,
 const path = require('path');
 const os   = require('os');
 const { spawn } = require('child_process');
-const { readEnvFileToken } = require('./envToken');
+const { readEnvFileToken, readEnvFileValue } = require('./envToken');
 
 let mainWindow;
 
@@ -20,6 +20,14 @@ let mainWindow;
 // process's environment; for now (dev flow) both the backend and this
 // process read the same source so they agree without any IPC between them.
 const API_TOKEN = process.env.FILEPLUS_API_TOKEN || readEnvFileToken(path.join(__dirname, '..'));
+
+// ── API port ─────────────────────────────────────────────────────────────
+// FILEPLUS_PORT from our own process environment, else parsed from .env,
+// else the default 9876 -- must agree with backend/config.py's FILEPLUS_PORT
+// default so the renderer's fetch() calls land on whichever backend is
+// actually listening (scripts/verify.ps1 sets FILEPLUS_PORT=9877 so its own
+// backend can run alongside a developer's already-running instance on 9876).
+const API_PORT = Number(process.env.FILEPLUS_PORT || readEnvFileValue(path.join(__dirname, '..'), 'FILEPLUS_PORT')) || 9876;
 
 // Mica needs Windows 11 22H2 (build 22621). Elsewhere Electron ignores the option
 // and the renderer paints solid --bg-chrome.
@@ -90,6 +98,10 @@ app.whenReady().then(() => {
 
   ipcMain.on('get-api-token', (event) => {
     event.returnValue = API_TOKEN;
+  });
+
+  ipcMain.on('get-api-port', (event) => {
+    event.returnValue = API_PORT;
   });
 
   ipcMain.on('mica-available', (event) => { event.returnValue = MICA_AVAILABLE; });

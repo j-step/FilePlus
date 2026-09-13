@@ -3,8 +3,11 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <!-- connect-src allows both the default backend port (9876) and verify.ps1's
+       (9877, so it can run its own backend beside a developer's already-running
+       instance) -- see FILEPLUS_PORT in backend/config.py and frontend/main.js. -->
   <meta http-equiv="Content-Security-Policy"
-        content="default-src 'self'; script-src 'self'; img-src 'self' data: blob:; connect-src 'self' http://127.0.0.1:9876 http://localhost:9876; style-src 'self' 'unsafe-inline';" />
+        content="default-src 'self'; script-src 'self'; img-src 'self' data: blob:; connect-src 'self' http://127.0.0.1:9876 http://localhost:9876 http://127.0.0.1:9877 http://localhost:9877; style-src 'self' 'unsafe-inline';" />
   <title>FilePlus</title>
   <link rel="stylesheet" href="src/styles.css" />
 </head>
@@ -3312,6 +3315,7 @@
 "></div>
 
 <script src="src/api.js"></script>
+<script src="src/filetypes.js"></script>
 <script src="src/fileops.js"></script>
 <script src="src/browser.js"></script>
 <script src="src/inspector.js"></script>

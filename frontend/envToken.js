@@ -1,9 +1,12 @@
 /**
- * Tiny, dependency-free .env value parser for FILEPLUS_API_TOKEN.
+ * Tiny, dependency-free .env value reader.
  *
- * Mirrors python-dotenv's value handling for this one key -- backend/config.py
- * loads the same .env file via python-dotenv's load_dotenv(), so both
- * processes must agree on the token regardless of how it's quoted/commented.
+ * Mirrors python-dotenv's value handling -- backend/config.py loads the same
+ * .env file via python-dotenv's load_dotenv(), so every process must agree
+ * on a given key's value regardless of how it's quoted/commented. Originally
+ * just FILEPLUS_API_TOKEN; readEnvFileValue(repoDir, key) is the general
+ * form now used for FILEPLUS_PORT too (readEnvFileToken is kept as a thin
+ * wrapper so existing callers/tests are unaffected).
  * No `electron` import here (unlike main.js) so this stays requirable from
  * plain node, including from a Playwright test.
  */
@@ -25,8 +28,8 @@ function parseEnvValue(raw) {
   return v.trim();
 }
 
-/** Read FILEPLUS_API_TOKEN from <repoDir>/.env, or '' if unset/missing/unreadable. */
-function readEnvFileToken(repoDir) {
+/** Read *key* from <repoDir>/.env, or '' if unset/missing/unreadable. */
+function readEnvFileValue(repoDir, key) {
   try {
     const envPath = path.join(repoDir, '.env');
     const lines = fs.readFileSync(envPath, 'utf8').split(/\r?\n/);
@@ -35,13 +38,18 @@ function readEnvFileToken(repoDir) {
       if (!trimmed || trimmed.startsWith('#')) continue;
       const eq = trimmed.indexOf('=');
       if (eq === -1) continue;
-      const key = trimmed.slice(0, eq).trim();
-      if (key === 'FILEPLUS_API_TOKEN') return parseEnvValue(trimmed.slice(eq + 1));
+      const lineKey = trimmed.slice(0, eq).trim();
+      if (lineKey === key) return parseEnvValue(trimmed.slice(eq + 1));
     }
   } catch (_) {
-    // .env missing or unreadable — no token
+    // .env missing or unreadable — no value
   }
   return '';
 }
 
-module.exports = { parseEnvValue, readEnvFileToken };
+/** Read FILEPLUS_API_TOKEN from <repoDir>/.env, or '' if unset/missing/unreadable. */
+function readEnvFileToken(repoDir) {
+  return readEnvFileValue(repoDir, 'FILEPLUS_API_TOKEN');
+}
+
+module.exports = { parseEnvValue, readEnvFileToken, readEnvFileValue };

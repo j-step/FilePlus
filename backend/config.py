@@ -43,6 +43,12 @@ FILEPLUS_SANDBOX_PATH = Path(os.getenv("FILEPLUS_SANDBOX_PATH", str(FILEPLUS_APP
 FILEPLUS_DB_PATH = Path(os.getenv("FILEPLUS_DB_PATH", str(FILEPLUS_APP_DIR / "fileplus.db")))
 FILEPLUS_EVERYTHING_PATH = Path(os.getenv("FILEPLUS_EVERYTHING_PATH", r"C:\Everything"))
 
+# Backend HTTP port. Overriding this lets a second backend (e.g. scripts/verify.ps1's,
+# which sets FILEPLUS_PORT=9877) run alongside a developer's already-running instance
+# on the default 9876 without a bind conflict. frontend/main.js reads the same
+# variable (or the same .env) so the Electron app's fetch() calls agree.
+FILEPLUS_PORT = int(os.getenv("FILEPLUS_PORT", "9876"))
+
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 # When set, every route except /health requires header X-FilePlus-Token to match.
 FILEPLUS_API_TOKEN = os.getenv("FILEPLUS_API_TOKEN", "")

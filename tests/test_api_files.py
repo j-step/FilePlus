@@ -58,7 +58,8 @@ def test_search_and_quick_index(client, sandbox):
         if client.get("/index/status").json()["running"] is False: break
         time.sleep(0.1)
     st = client.get("/index/status").json()
-    assert st["running"] is False and st["count"] >= 1 and st["error"] is None
+    entry = next(r for r in st["roots"] if r["root"] == str(sandbox))
+    assert st["running"] is False and entry["file_count"] >= 1 and entry["last_run"]
     hits = client.get("/search", params={"q": "budget"}).json()
     assert hits and hits[0]["filename"] == "budget-2026.xlsx" and hits[0]["hash"] is None   # quick index does not hash
 

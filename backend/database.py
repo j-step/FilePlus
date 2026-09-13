@@ -11,7 +11,7 @@ import backend.config as _config
 
 logger = logging.getLogger(__name__)
 
-CURRENT_SCHEMA_VERSION = 3
+CURRENT_SCHEMA_VERSION = 4
 
 # ---------------------------------------------------------------------------
 # Table definitions — match HANDOFF.md §7.3 exactly
@@ -145,6 +145,14 @@ CREATE TABLE IF NOT EXISTS pinned_folders (
 );
 """
 
+CREATE_INDEX_ROOTS = """
+CREATE TABLE IF NOT EXISTS index_roots (
+    root       TEXT PRIMARY KEY,
+    file_count INTEGER NOT NULL DEFAULT 0,
+    last_run   TEXT NOT NULL
+);
+"""
+
 ALL_TABLES = [
     CREATE_SCHEMA_VERSION,
     CREATE_FILES,
@@ -158,6 +166,7 @@ ALL_TABLES = [
     CREATE_RECENT_ACTIONS,
     CREATE_FAVORITES,
     CREATE_PINNED_FOLDERS,
+    CREATE_INDEX_ROOTS,
 ]
 
 ALL_INDEXES = [
@@ -211,6 +220,12 @@ async def _run_migrations(db: aiosqlite.Connection, current: int) -> None:
                 await db.execute(stmt)
             except Exception:
                 pass  # column already exists
+
+    if current < 4:
+        # v3 -> v4: add index_roots. No column changes to existing tables --
+        # the new table is created by CREATE TABLE IF NOT EXISTS above, same
+        # as v2's snapshots/approvals/training_signals.
+        pass
 
 
 # ---------------------------------------------------------------------------

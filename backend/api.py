@@ -1,4 +1,5 @@
-"""FilePlus FastAPI backend — HTTP API served on localhost:9876.
+"""FilePlus FastAPI backend — HTTP API served on localhost:9876 by default
+(config.FILEPLUS_PORT overrides).
 
 The Electron frontend communicates exclusively through this API.
 All business logic lives here; the renderer never touches the filesystem directly.
@@ -27,7 +28,7 @@ import backend.config as _config
 from backend.config import BadPathError, OutOfSandboxError, ProtectedPathError, path_guard
 from backend.database import init_db
 from backend.indexer import index_file, scan_directory, remove_stale_entries
-from backend import mover, operations_log as ol, stores, tagger
+from backend import filetypes as ft, mover, operations_log as ol, stores, tagger, winshell
 
 logger = logging.getLogger(__name__)
 
@@ -450,6 +451,75 @@ async def fs_list_root(show_hidden: bool = False):
     return _listing_response(root, entries, truncated)
 
 
+_PEEK_SCAN_CAP = 2000
+
+
+def _peek_entries(directory: Path, n: int) -> list[dict]:
+    """First *n* non-hidden media files directly inside *directory*, by name.
+
+    Skips dot-prefixed and Windows-hidden entries, .FilePlusTrash, and
+    sub-directories; gives up after _PEEK_SCAN_CAP entries even if *n* media
+    hits were never reached (a huge non-media folder must not hang this).
+    """
+    items: list[dict] = []
+    try:
+        entries = sorted(os.scandir(directory), key=lambda e: e.name.lower())
+    except OSError:
+        return items
+    scanned = 0
+    for de in entries:
+        if len(items) >= n or scanned >= _PEEK_SCAN_CAP:
+            break
+        scanned += 1
+        if de.name.startswith(".") or de.name == _config.TRASH_DIRNAME:
+            continue
+        try:
+            if de.is_dir(follow_symlinks=False):
+                continue
+            if os.name == "nt":
+                attrs = de.stat(follow_symlinks=False).st_file_attributes  # type: ignore[attr-defined]
+                if attrs & 0x2:  # FILE_ATTRIBUTE_HIDDEN
+                    continue
+        except OSError:
+            continue
+        ext = os.path.splitext(de.name)[1].lstrip(".").lower()
+        if not ft.is_media(ext):
+            continue
+        items.append({"name": de.name, "path": str(directory / de.name), "ext": ext})
+    return items
+
+
+@app.get("/fs/peek")
+async def fs_peek(
+    path: str = Query(..., description="Absolute path of directory to peek into"),
+    n: int = Query(2, description="Max number of media items to return"),
+):
+    """Return up to *n* media files (images/videos) directly inside *path*.
+
+    Used for folder preview thumbnails (e.g. a fanned pair of images on a
+    folder tile). Read-only, so any real path is allowed (D2).
+    """
+    resolved = path_guard(Path(path), "read")  # relative/driveless -> BadPathError -> 400
+    if not resolved.is_dir():
+        raise HTTPException(status_code=404, detail=f"Not a directory: {path}")
+    items = await asyncio.to_thread(_peek_entries, resolved, n)
+    return {"items": items}
+
+
+# ---------------------------------------------------------------------------
+# File-type taxonomy and Windows known folders
+# ---------------------------------------------------------------------------
+
+@app.get("/filetypes")
+async def filetypes():
+    return ft.as_json()
+
+
+@app.get("/known-folders")
+async def known_folders():
+    return {"folders": winshell.known_folders()}
+
+
 # ---------------------------------------------------------------------------
 # Drives
 # ---------------------------------------------------------------------------
@@ -550,7 +620,26 @@ async def start_index(body: IndexRequest):
 
 @app.get("/index/status")
 async def index_status():
-    return app.state.index_state
+    """Indexed roots (from index_roots, kept current by scan_directory) plus
+    whether a quick-index scan is running right now."""
+    async with _db() as conn:
+        conn.row_factory = aiosqlite.Row
+        cur = await conn.execute("SELECT root, file_count, last_run FROM index_roots ORDER BY root")
+        rows = await cur.fetchall()
+    return {"roots": [dict(row) for row in rows], "running": app.state.index_state["running"]}
+
+
+@app.delete("/index")
+async def delete_index_root(root: str = Query(..., description="Absolute path of a previously-indexed root to forget")):
+    """Forget an indexed root: drop its now-stale files rows and its
+    index_roots bookkeeping row. *root* need not still exist on disk --
+    this is how a removed/unmounted root gets cleaned out of the index."""
+    resolved = path_guard(Path(root), "read")
+    removed = await remove_stale_entries(resolved)
+    async with _db() as conn:
+        await conn.execute("DELETE FROM index_roots WHERE root = ?", (str(resolved),))
+        await conn.commit()
+    return {"status": "ok", "removed": removed}
 
 
 # ---------------------------------------------------------------------------
@@ -854,4 +943,4 @@ async def post_pins_reorder(body: ReorderIds):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("backend.api:app", host="127.0.0.1", port=9876, reload=False)
+    uvicorn.run("backend.api:app", host="127.0.0.1", port=_config.FILEPLUS_PORT, reload=False)

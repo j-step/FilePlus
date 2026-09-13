@@ -10,7 +10,7 @@ run protocol). Check which stage is active in `docs/superpowers/runs/` before do
 
 Backend Python 3.14 (`py -3`) · FastAPI on `localhost:9876` · aiosqlite/SQLite WAL · xxhash · watchdog.
 Frontend Electron 41, plain HTML/CSS/JS, no framework, no build step. Tests: pytest (asyncio auto) and
-`@playwright/test` driving Electron.
+`@playwright/test` driving Electron. `FILEPLUS_PORT` overrides 9876; verify uses 9877.
 
 ## Hard safety rules (non-negotiable)
 

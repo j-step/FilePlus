@@ -25,6 +25,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   micaAvailable: () => ipcRenderer.sendSync('mica-available'),
   // API auth token (empty string when FILEPLUS_API_TOKEN is unset)
   apiToken:    () => ipcRenderer.sendSync('get-api-token'),
+  // Backend port (9876 unless FILEPLUS_PORT overrides it)
+  apiPort:     () => ipcRenderer.sendSync('get-api-port'),
   // Theme — syncs Electron's nativeTheme.themeSource so window chrome (e.g. Mica tint) agrees
   setThemeSource: (mode) => ipcRenderer.send('set-theme-source', mode),
   // Shell / dialog / clipboard bridge (Plan 2B wires renderer callers)

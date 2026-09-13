@@ -7,7 +7,7 @@ const fs = require('fs');
 
 const FRONTEND = path.join(__dirname, '..');
 const SHOTS = path.join(FRONTEND, '..', 'artifacts', 'screenshots');
-const API = 'http://127.0.0.1:9876';
+const API = `http://127.0.0.1:${process.env.FILEPLUS_PORT || 9876}`;
 const SCREENS = [
   'home', 'browser', 'ftree', 'scan-config', 'scan-progress',
   'scan-results', 'review-bin', 'everything', 'settings',
