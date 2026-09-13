@@ -53,12 +53,21 @@ April "one fix at a time" rule is retired (D10).
 ## Frontend traps (load-bearing, learned the hard way)
 
 - Frontend modules (globals, no build step, no modules) load in this order —
-  `frontend/src/{api,fileops,browser,inspector,home,settings,app}.js` — each can call
-  anything defined earlier at its own top level; anything from a later file is only safe to
-  reference from inside a function that runs after `DOMContentLoaded`. `actions.js` is gone
-  (Stage 2B deleted it): click dispatch is the `switch` in `app.js`
-  (`document.addEventListener('click', …)`) plus the `IN_SCOPE_ACTIONS` set (marks an action as a
-  deliberate silent no-op instead of the "not yet implemented" stub toast) — there is no registry.
+  `frontend/src/{api,filetypes,icons-sprite,icons,fileops,browser,dragdrop,search,inspector,home,
+  settings,properties,app}.js` — each can call anything defined earlier at its own top level;
+  anything from a later file is only safe to reference from inside a function that runs after
+  `DOMContentLoaded`. `actions.js` is gone (Stage 2B deleted it): click dispatch is the `switch` in
+  `app.js` (`document.addEventListener('click', …)`) plus the `IN_SCOPE_ACTIONS` set (marks an
+  action as a deliberate silent no-op instead of the "not yet implemented" stub toast) — there is
+  no registry.
+- `filetypes.js` and `icons-sprite.js` are generated, not hand-edited: `filetypes.js` from
+  `backend/filetypes.py` via `scripts/build_filetypes.py`; `icons-sprite.js` (the Fluent chrome
+  sprite) via `scripts/build_icons.js`. Both are parity-gated in `verify.ps1`'s frontend-gates
+  stage — a hand edit or a stale generated file fails verify with the regeneration command to run.
+- Bridge methods added in Stage 2C live on `window.electronAPI` (`preload.js`):
+  `fileIcon`, `thumbnail`, `showProperties`, `openWithDialog`, `apiPort` — `icons.js` calls the
+  first two, `properties.js` the native-dialog pair, `api.js` reads the port so the renderer and
+  `verify.ps1`'s `FILEPLUS_PORT=9877` agree.
 - `showSnackbar`/`showToast` are defined once, in `app.js`. Signature: `showSnackbar(msg, 'Undo', fn)`.
 - Snackbars/toasts are gated by `localStorage['fp-notifications-enabled']` (default off). Only
   `showToast(msg, 'error')` bypasses. No other exceptions.
@@ -71,12 +80,13 @@ April "one fix at a time" rule is retired (D10).
 
 ## Current state
 
-Stage 2B (frontend) is landed — see `docs/superpowers/runs/2026-09-11-stage-2b.md` for the run summary
-(every screen wired to the backend, file ops/undo/redo/conflicts, Inspector, Home, palette search,
-settings, Data pane, API token auth) and `docs/superpowers/runs/2026-09-11-stage-2a.md` for the backend
-core it builds on. Canonical docs: `PRODUCT.md`, `docs/UI-SPEC.md` (behaviour; style superseded),
-`docs/backend-integration.md` (wiring ledger), `docs/fileplus-feature-list.md` (backlog). Everything
-else is under `docs/archive/`.
+Stage 2C (playtest pass 1) is landed — see `docs/superpowers/runs/2026-09-13-stage-2c.md` for the run
+summary (real tabs, file-type taxonomy and custom icon family with a Windows-icon option, live +
+This-PC search, Properties panel with native-dialog option, pointer-based drag and drop, This PC /
+Quick Access sidebar, View/Sort menus, Ask File+ popout shell). Earlier: `docs/superpowers/runs/
+2026-09-11-stage-2b.md` (frontend wiring) and `2026-09-11-stage-2a.md` (backend core). Canonical docs:
+`PRODUCT.md`, `docs/UI-SPEC.md` (behaviour; style superseded), `docs/backend-integration.md` (wiring
+ledger), `docs/fileplus-feature-list.md` (backlog). Everything else is under `docs/archive/`.
 
 The sandbox default is `FILEPLUS_APP_DIR/FilePlusTestSandbox` (`backend/config.py`), so each git
 worktree gets its own empty sandbox with no cross-worktree collisions; `.env` can override it via

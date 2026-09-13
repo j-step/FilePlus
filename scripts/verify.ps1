@@ -71,6 +71,25 @@ if ($LASTEXITCODE -ne 0) { Write-Host 'check_menu_cases failed' -ForegroundColor
 node scripts/check_icons.js
 if ($LASTEXITCODE -ne 0) { Write-Host 'check_icons failed' -ForegroundColor Red; exit 1 }
 
+# filetypes parity: frontend/src/filetypes.js is generated from
+# backend/filetypes.py (scripts/build_filetypes.py); tests/test_filetypes.py
+# ::test_generated_js_is_current checks the same thing inside pytest, but a
+# stale generated file is easy to miss in a long pytest tail -- this gate
+# puts it front and centre in the frontend-gates stage instead.
+$filetypesTmpDir = Join-Path $root 'artifacts'
+New-Item -ItemType Directory -Force $filetypesTmpDir | Out-Null
+$filetypesTmp = Join-Path $filetypesTmpDir 'filetypes-parity.js'
+py -3 scripts/build_filetypes.py $filetypesTmp
+if ($LASTEXITCODE -ne 0) { Write-Host 'build_filetypes.py failed' -ForegroundColor Red; exit 1 }
+$filetypesGenHash = (Get-FileHash $filetypesTmp -Algorithm SHA256).Hash
+$filetypesCurHash = (Get-FileHash frontend/src/filetypes.js -Algorithm SHA256).Hash
+Remove-Item $filetypesTmp -ErrorAction SilentlyContinue
+if ($filetypesGenHash -ne $filetypesCurHash) {
+  Write-Host 'frontend/src/filetypes.js is stale -- run: py -3 scripts/build_filetypes.py' -ForegroundColor Red
+  exit 1
+}
+Write-Host 'check_filetypes_parity: ok (frontend/src/filetypes.js matches backend/filetypes.py)' -ForegroundColor Green
+
 Write-Host '== 5/6 backend ==' -ForegroundColor Cyan
 
 try {

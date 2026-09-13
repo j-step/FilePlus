@@ -17,6 +17,12 @@
 
 _Polish complete; integration items pending._
 
+**Done in 2C (2026-09-13).** Real per-tab state (`{id, screen, label, path, history, view, scrollTop,
+selection}`, Task 7); This PC section replaces Tree with `GET /known-folders` backing Quick Access
+(Desktop/Downloads/Screenshots, removable, Task 9); refresh button beside the breadcrumb, one-click
+theme toggle, inspector-is-a-switch, deselect-anywhere (Task 8); Ctrl+wheel `--list-scale` plus View
+and Sort toolbar menus (Task 10). See `docs/superpowers/runs/2026-09-13-stage-2c.md`.
+
 ### 1. Sidebar drive bar fill
 **Done (Stage 2B, 2026-09-11).** `GET /drives` + real `.fp-sidebar__drive-bar__fill` width in `app.js`.
 
@@ -31,6 +37,10 @@ _Polish complete; integration items pending._
 - Endpoint should be cheap (~20 ms) so the renderer can re-poll every 60 s without a perf hit.
 
 ### 2. Sidebar tag list
+**Done in 2C (2026-09-13).** `GET /tags` (top 8 by count) wired in Task 14; clicking a chip opens a
+This PC search scoped to `tag:<name>`; "View all" still opens the Stage 3 Tag Canvas placeholder. The
+static demo markup the author flagged as "tags not implemented" was this list, not the tag store.
+
 **What.** Tags in `#sb-tags` are static (work / photos / docs / code with hardcoded counts).
 
 **How.**
@@ -185,6 +195,9 @@ _Polish complete; integration items pending._
 - On `drop`: compute new order array (in DOM order), call `POST /favorites/reorder`. Optimistic — rebuild order array from the live DOM, send to server, reconcile with server response.
 - Keyboard alternative: `Alt+↑` / `Alt+↓` on selected favorite row.
 
+**Done in 2C (2026-09-13).** Favorited rows show an accent star (`favoritesSet`, loaded once, kept in
+sync by every mutation) and the context-menu label flips Add/Remove (Task 11, spec §4.3).
+
 ### A.2.3 Shared
 v2 only. Tab is permanently `disabled`. No backend integration in v1.
 
@@ -265,6 +278,10 @@ v2 only. Tab is permanently `disabled`. No backend integration in v1.
 ### 7. List/grid sorting
 **Done (Stage 2B, 2026-09-11).** Client-side `applySort()`/`initColumnSort()` in `browser.js`; deep-tree `order_by` not needed (no search-results tree yet).
 
+**Done in 2C (2026-09-13).** Toolbar View (icon-size presets, List, Details, Show hidden/extensions,
+Dynamic media view) and Sort (Name/Date/Type/Size, Asc/Desc) menus built on the context-menu component
+(`ui.view_mode`, `ui.sort`, `ui.list_scale`, `ui.dynamic_media_view`, Task 10).
+
 **What.** Column headers fire `data-action="sort-by"` but [app.js:569](../frontend/src/app.js#L569) is a stub.
 
 **How.**
@@ -273,6 +290,12 @@ v2 only. Tab is permanently `disabled`. No backend integration in v1.
 
 ### 8. Drag-drop into folder (`POST /fs/move`)
 **Done (Stage 2B, 2026-09-11).** `handleFsDrop()`/`dropViolation()` in `browser.js`; conflicts route to the Replace/Skip/Keep-both modal; snackbar Undo posts `/operations/batch/{id}/undo`.
+
+**Superseded in 2C (2026-09-13).** HTML5 drag/drop replaced by an in-app pointer-event drag session
+(`dragdrop.js`, Task 12) — Chromium cancels a native drag on right-click and gives no ghost control.
+Same volume → Move, cross-volume → Copy (Ctrl/Shift override), a floating Move/Copy badge, and
+spring-loaded folders (700 ms hover navigates in). Still ends in the same `fileops.moveTo(paths, dir,
+copy)` → conflict modal → undo path. Native drag-out to other applications stays out of scope.
 
 **What.** Dropping files onto a folder row should move them.
 
@@ -283,6 +306,12 @@ v2 only. Tab is permanently `disabled`. No backend integration in v1.
 
 ### 9. Right-click context menu actions
 **Done for the actions actually in v1's menus (Stage 2B/Task 8b, 2026-09-11).** `open/open-with/reveal-explorer/cut/copy/paste/rename/delete/new-file/new-folder/favorite/pin-sidebar/add-tag/properties` are wired in `app.js`'s switch (`scripts/check_menu_cases.js` gates regressions); `cm-permanent-delete`/`cm-reclassify`/`cm-compress` are not in any v1 menu — deferred. `actions.js` no longer exists (deleted this stage).
+
+**Done in 2C (2026-09-13).** Items gain an optional `enabled(ctx)` predicate (Task 11, spec §4.2):
+Open/Open with/Rename/Properties/Index-folder/Pin single-item rules, Copy path/Cut/Copy/Trash/
+favorites/Add-tag any-count, Paste only with clipboard contents; disabled items render greyed via
+`aria-disabled`. `cm-open-with` now opens the native Windows "Open with" dialog
+(`electronAPI.openWithDialog`, Task 4) instead of a bare `start`.
 
 **What.** All `cm-*` actions are stubs in [actions.js:121-148](../frontend/src/actions.js#L121).
 
@@ -315,6 +344,23 @@ All file-touching ops above MUST call `operations_log.log_operation(executed=0)`
 **What.** Marquee drag selects rows; multi-select aggregate at [app.js:618](../frontend/src/app.js#L618) is a stub.
 
 **How.** Pure client-side aggregation from already-loaded rows. See A.3.6 for the inspector multi-select payload.
+
+### 11. Live search (new in 2C)
+**Done (2026-09-13).** `GET /fs/search` (current-location, bounded `os.scandir` walk with type/ext/
+modified/size/tag/hidden/whole-word filters, budgeted at 4 s, capped at `limit`) and, for the "This PC"
+scope chip, `/search` extended with the same filters over the SQLite index plus `GET /index/status` /
+`GET /known-folders` / `GET /fs/peek` / `GET /filetypes` (`backend/filetypes.py`, mirrored to
+`frontend/src/filetypes.js` by `scripts/build_filetypes.py`, gated in `verify.ps1`). Discord-style
+filter chips and results-in-the-list live in `search.js` (Task 1, Task 2, Task 14; spec §8).
+
+### 12. Properties panel and file icons (new in 2C)
+**Done (2026-09-13).** `GET /fs/properties`, `GET /fs/properties/details` (shell property store,
+`pywin32`, 503 when absent), `POST /fs/attributes` and `POST /fs/folder-type` (both logged + undoable)
+back the FilePlus properties panel (`properties.js`, Task 3/Task 13); `ui.properties_mode=windows`
+routes Properties/Alt+Enter to the native dialog instead (`electronAPI.showProperties`, Task 4). Icons:
+`ui.icon_source` picks the FilePlus family set (`frontend/assets/icons/filetypes`, `icons.js`) or
+Windows shell icons (`electronAPI.fileIcon`); thumbnails always come from
+`electronAPI.thumbnail` (Task 4, Task 6).
 
 ---
 
@@ -612,6 +658,12 @@ See A.4 above (the v1 design originally numbered this A.4; the doc reuses A.4 as
 
 ## A.9 Tag Canvas (overlay)
 
+**Status (Stage 2C, 2026-09-13, D2C-3).** Stays a Stage 3 placeholder by decision, not oversight: the
+overlay shows a "Not built yet — planned for Stage 3" banner over a dimmed mock body; its sidebar
+entry and Close button still work. Inspector tag add/remove/undo (unrelated to this screen) works
+today. A pill button "Ask File+" (sparkle icon, Ctrl+J) opens a static popout shell above Quick
+Access — no model wired in this pass (Task 15, spec §9); none of A.9's routes below are implemented.
+
 ### 1. Tag tree (`GET /tags/tree`)
 **What.** Left pane shows tags grouped by `tag_group` ("project:", "type:", "app:", ...).
 
@@ -646,6 +698,11 @@ See A.4 above (the v1 design originally numbered this A.4; the doc reuses A.4 as
 menu's new-tab/close-tab are wired but duplicate/close-others/pin/rename-tab are not (no client-side
 tab-state support built yet — `scripts/check_menu_cases.js` documents this as a known gap, not a
 regression); the Tag chip context menu doesn't exist (no Tag Canvas screen yet).
+
+**Status (Stage 2C, 2026-09-13).** Real tabs (Task 7) landed Duplicate tab and Close other tabs
+(`cm-duplicate-tab`, `cm-close-other-tabs`); "Pin tab" and "Rename tab" were removed from the menu
+rather than left as stubs (placeholders are debt — ruling). Applicability predicates added across
+menus (see A.3.9). The Tag chip context menu remains unbuilt (Tag Canvas is still a Stage 3 banner).
 
 Already covered in A.3.9 for browser context menus. Other variants:
 - **Sidebar item context menu**: pin/unpin, rename, remove from sidebar — `POST /pins`, `DELETE /pins/{id}`, `PATCH /pins/{id} { label }`.
@@ -720,7 +777,17 @@ No backend. Pure UI.
 - Theme / density / accent / glow / show-notifications / inspector-width / show-extensions / show-hidden / click-mode / tab-style — all single config keys (`ui.theme`, `ui.density`, etc.). Keep localStorage as fast-paint cache; canonical state in config table.
 - Reset accent button: `DELETE /config/ui.accent_hex`.
 
+**Done in 2C (2026-09-13).** New keys, all via the same `saveSetting()` -> `POST /config` path:
+`ui.inspector_open, ui.sidebar_thispc_open, ui.quick_access_hidden, ui.list_scale, ui.view_mode,
+ui.sort, ui.dynamic_media_view, ui.backspace_deletes, ui.properties_mode, ui.icon_source`. "Spacious"
+density got its missing CSS rule (Task 8, spec §3.14); "Backspace deletes" lives under Personalization
+› Keyboard (Task 9); the known-folders checkboxes for Quick Access restoration live here too.
+
 ### 2. Scan & Index pane
+**Done in 2C (2026-09-13).** Real data replaces the placeholder: `GET /index/status` (indexed roots,
+file counts, last-run time), Re-index and Remove-from-index buttons per root. The folder context-menu
+item is relabelled "Index for This PC search" (Task 1, Task 14; spec §8.7).
+
 - Indexed drives: `config['scan.indexed_drives']` JSON array. Add/remove via POST.
 - Ignore patterns: `config['scan.ignore_patterns']` JSON array.
 - Content analysis toggle: `config['scan.content_analysis']`.
@@ -823,6 +890,10 @@ No backend. Pure UI.
 - Tags: `SELECT * FROM tags WHERE name LIKE '%q%' LIMIT 5`.
 - Commands: a static frontend list (no backend); merged client-side.
 - Frontend infers query mode from the leading char: `>` = commands only, `#` = tags only, `/` = paths only, otherwise = files+folders+tags+commands.
+
+**Superseded in 2C (2026-09-13).** The palette's file-search mode is replaced by one command
+("Search files for '<text>'") that hands the text to the toolbar search (`GET /fs/search`) — one
+search code path instead of two (Task 14, spec §8.5). Command/tag palette modes are unaffected.
 
 ### 2. Chat mode (`POST /palette/chat`)
 **What.** "Plan something with the AI."
