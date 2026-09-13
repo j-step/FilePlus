@@ -499,7 +499,7 @@ function refreshDirectory() {
     const searchBtn = document.getElementById('btn-refresh');
     searchBtn?.classList.add('is-spinning');
     const rerun = typeof runSearch === 'function'
-      ? Promise.resolve(runSearch({ pushHistory: false }))
+      ? Promise.resolve(runSearch({ pushHistory: false, preserveSelection: true }))
       : Promise.resolve();
     return rerun.finally(() => searchBtn?.classList.remove('is-spinning'));
   }
@@ -787,6 +787,11 @@ function appendSearchHeaderHint(text, actionLabel, actionName) {
 function showSearchPending(query, root) {
   const listScroll = document.getElementById('list-scroll');
   const entering = browserState.mode !== 'search';
+  // A search firing (or re-firing while typing) supersedes any /fs/list still
+  // in flight from loadDirectory() the same way a real navigation would —
+  // otherwise a slow listing that resolves after the bar starts searching
+  // would paint folder entries into the now-search-mode list.
+  browserState._loadSeq++;
   browserState.mode = 'search';
   browserState.searchRoot = root;
   if (listScroll) listScroll.dataset.mode = 'search';
@@ -808,17 +813,33 @@ function showSearchPending(query, root) {
  * `payload` is always in GET /fs/search's shape ({results, truncated, …}) —
  * search.js normalises the index route's rows into it first — and each result
  * gets a `location` (its parent folder) for the row's subline.
+ *
+ * `preserveSelection` (Task 8/finding 5 parity with loadDirectory's own
+ * preserveSelection branch, browser.js ~456-461) keeps whichever result paths
+ * are still present after a re-run — refreshDirectory()'s search-mode branch
+ * passes this so an op on a result row (favorite toggle, attributes Apply,
+ * rename) doesn't drop the selection and blank the inspector.
  */
-function renderSearchResults(payload, { query = '', root = '' } = {}) {
+function renderSearchResults(payload, { query = '', root = '', preserveSelection = false } = {}) {
   const listScroll = document.getElementById('list-scroll');
   if (!listScroll) return;
+  const prevSelection = preserveSelection ? new Set(browserState.selection) : null;
+  const prevAnchor = preserveSelection ? browserState.anchor : null;
+  const prevFocus = preserveSelection ? browserState.focus : null;
   browserState.mode = 'search';
   browserState.searchRoot = root;
   browserState.truncated = false;
   browserState.entries = (payload.results || []).map(r => ({ ...r, location: parentOfPath(r.path) }));
-  browserState.selection = new Set();
-  browserState.anchor = null;
-  browserState.focus = null;
+  if (preserveSelection && prevSelection) {
+    const validPaths = new Set(browserState.entries.map(e => e.path));
+    browserState.selection = new Set([...prevSelection].filter(p => validPaths.has(p)));
+    browserState.anchor = prevAnchor && validPaths.has(prevAnchor) ? prevAnchor : null;
+    browserState.focus = prevFocus && validPaths.has(prevFocus) ? prevFocus : null;
+  } else {
+    browserState.selection = new Set();
+    browserState.anchor = null;
+    browserState.focus = null;
+  }
   listScroll.dataset.mode = 'search';
 
   updateSearchBreadcrumb(root);
@@ -858,6 +879,14 @@ function leaveSearchMode() {
   if (browserState.mode !== 'search') return;
   browserState.mode = 'browse';
   browserState.searchRoot = null;
+  // search.js loads after browser.js, so its exports only exist once the app
+  // has booted — safe here because leaveSearchMode() is only ever called from
+  // event handlers, long after every script has run. Abort the in-flight
+  // request and bump the sequence runSearch()'s superseded() checks so a
+  // response that lands after this navigation is ignored instead of
+  // repainting stale search results over the folder we're navigating to.
+  if (typeof abortSearch === 'function') abortSearch();
+  if (typeof searchState !== 'undefined' && searchState) searchState._seq++;
   const listScroll = document.getElementById('list-scroll');
   if (listScroll) delete listScroll.dataset.mode;
   const header = document.getElementById('list-search-header');

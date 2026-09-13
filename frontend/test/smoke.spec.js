@@ -1103,6 +1103,27 @@ test('every screen renders with no renderer errors', async () => {
     await page.locator('#breadcrumb [data-action="search-clear"]').click();
     await expect(searchHeader).toBeHidden();
 
+    // 6e. Same-tab race guard (final review finding 1): unlike 6d, this is not
+    // a tab switch — start a fresh search and, before it can resolve,
+    // navigate away with loadDirectory() in the very same tab. leaveSearchMode()
+    // (called at the top of loadDirectory()) must abort the in-flight request
+    // and bump searchState._seq so the late response cannot supersede the new
+    // folder listing, and showSearchPending() must bump browserState._loadSeq
+    // so a slow /fs/list in flight from a still-earlier navigation can't paint
+    // over the search either.
+    const histLenBefore = await page.evaluate(() => nav.history.length);
+    await page.evaluate(() => { setSearchText('doc-2'); runSearch(); /* deliberately not awaited */ });
+    await page.evaluate((p) => { loadDirectory(p); /* deliberately not awaited */ }, picsDir);
+    await page.waitForTimeout(1500);
+    await expect(page.locator('#list-scroll .fp-row mark')).toHaveCount(0);
+    await expect(page.locator('#breadcrumb .fp-breadcrumb__crumb--current')).toHaveText('Pictures');
+    expect(await page.evaluate(() => activeTab().search)).toBe(null);
+    expect(await page.evaluate(() => nav.history.length)).toBe(histLenBefore + 1);
+    // Restore the folder the History/palette checks below expect (readme.md
+    // lives under docsDir, not Pictures, and the palette search's default
+    // scope is "current location").
+    await page.evaluate((p) => loadDirectory(p), docsDir);
+
     // 7. The search just run is in History, ready to restore.
     await searchInput.click();
     await expect(searchDropdown.locator('[data-action="search-history-run"]').first())

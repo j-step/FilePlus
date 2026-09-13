@@ -32,7 +32,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Shell / dialog / clipboard bridge (Plan 2B wires renderer callers)
   openPath:          (p) => ipcRenderer.invoke('shell-open-path', p),
   showItemInFolder:  (p) => ipcRenderer.send('shell-show-item', p),
-  openWith:          (p) => ipcRenderer.send('shell-open-with', p),
   pickFolder:        (defaultPath) => ipcRenderer.invoke('dialog-pick-folder', defaultPath),
   clipboardWriteText: (text) => ipcRenderer.send('clipboard-write-text', text),
   // Icons / thumbnails / native dialogs (Stage 2C Task 4; Tasks 6 and 13 wire renderer callers)

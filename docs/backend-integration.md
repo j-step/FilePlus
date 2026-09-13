@@ -311,14 +311,17 @@ copy)` → conflict modal → undo path. Native drag-out to other applications s
 Open/Open with/Rename/Properties/Index-folder/Pin single-item rules, Copy path/Cut/Copy/Trash/
 favorites/Add-tag any-count, Paste only with clipboard contents; disabled items render greyed via
 `aria-disabled`. `cm-open-with` now opens the native Windows "Open with" dialog
-(`electronAPI.openWithDialog`, Task 4) instead of a bare `start`.
+through the `isSafeLocalPath`-gated `electronAPI.openWithDialog` (Task 4, same bridge
+the Properties panel's Change… button uses) instead of the ungated legacy
+`electronAPI.openWith`/`shell-open-with` IPC pair, which final review found still
+wired to the menu item and has been removed (final fix wave, 2026-09-13).
 
 **What.** All `cm-*` actions are stubs in [actions.js:121-148](../frontend/src/actions.js#L121).
 
 | Action | Endpoint | Notes |
 |---|---|---|
 | `cm-open` | IPC `shell.openPath` | already deliverable via preload |
-| `cm-open-with` | IPC native | spawn `start /B "" <path>` then handle in main.js |
+| `cm-open-with` | IPC native | `electronAPI.openWithDialog` → `isSafeLocalPath`-gated `open-with-dialog` handler in main.js |
 | `cm-reveal-explorer` | IPC `shell.showItemInFolder` | one-line preload addition |
 | `cm-copy` | client clipboard + state | tracks "copy" intent on selection |
 | `cm-cut` | client clipboard + state | tracks "cut" intent — paste then moves |

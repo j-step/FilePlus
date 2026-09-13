@@ -151,10 +151,6 @@ app.whenReady().then(() => {
   const isStr = (v) => typeof v === 'string' && v.length > 0;
   ipcMain.handle('shell-open-path', async (_e, p) => isStr(p) ? await shell.openPath(p) : 'invalid path');
   ipcMain.on('shell-show-item', (_e, p) => { if (isStr(p)) shell.showItemInFolder(p); });
-  ipcMain.on('shell-open-with', (_e, p) => {
-    if (!isStr(p)) return;
-    spawn('rundll32.exe', ['shell32.dll,OpenAs_RunDLL', p], { detached: true, stdio: 'ignore' }).unref();
-  });
   ipcMain.handle('dialog-pick-folder', async (_e, defaultPath) => {
     if (!mainWindow) return null;
     const r = await dialog.showOpenDialog(mainWindow, { properties: ['openDirectory'], defaultPath: isStr(defaultPath) ? defaultPath : undefined });
@@ -219,9 +215,11 @@ app.whenReady().then(() => {
     }
   });
 
-  // Native "Open with" dialog, gated the same way as showProperties. (Distinct
-  // from the older fire-and-forget openWith() above: this one validates the
-  // path and reports back whether the dialog was actually spawned.)
+  // Native "Open with" dialog, gated the same way as showProperties: validates
+  // the path with isSafeLocalPath before it ever reaches a spawned process,
+  // and reports back whether the dialog was actually spawned. The sole way to
+  // open this dialog — both the context menu's Open with… and the Properties
+  // panel's Change… button call electronAPI.openWithDialog().
   ipcMain.handle('open-with-dialog', async (_e, filePath) => {
     if (!isSafeLocalPath(filePath)) return false;
     try {

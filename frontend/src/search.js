@@ -348,9 +348,11 @@ async function searchEnsureBrowser() {
  *
  * `pushHistory: false` is for a re-run that is not a new search (the Refresh
  * button / a file operation's post-op refresh in search mode), which must not
- * push a duplicate history entry.
+ * push a duplicate history entry. `preserveSelection: true` (refreshDirectory's
+ * search-mode branch) carries the current selection into the re-rendered
+ * results the same way a browse-mode refresh does.
  */
-async function runSearch({ pushHistory = true } = {}) {
+async function runSearch({ pushHistory = true, preserveSelection = false } = {}) {
   if (searchState.inflight) {
     searchState.inflight.abort();
     searchState.inflight = null;
@@ -405,7 +407,7 @@ async function runSearch({ pushHistory = true } = {}) {
   searchState.root = usePc ? '*' : params.root;
   searchState.query = query;
 
-  renderSearchResults(normalized, { query, root: searchState.root });
+  renderSearchResults(normalized, { query, root: searchState.root, preserveSelection });
   if (pushHistory) pushSearchHistory();
   syncSearchToTab();
   if (usePc) {

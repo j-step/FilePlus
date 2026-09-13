@@ -4,9 +4,10 @@
  * unfavorite+undo flow, drag-to-reorder for Favorites, and the small helpers
  * app.js's dispatch switch and context-menu wiring call into.
  *
- * Script load order is api.js → fileops.js → browser.js → inspector.js →
- * home.js → settings.js → app.js (see index.html) — this file can call
- * anything defined in api.js/icons.js/browser.js at parse time (iconFor,
+ * Script load order is api.js → filetypes.js → icons-sprite.js → icons.js →
+ * fileops.js → browser.js → dragdrop.js → search.js → inspector.js → home.js
+ * → settings.js → properties.js → app.js (see index.html) — this file can
+ * call anything defined in an earlier file at parse time (iconFor,
  * escapeHtml, parentOfPath, formatModified, ApiError,
  * formatApiError), but anything defined later in app.js (showSnackbar,
  * showToast, openBrowserAt, pathBaseName, selectRow, contextMenuTarget) is

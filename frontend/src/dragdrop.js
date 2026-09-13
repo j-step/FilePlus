@@ -111,13 +111,24 @@ function sameVolume(a, b) {
  *  (Moved here verbatim from browser.js's HTML5 implementation, Task 4.)
  *  'self'       — destDir is (case-insensitively) one of the dragged paths
  *  'current'    — destDir is the directory already open
- *  'descendant' — destDir is nested inside one of the dragged folders */
+ *  'descendant' — destDir is nested inside one of the dragged folders
+ *
+ *  In search mode browserState.path is the search ROOT, not any result's real
+ *  parent — results can live scattered across its subfolders, so a single
+ *  "directory already open" comparison is wrong there (it refused a
+ *  perfectly legitimate drop of a subfolder result onto the search root).
+ *  'current' in search mode instead means every dragged item's OWN parent
+ *  already is destDir — a true no-op only when the whole set is already
+ *  sitting there. */
 function dropViolation(destDir, paths) {
   if (!destDir || !paths || !paths.length) return 'self';
   const norm = p => String(p).replace(/[\\\/]+$/, '').toLowerCase();
   const destLower = norm(destDir);
   if (paths.some(p => norm(p) === destLower)) return 'self';
-  if (destLower === norm(browserState.path || '')) return 'current';
+  const alreadyThere = browserState.mode === 'search'
+    ? paths.every(p => norm(parentOfPath(p)) === destLower)
+    : destLower === norm(browserState.path || '');
+  if (alreadyThere) return 'current';
   if (paths.some(p => destLower.startsWith(norm(p) + '\\'))) return 'descendant';
   return null;
 }

@@ -234,6 +234,18 @@ function activateTab(id) {
     browserState.path = incoming.path;
     browserState.parent = null;
     browserState.isRoot = false;
+    // Apply the INCOMING tab's own view/scale before repainting its results —
+    // otherwise renderDirectory() (called from inside restoreSearchResultsForTab
+    // → renderSearchResults) paints them with whatever view/scale the OUTGOING
+    // tab left behind (e.g. a grid Pictures tab making another tab's results
+    // render as tiles). Mirrors the listing branch's restore.view handling below.
+    const cfg = window.__fpConfig || {};
+    const cfgView = ['details', 'list', 'grid'].includes(cfg['ui.view_mode']) ? cfg['ui.view_mode'] : 'details';
+    if (typeof setViewMode === 'function') setViewMode(incoming.view || cfgView);
+    if (typeof setListScale === 'function' && typeof LIST_SCALE_STEPS !== 'undefined') {
+      const cfgScale = LIST_SCALE_STEPS.includes(cfg['ui.list_scale']) ? cfg['ui.list_scale'] : 1;
+      setListScale(cfgScale, { persist: false });
+    }
     restoreSearchResultsForTab(incoming.search);
     updateSidebarActive(incoming.path);
     refreshNavButtons();
@@ -2455,7 +2467,11 @@ document.addEventListener('click', e => {
     }
     case 'cm-open-with': {
       const path = contextTargetPath();
-      if (path) window.electronAPI?.openWith?.(path);
+      if (path) {
+        Promise.resolve(window.electronAPI?.openWithDialog?.(path)).then(ok => {
+          if (!ok) showToast('Failed to open the Open With dialog', 'error');
+        });
+      }
       break;
     }
     case 'cm-reveal-explorer': {
