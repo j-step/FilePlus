@@ -28,7 +28,7 @@ import backend.config as _config
 from backend.config import BadPathError, OutOfSandboxError, ProtectedPathError, path_guard
 from backend.database import init_db
 from backend.indexer import index_file, scan_directory, remove_stale_entries
-from backend import filetypes as ft, mover, operations_log as ol, stores, tagger, winshell
+from backend import filetypes as ft, mover, operations_log as ol, searcher, stores, tagger, winshell
 
 logger = logging.getLogger(__name__)
 
@@ -319,16 +319,92 @@ async def files_history(path: str = Query(..., description="Absolute path to loo
 
 
 @app.get("/search")
-async def search_files(q: str = Query(..., description="Substring to match against filename or path"), limit: int = Query(50)):
+async def search_files(
+    q: str = Query("", description="Substring to match against filename or path"),
+    type_: Optional[str] = Query(None, alias="type", description="Search group or 'folder'"),
+    ext: Optional[str] = Query(None, description="Single extension, no dot"),
+    modified_after: Optional[float] = Query(None, description="Epoch seconds"),
+    modified_before: Optional[float] = Query(None),
+    created_after: Optional[float] = Query(None),
+    created_before: Optional[float] = Query(None),
+    min_size: Optional[int] = Query(None),
+    max_size: Optional[int] = Query(None),
+    tag: Optional[str] = Query(None),
+    hidden: bool = Query(False),
+    whole_word: bool = Query(False),
+    limit: int = Query(50),
+):
+    """Substring search over the index (the `files` table), plus filters.
+
+    `q`/`limit` keep their original behaviour (LIKE substring on filename or
+    path, row cap) for callers that pass only those two -- e.g. the command
+    palette's file search. `ext`/`min_size`/`max_size`/`modified_*`/
+    `created_*` have real columns on `files` and are applied in SQL;
+    `type` (a filetypes search group -- indexed rows are always files, so
+    'folder' never matches anything here) and `hidden` (no stored column;
+    approximated from the filename the same way the indexer already avoids
+    indexing dot-prefixed names) are applied in Python afterward, along
+    with `tag` (backend.tagger.paths_for_tag) and `whole_word`
+    (backend.searcher.match_spans, since SQL LIKE has no word-boundary
+    concept). `indexed_roots` is always included so the frontend's "This PC"
+    search scope can flag drives that aren't indexed yet.
+    """
+    limit = min(limit, 1000)
+    conditions = []
+    params: list = []
+    if q:
+        conditions.append("(filename LIKE ? OR path LIKE ?)")
+        params += [f"%{q}%", f"%{q}%"]
+    if ext:
+        conditions.append("extension = ?")
+        params.append("." + ext.lstrip(".").lower())
+    if min_size is not None:
+        conditions.append("size >= ?")
+        params.append(min_size)
+    if max_size is not None:
+        conditions.append("size <= ?")
+        params.append(max_size)
+    if modified_after is not None:
+        conditions.append("modified >= ?")
+        params.append(datetime.fromtimestamp(modified_after).isoformat())
+    if modified_before is not None:
+        conditions.append("modified <= ?")
+        params.append(datetime.fromtimestamp(modified_before).isoformat())
+    if created_after is not None:
+        conditions.append("created >= ?")
+        params.append(datetime.fromtimestamp(created_after).isoformat())
+    if created_before is not None:
+        conditions.append("created <= ?")
+        params.append(datetime.fromtimestamp(created_before).isoformat())
+
+    where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+    words = q.split() if (q and whole_word) else []
+
     async with _db() as conn:
         conn.row_factory = aiosqlite.Row
         cur = await conn.execute(
-            "SELECT id, path, filename, extension, size, modified, hash FROM files "
-            "WHERE filename LIKE ? OR path LIKE ? ORDER BY filename COLLATE NOCASE LIMIT ?",
-            (f"%{q}%", f"%{q}%", limit),
+            f"SELECT id, path, filename, extension, size, modified, created, hash FROM files "
+            f"{where} ORDER BY filename COLLATE NOCASE",
+            params,
         )
-        rows = await cur.fetchall()
-    return [dict(row) for row in rows]
+        rows = [dict(r) for r in await cur.fetchall()]
+        tag_paths = await tagger.paths_for_tag(conn, tag) if tag else None
+        cur2 = await conn.execute("SELECT root FROM index_roots ORDER BY root")
+        indexed_roots = [r[0] for r in await cur2.fetchall()]
+
+    def _keep(row: dict) -> bool:
+        if not hidden and row["filename"].startswith("."):
+            return False
+        if type_ and ft.type_group_for(row["extension"] or "", is_dir=False) != type_:
+            return False
+        if tag_paths is not None and row["path"] not in tag_paths:
+            return False
+        if words and searcher.match_spans(row["filename"], words, True) is None:
+            return False
+        return True
+
+    results = [r for r in rows if _keep(r)][:limit]
+    return {"results": results, "indexed_roots": indexed_roots}
 
 
 @app.get("/files/{file_id}")
@@ -510,6 +586,48 @@ async def fs_peek(
         raise HTTPException(status_code=404, detail=f"Not a directory: {path}")
     items = await asyncio.to_thread(_peek_entries, resolved, n)
     return {"items": items}
+
+
+@app.get("/fs/search")
+async def fs_search(
+    root: str = Query(..., description="Absolute path of the folder to search live"),
+    q: str = Query(""),
+    type_: Optional[str] = Query(None, alias="type", description="Search group or 'folder'"),
+    ext: Optional[str] = Query(None, description="Single extension, no dot"),
+    modified_after: Optional[float] = Query(None, description="Epoch seconds"),
+    modified_before: Optional[float] = Query(None),
+    created_after: Optional[float] = Query(None),
+    created_before: Optional[float] = Query(None),
+    min_size: Optional[int] = Query(None),
+    max_size: Optional[int] = Query(None),
+    tag: Optional[str] = Query(None),
+    hidden: bool = Query(False),
+    whole_word: bool = Query(False),
+    limit: int = Query(500),
+):
+    """Budgeted live search of the tree rooted at *root* -- see backend.searcher.
+
+    *root* must be absolute (path_guard's _canonicalize raises BadPathError
+    for a relative or driveless spelling -> 400 via the global handler) and
+    is read-guarded like every other read route (D2: reads are allowed
+    anywhere). `tag=` resolves to a path set up front via
+    tagger.paths_for_tag so the blocking tree walk itself never touches the
+    database. The walk runs in asyncio.to_thread since it's blocking I/O.
+    """
+    resolved = path_guard(Path(root), "read")
+    tag_paths = None
+    if tag:
+        async with _db() as conn:
+            tag_paths = await tagger.paths_for_tag(conn, tag)
+    filters = searcher.SearchFilters(
+        q=q, type=type_, ext=ext,
+        modified_after=modified_after, modified_before=modified_before,
+        created_after=created_after, created_before=created_before,
+        min_size=min_size, max_size=max_size,
+        hidden=hidden, whole_word=whole_word, tag_paths=tag_paths,
+    )
+    capped_limit = min(limit, 1000)
+    return await asyncio.to_thread(searcher.search_tree, resolved, filters, limit=capped_limit)
 
 
 # ---------------------------------------------------------------------------

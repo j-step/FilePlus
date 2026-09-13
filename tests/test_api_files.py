@@ -60,8 +60,53 @@ def test_search_and_quick_index(client, sandbox):
     st = client.get("/index/status").json()
     entry = next(r for r in st["roots"] if r["root"] == str(sandbox))
     assert st["running"] is False and entry["file_count"] >= 1 and entry["last_run"]
-    hits = client.get("/search", params={"q": "budget"}).json()
+    # GET /search now returns {"results": [...], "indexed_roots": [...]} (Stage 2C Task 2)
+    # instead of a bare list, so This-PC search can flag un-indexed drives.
+    body = client.get("/search", params={"q": "budget"}).json()
+    hits = body["results"]
     assert hits and hits[0]["filename"] == "budget-2026.xlsx" and hits[0]["hash"] is None   # quick index does not hash
+    assert str(sandbox) in body["indexed_roots"]
+
+
+def test_search_type_and_ext_filters_and_indexed_roots(client, sandbox):
+    (sandbox / "doc-note.txt").write_text("hello")
+    (sandbox / "doc-readme.md").write_text("hello")
+    (sandbox / "doc-photo.png").write_bytes(b"\x89PNG")
+    r = client.post("/index", json={"path": str(sandbox)}); assert r.status_code == 200
+    import time
+    for _ in range(50):
+        if client.get("/index/status").json()["running"] is False: break
+        time.sleep(0.1)
+
+    body = client.get("/search", params={"q": "doc", "type": "document"}).json()
+    assert {r["filename"] for r in body["results"]} == {"doc-note.txt", "doc-readme.md"}
+    assert str(sandbox) in body["indexed_roots"]
+
+    ext_body = client.get("/search", params={"q": "doc", "ext": "md"}).json()
+    assert [r["filename"] for r in ext_body["results"]] == ["doc-readme.md"]
+
+
+def test_search_whole_word_filter(client, sandbox):
+    (sandbox / "mydoc.txt").write_text("x")
+    (sandbox / "my doc.txt").write_text("x")
+    client.post("/index", json={"path": str(sandbox)})
+    import time
+    for _ in range(50):
+        if client.get("/index/status").json()["running"] is False: break
+        time.sleep(0.1)
+
+    body = client.get("/search", params={"q": "doc", "whole_word": "true"}).json()
+    assert {r["filename"] for r in body["results"]} == {"my doc.txt"}
+
+
+def test_search_tag_filter(client, sandbox):
+    p = sandbox / "tagged.txt"; p.write_text("x")
+    other = sandbox / "untagged.txt"; other.write_text("x")
+    fid = client.get("/file", params={"path": str(p)}).json()["id"]
+    client.get("/file", params={"path": str(other)})  # index it too, untagged, so both rows exist
+    client.post(f"/files/{fid}/tags", json={"name": "keep"})
+    body = client.get("/search", params={"q": "", "tag": "keep"}).json()
+    assert [r["filename"] for r in body["results"]] == ["tagged.txt"]
 
 
 def test_files_pagination(client, sandbox):

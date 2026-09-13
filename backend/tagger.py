@@ -183,6 +183,31 @@ async def search_tags(conn, q: str, limit: int = 10) -> list[dict]:
     return [_tag_row(r) for r in await cur.fetchall()]
 
 
+async def paths_for_tag(conn, tag_name: str) -> set[str]:
+    """Return the paths of every indexed file tagged *tag_name*.
+
+    Joins file_tags/tags/files by tag *name* (not id) since every caller
+    (GET /fs/search's and GET /search's `tag=` param) addresses a tag by
+    name. An unknown tag name yields an empty set rather than an error --
+    same "absence is not failure" spirit as tag_id_for_name.
+
+    Args:
+        conn: Active aiosqlite connection.
+        tag_name: Tag name to look up.
+
+    Returns:
+        Set of absolute file paths carrying that tag.
+    """
+    cur = await conn.execute(
+        "SELECT f.path FROM files f "
+        "JOIN file_tags ft ON ft.file_id = f.id "
+        "JOIN tags t ON t.id = ft.tag_id "
+        "WHERE t.name = ?",
+        (tag_name,),
+    )
+    return {row[0] for row in await cur.fetchall()}
+
+
 async def auto_tag(file_id: int) -> None:
     """Apply system-level auto-tags based on file metadata rules.
 
