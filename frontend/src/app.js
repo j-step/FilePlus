@@ -1264,11 +1264,17 @@ const CONTEXT_MENUS = {
     { label: 'Close other tabs',   action: 'cm-close-other-tabs' },
   ],
 
-  // A.10.5 — Sidebar item context menu (pinned folders only — see getMenuTypeForTarget)
+  // A.10.5 — Sidebar item context menu (pinned folders and Quick Access known
+  // folders — see getMenuTypeForTarget). Unpin/Rename label apply to pins
+  // only; Remove from Quick Access applies to known folders only — the
+  // contextmenu listener below filters out whichever pair doesn't match the
+  // right-clicked item (Task 11 will replace this with the general
+  // enabled(ctx) mechanism).
   'sidebar-item': [
-    { label: 'Open in new tab',    action: 'cm-open-new-tab' },
-    { label: 'Unpin',              action: 'cm-unpin-sidebar' },
-    { label: 'Rename label',       action: 'cm-rename-sidebar-item' },
+    { label: 'Open in new tab',          action: 'cm-open-new-tab' },
+    { label: 'Unpin',                    action: 'cm-unpin-sidebar' },
+    { label: 'Rename label',             action: 'cm-rename-sidebar-item' },
+    { label: 'Remove from Quick Access', action: 'cm-quick-access-remove' },
   ],
 
   // A.10.6 — Home row context menu (Recent + Favorites rows). "Add/Remove
@@ -1285,9 +1291,12 @@ const CONTEXT_MENUS = {
 
 function getMenuTypeForTarget(target) {
   if (target.closest('.fp-tab')) return 'tab';
-  // Only user pins carry data-pin-id — Home/Downloads/drives are not pins
-  // and fall through to the empty-area menu instead.
-  if (target.closest('.fp-sidebar__item[data-pin-id]')) return 'sidebar-item';
+  // User pins (data-pin-id) and Quick Access known folders (data-known-id)
+  // both get the sidebar-item menu — Home and drives are neither and fall
+  // through to the empty-area menu instead. The menu's own item list is
+  // filtered per kind (Unpin/Rename for pins, Remove from Quick Access for
+  // known folders) by the contextmenu listener below.
+  if (target.closest('.fp-sidebar__item[data-pin-id], .fp-sidebar__item[data-known-id]')) return 'sidebar-item';
   // Home's Recent/Favorites rows get their own menu — checked before the
   // generic folder/file checks below so a Home row never falls into those.
   if (target.closest('.fp-row--recent')) return 'home-row';
@@ -1567,16 +1576,99 @@ function renderPinItem(pin) {
   </button>`;
 }
 
-// Downloads' data-path is resolved once at startup: config['paths.downloads']
-// when the user configured one, else the real OS Downloads folder (main.js's
-// get-home-dir bridge), never the old hardcoded sandbox-relative guess.
-function applyDownloadsPath() {
-  const el = document.getElementById('nav-downloads');
-  if (!el) return;
-  const configured = window.__fpConfig && window.__fpConfig['paths.downloads'];
-  const home = window.electronAPI?.homeDir?.();
-  const path = configured || (home ? `${home}\\Downloads` : null);
-  if (path) el.dataset.path = path;
+// ── Quick Access known folders (Task 9) ─────────────────────────────────────
+// Known-folder ids shown in Quick Access by default: Desktop, Downloads, and
+// Screenshots (when the machine has one — GET /known-folders only returns it
+// if the folder actually exists). Each maps to its own icon() sprite symbol
+// — distinct from icons.js's FP_FOLDER_SPECIALS, the family-sprite icon used
+// for folder rows inside a directory listing.
+const QUICK_ACCESS_IDS = ['desktop', 'downloads', 'screenshots'];
+const QUICK_ACCESS_ICON = { desktop: 'desktop', downloads: 'download', screenshots: 'screenshots' };
+
+function quickAccessHiddenIds() {
+  const hidden = window.__fpConfig && window.__fpConfig['ui.quick_access_hidden'];
+  return Array.isArray(hidden) ? hidden : [];
+}
+
+/** Renders the sidebar's Quick Access known-folder items (between Home and
+ * Review Bin) and the Settings › Personalization checkboxes that control
+ * them — both read the same GET /known-folders cache (fpLoadKnownFolders(),
+ * icons.js, awaited before this in app.js's init) and the
+ * ui.quick_access_hidden config array, so one function keeps them in sync.
+ * Safe to re-run any time either source changes (a Settings checkbox, the
+ * sidebar-item "Remove from Quick Access" menu action). */
+function loadQuickAccess() {
+  const list = window.__fpKnownFolderList || [];
+  const hidden = new Set(quickAccessHiddenIds());
+
+  const sidebar = document.getElementById('sb-quick-access-folders');
+  if (sidebar) {
+    const visible = QUICK_ACCESS_IDS
+      .map(id => list.find(f => f && f.id === id))
+      .filter(f => f && !hidden.has(f.id));
+    sidebar.innerHTML = visible.map(renderQuickAccessItem).join('');
+  }
+
+  renderQuickAccessSettings(list, hidden);
+}
+
+function renderQuickAccessItem(f) {
+  const symbol = QUICK_ACCESS_ICON[f.id] || 'folder';
+  const label = f.name || pathBaseName(f.path) || f.id;
+  return `<button class="fp-sidebar__item" data-screen="browser" data-path="${escapeHtml(f.path)}"
+          data-known-id="${escapeHtml(f.id)}" data-action="navigate-path" title="${escapeHtml(label)}">
+    ${icon(symbol, 'fp-icon--16')}
+    <span class="fp-sidebar__item__label">${escapeHtml(label)}</span>
+  </button>`;
+}
+
+/** Settings › Personalization › Quick Access: one checkbox per known folder
+ * that can appear in Quick Access, checked = currently shown. `list` is the
+ * raw GET /known-folders result, `hiddenIds` the Set of currently-hidden ids
+ * (both already computed by loadQuickAccess(), the sole caller). */
+function renderQuickAccessSettings(list, hiddenIds) {
+  const container = document.getElementById('settings-quick-access-list');
+  if (!container) return;
+  const items = QUICK_ACCESS_IDS.map(id => list.find(f => f && f.id === id)).filter(Boolean);
+  if (!items.length) {
+    container.innerHTML = '<div class="settings-row__desc">No known folders detected on this PC.</div>';
+    return;
+  }
+  container.innerHTML = items.map((f, i) => `
+    <div class="settings-row">
+      <div class="settings-row__label">${escapeHtml(f.name || pathBaseName(f.path) || f.id)}</div>
+      <label class="fp-toggle">
+        <input type="checkbox" data-action="settings-quick-access-toggle" data-known-id="${escapeHtml(f.id)}" ${hiddenIds.has(f.id) ? '' : 'checked'} />
+        <span class="fp-toggle__track"></span>
+        <span class="fp-toggle__thumb"></span>
+      </label>
+    </div>${i < items.length - 1 ? '<div class="settings-sep"></div>' : ''}`).join('');
+}
+
+/** Adds or removes `id` from ui.quick_access_hidden and re-renders both the
+ * sidebar Quick Access list and the Settings checkboxes. Shared by the
+ * Settings checkbox (change listener, below) and the sidebar-item context
+ * menu's "Remove from Quick Access" action (the click switch, above). */
+async function setQuickAccessHidden(id, hide) {
+  const hidden = new Set(quickAccessHiddenIds());
+  if (hide) hidden.add(id); else hidden.delete(id);
+  await saveSetting('ui.quick_access_hidden', [...hidden]);
+  loadQuickAccess();
+}
+
+// ── This PC collapse (Task 9) ───────────────────────────────────────────────
+/** Expands/collapses the "This PC" sidebar section: rotates the chevron,
+ * shows/hides #sb-drives, and (unless {persist:false}, used when restoring
+ * from config at startup) saves ui.sidebar_thispc_open. */
+function setThisPcOpen(open, { persist = true } = {}) {
+  const chevron = document.querySelector('#sb-thispc .fp-sidebar__chevron');
+  const body = document.getElementById('sb-drives');
+  if (chevron) {
+    chevron.setAttribute('aria-expanded', String(open));
+    chevron.setAttribute('aria-label', open ? 'Collapse This PC' : 'Expand This PC');
+  }
+  if (body) body.hidden = !open;
+  if (persist) saveSetting('ui.sidebar_thispc_open', open);
 }
 
 // ── Window controls (Electron IPC) ───────────────────────────────────────────
@@ -1654,7 +1746,7 @@ const IN_SCOPE_ACTIONS = new Set([
   'settings-nav', 'settings-set-theme', 'settings-set-density', 'settings-set-accent',
   'settings-set-accent-hex', 'settings-reset-accent',
   'settings-set-show-notifications', 'settings-toggle', 'settings-set-click-mode',
-  'settings-set-icon-source',
+  'settings-set-icon-source', 'settings-quick-access-toggle', 'settings-set-backspace-deletes',
   'settings-empty-trash',
   'settings-set-font-scale', 'settings-reset-shortcuts',
   'zoom-reset',
@@ -1699,6 +1791,19 @@ document.addEventListener('click', e => {
       // and the sidebar highlight synchronously, before the fetch even
       // lands — no manual pre-marking needed here any more.
       openBrowserAt(btn.dataset.path);
+      break;
+    }
+    // This PC (Task 9): thispc-open sits on the section-head row itself and
+    // opens the drives listing (openBrowserAt(null), tab label "This PC");
+    // thispc-toggle sits on the nested chevron button, so a click there is
+    // caught by this case first (closest() returns the innermost match) and
+    // never falls through to thispc-open.
+    case 'thispc-open':
+      openBrowserAt(null);
+      break;
+    case 'thispc-toggle': {
+      const expanded = btn.getAttribute('aria-expanded') !== 'false';
+      setThisPcOpen(!expanded);
       break;
     }
     case 'nav-back':
@@ -1993,14 +2098,14 @@ document.addEventListener('click', e => {
       if (tab) closeOtherTabs(tab.dataset.tabId);
       break;
     }
-    // Sidebar pinned-item context menu (A.10.5). These are only reachable
-    // through the 'sidebar-item' menu type (see getMenuTypeForTarget), which
-    // is raised solely for elements with data-pin-id — so any other menu
-    // (file/folder/tab/empty-area) still falls through to the stub below.
+    // Sidebar item context menu (A.10.5) — pins and Quick Access known
+    // folders both reach here (see getMenuTypeForTarget); both carry
+    // data-path. Any other menu (file/folder/tab/empty-area) still falls
+    // through to the stub below.
     case 'cm-open-new-tab': {
       if (contextMenuType === 'sidebar-item' && contextMenuTarget) {
-        const pinPath = contextMenuTarget.dataset.path;
-        if (pinPath) { openNewTab(); openBrowserAt(pinPath); }
+        const itemPath = contextMenuTarget.dataset.path;
+        if (itemPath) { openNewTab(); openBrowserAt(itemPath); }
       } else if (contextMenuType === 'file' || contextMenuType === 'folder') {
         // Folder → open that folder; file → open its parent folder.
         const path = contextTargetPath();
@@ -2053,6 +2158,20 @@ document.addEventListener('click', e => {
             },
           });
         }
+      } else {
+        console.log(`[FilePlus] data-action stub: ${action}`, btn.dataset);
+        showToast(`Action "${action}" — not yet implemented`, 'action');
+      }
+      break;
+    }
+    // Quick Access known-folder removal (Task 9) — only reachable for
+    // sidebar items carrying data-known-id (see getMenuTypeForTarget); adds
+    // the id to ui.quick_access_hidden and re-renders both the sidebar list
+    // and the Settings checkboxes (setQuickAccessHidden -> loadQuickAccess).
+    case 'cm-quick-access-remove': {
+      if (contextMenuType === 'sidebar-item' && contextMenuTarget) {
+        const knownId = contextMenuTarget.dataset.knownId;
+        if (knownId) setQuickAccessHidden(knownId, true);
       } else {
         console.log(`[FilePlus] data-action stub: ${action}`, btn.dataset);
         showToast(`Action "${action}" — not yet implemented`, 'action');
@@ -2227,6 +2346,15 @@ document.addEventListener('change', e => {
     refreshDirectory();
     return;
   }
+  if (t.dataset.action === 'settings-quick-access-toggle') {
+    const id = t.dataset.knownId;
+    if (id) setQuickAccessHidden(id, !t.checked);
+    return;
+  }
+  if (t.dataset.action === 'settings-set-backspace-deletes') {
+    saveSetting('ui.backspace_deletes', t.checked);
+    return;
+  }
 });
 
 function setNotificationsEnabled(enabled) {
@@ -2375,7 +2503,9 @@ document.addEventListener('contextmenu', e => {
   // excluded from deselect.
   deselectOnOpenSpace(e.target);
   contextMenuType = getMenuTypeForTarget(e.target);
-  contextMenuTarget = contextMenuType === 'sidebar-item' ? e.target.closest('.fp-sidebar__item[data-pin-id]') : e.target;
+  contextMenuTarget = contextMenuType === 'sidebar-item'
+    ? e.target.closest('.fp-sidebar__item[data-pin-id], .fp-sidebar__item[data-known-id]')
+    : e.target;
   // Right-click on a row that isn't already selected selects it alone before
   // the menu opens; right-click within an existing multi-selection leaves it
   // untouched so batch actions (Task 4) apply to the whole selection.
@@ -2384,6 +2514,19 @@ document.addEventListener('contextmenu', e => {
     if (row && typeof ensureRowSelected === 'function') ensureRowSelected(row.dataset.path);
   }
   let items = CONTEXT_MENUS[contextMenuType] || CONTEXT_MENUS.file;
+
+  // Sidebar item menu: a pin gets Unpin/Rename label, a Quick Access known
+  // folder gets Remove from Quick Access — each hidden for the other kind
+  // (Task 11 replaces this with the general enabled(ctx) mechanism).
+  if (contextMenuType === 'sidebar-item') {
+    const isKnown = !!(contextMenuTarget && contextMenuTarget.dataset.knownId);
+    items = items.filter(i => {
+      if (i === 'sep') return true;
+      if (i.action === 'cm-quick-access-remove') return isKnown;
+      if (i.action === 'cm-unpin-sidebar' || i.action === 'cm-rename-sidebar-item') return !isKnown;
+      return true;
+    });
+  }
 
   // Home row menu: select the row (mirrors the plain-click select+inspect
   // behavior) and relabel the favorite toggle to reflect current membership.
@@ -2483,6 +2626,14 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Sidebar device name — load saved name or fall back to OS hostname
   initDeviceName();
 
+  // This PC section head is a <div role="button"> (its click already routes
+  // through the delegated data-action switch above) — Enter/Space need their
+  // own listener since a div, unlike a real <button>, never activates on a
+  // key press by itself.
+  document.querySelector('#sb-thispc .fp-sidebar__section-head')?.addEventListener('keydown', e => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openBrowserAt(null); }
+  });
+
   // Sync the status-bar zoom pill with Electron's persisted zoom factor
   updateZoomPill();
 
@@ -2520,9 +2671,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   // icons (Desktop, Downloads, …) by matching a path against this map, and
   // falls back to guessing from the folder's name until it has loaded.
   await fpLoadKnownFolders();
-  applyDownloadsPath();
   await loadDrives();
   await loadPins();
+  loadQuickAccess();
   await checkCrashRecovery();
 
   // Always start on Home — the previous "restore last active screen"

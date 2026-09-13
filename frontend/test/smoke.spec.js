@@ -460,6 +460,71 @@ test('every screen renders with no renderer errors', async () => {
     await page.mouse.click(homeScreenBox.x + homeScreenBox.width / 2, homeScreenBox.y + homeScreenBox.height - 20);
     await expect(page.locator('#screen-home .fp-row--selected')).toHaveCount(0);
 
+    // --- Task 9: This PC section, Quick Access known folders, Backspace-deletes ---
+    await page.evaluate(() => switchScreen('browser'));
+
+    // Sidebar's Tree section is now the collapsible "This PC" section — no
+    // more bare "Tree" label.
+    await expect(page.locator('#sb-thispc .fp-sidebar__section-label')).toHaveText('This PC');
+    await expect(page.locator('.fp-sidebar__section-label', { hasText: /^Tree$/ })).toHaveCount(0);
+
+    // Chevron collapses #sb-drives and persists ui.sidebar_thispc_open=false;
+    // clicking again restores the default (open) state for the rest of this run.
+    await page.locator('#sb-thispc .fp-sidebar__chevron').click();
+    await expect(page.locator('#sb-drives')).toBeHidden();
+    await expect(page.locator('#sb-thispc .fp-sidebar__chevron')).toHaveAttribute('aria-expanded', 'false');
+    const cfgCollapsed = await (await fetch(`${API}/config`, { headers: apiHeaders })).json();
+    expect(cfgCollapsed['ui.sidebar_thispc_open']).toBe(false);
+    await page.locator('#sb-thispc .fp-sidebar__chevron').click();
+    await expect(page.locator('#sb-drives')).toBeVisible();
+    await expect(page.locator('#sb-thispc .fp-sidebar__chevron')).toHaveAttribute('aria-expanded', 'true');
+
+    // Quick Access renders Desktop and Downloads with absolute data-path
+    // (real GET /known-folders paths, not the old sandbox-relative guess).
+    const qaDesktop = page.locator('#sb-quick-access-folders [data-known-id="desktop"]');
+    const qaDownloads = page.locator('#sb-quick-access-folders [data-known-id="downloads"]');
+    await expect(qaDesktop).toBeVisible();
+    await expect(qaDownloads).toBeVisible();
+    expect(await qaDesktop.getAttribute('data-path')).toMatch(/^[A-Za-z]:\\/);
+    expect(await qaDownloads.getAttribute('data-path')).toMatch(/^[A-Za-z]:\\/);
+
+    // Settings › Personalization › Quick Access: unchecking Desktop removes
+    // it from the sidebar; re-checking restores it.
+    await page.evaluate(() => switchScreen('settings'));
+    const desktopToggle = page.locator(
+      '#settings-quick-access-list [data-action="settings-quick-access-toggle"][data-known-id="desktop"]');
+    await expect(desktopToggle).toBeChecked();
+    // force: true — the checkbox is visually skinned by sibling .fp-toggle__track/
+    // __thumb spans (the real .fp-toggle CSS pattern, styles.css), which sit on top
+    // of it and fail Playwright's actionability hit-test even though a real click
+    // there still reaches the input (it's the label's native target).
+    await desktopToggle.uncheck({ force: true });
+    await expect(page.locator('#sb-quick-access-folders [data-known-id="desktop"]')).toHaveCount(0);
+    await desktopToggle.check({ force: true });
+    await expect(page.locator('#sb-quick-access-folders [data-known-id="desktop"]')).toBeVisible();
+
+    // Backspace-deletes setting: with ui.backspace_deletes=true, selecting
+    // doc-01.txt and pressing Backspace trashes it (no navUp); Ctrl+Z restores it.
+    await postJson('/config', { key: 'ui.backspace_deletes', value: true });
+    await page.evaluate(async () => { await loadConfig(); applySettingsFromConfig(); });
+    await page.evaluate(() => switchScreen('browser'));
+    await page.evaluate((p) => loadDirectory(p), docsDir);
+    await page.waitForFunction(() => document.querySelectorAll('.fp-row').length >= 10);
+    await rowByName('doc-01.txt').click();
+    await page.keyboard.press('Backspace');
+    await expect(rowByName('doc-01.txt')).toHaveCount(0);
+    const trashOps = await (await fetch(`${API}/operations?limit=1`, { headers: apiHeaders })).json();
+    expect(trashOps[0]?.op_type, JSON.stringify(trashOps)).toBe('trash');
+    await page.keyboard.press('Control+z');
+    await expect(rowByName('doc-01.txt')).toBeVisible();
+
+    // Reset the config keys this block set so later smoke steps (and the
+    // next verify run) see the documented defaults again.
+    await fetch(`${API}/config/ui.sidebar_thispc_open`, { method: 'DELETE', headers: apiHeaders });
+    await fetch(`${API}/config/ui.quick_access_hidden`, { method: 'DELETE', headers: apiHeaders });
+    await fetch(`${API}/config/ui.backspace_deletes`, { method: 'DELETE', headers: apiHeaders });
+    await page.evaluate(async () => { await loadConfig(); applySettingsFromConfig(); loadQuickAccess(); });
+
     await page.evaluate(() => applyTheme('light'));
     for (const id of ['home', 'browser', 'settings']) {
       await page.evaluate((s) => switchScreen(s), id);

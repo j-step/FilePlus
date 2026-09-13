@@ -86,14 +86,14 @@
           <span class="fp-sidebar__item__label">Home</span>
         </button>
 
-        <!-- Downloads — opens Browser at configured Downloads path -->
-        <button class="fp-sidebar__item" id="nav-downloads"
-                data-screen="browser" data-action="navigate-path"
-                data-path="C:\Users\justi\Downloads"
-                title="Downloads (configured Downloads Folder)">
-          <svg class="fp-icon fp-icon--16" aria-hidden="true"><use href="#fp-download"></use></svg>
-          <span class="fp-sidebar__item__label">Downloads</span>
-        </button>
+        <!-- Quick Access known folders (Desktop, Downloads, Screenshots by
+             default) — rendered by loadQuickAccess() (app.js) from
+             GET /known-folders, filtered against ui.quick_access_hidden.
+             Each item carries an absolute data-path and data-known-id (the
+             latter drives the sidebar-item context menu's "Remove from Quick
+             Access" and the Settings › Personalization checkboxes). Replaces
+             the old static #nav-downloads entry (Stage 2C Task 9). -->
+        <div id="sb-quick-access-folders"></div>
 
         <!-- Review Bin with accent badge when non-zero -->
         <button class="fp-sidebar__item" id="nav-review-bin"
@@ -110,11 +110,21 @@
         <!-- Populated by loadPins() from GET /pins -->
         <div id="sb-pinned-folders"></div>
 
-        <!-- ── TREE ─────────────────────────────────────────────── -->
-        <!-- Real fixed drives from GET /drives (Stage 3 will add the AI-organised dot) -->
-        <div class="fp-sidebar__section-label">Tree</div>
-
-        <div id="sb-drives"></div>
+        <!-- ── THIS PC ──────────────────────────────────────────── -->
+        <!-- Real fixed drives from GET /drives (Stage 3 will add the
+             AI-organised dot). Collapsible: thispc-toggle flips
+             aria-expanded, hides #sb-drives, rotates the chevron, and
+             persists ui.sidebar_thispc_open; thispc-open opens the drives
+             listing itself (openBrowserAt(null), tab label "This PC"). -->
+        <div class="fp-sidebar__section" id="sb-thispc">
+          <div class="fp-sidebar__section-head" role="button" tabindex="0" data-action="thispc-open">
+            <button class="fp-sidebar__chevron" data-action="thispc-toggle" aria-label="Collapse This PC" aria-expanded="true">
+              <svg class="fp-icon fp-icon--14" aria-hidden="true"><use href="#fp-chevron-down"></use></svg>
+            </button>
+            <span class="fp-sidebar__section-label">This PC</span>
+          </div>
+          <div class="fp-sidebar__section-body" id="sb-drives"></div>
+        </div>
 
         <!-- ── TAGS ─────────────────────────────────────────────── -->
         <!-- INTEGRATION: top tags from GET /tags?limit=8 -->
@@ -1969,6 +1979,34 @@
                         <button class="fp-segmented__opt" data-action="settings-set-icon-source" data-val="windows">Windows</button>
                       </div>
                       <span style="font:400 var(--t-small) var(--font-ui);color:var(--text-tertiary);margin-left:10px">FilePlus draws its own file-type icons; Windows uses the icon each file's registered app supplies.</span>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Quick Access — one checkbox per known folder (desktop/downloads/
+                     screenshots), checked = shown in the sidebar's Quick Access
+                     section. Populated by loadQuickAccess() (app.js) alongside the
+                     sidebar list itself, from the same GET /known-folders +
+                     ui.quick_access_hidden source. -->
+                <div class="fp-card settings-card">
+                  <div class="fp-card__header"><span class="fp-card__title">Quick Access</span></div>
+                  <div id="settings-quick-access-list">
+                    <!-- INTEGRATION: populated by loadQuickAccess() (app.js) -->
+                  </div>
+                </div>
+
+                <!-- Keyboard -->
+                <div class="fp-card settings-card">
+                  <div class="fp-card__header"><span class="fp-card__title">Keyboard</span></div>
+                  <div class="settings-row">
+                    <div class="settings-row__label">Backspace deletes selected items</div>
+                    <div class="settings-row__control">
+                      <label class="fp-toggle">
+                        <input type="checkbox" id="settings-backspace-deletes" data-action="settings-set-backspace-deletes" />
+                        <span class="fp-toggle__track"></span>
+                        <span class="fp-toggle__thumb"></span>
+                      </label>
+                      <span style="font:400 var(--t-small) var(--font-ui);color:var(--text-tertiary);margin-left:10px">Otherwise Backspace goes up a folder. Applies in the file browser only; no effect with nothing selected.</span>
                     </div>
                   </div>
                 </div>

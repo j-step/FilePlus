@@ -526,12 +526,56 @@ svg { flex-shrink: 0; }
   padding: var(--s-14) var(--s-8) var(--s-6);
 }
 
-/* Group separation between sidebar sections (Quick Access / Tree / Tags /
+/* Group separation between sidebar sections (Quick Access / This PC / Tags /
    System). Specificity beats the collapsed-mode margin reset on purpose:
-   collapsed labels are invisible spacers and keep this same rhythm. */
-.fp-sidebar__scroll > .fp-sidebar__section-label:not(:first-child) {
+   collapsed labels are invisible spacers and keep this same rhythm.
+   .fp-sidebar__section (This PC's wrapper) gets the same top rhythm as a
+   bare .fp-sidebar__section-label since its own head owns the label. */
+.fp-sidebar__scroll > .fp-sidebar__section-label:not(:first-child),
+.fp-sidebar__scroll > .fp-sidebar__section:not(:first-child) {
   margin-top: var(--s-8);
 }
+
+/* This PC — collapsible section head (chevron + label) wrapping #sb-drives.
+   The label re-uses .fp-sidebar__section-label but sits inside a flex row
+   with the chevron, so it drops its own top/bottom padding in favor of the
+   head's (avoids doubling the vertical rhythm above). */
+.fp-sidebar__section-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  padding: var(--s-14) var(--s-8) var(--s-6);
+  cursor: pointer;
+  user-select: none;
+  background: transparent;
+  border: none;
+}
+.fp-sidebar__section-head .fp-sidebar__section-label {
+  padding: 0;
+}
+.fp-sidebar__section-head:hover .fp-sidebar__section-label {
+  color: var(--text-secondary);
+}
+.fp-sidebar__chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  flex-shrink: 0;
+  background: transparent;
+  border: none;
+  border-radius: var(--r-chip);
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: transform var(--dur-flash) var(--ease-snap),
+              color var(--dur-flash) var(--ease-snap);
+}
+.fp-sidebar__chevron svg { width: 12px; height: 12px; }
+.fp-sidebar__chevron:hover { color: var(--text-primary); }
+.fp-sidebar__chevron[aria-expanded="false"] { transform: rotate(-90deg); }
 
 #sb-tags {
   display: flex;
@@ -4344,7 +4388,7 @@ svg { flex-shrink: 0; }
 .fp-sidebar--collapsed .fp-sidebar__drive-ai-dot { display: none; }
 
 /* Section labels become invisible spacers — provide equal vertical gap between
-   Quick Access / Tree / Tags / System groups in the collapsed rail. */
+   Quick Access / This PC / Tags / System groups in the collapsed rail. */
 .fp-sidebar--collapsed .fp-sidebar__section-label {
   display: block;
   height: 12px;
@@ -4354,6 +4398,10 @@ svg { flex-shrink: 0; }
   margin: 0;
   pointer-events: none;
 }
+/* This PC's chevron has no room in the 52px collapsed rail — the section
+   head collapses to the same invisible spacer as every other section label
+   (above), drive icons underneath stay visible via .fp-sidebar__drive-item. */
+.fp-sidebar--collapsed .fp-sidebar__chevron { display: none; }
 
 /* Drive in collapsed mode: the letter renders as a small SSD-shaped badge with
    a tiny LED dot top-right, signifying "this is a drive." The original disc

@@ -7,8 +7,8 @@
 
 // ── Config cache ─────────────────────────────────────────────────────────────
 // Loaded once at startup from GET /config into window.__fpConfig — read by
-// applyDownloadsPath() and the browserState.showHidden seed in app.js's init.
-// Left as {} (not populated) when the backend can't be reached; callers use
+// the browserState.showHidden seed in app.js's init. Left as {} (not
+// populated) when the backend can't be reached; callers use
 // `config['key'] || fallback` so a missing/empty cache degrades gracefully.
 async function loadConfig() {
   try {
@@ -21,11 +21,12 @@ async function loadConfig() {
 /**
  * Persists one setting to POST /config, updating window.__fpConfig
  * optimistically so callers that read the cache synchronously (browserState
- * seeds, applyDownloadsPath, the click-mode check in browser.js's row click
- * handler) see the new value immediately. On failure, reverts the cache to
- * whatever it held before and toasts — the caller's own UI (checkbox/segmented
- * button) has already visually applied the change and is not rolled back here,
- * since each caller owns its own apply step and can re-apply if it wants to.
+ * seeds, the click-mode check in browser.js's row click handler, the
+ * Backspace-deletes check in browserKeydown) see the new value immediately.
+ * On failure, reverts the cache to whatever it held before and toasts — the
+ * caller's own UI (checkbox/segmented button) has already visually applied
+ * the change and is not rolled back here, since each caller owns its own
+ * apply step and can re-apply if it wants to.
  */
 async function saveSetting(key, value) {
   if (!window.__fpConfig) window.__fpConfig = {};
@@ -118,6 +119,20 @@ function applySettingsFromConfig() {
   // anything other than the literal 'windows' as the FilePlus family sprite.
   // No repaint here: this runs during init, before the first listing renders.
   applyIconSource(cfg['ui.icon_source']);
+
+  // Default true — "This PC" starts expanded unless the user previously
+  // collapsed it. {persist: false} so restoring the value we just read back
+  // never fires a redundant POST /config on startup (setThisPcOpen, app.js).
+  if (typeof setThisPcOpen === 'function') {
+    setThisPcOpen(cfg['ui.sidebar_thispc_open'] !== false, { persist: false });
+  }
+
+  // Default false — Backspace navigates up a folder unless the user opts
+  // into delete-on-backspace. browserKeydown (browser.js) reads
+  // window.__fpConfig directly on every press; this only syncs the checkbox.
+  const backspaceDeletes = !!cfg['ui.backspace_deletes'];
+  const backspaceToggle = document.getElementById('settings-backspace-deletes');
+  if (backspaceToggle) backspaceToggle.checked = backspaceDeletes;
 }
 
 /** Syncs the Personalization "File icons" segmented control to `source` and

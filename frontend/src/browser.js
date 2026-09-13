@@ -1143,7 +1143,17 @@ function browserKeydown(e) {
     case 'Home':      e.preventDefault(); moveFocus('home', { shift: e.shiftKey }); break;
     case 'End':       e.preventDefault(); moveFocus('end', { shift: e.shiftKey }); break;
     case 'Enter':     e.preventDefault(); openFocused(); break;
-    case 'Backspace': e.preventDefault(); navUp(); break;
+    case 'Backspace': {
+      e.preventDefault();
+      // ui.backspace_deletes (Settings › Personalization › Keyboard): trash
+      // the selection instead of navigating up. trashSelection() already
+      // no-ops on an empty selection, so "nothing selected" falls out for
+      // free rather than needing its own check here.
+      const backspaceDeletes = !!(window.__fpConfig && window.__fpConfig['ui.backspace_deletes']);
+      if (backspaceDeletes) fileops.trashSelection();
+      else navUp();
+      break;
+    }
     case 'F5':        e.preventDefault(); refreshDirectory(); break;
     default: break;
   }

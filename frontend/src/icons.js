@@ -79,10 +79,12 @@ function fpKnownFolderIdFor(path) {
 }
 
 /** Fetches GET /known-folders once and caches it as window.__fpKnownFolders,
- * a Map of normalised path -> known-folder id. app.js's init awaits this
- * before the first listing renders. On failure the map is left unset, which
- * keeps _folderSymbol on its name heuristic rather than flattening every
- * special folder to the plain icon. */
+ * a Map of normalised path -> known-folder id, plus the raw {id, name, path}
+ * list as window.__fpKnownFolderList (Task 9's sidebar Quick Access section
+ * and Settings › Personalization checkboxes read the list; icon lookups read
+ * the map). app.js's init awaits this before the first listing renders. On
+ * failure both are left unset, which keeps _folderSymbol on its name
+ * heuristic rather than flattening every special folder to the plain icon. */
 async function fpLoadKnownFolders() {
   if (window.__fpKnownFolders) return window.__fpKnownFolders;
   let folders;
@@ -97,6 +99,7 @@ async function fpLoadKnownFolders() {
     if (f && f.path && f.id) map.set(fpNormalizePath(f.path), f.id);
   }
   window.__fpKnownFolders = map;
+  window.__fpKnownFolderList = folders;
   return map;
 }
 
