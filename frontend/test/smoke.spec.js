@@ -158,6 +158,42 @@ test('every screen renders with no renderer errors', async () => {
       }
     }
 
+    // --- Fix round 1 (Task 10 keydown regression): F2/Ctrl+Z must keep
+    // reaching the file list even when DOM focus has moved into the
+    // sidebar — only Enter/Space on a sidebar control are excluded from
+    // browserKeydown (the chevron click below both toggles This PC AND
+    // moves DOM focus there, exercising exactly that path). ---
+    await rowByName('doc-00.txt').click();
+    await page.locator('#sb-thispc .fp-sidebar__chevron').click(); // shifts DOM focus into the sidebar
+    await page.keyboard.press('F2');
+    await expect(page.locator('.fp-row__rename')).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.locator('.fp-row__rename')).toHaveCount(0);
+    await page.locator('#sb-thispc .fp-sidebar__chevron').click(); // restore expanded state
+
+    try {
+      await rowByName('doc-00.txt').click();
+      await page.keyboard.press('F2');
+      await page.keyboard.type('renamed-by-smoke-2');
+      await page.keyboard.press('Enter');
+      await expect(rowByName('renamed-by-smoke-2.txt')).toBeVisible();
+
+      await page.locator('#sb-thispc .fp-sidebar__chevron').click(); // shifts DOM focus into the sidebar
+      await page.keyboard.press('Control+z');
+      await expect(rowByName('doc-00.txt')).toBeVisible();
+      await expect(rowByName('renamed-by-smoke-2.txt')).toHaveCount(0);
+    } finally {
+      await page.locator('#sb-thispc .fp-sidebar__chevron').click(); // restore expanded state
+      const stillRenamed2 = await rowByName('renamed-by-smoke-2.txt').count();
+      if (stillRenamed2 > 0) {
+        await fetch(`${API}/fs/rename`, {
+          method: 'POST',
+          headers: { ...apiHeaders, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path: `${docsDir}\\renamed-by-smoke-2.txt`, new_name: 'doc-00.txt' }),
+        });
+      }
+    }
+
     // --- File-type icons, grid thumbnails, Windows icon mode (Task 6) ---
     // gen_sandbox.py writes six PNGs into <root>\_gen\Pictures, so the grid
     // has real image content for the shell to thumbnail.
@@ -596,10 +632,16 @@ test('every screen renders with no renderer errors', async () => {
     await page.keyboard.up('Control');
     await expect.poll(() => page.evaluate(() => browserState.listScale)).not.toBe(scaleBefore);
     expect(await getZoom()).toBe(zoomBefore);
+    const scaleAfter = await page.evaluate(() => browserState.listScale);
 
-    // /config holds the persisted scale, matching what the page just applied.
-    const cfgAfterScale = await (await fetch(`${API}/config`, { headers: apiHeaders })).json();
-    expect(cfgAfterScale['ui.list_scale']).toBe(await page.evaluate(() => browserState.listScale));
+    // /config holds the persisted scale, matching what the page just
+    // applied — setListScale()'s saveSetting() POST is fire-and-forget, so
+    // poll rather than assuming the round trip already landed the instant
+    // the in-page value changed above.
+    await expect.poll(async () => {
+      const cfg = await (await fetch(`${API}/config`, { headers: apiHeaders })).json();
+      return cfg['ui.list_scale'];
+    }).toBe(scaleAfter);
 
     // Reset the config keys and in-memory manual-view map this block set,
     // and reload Documents in 'details' so later smoke steps (and the next

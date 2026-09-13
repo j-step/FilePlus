@@ -2607,20 +2607,24 @@ document.addEventListener('keydown', e => {
     closeTagCanvas();
   }
   // Browser-screen keyboard nav (selection, sort-order arrows, Enter, F5,
-  // Ctrl+A, Alt+arrows) only applies when that screen is active, the user
-  // isn't typing into an input/textarea/contenteditable element, and focus
-  // isn't inside the sidebar — a sidebar row/button (This PC's chevron
-  // included) owns its own Enter/Space activation (native <button> click, or
-  // a dedicated keydown listener) and must not also have e.g. Enter
-  // reinterpreted as "open the focused FILE LIST row" (browserState.focus
-  // has nothing to do with sidebar focus) or F5/Delete/Ctrl+C acting on
-  // whatever happens to be selected in the file list instead.
+  // Ctrl+A, Alt+arrows) only applies when that screen is active and the
+  // user isn't typing into an input/textarea/contenteditable element.
+  // Fix round 1: narrowly exclude only Enter/Space while focus sits on a
+  // sidebar element — a sidebar row/button (This PC's chevron included)
+  // owns its own Enter/Space activation (native <button> click, or a
+  // dedicated keydown listener) and must not also have Enter reinterpreted
+  // as "open the focused FILE LIST row" (browserState.focus has nothing to
+  // do with sidebar focus). Every OTHER shortcut (F2, Delete, F5, Ctrl+Z/Y/
+  // X/C/V, arrow navigation, …) must keep reaching browserKeydown
+  // regardless of where DOM focus happens to be — excluding the whole
+  // sidebar for every key (the original fix) went too far and silently
+  // killed all of those the moment the user clicked any sidebar control.
   const activeEl = document.activeElement;
   const activeTag = activeEl && activeEl.tagName;
   const isEditableTarget = activeTag === 'INPUT' || activeTag === 'TEXTAREA' || (activeEl && activeEl.isContentEditable);
-  const focusInSidebar = !!(activeEl && activeEl.closest && activeEl.closest('#sidebar'));
+  const sidebarKeyActivation = (e.key === 'Enter' || e.key === ' ') && activeEl?.closest?.('#sidebar');
   const browserScreenActive = document.getElementById('screen-browser')?.classList.contains('active');
-  if (browserScreenActive && !isEditableTarget && !focusInSidebar && typeof browserKeydown === 'function') {
+  if (browserScreenActive && !isEditableTarget && !sidebarKeyActivation && typeof browserKeydown === 'function') {
     browserKeydown(e);
   }
   const homeScreenActive = document.getElementById('screen-home')?.classList.contains('active');
