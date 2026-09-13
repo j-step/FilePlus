@@ -79,14 +79,19 @@ if ($LASTEXITCODE -ne 0) { Write-Host 'check_icons failed' -ForegroundColor Red;
 $filetypesTmpDir = Join-Path $root 'artifacts'
 New-Item -ItemType Directory -Force $filetypesTmpDir | Out-Null
 $filetypesTmp = Join-Path $filetypesTmpDir 'filetypes-parity.js'
-py -3 scripts/build_filetypes.py $filetypesTmp
-if ($LASTEXITCODE -ne 0) { Write-Host 'build_filetypes.py failed' -ForegroundColor Red; exit 1 }
-$filetypesGenHash = (Get-FileHash $filetypesTmp -Algorithm SHA256).Hash
-$filetypesCurHash = (Get-FileHash frontend/src/filetypes.js -Algorithm SHA256).Hash
-Remove-Item $filetypesTmp -ErrorAction SilentlyContinue
-if ($filetypesGenHash -ne $filetypesCurHash) {
-  Write-Host 'frontend/src/filetypes.js is stale -- run: py -3 scripts/build_filetypes.py' -ForegroundColor Red
-  exit 1
+try {
+  py -3 scripts/build_filetypes.py $filetypesTmp
+  if ($LASTEXITCODE -ne 0) { Write-Host 'build_filetypes.py failed' -ForegroundColor Red; exit 1 }
+  $filetypesGenHash = (Get-FileHash $filetypesTmp -Algorithm SHA256).Hash
+  $filetypesCurHash = (Get-FileHash frontend/src/filetypes.js -Algorithm SHA256).Hash
+  if ($filetypesGenHash -ne $filetypesCurHash) {
+    Write-Host 'frontend/src/filetypes.js is stale -- run: py -3 scripts/build_filetypes.py' -ForegroundColor Red
+    exit 1
+  }
+} finally {
+  # Remove the temp file even when build_filetypes.py itself failed partway
+  # (e.g. wrote a partial file before erroring) -- not just on the success path.
+  Remove-Item $filetypesTmp -ErrorAction SilentlyContinue
 }
 Write-Host 'check_filetypes_parity: ok (frontend/src/filetypes.js matches backend/filetypes.py)' -ForegroundColor Green
 

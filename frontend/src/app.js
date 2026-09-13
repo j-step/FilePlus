@@ -838,12 +838,15 @@ function openAskPopout() {
 }
 
 function closeAskPopout() {
+  // Fix round 1 (Task 16): the global Escape handler calls closeAskPopout()
+  // unconditionally (it also closes the palette, Properties modal, etc.), so
+  // the focus-return below must only fire when the popout was actually open
+  // -- otherwise every unrelated Escape steals focus to the Ask File+ pill.
+  // Mirrors the open-check the outside-click handler already uses.
+  const wasOpen = askPopoutOpen();
   const popout = document.getElementById('ask-popout');
   if (popout) popout.style.display = 'none';
-  // Carried fix (Task 16): closing (Escape, outside click, the Close button,
-  // or toggling) must not strand focus on a hidden element -- return it to
-  // the sidebar pill that owns the popout.
-  document.getElementById('btn-ask-fileplus')?.focus();
+  if (wasOpen) document.getElementById('btn-ask-fileplus')?.focus();
 }
 
 function toggleAskPopout() {

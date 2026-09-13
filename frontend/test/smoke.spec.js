@@ -1197,6 +1197,16 @@ test('every screen renders with no renderer errors', async () => {
     // rather than being stranded on the now-hidden popout.
     await expect(page.locator('#btn-ask-fileplus')).toBeFocused();
 
+    // Fix round 1 (Task 16): the global Escape handler calls closeAskPopout()
+    // unconditionally (alongside closePalette()/closeModal()/etc.), so with
+    // the popout already closed, an unrelated Escape (here: dismissing the
+    // palette) must NOT steal focus to the Ask File+ pill.
+    await page.keyboard.press('Control+k');
+    await expect(page.locator('#palette-scrim')).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#palette-scrim')).toBeHidden();
+    await expect(page.locator('#btn-ask-fileplus')).not.toBeFocused();
+
     // Ctrl+J toggles it open, and a click outside (not on the button or the
     // popout itself) closes it again — blank sidebar space below the last
     // item, same safe "definitely not an overlay, not a drag region" spot
