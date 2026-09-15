@@ -53,7 +53,10 @@ April "one fix at a time" rule is retired (D10).
 ## Frontend traps (load-bearing, learned the hard way)
 
 - Frontend modules (globals, no build step, no modules) load in this order —
-  `frontend/src/{api,filetypes,icons-sprite,icons,fileops,browser,dragdrop,search,inspector,home,
+  `frontend/src/{api,filetypes,icons-sprite}.js`, then `frontend/iconCache.js` (dual-mode: also a
+  CommonJS module required by `frontend/main.js` and by node-run tests, so the renderer's request
+  key and the main process's cache key are one piece of code, not two hand-kept twins), then
+  `frontend/src/{icons,fileops,browser,dragdrop,search,inspector,home,
   settings,properties,app}.js` — each can call anything defined earlier at its own top level;
   anything from a later file is only safe to reference from inside a function that runs after
   `DOMContentLoaded`. `actions.js` is gone (Stage 2B deleted it): click dispatch is the `switch` in
