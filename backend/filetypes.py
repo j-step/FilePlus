@@ -101,3 +101,35 @@ def is_media(ext: str) -> bool:
 def as_json() -> dict:
     """Serialisable snapshot of the taxonomy, as consumed by GET /filetypes."""
     return {"families": FAMILIES, "groups": GROUPS}
+
+
+# Every extension that belongs to *some* declared group. Anything outside this
+# set classifies as the 'other' group (see type_group_for's fallback), which is
+# what lets a SQL type filter express 'other' as a NOT IN over this set.
+_GROUPED_EXTENSIONS: frozenset[str] = frozenset(
+    ext for group, families in GROUPS.items() for family in families for ext in FAMILIES[family]
+)
+
+
+def extensions_for_group(group: str) -> tuple[frozenset[str], bool] | None:
+    """Return (extensions, negate) describing *group* as an extension set.
+
+    The set is dotless and lowercase, matching FAMILIES. ``negate`` is True
+    only for the 'other' group, which is defined by exclusion: every
+    extension that no declared group covers (including the empty extension).
+
+    Returns None for an unknown group name, and (empty set, False) for
+    'folder' -- indexed rows are always files, so a folder filter can never
+    match one.
+
+    Exists so GET /search can push a `type=` filter into SQL instead of
+    classifying rows in Python after a row cap has already been applied.
+    """
+    if group == "folder":
+        return frozenset(), False
+    if group == "other":
+        return _GROUPED_EXTENSIONS, True
+    families = GROUPS.get(group)
+    if families is None:
+        return None
+    return frozenset(ext for family in families for ext in FAMILIES[family]), False

@@ -11,9 +11,12 @@ import logging
 import mimetypes
 import os
 import secrets
+import sqlite3
+import threading
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
+from stat import S_ISDIR
 from typing import Literal, Optional
 
 import aiosqlite
@@ -144,6 +147,20 @@ async def _denied(_r, exc):
 _EINVAL_ERRNOS = {errno.EINVAL}
 
 
+# A long-running index no longer holds one write transaction for a whole
+# walk (backend.indexer commits per chunk), but SQLite can still answer
+# "database is locked" when two writers genuinely collide. That is a
+# transient busy signal, not a bug in the request -- answer 503 (with a
+# Retry-After) instead of an unhandled 500 traceback.
+@app.exception_handler(sqlite3.OperationalError)
+async def _db_busy(_r, exc):
+    text = str(exc).lower()
+    if "locked" in text or "busy" in text:
+        return JSONResponse(status_code=503, content={"detail": f"database busy: {exc}"},
+                            headers={"Retry-After": "1"})
+    return JSONResponse(status_code=500, content={"detail": f"database error: {exc}"})
+
+
 @app.exception_handler(OSError)
 async def _os_error(request, exc):
     status = 400 if exc.errno in _EINVAL_ERRNOS else 502
@@ -153,6 +170,21 @@ async def _os_error(request, exc):
 
 def _db():
     return aiosqlite.connect(_config.FILEPLUS_DB_PATH)
+
+
+async def aguard(path: Path | str, mode: str = "read") -> Path:
+    r"""path_guard, off the event loop.
+
+    path_guard resolves the path, and Path.resolve() on a UNC path opens an
+    SMB session that can take ~20s to fail against an unroutable host (and
+    the loopback-share detection ahead of it may do a bounded DNS lookup).
+    Doing that inline in a coroutine freezes every other request -- /health
+    included, which is how the status bar ends up claiming "Backend offline"
+    while the backend is merely stuck resolving ``\\somehost\share``. Every
+    route guards through this wrapper so the wait occupies a worker thread
+    instead.
+    """
+    return await asyncio.to_thread(path_guard, path, mode)
 
 
 # ---------------------------------------------------------------------------
@@ -172,8 +204,11 @@ KIND_BY_EXT = {
 }
 
 
-def _kind_for(path: Path) -> str:
-    if path.is_dir():
+def _kind_for(path: Path, is_dir: bool = False) -> str:
+    """Human-readable kind for *path*. *is_dir* comes from the caller (which
+    has already stat'ed the path in a worker thread) so this never issues a
+    filesystem call of its own on the event loop."""
+    if is_dir:
         return "Folder"
     ext = path.suffix.lower()
     if ext in KIND_BY_EXT:
@@ -192,6 +227,42 @@ _PREVIEW_TEXT_EXTS = {
 }
 _PREVIEW_IMAGE_EXTS = {"png", "jpg", "jpeg", "gif", "webp", "bmp", "svg", "ico"}
 _PREVIEW_MAX_IMAGE_BYTES = 25 * 1024 * 1024
+_PREVIEW_TEXT_BYTES = 4096
+
+# GET /files is always paginated -- see list_files.
+_DEFAULT_FILES_LIMIT = 200
+_MAX_FILES_LIMIT = 1000
+
+# Rows GET /search scans when whole_word= is on -- the one filter that
+# cannot be expressed in SQL, so it still runs in Python over a window.
+_SEARCH_SCAN_CAP = 5000
+
+# GET /file indexes an unseen file on demand. Hashing is a full read of the
+# file's bytes, so only files up to this size are hashed inline; anything
+# bigger is indexed without a hash (a later POST /scan fills it in). Selecting
+# a folder of multi-gigabyte videos fires one GET /file per item, and hashing
+# those would tie up the whole worker pool for tens of seconds each.
+_ONDEMAND_HASH_MAX_BYTES = 64 * 1024 * 1024
+
+
+def _read_head(path: Path, n: int) -> bytes:
+    """First *n* bytes of *path*. Runs in a worker thread (GET /preview)."""
+    with open(path, "rb") as fh:
+        return fh.read(n)
+
+
+def _entry_facts(path: Path) -> tuple[bool, bool, "os.stat_result | None"]:
+    """(exists, is_dir, stat) for *path* in one worker-thread hop.
+
+    A missing path reports (False, False, None) rather than raising; any
+    other OSError (denied, device not ready) propagates so the route's
+    handlers can map it.
+    """
+    try:
+        st = path.stat()
+    except FileNotFoundError:
+        return False, False, None
+    return True, S_ISDIR(st.st_mode), st
 
 
 # ---------------------------------------------------------------------------
@@ -203,7 +274,11 @@ async def health() -> dict:
     try:
         async with _db() as conn:
             await conn.execute("SELECT 1")
-            pending_ops = len(await ol.pending_operations(conn))
+            # COUNT(*) over the partial index, not len(pending_operations()):
+            # /health polls every few seconds and only ever wanted the number,
+            # while materialising every pending row's full dict scanned (and
+            # allocated) the whole never-pruned operations_log each time.
+            pending_ops = await ol.count_pending(conn)
         db_ok = True
     except Exception:
         db_ok = False
@@ -227,10 +302,18 @@ async def health() -> dict:
 async def list_files(
     path: Optional[str] = Query(None, description="Filter to files whose path starts with this prefix"),
     q: Optional[str] = Query(None, description="Substring search on filename"),
-    limit: Optional[int] = Query(None),
-    offset: int = Query(0),
+    limit: int = Query(_DEFAULT_FILES_LIMIT, ge=1, le=_MAX_FILES_LIMIT),
+    offset: int = Query(0, ge=0),
 ):
-    """Return all indexed files, optionally filtered by path prefix and/or filename search."""
+    """Return indexed files, optionally filtered by path prefix and/or filename search.
+
+    Always paginated. `limit` used to default to None, which meant a bare
+    GET /files serialised the entire files table -- at whole-drive index
+    scale that is hundreds of thousands of rows through jsonable_encoder on
+    the event loop. It now defaults to _DEFAULT_FILES_LIMIT and is capped at
+    _MAX_FILES_LIMIT, the same shape GET /search already had; walk the table
+    with `offset`.
+    """
     conditions = []
     params: list = []
     if path:
@@ -240,10 +323,9 @@ async def list_files(
         conditions.append("filename LIKE ?")
         params.append(f"%{q}%")
     where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
-    sql = f"SELECT id, path, filename, extension, size, modified, category, status, is_pinned FROM files {where} ORDER BY filename COLLATE NOCASE"
-    if limit is not None:
-        sql += " LIMIT ? OFFSET ?"
-        params += [limit, offset]
+    sql = (f"SELECT id, path, filename, extension, size, modified, category, status, is_pinned "
+           f"FROM files {where} ORDER BY filename COLLATE NOCASE LIMIT ? OFFSET ?")
+    params += [limit, offset]
     async with aiosqlite.connect(_config.FILEPLUS_DB_PATH) as conn:
         conn.row_factory = aiosqlite.Row
         cur = await conn.execute(sql, params)
@@ -258,11 +340,11 @@ async def file_meta(path: str = Query(..., description="Absolute path of the fil
     Unlike /files/{id}, this is addressed by filesystem path (what the
     Inspector has on hand) rather than DB id.
     """
-    resolved = path_guard(Path(path), "read")
-    if not resolved.exists():
+    resolved = await aguard(path)
+    exists, is_dir, st = await asyncio.to_thread(_entry_facts, resolved)
+    if not exists:
         raise HTTPException(status_code=404, detail=f"Not found: {path}")
-    if resolved.is_dir():
-        stat = resolved.stat()
+    if is_dir:
         return {
             "id": None,
             "path": str(resolved),
@@ -270,8 +352,8 @@ async def file_meta(path: str = Query(..., description="Absolute path of the fil
             "extension": "",
             "size": None,
             "hash": None,
-            "created": datetime.fromtimestamp(stat.st_ctime).isoformat(),
-            "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+            "created": datetime.fromtimestamp(st.st_ctime).isoformat(),
+            "modified": datetime.fromtimestamp(st.st_mtime).isoformat(),
             "category": None,
             "confidence": 0.0,
             "status": "directory",
@@ -284,37 +366,46 @@ async def file_meta(path: str = Query(..., description="Absolute path of the fil
         cur = await conn.execute("SELECT * FROM files WHERE path = ?", (str(resolved),))
         row = await cur.fetchone()
         if row is None:
-            await index_file(resolved, conn, hash=True)
+            # On-demand indexing must stay cheap: selecting a folder of large
+            # media files fires one of these per item, so only small files are
+            # hashed here (see _ONDEMAND_HASH_MAX_BYTES).
+            await index_file(resolved, conn, hash=st.st_size <= _ONDEMAND_HASH_MAX_BYTES)
             await conn.commit()
             cur = await conn.execute("SELECT * FROM files WHERE path = ?", (str(resolved),))
             row = await cur.fetchone()
         data = dict(row)
         data["tags"] = await tagger.get_tags(conn, data["id"])
-    data["kind"] = _kind_for(resolved)
+    data["kind"] = _kind_for(resolved, is_dir=False)
     return data
 
 
 @app.get("/preview")
 async def preview(path: str = Query(..., description="Absolute path of the file")):
-    """Return a lightweight preview: text snippet, an image response, or a binary marker."""
-    resolved = path_guard(Path(path), "read")
-    if not resolved.exists():
+    """Return a lightweight preview: text snippet, an image response, or a binary marker.
+
+    Every filesystem touch (exists/is_dir/stat, and the head read for a text
+    file) happens in a worker thread -- the same shape /fs/properties uses,
+    and one stat instead of the two this used to take. Inline, a preview of a
+    file on a slow or unresponsive volume blocked the whole event loop.
+    """
+    resolved = await aguard(path)
+    exists, is_dir, st = await asyncio.to_thread(_entry_facts, resolved)
+    if not exists:
         raise HTTPException(status_code=404, detail=f"Not found: {path}")
-    if resolved.is_dir():
+    if is_dir:
         raise HTTPException(status_code=400, detail=f"Not a file: {path}")
     ext = resolved.suffix.lower().lstrip(".")
-    size = resolved.stat().st_size
+    size = st.st_size
     if ext in _PREVIEW_IMAGE_EXTS:
         if size > _PREVIEW_MAX_IMAGE_BYTES:
             return {"kind": "too-large"}
         media_type = mimetypes.guess_type(str(resolved))[0] or "application/octet-stream"
         return FileResponse(str(resolved), media_type=media_type)
     if ext in _PREVIEW_TEXT_EXTS:
-        with open(resolved, "rb") as f:
-            raw = f.read(4096)
-        total_size = resolved.stat().st_size
+        raw = await asyncio.to_thread(_read_head, resolved, _PREVIEW_TEXT_BYTES)
         content = raw.decode("utf-8", errors="replace")
-        return {"kind": "text", "content": content, "truncated": total_size > 4096, "total_size": total_size}
+        return {"kind": "text", "content": content,
+                "truncated": size > _PREVIEW_TEXT_BYTES, "total_size": size}
     return {"kind": "binary", "size": size}
 
 
@@ -325,7 +416,7 @@ async def files_history(path: str = Query(..., description="Absolute path to loo
     Registered before /files/{file_id} so "history" is never swallowed as an
     (invalid) integer file id.
     """
-    resolved = path_guard(Path(path), "read")
+    resolved = await aguard(path)
     async with _db() as conn:
         return await ol.list_operations(conn, path=str(resolved))
 
@@ -350,27 +441,28 @@ async def search_files(
 
     `q`/`limit` keep their original behaviour (LIKE substring on filename or
     path, row cap) for callers that pass only those two -- e.g. the command
-    palette's file search. `ext`/`min_size`/`max_size`/`modified_*`/
-    `created_*` have real columns on `files` and are applied in SQL;
-    `type` (a filetypes search group -- indexed rows are always files, so
-    'folder' never matches anything here) and `hidden` (no stored column;
-    approximated from the filename the same way the indexer already avoids
-    indexing dot-prefixed names) are applied in Python afterward, along
-    with `tag` (backend.tagger.paths_for_tag, path membership normalised via
-    backend.searcher.normalize_path so a file renamed to change only its
-    case still matches) and `whole_word` (backend.searcher.match_spans,
-    since SQL LIKE has no word-boundary concept). `indexed_roots` is always
-    included so the frontend's "This PC" search scope can flag drives that
-    aren't indexed yet.
+    palette's file search. Every filter except `whole_word` is applied in
+    SQL: `ext`/`min_size`/`max_size`/`modified_*`/`created_*` against their
+    own columns, `type` as an extension set derived from
+    backend.filetypes.GROUPS (the 'other' group is the complement, and
+    'folder' matches nothing here since indexed rows are always files),
+    `hidden` as a `filename NOT LIKE '.%'` predicate (there is no stored
+    column; this is the same approximation the indexer uses when it declines
+    to index dot-prefixed names), and `tag` as an EXISTS join on
+    file_tags/tags -- an exact file_id join, so a file renamed to change only
+    its case matches without any path normalisation. `indexed_roots` is
+    always included so the frontend's "This PC" search scope can flag drives
+    that aren't indexed yet.
 
-    The SQL query itself is capped at 5000 rows (`LIMIT 5000`), well above
-    the user-facing `limit` (default 50, capped at 1000 below) -- so a
-    broad `q` can't pull the entire index into memory before the
-    Python-side filters and the real `limit` slice run. `limit` is applied
-    last, as a Python slice after every filter, not as a SQL `LIMIT ?`: a
-    `type`/`hidden`/`tag`/`whole_word` filter can only narrow rows the SQL
-    query already returned, so slicing before filtering could silently
-    return fewer than the true first N matches.
+    Pushing those filters into SQL is what makes the row cap honest. They
+    used to run in Python *after* a hard `LIMIT 5000`, so at index scale a
+    `type=`/`tag=` search silently returned a subset of -- or nothing from --
+    the real match set, because the 5000 rows the SQL query happened to
+    return were drawn from unfiltered rows. Now the cap applies to
+    already-filtered rows: the query asks for `limit` rows directly
+    (`LIMIT ?`), except when `whole_word` is on, which is the one filter SQL
+    LIKE cannot express (no word-boundary concept) and therefore still runs
+    in Python over a capped `_SEARCH_SCAN_CAP` window.
     """
     limit = min(limit, 1000)
     conditions = []
@@ -381,6 +473,27 @@ async def search_files(
     if ext:
         conditions.append("extension = ?")
         params.append("." + ext.lstrip(".").lower())
+    if type_:
+        spec = ft.extensions_for_group(type_)
+        if spec is None:
+            conditions.append("0")  # unknown group: matches nothing, same as before
+        else:
+            exts, negate = spec
+            if not exts:
+                conditions.append("0")  # 'folder': indexed rows are always files
+            else:
+                placeholders = ",".join("?" * len(exts))
+                op = "NOT IN" if negate else "IN"
+                conditions.append(f"COALESCE(extension, '') {op} ({placeholders})")
+                params += ["." + e for e in sorted(exts)]
+    if not hidden:
+        conditions.append("filename NOT LIKE '.%'")
+    if tag:
+        conditions.append(
+            "EXISTS (SELECT 1 FROM file_tags ft_ JOIN tags t_ ON t_.id = ft_.tag_id "
+            "WHERE ft_.file_id = files.id AND t_.name = ?)"
+        )
+        params.append(tag)
     if min_size is not None:
         conditions.append("size >= ?")
         params.append(min_size)
@@ -402,33 +515,22 @@ async def search_files(
 
     where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
     words = q.split() if (q and whole_word) else []
+    sql_limit = _SEARCH_SCAN_CAP if words else limit
 
     async with _db() as conn:
         conn.row_factory = aiosqlite.Row
         cur = await conn.execute(
             f"SELECT id, path, filename, extension, size, modified, created, hash FROM files "
-            f"{where} ORDER BY filename COLLATE NOCASE LIMIT 5000",
-            params,
+            f"{where} ORDER BY filename COLLATE NOCASE LIMIT ?",
+            params + [sql_limit],
         )
         rows = [dict(r) for r in await cur.fetchall()]
-        tag_paths = None
-        if tag:
-            tag_paths = {searcher.normalize_path(p) for p in await tagger.paths_for_tag(conn, tag)}
         cur2 = await conn.execute("SELECT root FROM index_roots ORDER BY root")
         indexed_roots = [r[0] for r in await cur2.fetchall()]
 
-    def _keep(row: dict) -> bool:
-        if not hidden and row["filename"].startswith("."):
-            return False
-        if type_ and ft.type_group_for(row["extension"] or "", is_dir=False) != type_:
-            return False
-        if tag_paths is not None and searcher.normalize_path(row["path"]) not in tag_paths:
-            return False
-        if words and searcher.match_spans(row["filename"], words, True) is None:
-            return False
-        return True
-
-    results = [r for r in rows if _keep(r)][:limit]
+    if words:
+        rows = [r for r in rows if searcher.match_spans(r["filename"], words, True) is not None]
+    results = rows[:limit]
     return {"results": results, "indexed_roots": indexed_roots}
 
 
@@ -447,6 +549,12 @@ async def get_file(file_id: int):
 # Filesystem listing (read-only) — /fs/list
 # ---------------------------------------------------------------------------
 
+# Raw os.scandir entries one /fs/list call will look at, before any
+# hidden-entry filtering. LISTING_CAP bounds what comes back; this bounds the
+# work done to produce it.
+_LIST_SCAN_CAP = 50_000
+
+
 def _scandir_entries(directory: Path, show_hidden: bool) -> tuple[list[dict], bool]:
     """Return (entries, truncated) for the given directory.
 
@@ -458,12 +566,25 @@ def _scandir_entries(directory: Path, show_hidden: bool) -> tuple[list[dict], bo
     entry is returned with an ``"error"`` field and zero size instead.
 
     Hidden entries (leading dot, or the Windows hidden attribute) are
-    dropped unless show_hidden is true. The listing stops at
-    _config.LISTING_CAP entries and reports truncated=True when it does.
+    dropped unless show_hidden is true.
+
+    Two separate budgets bound the work: the scan stops after
+    _LIST_SCAN_CAP raw directory entries (hidden entries that are skipped
+    count toward this one, so a folder of a million hidden files can't make
+    the scan itself unbounded), and the returned listing is truncated to
+    _config.LISTING_CAP entries. Either one sets truncated=True. The
+    truncation happens *after* the sort, so a capped listing is the first
+    LISTING_CAP entries in display order (folders first, then by name)
+    rather than an arbitrary subset in raw directory order.
     """
     entries: list[dict] = []
     truncated = False
+    scanned = 0
     for de in os.scandir(directory):
+        scanned += 1
+        if scanned > _LIST_SCAN_CAP:
+            truncated = True
+            break
         is_hidden = de.name.startswith(".")
         try:
             stat = de.stat(follow_symlinks=False)
@@ -474,9 +595,6 @@ def _scandir_entries(directory: Path, show_hidden: bool) -> tuple[list[dict], bo
                 continue
             entries.append({"name": de.name, "is_dir": False, "size": 0, "modified": 0.0,
                             "ext": "", "is_hidden": is_hidden, "error": "access denied"})
-            if len(entries) >= _config.LISTING_CAP:
-                truncated = True
-                break
             continue
         is_dir = de.is_dir(follow_symlinks=False)
         ext = "" if is_dir else os.path.splitext(de.name)[1].lower()
@@ -496,14 +614,19 @@ def _scandir_entries(directory: Path, show_hidden: bool) -> tuple[list[dict], bo
             "ext": ext,
             "is_hidden": is_hidden,
         })
-        if len(entries) >= _config.LISTING_CAP:
-            truncated = True
-            break
     entries.sort(key=lambda e: (not e["is_dir"], e["name"].lower()))
+    if len(entries) > _config.LISTING_CAP:
+        entries = entries[:_config.LISTING_CAP]
+        truncated = True
     return entries, truncated
 
 
 def _listing_response(resolved: Path, entries: list[dict], truncated: bool) -> dict:
+    """The /fs/list payload. Returned through JSONResponse(content=...) by
+    both listing routes: every value here is already a plain str/int/float/
+    bool, so FastAPI's default path (jsonable_encoder recursively walking up
+    to LISTING_CAP six-key dicts on the event loop) is pure overhead --
+    several times the cost of the threaded scandir walk it serialises."""
     parent = resolved.parent
     is_root = parent == resolved
     return {
@@ -530,11 +653,11 @@ async def fs_list(
     PermissionError on the directory itself is mapped to 403 by the
     exception handler above.
     """
-    resolved = path_guard(Path(path), "read")  # _canonicalize refuses relative/driveless input -> BadPathError -> 400
+    resolved = await aguard(path)  # _canonicalize refuses relative/driveless input -> BadPathError -> 400
     if not resolved.is_dir():
         raise HTTPException(status_code=404, detail=f"Not a directory: {path}")
     entries, truncated = await asyncio.to_thread(_scandir_entries, resolved, show_hidden)
-    return _listing_response(resolved, entries, truncated)
+    return JSONResponse(content=_listing_response(resolved, entries, truncated))
 
 
 @app.get("/fs/list/root")
@@ -549,7 +672,7 @@ async def fs_list_root(show_hidden: bool = False):
     if not root.is_dir():
         raise HTTPException(status_code=404, detail=f"Sandbox root missing: {root}")
     entries, truncated = await asyncio.to_thread(_scandir_entries, root, show_hidden)
-    return _listing_response(root, entries, truncated)
+    return JSONResponse(content=_listing_response(root, entries, truncated))
 
 
 _PEEK_SCAN_CAP = 2000
@@ -614,7 +737,7 @@ async def fs_peek(
     relative/driveless path raises BadPathError (400) and a guarded path
     raises ProtectedPathError (403) from path_guard above.
     """
-    resolved = path_guard(Path(path), "read")  # relative/driveless -> BadPathError -> 400
+    resolved = await aguard(path)  # relative/driveless -> BadPathError -> 400
     if not resolved.is_dir():
         return {"items": []}
     items = await asyncio.to_thread(_peek_entries, resolved, n)
@@ -648,13 +771,25 @@ async def fs_search(
     database; the set is normalised (searcher.normalize_path) so a file
     renamed to change only its case (the files-table row keeps whatever
     case existed when it was indexed) still matches during the live walk.
-    The walk runs in asyncio.to_thread since it's blocking I/O.
+    The walk runs in asyncio.to_thread since it's blocking I/O, and so does
+    the normalisation of the `tag=` path set (one normcase+normpath per
+    tagged path, over a set with no upper bound).
+
+    The renderer aborts the in-flight search on every keystroke and on tab
+    switch. asyncio.to_thread cannot interrupt a thread, so the walk is
+    handed a threading.Event that this route sets when the request is
+    cancelled or the client disconnects -- otherwise every superseded query
+    kept walking the disk to completion, piling up concurrent walks in the
+    shared default executor (which /fs/list, /fs/peek and /fs/properties
+    also draw from).
     """
-    resolved = path_guard(Path(root), "read")
+    resolved = await aguard(root)
     tag_paths = None
     if tag:
         async with _db() as conn:
-            tag_paths = {searcher.normalize_path(p) for p in await tagger.paths_for_tag(conn, tag)}
+            raw_paths = await tagger.paths_for_tag(conn, tag)
+        tag_paths = await asyncio.to_thread(
+            lambda ps: {searcher.normalize_path(x) for x in ps}, raw_paths)
     filters = searcher.SearchFilters(
         q=q, type=type_, ext=ext,
         modified_after=modified_after, modified_before=modified_before,
@@ -663,7 +798,16 @@ async def fs_search(
         hidden=hidden, whole_word=whole_word, tag_paths=tag_paths,
     )
     capped_limit = min(limit, 1000)
-    return await asyncio.to_thread(searcher.search_tree, resolved, filters, limit=capped_limit)
+    cancel = threading.Event()
+    walk = asyncio.create_task(
+        asyncio.to_thread(searcher.search_tree, resolved, filters,
+                          limit=capped_limit, cancel=cancel))
+    try:
+        return await asyncio.shield(walk)
+    except asyncio.CancelledError:
+        cancel.set()          # tell the walk to stop; the thread ends on its own
+        walk.add_done_callback(lambda t: t.exception())  # never an "exception was never retrieved" warning
+        raise
 
 
 # ---------------------------------------------------------------------------
@@ -725,7 +869,7 @@ async def fs_properties(path: str = Query(..., description="Absolute path of the
     size-on-disk, the recursive folder summary) runs together in a single
     asyncio.to_thread dispatch (_properties_blocking) instead of several.
     """
-    resolved = path_guard(Path(path), "read")
+    resolved = await aguard(path)
     if not resolved.exists():
         raise HTTPException(status_code=404, detail=f"Not found: {path}")
     st = resolved.stat()
@@ -766,7 +910,7 @@ async def fs_properties_details(path: str = Query(..., description="Absolute pat
     rather than an unhandled 500, since it's an external-API failure, not a
     bug in the request itself.
     """
-    resolved = path_guard(Path(path), "read")
+    resolved = await aguard(path)
     if not resolved.exists():
         raise HTTPException(status_code=404, detail=f"Not found: {path}")
     try:
@@ -789,7 +933,9 @@ async def filetypes():
 
 @app.get("/known-folders")
 async def known_folders():
-    return {"folders": winshell.known_folders()}
+    # Six SHGetKnownFolderPath COM calls plus an is_dir() probe each -- off
+    # the event loop, exactly like /drives and /fs/properties.
+    return {"folders": await asyncio.to_thread(winshell.known_folders)}
 
 
 # ---------------------------------------------------------------------------
@@ -839,7 +985,7 @@ async def trigger_scan(body: Optional[ScanRequest] = None):
     refused with 409.
     """
     raw = Path(body.path) if (body and body.path) else _config.FILEPLUS_SANDBOX_PATH
-    root = path_guard(raw, "read")
+    root = await aguard(raw)
     if _config.is_protected_read(root):
         raise HTTPException(status_code=403, detail="system folders are not indexed")
     if app.state.index_state["running"]:
@@ -881,7 +1027,7 @@ async def start_index(body: IndexRequest):
     roots -- config.is_protected_read exempts it the same way path_guard
     does for writes, so indexing the sandbox is never wrongly refused.
     """
-    resolved = path_guard(Path(body.path), "read")
+    resolved = await aguard(body.path)
     if _config.is_protected_read(resolved):
         raise HTTPException(status_code=403, detail="system folders are not indexed")
     if app.state.index_state["running"]:
@@ -926,7 +1072,7 @@ async def delete_index_root(root: str = Query(..., description="Absolute path of
     race the DELETE below and resurrect the very row this call means to
     remove).
     """
-    resolved = path_guard(Path(root), "read")
+    resolved = await aguard(root)
     if _config.is_protected_read(resolved):
         raise HTTPException(status_code=403, detail="system folders are not indexed")
     if app.state.index_state["running"]:

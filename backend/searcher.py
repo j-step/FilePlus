@@ -125,8 +125,47 @@ def _match(*, name: str, is_dir: bool, ext: str, size: int, modified: float,
     return match_spans(name, words, filters.whole_word)
 
 
+def _never() -> bool:
+    return False
+
+
+def _norm(path) -> str:
+    return os.path.normcase(os.path.normpath(str(path)))
+
+
+class _ProtectedRoots:
+    """config.is_protected_read, with the protected roots normalised once.
+
+    Built per search_tree call (never cached at import: tests monkeypatch
+    SYSTEM_WRITE_ROOTS / PROTECTED_WRITE_ROOTS / FILEPLUS_SANDBOX_PATH per
+    test, and one walk pays for this once). `covers` applies exactly
+    is_protected_read's order -- a Windows system root wins, then the
+    sandbox is exempt, then any other protected root -- but on a path that
+    is already absolute and resolved, so it never calls Path.resolve().
+    """
+
+    __slots__ = ("system", "protected", "sandbox")
+
+    def __init__(self) -> None:
+        self.system = tuple(_norm(r) for r in config.SYSTEM_WRITE_ROOTS)
+        self.protected = tuple(_norm(r) for r in config.PROTECTED_WRITE_ROOTS)
+        self.sandbox = _norm(config.FILEPLUS_SANDBOX_PATH)
+
+    @staticmethod
+    def _under(path: str, root: str) -> bool:
+        return path == root or path.startswith(root.rstrip("\\/") + os.sep)
+
+    def covers(self, path) -> bool:
+        p = _norm(path)
+        if any(self._under(p, r) for r in self.system):
+            return True
+        if self._under(p, self.sandbox):
+            return False
+        return any(self._under(p, r) for r in self.protected)
+
+
 def search_tree(root: Path, filters: SearchFilters, *, budget_s: float = 4.0,
-                limit: int = 500, clock=time.monotonic) -> dict:
+                limit: int = 500, clock=time.monotonic, cancel=None) -> dict:
     """Budgeted breadth-first search of the tree rooted at *root*.
 
     Synchronous -- the caller (GET /fs/search) runs it in
@@ -151,6 +190,13 @@ def search_tree(root: Path, filters: SearchFilters, *, budget_s: float = 4.0,
     (permission-denied children under real drive roots are common and must
     not abort the whole walk).
 
+    *cancel*, when given, is a threading.Event the caller can set to stop the
+    walk early: it is checked wherever the budget is, so an abandoned search
+    (the renderer aborts the in-flight fetch on every keystroke and on tab
+    switch) stops walking the disk instead of running to completion in a
+    worker thread the next search then has to queue behind. A cancelled walk
+    returns whatever it had, with truncated=True.
+
     Returns:
         {"results": [...], "truncated": bool, "elapsed_ms": int, "walked": int}
         Each result: {path, name, is_dir, size, modified, created, ext, match}.
@@ -164,13 +210,26 @@ def search_tree(root: Path, filters: SearchFilters, *, budget_s: float = 4.0,
     walked = 0
     truncated = False
     queue: deque[Path] = deque([Path(root)])
+    cancelled = cancel.is_set if cancel is not None else _never
+
+    # config.is_protected_read() costs a fresh Path.resolve() plus up to six
+    # containment comparisons -- around 100x the cost of visiting one
+    # scandir entry -- and it was paid once per dequeued directory against a
+    # root list that never changes during a walk. The walk root still gets
+    # the full check (the caller can hand in any spelling, junctions
+    # included); every directory discovered below it is an already-absolute,
+    # already-resolved entry.path from os.scandir, so a normcase prefix test
+    # against roots normalised once answers the identical question.
+    if config.is_protected_read(root):
+        return {"results": [], "truncated": False, "elapsed_ms": 0, "walked": 0}
+    guard = _ProtectedRoots()
 
     while queue:
-        if clock() - start > budget_s:
+        if clock() - start > budget_s or cancelled():
             truncated = True
             break
         directory = queue.popleft()
-        if config.is_protected_read(directory):
+        if guard.covers(directory):
             continue
         try:
             scandir_ctx = os.scandir(directory)
@@ -178,7 +237,7 @@ def search_tree(root: Path, filters: SearchFilters, *, budget_s: float = 4.0,
             continue
         with scandir_ctx as entries:
             for entry in entries:
-                if clock() - start > budget_s:
+                if clock() - start > budget_s or cancelled():
                     truncated = True
                     break
                 if entry.name == config.TRASH_DIRNAME:

@@ -985,9 +985,9 @@ For a 200K-file index, these turn `GET /review-bin/count` from a full scan to a 
 - Memoise on `(path, mtime, size)` — if mtime hasn't changed, no need to re-hash on subsequent scans (the existing upsert already skips by path, but `index_file` always re-hashes; gate on `WHERE files.path=? AND files.modified=? AND files.size=?` first, return the cached hash).
 
 ### 9. Pagination on `/files`
-**What.** `GET /files` returns ALL rows. With 200K files, multi-MB JSON response.
-
-**How.** Add `?limit=200&offset=0&order_by=name|size|mtime&dir=asc|desc`; default limit 200. Renderer paginates with infinite scroll.
+**Partly done (pass 2, 2026-09-15).** `GET /files` no longer returns ALL rows: `limit` defaults to 200 and is
+capped at 1000 (`?limit=&offset=`), so a bare call can never serialise the whole table. Still open:
+`order_by=name|size|mtime&dir=asc|desc`, and infinite scroll in the renderer (no renderer calls this route yet).
 
 ### 10. SSE event bus
 **What.** Watcher events, mover progress, scan progress, approvals updates — all currently demand polling.

@@ -103,6 +103,20 @@ async def pending_operations(conn) -> list[dict]:
     return [_row(r) for r in await cur.fetchall()]
 
 
+async def count_pending(conn) -> int:
+    """How many operations are logged but not yet executed.
+
+    Same predicate as pending_operations, but counted in SQL. /health polls
+    for this number every few seconds and operations_log is append-only and
+    never pruned, so materialising every pending row just to call len() on
+    the list meant a growing full scan on every poll. Served by the partial
+    index idx_ops_pending (backend/database.py).
+    """
+    cur = await conn.execute("SELECT COUNT(*) FROM operations_log WHERE executed = 0 AND error IS NULL")
+    row = await cur.fetchone()
+    return row[0] if row else 0
+
+
 def _state_resolution(row: dict) -> str | None:
     """Classify a crashed attr-set / folder-type-set row by re-reading disk.
 

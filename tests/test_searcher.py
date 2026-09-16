@@ -105,9 +105,66 @@ def test_limit_truncates(tree):
 
 
 def test_skips_protected_roots(tree, monkeypatch):
+    """A protected directory discovered mid-walk is pruned.
+
+    Set through the real config root lists rather than by stubbing
+    is_protected_read: search_tree normalises those roots once per walk and
+    tests the discovered (already-resolved) subdirectories against them with
+    a string prefix, instead of paying a Path.resolve() per directory.
+    """
     from backend import searcher
-    monkeypatch.setattr(searcher.config, "is_protected_read", lambda p: p.name == "b")
+    monkeypatch.setattr(searcher.config, "SYSTEM_WRITE_ROOTS", [])
+    monkeypatch.setattr(searcher.config, "PROTECTED_WRITE_ROOTS", [tree / "a" / "b"])
     assert all(x["name"] != "doc-02.md" for x in search_tree(tree, SearchFilters(q="doc"))["results"])
+
+
+def test_a_protected_walk_root_returns_nothing(tree, monkeypatch):
+    from backend import searcher
+    monkeypatch.setattr(searcher.config, "SYSTEM_WRITE_ROOTS", [tree])
+    monkeypatch.setattr(searcher.config, "PROTECTED_WRITE_ROOTS", [tree])
+    r = search_tree(tree, SearchFilters(q="doc"))
+    assert r["results"] == [] and r["walked"] == 0
+
+
+def test_the_sandbox_is_never_treated_as_protected(tree, monkeypatch):
+    """is_protected_read exempts the sandbox even when it sits inside a
+    protected (non-system) root -- the cheap in-walk check must agree."""
+    from backend import searcher
+    monkeypatch.setattr(searcher.config, "SYSTEM_WRITE_ROOTS", [])
+    monkeypatch.setattr(searcher.config, "PROTECTED_WRITE_ROOTS", [tree / "a" / "b"])
+    monkeypatch.setattr(searcher.config, "FILEPLUS_SANDBOX_PATH", tree / "a" / "b")
+    names = {x["name"] for x in search_tree(tree, SearchFilters(q="doc"))["results"]}
+    assert "doc-01.txt" in names and "doc-02.md" in names
+
+
+def test_cancel_event_stops_the_walk(tree):
+    """An aborted search must stop walking, not run to completion in a worker
+    thread the next search then queues behind."""
+    import threading
+
+    cancel = threading.Event()
+    cancel.set()
+    r = search_tree(tree, SearchFilters(q="doc"), cancel=cancel)
+    assert r["results"] == [] and r["truncated"] is True and r["walked"] == 0
+
+
+def test_cancel_mid_walk_returns_partial_results(tree):
+    import threading
+
+    cancel = threading.Event()
+    seen = {"n": 0}
+
+    def clock():
+        # Cancel once the walk is under way; the clock hook is the only
+        # per-entry callback search_tree offers a test.
+        seen["n"] += 1
+        if seen["n"] > 4:
+            cancel.set()
+        return 0.0
+
+    r = search_tree(tree, SearchFilters(q="doc"), clock=clock, cancel=cancel)
+    assert r["truncated"] is True
+    assert len(r["results"]) < 3
 
 
 def test_skips_reparse_points(tmp_path, monkeypatch):

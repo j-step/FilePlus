@@ -175,6 +175,15 @@ ALL_INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_ops_batch ON operations_log(batch_id);",
     "CREATE INDEX IF NOT EXISTS idx_file_tags_tag ON file_tags(tag_id);",
     "CREATE INDEX IF NOT EXISTS idx_files_filename ON files(filename);",
+    # Both filename-ordered queries (GET /files, GET /search) sort with
+    # ORDER BY filename COLLATE NOCASE; SQLite can only use an index for a
+    # sort when the collations match, so the BINARY index above can never
+    # serve them and every call built a temp b-tree over the whole match set.
+    "CREATE INDEX IF NOT EXISTS idx_files_filename_nocase ON files(filename COLLATE NOCASE);",
+    # Partial index for /health's pending-operations count: operations_log is
+    # append-only and never pruned, so an unindexed `executed = 0` predicate
+    # full-scans a table that only grows.
+    "CREATE INDEX IF NOT EXISTS idx_ops_pending ON operations_log(executed) WHERE executed = 0;",
     "CREATE INDEX IF NOT EXISTS idx_recent_ts ON recent_actions(ts);",
 ]
 

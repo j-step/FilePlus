@@ -17,6 +17,7 @@ import logging
 import os
 import re
 import shutil
+from collections import OrderedDict
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -28,6 +29,23 @@ from backend.errors import RefusedError
 from backend.hasher import hash_file
 
 logger = logging.getLogger(__name__)
+
+
+async def _aguard(path, mode: str = "write") -> Path:
+    r"""config.path_guard, off the event loop.
+
+    path_guard resolves the path, and Path.resolve() on a UNC path opens an
+    SMB session that can block for ~20s against an unroutable host. Every
+    mutation here is reached from an async route, so the guard runs in a
+    worker thread instead of freezing the whole backend (see
+    backend.api.aguard, the read-side twin).
+    """
+    return await asyncio.to_thread(_config.path_guard, path, mode)
+
+
+async def _aguard_operand(path, mode: str = "write") -> Path:
+    """config.guard_operand, off the event loop -- see _aguard."""
+    return await asyncio.to_thread(_config.guard_operand, path, mode)
 
 
 class InvalidNameError(ValueError): ...
@@ -150,11 +168,36 @@ def manifest_path_for(root: Path, batch_id: str) -> Path:
     return root / f"{batch_id}.manifest.json"
 
 
+# In-memory item lists for the trash manifests this process has written, most
+# recent last. A batch trash calls _append_manifest once per item against the
+# same growing manifest.json; without this, each call re-read and re-parsed
+# everything already written -- quadratic in both I/O and CPU over a
+# multi-select delete. Bounded to the last few batches so a long-running
+# backend never accumulates them; a batch missing from the cache just falls
+# back to reading the file, exactly as before.
+_MANIFEST_CACHE: "OrderedDict[str, list[dict]]" = OrderedDict()
+_MANIFEST_CACHE_MAX = 8
+
+
+def _manifest_items(mf: Path) -> list[dict]:
+    key = os.path.normcase(str(mf))
+    cached = _MANIFEST_CACHE.get(key)
+    if cached is not None and mf.exists():
+        _MANIFEST_CACHE.move_to_end(key)
+        return cached
+    items = json.loads(mf.read_text(encoding="utf-8"))["items"] if mf.exists() else []
+    _MANIFEST_CACHE[key] = items
+    _MANIFEST_CACHE.move_to_end(key)
+    while len(_MANIFEST_CACHE) > _MANIFEST_CACHE_MAX:
+        _MANIFEST_CACHE.popitem(last=False)
+    return items
+
+
 def _append_manifest(root: Path, batch_id: str, original: Path, trashed: Path) -> None:
     mf = manifest_path_for(root, batch_id)
-    data = json.loads(mf.read_text(encoding="utf-8")) if mf.exists() else {"items": []}
-    data["items"].append({"original": str(original), "trashed": str(trashed), "ts": datetime.now(timezone.utc).isoformat(timespec="seconds")})
-    mf.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    items = _manifest_items(mf)
+    items.append({"original": str(original), "trashed": str(trashed), "ts": datetime.now(timezone.utc).isoformat(timespec="seconds")})
+    mf.write_text(json.dumps({"items": items}, indent=2), encoding="utf-8")
 
 
 def _append_manifest_safe(root: Path, batch_id: str, original: Path, trashed: Path) -> None:
@@ -264,17 +307,28 @@ async def _perform(conn, op_type, src, dest, batch_id, reason, fn, undo_of=None)
     return _result(op_id, op_type, "done", src, dest, batch_id)
 
 
-def _move_fn(src: Path, dest: Path):
+def _move_fn(src: Path, dest: Path, *, same_vol: bool | None = None, need: int | None = None):
+    """The worker body of a move.
+
+    *same_vol* and *need* are the results move() already computed for its own
+    pre-checks. They are passed in rather than recomputed: `_tree_size` is a
+    full rglob with a stat per entry, so working them out twice meant walking
+    and stat-ing the entire source tree twice before a single byte was
+    copied. The free-space check still re-runs here against the cached size
+    -- that one is a single `disk_usage` call and is the TOCTOU re-check
+    (another process may have filled the volume since) -- but the tree is
+    never walked again. Both default to None so a caller with nothing cached
+    (tests) still gets the self-contained behaviour.
+    """
     def run():
-        if same_volume(src, dest):
-            if dest.exists():  # conflict resolution ran earlier; this is the race window
-                raise ConflictError(f"'{dest}' already exists.")
+        crosses = (not same_volume(src, dest)) if same_vol is None else (not same_vol)
+        if dest.exists():  # conflict resolution ran earlier; this is the race window
+            raise ConflictError(f"'{dest}' already exists.")
+        if not crosses:
             os.replace(src, dest) if src.is_file() else os.rename(src, dest)
         else:
-            if dest.exists():  # conflict resolution ran earlier; this is the race window
-                raise ConflictError(f"'{dest}' already exists.")
-            need = _tree_size(src)
-            if _free_bytes(dest.parent) < need + SPACE_MARGIN:
+            required = _tree_size(src) if need is None else need
+            if _free_bytes(dest.parent) < required + SPACE_MARGIN:
                 raise RefusedError("Not enough free space on the destination volume.")
             _copy_tree_or_file(src, dest)
             _verify_copy(src, dest)
@@ -284,8 +338,8 @@ def _move_fn(src: Path, dest: Path):
 
 async def move(conn, src, dest_dir, *, batch_id=None, on_conflict="fail", reason=None, _op_type="move", _undo_of=None) -> dict:
     _validate_conflict_policy(on_conflict)
-    src = _config.guard_operand(src, "write")  # a junction moves as the link, not its target
-    dest_dir = _config.path_guard(dest_dir, "write")
+    src = await _aguard_operand(src, "write")  # a junction moves as the link, not its target
+    dest_dir = await _aguard(dest_dir, "write")
     if not exists_as_link_or_file(src):
         raise RefusedError(f"Source does not exist: {src}")
     if src.is_dir() and _config.is_under(dest_dir, src):
@@ -300,22 +354,25 @@ async def move(conn, src, dest_dir, *, batch_id=None, on_conflict="fail", reason
     target, action = _resolve_target(candidate, on_conflict)
     if action in ("conflict", "skipped"):
         return _result(None, _op_type, action, src, candidate, None if minted else batch_id)
-    target = _config.path_guard(target, "write")
-    if not same_volume(src, target):
+    target = await _aguard(target, "write")
+    same_vol = await asyncio.to_thread(same_volume, src, target)
+    need = None
+    if not same_vol:
         need = await asyncio.to_thread(_tree_size, src)
         if await asyncio.to_thread(_free_bytes, dest_dir) < need + SPACE_MARGIN:
             raise RefusedError("Not enough free space on the destination volume.")
     if action == "replace":
         await trash(conn, target, batch_id=batch_id, reason="replaced")
-    return await _perform(conn, _op_type, src, target, batch_id, reason, _move_fn(src, target), undo_of=_undo_of)
+    return await _perform(conn, _op_type, src, target, batch_id, reason,
+                          _move_fn(src, target, same_vol=same_vol, need=need), undo_of=_undo_of)
 
 
 async def rename(conn, path, new_name, *, batch_id=None, reason=None, _undo_of=None) -> dict:
     validate_name(new_name)
-    src = _config.guard_operand(path, "write")  # a junction is renamed as the link, not its target
+    src = await _aguard_operand(path, "write")  # a junction is renamed as the link, not its target
     if not exists_as_link_or_file(src):
         raise RefusedError(f"Source does not exist: {src}")
-    target = _config.path_guard(src.with_name(new_name), "write")
+    target = await _aguard(src.with_name(new_name), "write")
     if target.exists() and target != src:
         raise ConflictError(f"'{new_name}' already exists here.")
     return await _perform(conn, "rename", src, target, batch_id, reason, lambda: os.rename(src, target), undo_of=_undo_of)
@@ -323,8 +380,8 @@ async def rename(conn, path, new_name, *, batch_id=None, reason=None, _undo_of=N
 
 async def copy(conn, src, dest_dir, *, batch_id=None, on_conflict="fail", reason=None) -> dict:
     _validate_conflict_policy(on_conflict)
-    src = _config.guard_operand(src, "read")
-    dest_dir = _config.path_guard(dest_dir, "write")
+    src = await _aguard_operand(src, "read")
+    dest_dir = await _aguard(dest_dir, "write")
     if not src.exists():
         raise RefusedError(f"Source does not exist: {src}")
     if src.is_dir() and _config.is_under(dest_dir, src):
@@ -341,7 +398,7 @@ async def copy(conn, src, dest_dir, *, batch_id=None, on_conflict="fail", reason
     target, action = _resolve_target(candidate, on_conflict)
     if action in ("conflict", "skipped"):
         return _result(None, "copy", action, src, candidate, None if minted else batch_id)
-    target = _config.path_guard(target, "write")
+    target = await _aguard(target, "write")
     need = await asyncio.to_thread(_tree_size, src)
     if await asyncio.to_thread(_free_bytes, dest_dir) < need + SPACE_MARGIN:
         raise RefusedError("Not enough free space on the destination volume.")
@@ -357,7 +414,7 @@ async def copy(conn, src, dest_dir, *, batch_id=None, on_conflict="fail", reason
 
 
 async def trash(conn, path, *, batch_id=None, reason=None, _undo_of=None) -> dict:
-    src = _config.guard_operand(path, "write")  # a junction is trashed as the link, not its target
+    src = await _aguard_operand(path, "write")  # a junction is trashed as the link, not its target
     if not exists_as_link_or_file(src):
         raise RefusedError(f"Source does not exist: {src}")
     batch_id = batch_id or ol.new_batch_id()
@@ -366,8 +423,8 @@ async def trash(conn, path, *, batch_id=None, reason=None, _undo_of=None) -> dic
         raise RefusedError("Already in the FilePlus trash.")
     if src.is_dir() and _config.is_under(root, src):
         raise RefusedError("Cannot trash a folder that contains the FilePlus trash.")
-    batch_dir = _config.path_guard(root / batch_id, "write")  # guard the computed path before anything touches disk
-    target = _config.path_guard(keep_both_name(batch_dir / src.name), "write")
+    batch_dir = await _aguard(root / batch_id, "write")  # guard the computed path before anything touches disk
+    target = await _aguard(keep_both_name(batch_dir / src.name), "write")
 
     def run():
         # exist_ok everywhere: run() executes on a worker thread, so two
@@ -383,8 +440,8 @@ async def trash(conn, path, *, batch_id=None, reason=None, _undo_of=None) -> dic
 
 async def restore(conn, trashed_path, original_path, *, batch_id=None, on_conflict="keep-both", reason=None, _undo_of=None) -> dict:
     _validate_conflict_policy(on_conflict)
-    src = _config.path_guard(trashed_path, "write")
-    original = _config.path_guard(original_path, "write")
+    src = await _aguard(trashed_path, "write")
+    original = await _aguard(original_path, "write")
     if not src.exists():
         raise RefusedError(f"Trashed item no longer exists: {src}")
     minted = batch_id is None
@@ -392,7 +449,7 @@ async def restore(conn, trashed_path, original_path, *, batch_id=None, on_confli
     target, action = _resolve_target(original, on_conflict)
     if action in ("conflict", "skipped"):
         return _result(None, "restore", action, src, original, None if minted else batch_id)
-    target = _config.path_guard(target, "write")
+    target = await _aguard(target, "write")
     if action == "replace":
         await trash(conn, target, batch_id=batch_id, reason="replaced by restore")
 
@@ -404,7 +461,7 @@ async def restore(conn, trashed_path, original_path, *, batch_id=None, on_confli
 
 async def mkdir(conn, parent, name, *, batch_id=None, reason=None) -> dict:
     validate_name(name)
-    target = _config.path_guard(Path(parent) / name, "write")
+    target = await _aguard(Path(parent) / name, "write")
     if target.exists():
         raise ConflictError(f"'{name}' already exists here.")
     return await _perform(conn, "mkdir", None, target, batch_id, reason, lambda: target.mkdir())
@@ -412,7 +469,7 @@ async def mkdir(conn, parent, name, *, batch_id=None, reason=None) -> dict:
 
 async def touch(conn, parent, name, *, batch_id=None, reason=None) -> dict:
     validate_name(name)
-    target = _config.path_guard(Path(parent) / name, "write")
+    target = await _aguard(Path(parent) / name, "write")
     if target.exists():
         raise ConflictError(f"'{name}' already exists here.")
     return await _perform(conn, "touch", None, target, batch_id, reason, lambda: target.touch(exist_ok=False))
@@ -434,7 +491,7 @@ async def _apply_attr_bits(conn, path: Path, target_bits: int, current_bits: int
     undo paths (which re-guard by calling move()/rename()/trash() again,
     every one of which guards internally).
     """
-    path = _config.path_guard(path, "write")
+    path = await _aguard(path, "write")
     reason = json.dumps({"before": current_bits, "after": target_bits})
     return await _perform(conn, "attr-set", path, None, batch_id, reason,
                           lambda: winshell.set_attributes(path, target_bits), undo_of=undo_of)
@@ -442,7 +499,7 @@ async def _apply_attr_bits(conn, path: Path, target_bits: int, current_bits: int
 
 async def set_attributes(conn, path: Path, *, read_only: bool | None = None, hidden: bool | None = None,
                          archive: bool | None = None, batch_id: str) -> dict:
-    target = _config.path_guard(path, "write")
+    target = await _aguard(path, "write")
     if not target.exists():
         raise RefusedError(f"Source does not exist: {target}")
     before_bits = winshell.get_attributes(target)["bits"]
@@ -484,7 +541,7 @@ async def _apply_folder_type(conn, target: Path, folder_type: str, batch_id: str
 async def set_folder_type(conn, path: Path, folder_type: str, batch_id: str) -> dict:
     if folder_type not in winshell.FOLDER_TYPES:
         raise InvalidPolicyError(f"unknown folder type {folder_type!r}")
-    target = _config.path_guard(path, "write")
+    target = await _aguard(path, "write")
     if not target.is_dir():
         raise RefusedError(f"Not a folder: {target}")
     return await _apply_folder_type(conn, target, folder_type, batch_id)
@@ -504,7 +561,7 @@ async def _undo_folder_type_set(conn, op_id: int, target: Path, before_bytes: by
     what this undo is about to replace, exactly like attr-set's before/after
     swap.
     """
-    target = _config.path_guard(target, "write")
+    target = await _aguard(target, "write")
     ini_path = target / "desktop.ini"
     current_bytes = ini_path.read_bytes() if ini_path.exists() else None
     current_folder_bits = winshell.get_attributes(target)["bits"]
@@ -583,20 +640,34 @@ def _known_trash_roots() -> list[Path]:
     return roots
 
 
-async def empty_trash(conn) -> dict:
-    candidates = _known_trash_roots()
-    roots, skipped_roots = [], []
-    for r in candidates:
-        try:
-            roots.append(_config.path_guard(r, "write"))
-        except (_config.OutOfSandboxError, _config.ProtectedPathError) as exc:
-            logger.warning("skipping trash root %s: %s", r, exc)
-            skipped_roots.append(str(r))
+def _trash_contents(roots: list[Path]) -> tuple[list[Path], list[Path]]:
+    """(batch folders, manifest files) across *roots*. Runs in a worker thread.
+
+    One iterdir per root plus a stat per child, and a glob per root -- all
+    blocking, and all of it used to run inline in the coroutine even though
+    the _send2trash loop it feeds was already offloaded.
+    """
     batches = [d for r in roots for d in r.iterdir() if d.is_dir()]
     # <batch id>.manifest.json sits next to the batch folders (see
     # manifest_path_for), so emptying the trash has to take those too --
     # otherwise they accumulate in the trash root forever.
     manifests = [f for r in roots for f in r.glob("*.manifest.json") if f.is_file()]
+    return batches, manifests
+
+
+async def empty_trash(conn) -> dict:
+    # _known_trash_roots probes C: through Z: with an exists() each; a stale
+    # or unreachable network drive letter can take seconds to answer, so the
+    # probe runs in a worker thread rather than on the event loop.
+    candidates = await asyncio.to_thread(_known_trash_roots)
+    roots, skipped_roots = [], []
+    for r in candidates:
+        try:
+            roots.append(await _aguard(r, "write"))
+        except (_config.OutOfSandboxError, _config.ProtectedPathError) as exc:
+            logger.warning("skipping trash root %s: %s", r, exc)
+            skipped_roots.append(str(r))
+    batches, manifests = await asyncio.to_thread(_trash_contents, roots)
     op_id = await ol.log_operation(conn, "trash-empty:final", None, None, reason=f"{len(batches)} batch folders -> Recycle Bin")
 
     def run():
