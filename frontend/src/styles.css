@@ -2570,7 +2570,15 @@ body.is-dragging { cursor: default; }
 .fp-row--disabled .fp-row__name { font-style: italic; color: var(--text-tertiary); }
 .fp-row--disabled:hover { background: transparent; box-shadow: none; cursor: not-allowed; }
 
-.fp-row__icon {
+/* .fp-row .fp-row__icon (specificity 0,2,0), not bare .fp-row__icon: the
+   list-scale sizing must beat .fp-icon--16 (0,1,0, later in source at
+   :5864+ this insertion) so a row icon actually follows --list-scale as
+   spec §3.10 says — at equal specificity the later-in-source rule was
+   winning and every row icon was stuck at 16 CSS px regardless of scale
+   (pass 2 — icon-design.md §4.6). .home-pane[data-view="grid"] .fp-row__icon
+   (0,3,0) and .fp-tray__row .fp-row__icon (0,2,0, later in source) still
+   win over this, as before. */
+.fp-row .fp-row__icon {
   flex-shrink: 0;
   width: calc(16px * var(--list-scale, 1));
   height: calc(16px * var(--list-scale, 1));
@@ -5877,7 +5885,18 @@ button.fp-pill:hover {
    ============================================================================= */
 
 /* Windows shell icon (ui.icon_source = 'windows'): a real bitmap, sized by
-   the same .fp-icon--N modifier the sprite <use> would have carried. */
+   the same .fp-icon--N modifier the sprite <use> would have carried (an
+   inline style from icons.js then pins the exact px/dpr box — see below).
+   object-fit: contain is a no-op guard for a square bitmap in a square box.
+   Invariant (pass 2 — icon-design.md §2): the bitmap is exactly
+   box x devicePixelRatio px and icons.js pins the box to px/dpr, so Chromium
+   composites it 1:1 (measured pixel-identical at DPR 1/1.25/1.5/2 —
+   scratchpad out/dpr2-*.json). Do NOT add image-rendering: pixelated (no
+   gain at 1:1; it jags .fp-row--drag-target .fp-row__icon's
+   transform: scale(1.05) and every resampled Tier-B bitmap) or srcset
+   (would make naturalWidth report CSS px and defeat the sharpness smoke
+   assertions, which compare naturalWidth against the physical px the
+   bridge/route actually rendered). */
 .fp-icon--win { object-fit: contain; }
 
 /* Unknown extension in FilePlus mode: the blank page icon carries the
@@ -5903,6 +5922,11 @@ button.fp-pill:hover {
   justify-content: center;
   flex: none;
 }
+/* icons.js sets an inline w/dpr x h/dpr size on a resolved (non-mini)
+   thumbnail so its device box matches the physical-pixel bitmap exactly
+   (icon-design.md §2); max-width/max-height here are guards only (e.g. for
+   the brief window before that inline size lands, or a mini, which stays
+   CSS-sized at 40% of the tile via the rule below). */
 .fp-thumb {
   position: absolute;
   inset: 0;

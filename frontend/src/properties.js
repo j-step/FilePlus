@@ -193,21 +193,29 @@ function renderOpensWithCell(props) {
     `</div>`;
 }
 
-/** Fills in the "Opens with" app icon once electronAPI.fileIcon resolves —
- * separate from the lazy IntersectionObserver system in icons.js (this is a
- * single explicit icon, not a scrolling list of rows). Guards against a
- * since-closed or since-replaced modal before touching the DOM. */
+/** Fills in the "Opens with" app icon via the same shared Tier-B icon
+ * pipeline as icons.js's lazy rows (fpTierBIconUrl) — separate from the
+ * IntersectionObserver system there only because this is a single explicit
+ * icon, not a scrolling list. Sized per the sizing contract (icon-design.md
+ * §2): px = clampPx(round(16 * dpr)), the <img> pinned to px/dpr CSS px.
+ * Guards against a since-closed or since-replaced modal before touching the
+ * DOM. icons.js loads before properties.js, so
+ * fpDevicePx/fpTierBIconUrl/FpIconCache are defined at call time. */
 function loadOpensWithIcon(props) {
   const el = document.getElementById('properties-opens-with-icon');
   if (!el || !props.opens_with_exe || !window.electronAPI?.fileIcon) return;
-  window.electronAPI.fileIcon(props.opens_with_exe, 'exe', 16).then(dataUrl => {
-    if (!dataUrl || _propsPath !== props.path) return;
+  const px = fpDevicePx(16);
+  const key = window.FpIconCache.shellIconKey(props.opens_with_exe, 'exe', false, px);
+  fpTierBIconUrl(key, { path: props.opens_with_exe, ext: 'exe', isDir: false, px }).then((res) => {
+    if (!res || !res.url || _propsPath !== props.path) return;
     const el2 = document.getElementById('properties-opens-with-icon');
     if (!el2) return;
     el2.innerHTML = '';
     const img = document.createElement('img');
-    img.src = dataUrl;
+    img.src = res.url;
     img.alt = '';
+    img.dataset.px = String(res.px);
+    img.style.width = img.style.height = (res.px / (window.devicePixelRatio || 1)) + 'px';
     el2.appendChild(img);
   }).catch(() => { /* best-effort */ });
 }

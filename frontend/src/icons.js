@@ -167,8 +167,9 @@ function _winIcon(entry, size, fallbackSymbol, cls = '') {
   const p = entry && entry.path;
   if (!p) return icon(fallbackSymbol, cls16);
   const ext = String(entry.ext || '').replace(/^\./, '');
+  const dirAttr = entry.is_dir ? ' data-dir=""' : '';
   return `<img class="fp-icon fp-icon--win ${cls16}" alt="" src="${FP_BLANK_PX}"`
-    + ` data-win-icon="${_fpEsc(p)}" data-ext="${_fpEsc(ext)}" data-size="${size}"`
+    + ` data-win-icon="${_fpEsc(p)}" data-ext="${_fpEsc(ext)}" data-size="${size}"${dirAttr}`
     + ` data-fallback="${_fpEsc(fallbackSymbol)}">`;
 }
 
@@ -181,11 +182,12 @@ function fpThumbBox(entry, size, cls = '') {
   const ext = String(entry.ext || '').replace(/^\./, '');
   const mtime = Math.round(Number(entry.modified) || 0);
   const iconSize = size >= 64 ? 48 : (size >= 32 ? 24 : 16);
+  const dirAttr = entry.is_dir ? ' data-dir=""' : '';
   return `<span class="fp-thumb-box${cls ? ' ' + cls : ''}">`
     + icon(sym, `fp-icon--${iconSize}`)
     + `<img class="fp-thumb" alt="" src="${FP_BLANK_PX}"`
     + ` data-thumb="${_fpEsc(entry.path)}" data-ext="${_fpEsc(ext)}"`
-    + ` data-size="${size}" data-mtime="${mtime}">`
+    + ` data-size="${size}" data-mtime="${mtime}"${dirAttr}>`
     + '</span>';
 }
 
@@ -216,40 +218,47 @@ function fpFolderPeekBox(entry, cls = '') {
  * is dropped, and the element stays registered so the request is retried if
  * it comes back. Answers are memoised per key on top of main.js's own LRU
  * caches, so a re-render (sort, theme switch, view toggle) repaints from
- * memory with no IPC at all. */
+ * memory with no IPC at all.
+ *
+ * Sizing contract (pass 2 — icon-design.md §2): every request carries
+ * px = clampPx(round(cssBox * devicePixelRatio)); the bitmap that comes back
+ * is exactly px*px (thumbnails: longer edge == px); the <img> is pinned to
+ * px/dpr CSS px so Chromium composites it 1:1 instead of stretching a
+ * lower-resolution bitmap. */
 
-/** Bounded LRU: get() refreshes recency, set() evicts the oldest once full.
- * A deliberate twin of LruCache in frontend/iconCache.js — that file is a
- * CommonJS module for the main process, and the renderer has no require().
- * Unbounded Maps here would grow without limit across a long session of
- * browsing large folders, pinning every data: URL ever fetched in memory. */
-class FpLru {
-  constructor(max) { this.max = max; this._m = new Map(); }
-  has(key) { return this._m.has(key); }
-  get(key) {
-    if (!this._m.has(key)) return undefined;
-    const value = this._m.get(key);
-    this._m.delete(key); // delete + re-insert moves the key to the newest end
-    this._m.set(key, value);
-    return value;
-  }
-  set(key, value) {
-    if (this._m.has(key)) this._m.delete(key);
-    else if (this._m.size >= this.max) this._m.delete(this._m.keys().next().value);
-    this._m.set(key, value);
-  }
-}
-
-// Sized to match main.js's own caches (500 icons / 500 thumbnails there): a
-// renderer only ever holds what it has actually painted, and a data: URL for
-// a 96px thumbnail is a few KB.
-const _fpWinIconCache = new FpLru(300);
-const _fpThumbCache = new FpLru(500);
+// `_IC` is window.FpIconCache, loaded by index.html right before this file
+// (frontend/iconCache.js, dual-mode: also the CommonJS module main.js and
+// the pure-logic tests require). Sized to match main.js's own caches: a
+// renderer only ever holds what it has actually painted, and px-in-key
+// multiplies entries across zoom/scale steps, so the byte budget (not just
+// the entry count) is the real bound.
+const _IC = window.FpIconCache;
+const _fpWinIconCache = new _IC.LruCache(2000, 8 * 1024 * 1024);
+const _fpThumbCache = new _IC.LruCache(600, 32 * 1024 * 1024);
 // key -> in-flight Promise, so two tiles of the same file (or the same tile
-// re-observed after scrolling back) share one IPC round trip.
+// re-observed after scrolling back) share one IPC/HTTP round trip.
 const _fpThumbInFlight = new Map();
+const _fpIconInFlight = new Map();
+let _fpIconBatch = null; // { items: Map<key, {..., resolve}>, timer } | null
+window.__fpIconStats = { requested: 0, keys: 0, batches: 0, tierB: 0 };
 let _fpLazySeq = 0;
 let _fpLazyObserver = null;
+
+/** px for a CSS box: round(css * devicePixelRatio), clamped to 8..512.
+ * devicePixelRatio already folds in Electron's own webContents zoom, so
+ * zoom is covered for free — see main.js's ZOOM_STEPS / setZoomFactor. */
+function fpDevicePx(css) {
+  return _IC.clampPx(Math.round(css * (window.devicePixelRatio || 1)));
+}
+
+/** The CSS width of the box a bitmap will fill: the IntersectionObserver
+ * record's own boundingClientRect when available (free — no forced layout),
+ * else a fresh getBoundingClientRect(), else `fallback` (the no-IO eager
+ * path, or a rect measured as 0 before first layout). */
+function _fpCssBox(el, rect, fallback) {
+  const r = rect || el.getBoundingClientRect();
+  return r && r.width > 0 ? r.width : fallback;
+}
 
 function _fpObserver() {
   if (_fpLazyObserver) return _fpLazyObserver;
@@ -267,7 +276,7 @@ function _fpObserver() {
       if (rec.isIntersecting) {
         if (el.dataset.fpLazy === 'done' || el.dataset.fpLazy === 'pending') continue;
         el.dataset.fpLazy = 'pending';
-        _fpStartLazy(el);
+        _fpStartLazy(el, rec.boundingClientRect);
       } else if (el.dataset.fpLazy === 'pending') {
         // Cancelled: drop whatever the shell eventually answers with.
         el.dataset.fpLazy = '';
@@ -294,12 +303,12 @@ function fpScanLazyIcons(root) {
   scope.querySelectorAll('[data-win-icon],[data-thumb],[data-peek]').forEach(_fpObserve);
 }
 
-function _fpStartLazy(el) {
+function _fpStartLazy(el, rect) {
   const seq = ++_fpLazySeq;
   el._fpSeq = seq;
-  if (el.dataset.winIcon !== undefined) return _fpResolveWinIcon(el, seq);
+  if (el.dataset.winIcon !== undefined) return _fpResolveWinIcon(el, seq, rect);
   if (el.dataset.thumb !== undefined) {
-    return fpRequestThumbnail(el, el.dataset.thumb, Number(el.dataset.size) || 96, Number(el.dataset.mtime) || 0, seq);
+    return fpRequestThumbnail(el, el.dataset.thumb, Number(el.dataset.size) || 96, Number(el.dataset.mtime) || 0, seq, rect);
   }
   if (el.dataset.peek !== undefined) return _fpResolveFolderPeek(el, seq);
 }
@@ -322,65 +331,149 @@ function _fpWinIconFallback(el) {
   el.outerHTML = icon(sym, keep);
 }
 
-function _fpResolveWinIcon(el, seq) {
-  const p = el.dataset.winIcon;
-  const ext = el.dataset.ext || '';
-  const size = Number(el.dataset.size) || 16;
-  const key = `${p}|${ext}|${size}`;
-  const api = window.electronAPI;
-  if (_fpWinIconCache.has(key)) {
-    const cached = _fpWinIconCache.get(key);
+/** Resolves one Windows-shell <img> at the sizing contract's px (icon-design.md
+ * §2): px = clampPx(round(css * dpr)), the bitmap that comes back is exactly
+ * px*px, and the element is pinned to px/dpr CSS px so Chromium composites it
+ * 1:1 instead of stretching a lower-resolution bitmap across a larger box.
+ *
+ * Tier B (electronAPI.fileIcon(s), an Electron IPC round trip) is the only
+ * source in this landing step — Tier A (POST /shell/icons, the real shell
+ * via IShellItemImageFactory) is a later step that has not added the route
+ * to this backend yet, and probing an HTTP route that 404s logs a Chromium
+ * "Failed to load resource" console message that cannot be suppressed from
+ * JS, which would fail the smoke test's zero-console-errors gate — so this
+ * landing step does not call it at all. shellIconKey (rather than the
+ * narrower Tier-B iconCacheKey) is still the request identity because it is
+ * also what a future Tier-A cache entry would be keyed by, keeping the two
+ * steps' cache entries compatible without a migration. */
+function _fpResolveWinIcon(el, seq, rect) {
+  const p = el.dataset.winIcon, ext = el.dataset.ext || '', isDir = el.dataset.dir !== undefined;
+  const dpr = window.devicePixelRatio || 1;
+  const css = _fpCssBox(el, rect, Number(el.dataset.size) || 16);
+  const px = fpDevicePx(css);
+  const key = _IC.shellIconKey(p, ext, isDir, px);
+  const paint = (res) => {
     if (!_fpSettle(el, seq, true)) return;
-    if (cached) el.src = cached; else _fpWinIconFallback(el);
-    return;
-  }
-  if (!api || typeof api.fileIcon !== 'function') {
-    if (_fpSettle(el, seq, true)) _fpWinIconFallback(el);
-    return;
-  }
-  api.fileIcon(p, ext, size).then((url) => {
-    _fpWinIconCache.set(key, url || null);
-    if (!_fpSettle(el, seq, true)) return;
-    if (url) el.src = url; else _fpWinIconFallback(el);
-  }).catch(() => {
-    if (_fpSettle(el, seq, true)) _fpWinIconFallback(el);
-  });
+    if (!res || !res.url) { _fpWinIconFallback(el); return; }
+    el.dataset.px = String(res.px); el.dataset.exact = res.exact ? '1' : '';
+    el.style.width = el.style.height = (res.px / dpr) + 'px'; // device box == bitmap, always
+    el.src = res.url;
+  };
+  const hit = _fpWinIconCache.get(key);
+  if (hit !== undefined) { paint(hit); return; }
+  if (!window.electronAPI) { paint(null); return; }
+  window.__fpIconStats.requested++;
+  fpTierBIconUrl(key, { path: p, ext, isDir, px }).then(paint);
 }
 
-/** IntersectionObserver-driven shell thumbnail for one <img>. Sets src on
- * success; on a null answer falls back to the shell's per-type icon at the
- * same size, and only then gives up with .fp-thumb--failed (which hides the
- * <img> so the family icon layered beneath it shows through). Callers that
- * already have an element in the DOM can call this directly with just
- * (imgEl, path, size, mtime) — the peek loader below does. */
-function fpRequestThumbnail(imgEl, path, size, mtime, seq) {
+/** One resolved Tier-B icon per key, shared by every element waiting on it
+ * and memoised in _fpWinIconCache when it settles (including a definitive
+ * null — a directory/no-ext/lnk/url refusal, or a path the shell has no
+ * icon for — so a re-render never re-asks for it). Never rejects — resolves
+ * to {url, px, exact} or null. Queues the request into the current
+ * macrotask's batch, coalescing every icon asked for in one frame (a
+ * viewport of list rows) into as few electronAPI.fileIcons IPC calls as
+ * possible (<= 64 items each). */
+function fpTierBIconUrl(key, item) {
+  const pending = _fpIconInFlight.get(key);
+  if (pending) return pending;
+  const settled = new Promise((resolve) => {
+    if (!_fpIconBatch) _fpIconBatch = { items: new Map(), timer: setTimeout(_fpFlushIconBatch, 0) };
+    _fpIconBatch.items.set(key, { ...item, key, resolve });
+  }).then((res) => {
+    _fpWinIconCache.set(key, res);
+    _fpIconInFlight.delete(key);
+    return res;
+  });
+  _fpIconInFlight.set(key, settled);
+  return settled;
+}
+
+async function _fpFlushIconBatch() {
+  const items = [..._fpIconBatch.items.values()];
+  _fpIconBatch = null;
+  window.__fpIconStats.keys += items.length;
+  window.__fpIconStats.batches++;
+  await _fpTierB(items);
+}
+
+/** Chromium's IconLoader answers the system-drive glyph for every directory
+ * and extension-less path, and one identical blank page for every .lnk/.url
+ * regardless of target (probe/out2b.json) — the sprite fallback is more
+ * honest than any of those, so those entries never reach electronAPI at
+ * all. Resolves every item in `items` (each {path, ext, isDir, px, resolve}
+ * from fpTierBIconUrl's batch) to {url, px, exact} or null; never rejects
+ * an individual item. */
+async function _fpTierB(items) {
+  const api = window.electronAPI;
+  const eligible = [], refused = [];
+  for (const it of items) {
+    const e = (it.ext || '').toLowerCase();
+    (it.isDir || !e || e === 'lnk' || e === 'url' || !api || typeof api.fileIcons !== 'function')
+      ? refused.push(it) : eligible.push(it);
+  }
+  refused.forEach((it) => it.resolve(null));
+  for (let i = 0; i < eligible.length; i += 64) {
+    const chunk = eligible.slice(i, i + 64);
+    window.__fpIconStats.tierB += chunk.length;
+    let out = [];
+    try { out = await api.fileIcons(chunk.map((it) => ({ path: it.path, ext: it.ext, px: it.px }))); } catch (_) { out = []; }
+    chunk.forEach((it, j) => it.resolve(out[j] || null));
+  }
+}
+
+/** IntersectionObserver-driven shell thumbnail for one <img>, sized per the
+ * sizing contract (icon-design.md §2): px = clampPx(round(css * dpr)) where
+ * css is measured from the BOX (the <img>'s parent .fp-thumb-box — the
+ * <img> itself is a 1x1 GIF until it loads — except a peek mini, which has
+ * its own explicit CSS size and is measured directly). Sets src and pins the
+ * element to w/dpr x h/dpr device px on success; on a null answer falls back
+ * to the shell icon at the same px (Windows mode only — see _fpFetchThumb),
+ * and only then gives up with .fp-thumb--failed (hides the <img> so the
+ * family icon layered beneath it shows through). Callers that already have
+ * an element in the DOM can call this directly with just
+ * (imgEl, path, size, mtime) — size is then the css-box fallback used only
+ * before first layout. */
+function fpRequestThumbnail(imgEl, path, size, mtime, seq, rect) {
   if (seq === undefined) { seq = ++_fpLazySeq; imgEl._fpSeq = seq; imgEl.dataset.fpLazy = 'pending'; }
-  const key = `${path}|${size}|${mtime}`;
-  if (_fpThumbCache.has(key)) { _fpApplyThumb(imgEl, seq, _fpThumbCache.get(key)); return; }
-  _fpFetchThumb(key, path, size, mtime, imgEl.dataset.ext || '')
-    .then((url) => _fpApplyThumb(imgEl, seq, url));
+  const isMini = imgEl.classList.contains('fp-thumb--mini');
+  const boxEl = isMini ? imgEl : imgEl.parentElement;
+  const css = _fpCssBox(boxEl, isMini ? rect : null, size);
+  const px = fpDevicePx(css);
+  const ext = imgEl.dataset.ext || '';
+  const isDir = imgEl.dataset.dir !== undefined;
+  const key = `${_IC.normalizeWinPath(path)}|${mtime}|${px}`;
+  const hit = _fpThumbCache.get(key);
+  if (hit !== undefined) { _fpApplyThumb(imgEl, seq, hit); return; }
+  _fpFetchThumb(key, path, px, mtime, ext, isDir)
+    .then((res) => _fpApplyThumb(imgEl, seq, res));
 }
 
 /** One shell round trip per key, shared by every element waiting on it and
- * memoised in _fpThumbCache when it settles. Resolves to a data: URL or null;
- * never rejects. */
-function _fpFetchThumb(key, path, size, mtime, ext) {
+ * memoised in _fpThumbCache when it settles. Resolves to {url, w, h} or
+ * null; never rejects. */
+function _fpFetchThumb(key, path, px, mtime, ext, isDir) {
   const pending = _fpThumbInFlight.get(key);
   if (pending) return pending;
   const api = window.electronAPI;
   const request = (!api || typeof api.thumbnail !== 'function')
     ? Promise.resolve(null)
-    : Promise.resolve(api.thumbnail(path, size, mtime)).then((url) => {
-      if (url) return url;
-      // No content thumbnail (a .txt, an unreadable image, a folder with
-      // nothing to show) — the shell's per-type icon is still better than
-      // nothing at tile size.
-      return typeof api.fileIcon === 'function' ? api.fileIcon(path, ext, size) : null;
+    : Promise.resolve(api.thumbnail(path, px, mtime)).then((res) => {
+      if (res) return res;
+      // No content thumbnail (a .txt, an unreadable image, an empty folder,
+      // a non-image the shell can't picture) — in Windows mode the shell's
+      // per-type icon at the same px is still better than nothing; in
+      // FilePlus mode the family sprite already underneath is the type icon
+      // (spec §6.1), so this deliberately returns null rather than painting
+      // a shell PNG over it.
+      if (fpIconSource() !== 'windows') return null;
+      return fpTierBIconUrl(_IC.shellIconKey(path, ext, isDir, px), { path, ext, isDir, px })
+        .then((r) => (r && r.url) ? { url: r.url, w: r.px, h: r.px } : null);
     });
-  const settled = request.catch(() => null).then((url) => {
-    _fpThumbCache.set(key, url || null);
+  const settled = request.catch(() => null).then((res) => {
+    _fpThumbCache.set(key, res || null);
     _fpThumbInFlight.delete(key);
-    return url || null;
+    return res || null;
   });
   _fpThumbInFlight.set(key, settled);
   return settled;
@@ -388,16 +481,24 @@ function _fpFetchThumb(key, path, size, mtime, ext) {
 
 /** Paints one resolved thumbnail onto its <img>, unless that element has
  * since been superseded, removed, or scrolled out of view. */
-function _fpApplyThumb(imgEl, seq, url) {
+function _fpApplyThumb(imgEl, seq, res) {
   if (!_fpSettle(imgEl, seq, true)) return;
-  if (!url) { imgEl.classList.add('fp-thumb--failed'); return; }
-  imgEl.src = url;
+  // A re-request after a DPR/scale change can revive a tile that previously
+  // failed at a different px.
+  imgEl.classList.remove('fp-thumb--failed');
+  if (!res) { imgEl.classList.add('fp-thumb--failed'); return; }
+  imgEl.src = res.url;
   imgEl.classList.add('fp-thumb--ready');
+  imgEl.dataset.px = String(Math.max(res.w, res.h));
   // A real thumbnail replaces the placeholder icon outright — but a folder
   // preview's mini pictures are fanned OVER the folder icon, which has to
-  // stay put, so only the tile's own full-size thumbnail retires it.
-  if (!imgEl.classList.contains('fp-thumb--mini') && imgEl.parentElement) {
-    imgEl.parentElement.classList.add('fp-thumb-box--has-thumb');
+  // stay put, so only the tile's own full-size thumbnail retires it, and
+  // only the full-size thumbnail is pinned (a mini keeps its CSS 40% size).
+  if (!imgEl.classList.contains('fp-thumb--mini')) {
+    const dpr = window.devicePixelRatio || 1;
+    imgEl.style.width = (res.w / dpr) + 'px';
+    imgEl.style.height = (res.h / dpr) + 'px';
+    if (imgEl.parentElement) imgEl.parentElement.classList.add('fp-thumb-box--has-thumb');
   }
 }
 
@@ -419,9 +520,16 @@ async function _fpResolveFolderPeek(el, seq) {
     img.className = `fp-thumb fp-thumb--mini fp-thumb--mini-${i + 1}`;
     img.alt = '';
     img.src = FP_BLANK_PX;
+    img.dataset.thumb = item.path;
+    img.dataset.size = '38';
+    img.dataset.mtime = '0';
     img.dataset.ext = item.ext || '';
     el.appendChild(img);
-    fpRequestThumbnail(img, item.path, 64, 0);
+    // Registered like any other lazy element (not called directly) so it
+    // measures its OWN box (40% of the tile, styles.css) via the shared
+    // IntersectionObserver instead of a hardcoded size, and is covered by
+    // fpInvalidateLazyIcons on a DPR/zoom/list-scale change.
+    _fpObserve(img);
   });
 }
 
@@ -437,10 +545,35 @@ function _fpQueueScan() {
   setTimeout(() => { _fpScanQueued = false; fpScanLazyIcons(document.body); }, 16);
 }
 
+/** Re-resolves every settled shell icon / thumbnail under `root` at its
+ * CURRENT box x devicePixelRatio. The old bitmap stays on screen until the
+ * new one lands (no flash); keys differ by px so this never refetches an
+ * already-seen size. Called on zoom / monitor-DPI change (below) and by
+ * setListScale (browser.js) when --list-scale changes the row/tile box. */
+function fpInvalidateLazyIcons(root) {
+  (root || document.body).querySelectorAll('img.fp-icon--win[data-fp-lazy="done"], img.fp-thumb[data-fp-lazy="done"]').forEach((el) => {
+    el.dataset.fpLazy = ''; el._fpSeq = 0; el._fpObserved = false;
+    el.style.width = el.style.height = ''; // let CSS re-lay the box before it is measured again
+    _fpObserve(el);
+  });
+}
+
+/** Watches for a devicePixelRatio change (Electron zoom via
+ * webContents.setZoomFactor, or the window moving to a monitor with a
+ * different scale) and invalidates every lazy icon/thumbnail so it re-
+ * resolves at the new px instead of Chromium silently resampling the old
+ * bitmap. matchMedia's `change` fires once per crossing, so this re-arms
+ * itself against the new dpr after each fire. */
+function _fpWatchDpr() {
+  const mq = window.matchMedia(`(resolution: ${window.devicePixelRatio || 1}dppx)`);
+  mq.addEventListener('change', () => { fpInvalidateLazyIcons(document.body); _fpWatchDpr(); }, { once: true });
+}
+
 function fpInstallLazyIconWatcher() {
   if (!document.body || typeof MutationObserver !== 'function') return;
   new MutationObserver(_fpQueueScan).observe(document.body, { childList: true, subtree: true });
   fpScanLazyIcons(document.body);
+  _fpWatchDpr();
 }
 
 // Install as early as possible. index.html loads every frontend/src module

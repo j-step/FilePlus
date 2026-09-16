@@ -230,6 +230,65 @@ test('every screen renders with no renderer errors', async () => {
     await expect(page.locator('#list-scroll img.fp-icon--win[src^="data:image/png"]').first())
       .toBeVisible({ timeout: 3000 });
 
+    // --- Pass 2: Windows-icon sharpness fix, sizing contract (icon-design.md
+    // §2; landing steps 1-2 — Tier B only, since POST /shell/icons doesn't
+    // exist on this backend yet: the renderer discovers that via a 404 on
+    // its first batch and falls back for the rest of the run). dpr folds in
+    // any OS/Electron display scaling, so these assertions hold at whatever
+    // scale this machine happens to run at, not just 100%. ---
+    const dpr = await page.evaluate(() => window.devicePixelRatio || 1);
+
+    // Sharpness proof: a .txt row's icon is exactly round(16*dpr) physical
+    // px -- not the pre-fix bug (always a 32-px shell image force-resized to
+    // a 16-px, 1x-tagged bitmap that the renderer then stretched again).
+    await page.evaluate((p) => loadDirectory(p), docsDir);
+    await page.waitForFunction(() => document.querySelectorAll('.fp-row').length >= 10);
+    const txtIcon = rowByName('doc-00.txt').locator('img.fp-icon--win');
+    await expect(txtIcon).toHaveAttribute('src', /^data:image\/png/, { timeout: 3000 });
+    const txtProof = await txtIcon.evaluate((el) => {
+      const r = el.getBoundingClientRect();
+      return { naturalWidth: el.naturalWidth, naturalHeight: el.naturalHeight, px: el.dataset.px, exact: el.dataset.exact, width: r.width };
+    });
+    const expectedPx = Math.round(16 * dpr);
+    expect(txtProof.px).toBe(String(expectedPx));
+    expect(txtProof.naturalWidth).toBe(Number(txtProof.px));
+    expect(txtProof.naturalHeight).toBe(txtProof.naturalWidth);
+    expect(txtProof.naturalWidth).toBeGreaterThanOrEqual(16);
+    expect(Math.abs(txtProof.width * dpr - txtProof.naturalWidth)).toBeLessThan(0.5);
+    // At zoom 1 (no Electron webContents zoom applied in this run), dpr IS
+    // the Windows system scale S, so round(16*dpr) is exactly the shell's
+    // own small-image-list representation's native size -- the bitmap main.js
+    // returned should therefore be that representation completely unresampled,
+    // never the old 32-px-to-16-px downscale.
+    expect(txtProof.exact).toBe('1');
+    await page.screenshot({ path: path.join(SHOTS, 'browser-windows-icons.png') });
+
+    // Folder rows in Windows mode stay the sprite (<use>), never a shell
+    // <img>: Chromium's app.getFileIcon answers the identical system-drive
+    // glyph for every directory (probe/out2b.json), so icons.js never sends
+    // a directory to Tier B at all.
+    await page.evaluate((p) => loadDirectory(p), `${root}\\_gen`);
+    await page.waitForFunction(() => document.querySelectorAll('.fp-row').length >= 5);
+    const folderRow = rowByName('Documents');
+    await expect(folderRow.locator('use')).toHaveCount(1);
+    await expect(folderRow.locator('img.fp-icon--win')).toHaveCount(0);
+
+    // Grid thumbnails in Windows mode: the bitmap is exactly px*px and the
+    // <img> is pinned to px/dpr CSS px so the device box matches it 1:1.
+    await page.evaluate((p) => loadDirectory(p), picsDir);
+    await page.waitForFunction(() => document.querySelectorAll('.fp-row').length >= 6);
+    await page.evaluate(() => setViewMode('grid'));
+    await expect(page.locator('#list-scroll img.fp-thumb--ready[src^="data:image/png"]').first())
+      .toBeVisible({ timeout: 3000 });
+    const gridProof = await page.locator('#list-scroll img.fp-thumb--ready').first().evaluate((el) => {
+      const r = el.getBoundingClientRect();
+      return { naturalWidth: el.naturalWidth, naturalHeight: el.naturalHeight, px: el.dataset.px, width: r.width, height: r.height };
+    });
+    expect(Number(gridProof.px)).toBe(Math.max(gridProof.naturalWidth, gridProof.naturalHeight));
+    const expectedCss = Number(gridProof.px) / dpr;
+    expect(Math.abs(Math.max(gridProof.width, gridProof.height) - expectedCss)).toBeLessThan(0.5);
+    await page.evaluate(() => setViewMode('details'));
+
     // ...and back to FilePlus restores the sprite family icons.
     await page.evaluate(() => switchScreen('settings'));
     await page.locator('[data-action="settings-set-icon-source"][data-val="fileplus"]').click();
@@ -1269,6 +1328,84 @@ test('every screen renders with no renderer errors', async () => {
     }
     await page.evaluate(() => applyTheme('system'));
   } finally {
+    await app.close();
+  }
+  expect(errors, errors.join('\n')).toEqual([]);
+});
+
+// --- Pass 2: forced-DSF run (icon-design.md §5.4) --------------------------
+// A cheap, screenshot-free second Electron launch that forces
+// devicePixelRatio to 1.5 (verified to reach window.devicePixelRatio in this
+// Electron -- scratchpad out/dpr-1.5-cli.json) so the sizing contract's
+// rounding math (px = clampPx(round(css * dpr))) is exercised at a non-1
+// scale independently of whatever this machine's own display scale happens
+// to be.
+test('shell bitmaps are device-pixel exact at a forced 150% scale', async () => {
+  const env = { ...process.env };
+  delete env.ELECTRON_RUN_AS_NODE;
+  const app = await electron.launch({
+    executablePath: require('electron'),
+    args: [FRONTEND, '--force-device-scale-factor=1.5'],
+    cwd: FRONTEND,
+    env,
+  });
+  const page = await app.firstWindow();
+  // Without this, a real CSS fade-in transition (the settings screen switch
+  // below) can leave Playwright's actionability check polling forever for a
+  // "stable" frame instead of settling in a couple of frames -- the main
+  // smoke test does the same for the same reason.
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
+  page.on('console', (m) => { if (m.type() === 'error') errors.push(`console: ${m.text()}`); });
+  const apiToken = process.env.FILEPLUS_API_TOKEN;
+  const apiHeaders = apiToken ? { 'X-FilePlus-Token': apiToken } : {};
+  try {
+    await page.waitForSelector('#shell');
+    // switchScreen() is a no-op until app.js's DOMContentLoaded handler has
+    // run seedInitialTab() (activeTab() returns undefined before then) —
+    // #shell itself is static markup, present in the DOM (and matched by
+    // waitForSelector) before that handler runs at all, so wait for the
+    // actual readiness condition rather than a fixed timeout.
+    await page.waitForFunction(() => typeof tabs !== 'undefined' && tabs.list && tabs.list.length > 0);
+    // Same settle wait the main smoke test uses before its first screen
+    // switch (fonts, first /health poll) -- without it, the settings
+    // screen's own fade-in can race Playwright's actionability check on the
+    // very first interaction of a freshly-launched window.
+    await page.waitForTimeout(1500);
+    expect(await page.evaluate(() => window.devicePixelRatio)).toBe(1.5);
+
+    const root = (await (await fetch(`${API}/fs/list/root`, { headers: apiHeaders })).json()).path;
+    const docsDir = `${root}\\_gen\\Documents`;
+    const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const rowByName = (name) => page.locator('.fp-row').filter({
+      has: page.locator('.fp-row__name', { hasText: new RegExp(`^${escapeRe(name)}$`) }),
+    });
+
+    await page.evaluate(() => switchScreen('settings'));
+    await page.locator('[data-action="settings-set-icon-source"][data-val="windows"]').click();
+    await page.evaluate(() => switchScreen('browser'));
+    await page.evaluate((p) => loadDirectory(p), docsDir);
+    await page.waitForFunction(() => document.querySelectorAll('.fp-row').length >= 10);
+
+    const txtIcon = rowByName('doc-00.txt').locator('img.fp-icon--win');
+    await expect(txtIcon).toHaveAttribute('src', /^data:image\/png/, { timeout: 8000 });
+    const proof = await txtIcon.evaluate((el) => ({
+      naturalWidth: el.naturalWidth,
+      px: el.dataset.px,
+      width: el.getBoundingClientRect().width,
+    }));
+    // css 16 * dpr 1.5 = 24: not the OS's own 100%-scale small representation
+    // (16px), so this also exercises the resize/resample branch of
+    // renderShellIcon (main.js) independently of this machine's real display
+    // scale.
+    expect(proof.px).toBe('24');
+    expect(proof.naturalWidth).toBe(24);
+    expect(Math.abs(proof.width - 16)).toBeLessThan(0.5); // pinned to px/dpr = 24/1.5 = 16 CSS px
+  } finally {
+    // The icon-source setting is persisted server-side (POST /config), not
+    // per-window -- reset it so it doesn't leak into a later run.
+    await fetch(`${API}/config/ui.icon_source`, { method: 'DELETE', headers: apiHeaders }).catch(() => {});
     await app.close();
   }
   expect(errors, errors.join('\n')).toEqual([]);

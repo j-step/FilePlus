@@ -9,7 +9,7 @@ const path = require('path');
 const os   = require('os');
 const { spawn } = require('child_process');
 const { readEnvFileToken, readEnvFileValue } = require('./envToken');
-const { LruCache, iconCacheKey, isSafeLocalPath } = require('./iconCache');
+const { LruCache, iconCacheKey, isSafeLocalPath, normalizeWinPath, clampPx } = require('./iconCache');
 
 let mainWindow;
 
@@ -34,40 +34,55 @@ const API_PORT = Number(process.env.FILEPLUS_PORT || readEnvFileValue(path.join(
 // and the renderer paints solid --bg-chrome.
 const MICA_AVAILABLE = process.platform === 'win32' && Number(os.release().split('.')[2] || 0) >= 22621;
 
-// ── Icon / thumbnail bridge (Stage 2C Task 4) ───────────────────────────────
-// Two separate LRUs: file icons are small and numerous (folder chrome, list
-// rows); thumbnails are bigger images but there are fewer distinct sizes in
-// play at once (grid view). Sizes per task-4-brief.md.
-const iconCache = new LruCache(300);
-const thumbnailCache = new LruCache(500);
+// ── Icon / thumbnail bridge (Stage 2C Task 4; sizing rewritten pass 2 —
+// icon-design.md §4.2) ───────────────────────────────────────────────────
+// Two separate byte-budgeted LRUs: file icons are small and numerous (folder
+// chrome, list rows); thumbnails are bigger images but there are fewer
+// distinct sizes in play at once (grid view). Values: {url, px, exact} for
+// icons, {url, w, h} for thumbnails.
+const iconCache = new LruCache(2000, 8 * 1024 * 1024);
+const thumbnailCache = new LruCache(600, 32 * 1024 * 1024);
 
-// Thumbnails go through the shell (IShellItemImageFactory under the hood);
-// a grid of ~500 tiles must not fire 500 concurrent shell calls, so this is
-// a tiny FIFO queue capping in-flight work at THUMBNAIL_CONCURRENCY.
-const THUMBNAIL_CONCURRENCY = 4;
-let thumbnailInFlight = 0;
-const thumbnailQueue = [];
-
-function runQueuedThumbnail(task) {
-  return new Promise((resolve) => {
-    const run = () => {
-      thumbnailInFlight++;
-      task().then(
-        (result) => { thumbnailInFlight--; drainThumbnailQueue(); resolve(result); },
-        () => { thumbnailInFlight--; drainThumbnailQueue(); resolve(null); }
-      );
-    };
-    if (thumbnailInFlight < THUMBNAIL_CONCURRENCY) run();
-    else thumbnailQueue.push(run);
-  });
-}
-
-function drainThumbnailQueue() {
-  if (thumbnailInFlight < THUMBNAIL_CONCURRENCY) {
-    const next = thumbnailQueue.shift();
-    if (next) next();
+// Thumbnails and icons both go through the shell; a grid of ~500 tiles must
+// not fire 500 concurrent shell calls. makeQueue(concurrency) is a tiny FIFO
+// gate that also dedupes identical in-flight work by key — six rows sharing
+// one icon key become one shell call, not six.
+function makeQueue(concurrency) {
+  let running = 0;
+  const waiting = [];
+  const inFlight = new Map(); // key -> Promise
+  function drain() {
+    if (running < concurrency) {
+      const next = waiting.shift();
+      if (next) next();
+    }
   }
+  function run(key, task) {
+    const existing = inFlight.get(key);
+    if (existing) return existing;
+    const promise = new Promise((resolve) => {
+      const start = () => {
+        running++;
+        task().then(
+          (result) => { running--; inFlight.delete(key); drain(); resolve(result); },
+          () => { running--; inFlight.delete(key); drain(); resolve(null); }
+        );
+      };
+      if (running < concurrency) start();
+      else waiting.push(start);
+    });
+    inFlight.set(key, promise);
+    return promise;
+  }
+  return { run };
 }
+// 8 for icons: Chromium serialises app.getFileIcon internally anyway
+// (probe/out3.json), so a wider gate here costs nothing. THUMBNAIL_CONCURRENCY
+// stays 4 (IShellItemImageFactory-backed thumbnails are heavier per call).
+const THUMBNAIL_CONCURRENCY = 4;
+const iconQueue = makeQueue(8);
+const thumbQueue = makeQueue(THUMBNAIL_CONCURRENCY);
+globalThis.__fpMainIconStats = { shellCalls: 0, thumbCalls: 0, batches: 0 };
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -158,41 +173,91 @@ app.whenReady().then(() => {
   });
   ipcMain.on('clipboard-write-text', (_e, t) => { if (typeof t === 'string') clipboard.writeText(t); });
 
-  // File icon: app.getFileIcon's own {size} option is a coarse 'small'/'normal'/'large'
-  // enum, not a pixel size, so it's picked from the requested pixel size and the
-  // result is resized down/up to it exactly (list rows at 16-20, grid rows at 32-48).
-  ipcMain.handle('get-file-icon', async (_e, filePath, ext, size) => {
-    if (!isSafeLocalPath(filePath)) return null;
-    const key = iconCacheKey(filePath, ext, size);
-    const cached = iconCache.get(key);
-    if (cached !== undefined) return cached;
-    try {
-      const iconSize = size >= 32 ? 'large' : 'normal';
-      const image = await app.getFileIcon(filePath, { size: iconSize });
-      if (!image || image.isEmpty()) return null;
-      const dataUrl = image.resize({ width: size, height: size }).toDataURL();
-      iconCache.set(key, dataUrl);
-      return dataUrl;
-    } catch (_err) {
-      return null;
+  // File icon (Windows-icon sharpness fix, pass 2 — icon-design.md §4.2).
+  // app.getFileIcon's own {size} option is a coarse 'small'/'normal'/'large'
+  // enum: small = 16*S px, normal = large = 32*S px for extension groups
+  // (16/32/48 regardless of S for .exe/.dll/.ico — the per-file branch).
+  // The returned nativeImage is DPI-tagged on a scaled display, so its own
+  // getSize()/resize() work in DIP, not physical pixels (measured:
+  // scratchpad probe/out2.json, getSize {10,10} for a 16-px rep at 150%) —
+  // never call either on it. Instead read the raw representation at its true
+  // physical size via toPNG() and treat the PNG's own IHDR as ground truth.
+  function rawRep(image) {
+    const s = (typeof image.getScaleFactors === 'function' && image.getScaleFactors()[0]) || 1;
+    const png = image.toPNG({ scaleFactor: s });
+    return { png, w: png.readUInt32BE(16), h: png.readUInt32BE(20) };
+  }
+  // 'small' = the shell's small image list (16*S px, hand-hinted — exact for
+  // list rows at zoom 1); 'large' = 32*S for extension groups, 48 for
+  // exe/dll/ico ('normal' is identical to 'large' for extension groups, so
+  // it is never requested). Picks the smallest native representation that
+  // covers px and resamples at most once, only on a size mismatch.
+  async function renderShellIcon(filePath, px) {
+    let best = null;
+    for (const size of ['small', 'large']) {
+      globalThis.__fpMainIconStats.shellCalls++;
+      const img = await app.getFileIcon(filePath, { size });
+      if (!img || img.isEmpty()) continue;
+      best = rawRep(img);
+      if (best.w >= px) break;
     }
+    if (!best) return null;
+    const exact = best.w === px && best.h === px;
+    let out = nativeImage.createFromBuffer(best.png); // a true 1x image: DIP == px
+    if (!exact) out = out.resize({ width: px, height: px, quality: 'best' });
+    return { url: out.toDataURL(), px, exact };
+  }
+  async function fileIconFor(rawPath, ext, rawPx) {
+    if (!isSafeLocalPath(rawPath)) return null;
+    const p = normalizeWinPath(rawPath), px = clampPx(rawPx);
+    const key = iconCacheKey(p, ext, px);
+    const hit = iconCache.get(key);
+    if (hit !== undefined) return hit;
+    return iconQueue.run(key, async () => {
+      try {
+        const res = await renderShellIcon(p, px);
+        if (res) iconCache.set(key, res);
+        return res;
+      } catch (_err) {
+        return null;
+      }
+    });
+  }
+  // Single-icon and batched (a viewport of list rows -> one IPC round trip)
+  // variants share fileIconFor's cache/queue, so overlapping requests for the
+  // same key (one from a batch, one from a stray single call) still collapse
+  // to one shell call.
+  ipcMain.handle('get-file-icon', (_e, p, ext, px) => fileIconFor(p, ext, px));
+  ipcMain.handle('get-file-icons', (_e, reqs) => {
+    if (!Array.isArray(reqs)) return [];
+    globalThis.__fpMainIconStats.batches++;
+    return Promise.all(reqs.slice(0, 64).map((r) => (r && typeof r === 'object') ? fileIconFor(r.path, r.ext, r.px) : null));
   });
 
   // Shell thumbnail (real image content — photos, video posters, folder
-  // previews via IShellItemImageFactory). Keyed with mtime so an edited file
-  // doesn't serve a stale cached thumbnail. Queued: see THUMBNAIL_CONCURRENCY above.
-  ipcMain.handle('get-thumbnail', async (_e, filePath, size, mtime) => {
+  // previews via IThumbnailCache). px is device pixels (CSS box x
+  // devicePixelRatio), computed by icons.js. createThumbnailFromPath is
+  // thumbnail-ONLY — it rejects .txt/.exe/.pdf/.lnk and an empty folder (the
+  // renderer falls back to the icon path for those) — and for anything it
+  // accepts it returns the requested width on the longer edge exactly.
+  // Keyed with mtime so an edited file doesn't serve a stale cached
+  // thumbnail. Queued: see THUMBNAIL_CONCURRENCY above.
+  ipcMain.handle('get-thumbnail', async (_e, filePath, rawPx, mtime) => {
     if (!isSafeLocalPath(filePath)) return null;
-    const key = `${filePath}|${mtime}|${size}`;
+    const p = normalizeWinPath(filePath), px = clampPx(rawPx);
+    const key = `${p}|${mtime}|${px}`;
     const cached = thumbnailCache.get(key);
     if (cached !== undefined) return cached;
-    return runQueuedThumbnail(async () => {
+    return thumbQueue.run(key, async () => {
       try {
-        const image = await nativeImage.createThumbnailFromPath(filePath, { width: size, height: size });
+        globalThis.__fpMainIconStats.thumbCalls++;
+        const image = await nativeImage.createThumbnailFromPath(p, { width: px, height: px });
         if (!image || image.isEmpty()) return null;
-        const dataUrl = image.toDataURL();
-        thumbnailCache.set(key, dataUrl);
-        return dataUrl;
+        const png = image.toPNG();
+        const w = png.readUInt32BE(16), h = png.readUInt32BE(20);
+        const res = { url: 'data:image/png;base64,' + png.toString('base64'), w, h };
+        thumbnailCache.set(key, res);
+        return res;
       } catch (_err) {
         return null;
       }

@@ -138,7 +138,14 @@ function setListScale(v, { persist = true } = {}) {
   const scale = LIST_SCALE_STEPS.includes(v) ? v : 1;
   browserState.listScale = scale;
   const listScroll = document.getElementById('list-scroll');
-  if (listScroll) listScroll.style.setProperty('--list-scale', String(scale));
+  if (listScroll) {
+    listScroll.style.setProperty('--list-scale', String(scale));
+    // Row/tile icons and thumbnails are sized in physical px from the CSS
+    // box (icon-design.md §2), so a --list-scale change makes the old
+    // bitmap the wrong size until it re-resolves. A timer, not rAF: an
+    // occluded window stops painting (icons.js:_fpQueueScan does the same).
+    if (typeof fpInvalidateLazyIcons === 'function') setTimeout(() => fpInvalidateLazyIcons(listScroll), 0);
+  }
   if (persist) saveSetting('ui.list_scale', scale);
 }
 
