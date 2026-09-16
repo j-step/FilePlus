@@ -108,7 +108,10 @@ function formatRecentTime(actionAt, bucketKey) {
 // ── Row/section templates ──────────────────────────────────────────────────
 function renderRecentRow(entry, bucketKey) {
   const timeLabel = formatRecentTime(entry.action_at, bucketKey);
-  const parentDisplay = parentOfPath(entry.path) + '\\';
+  // parentOfPath() already ends a drive root in a separator ("C:\"), so
+  // appending one unconditionally spelled it "C:\\" (pass 2 #166).
+  const parentRaw = parentOfPath(entry.path);
+  const parentDisplay = parentRaw.endsWith('\\') ? parentRaw : parentRaw + '\\';
   // Same show_extensions handling as browser.js's renderFsRow: folders (ext
   // === '', see homeIconFor's note above) never hide anything; files hide the
   // extension in the rendered label only, with the full name kept as a tooltip.
@@ -146,7 +149,10 @@ function renderRecentSection(group) {
 }
 
 function renderFavoriteRow(entry) {
-  const parentDisplay = parentOfPath(entry.path) + '\\';
+  // parentOfPath() already ends a drive root in a separator ("C:\"), so
+  // appending one unconditionally spelled it "C:\\" (pass 2 #166).
+  const parentRaw = parentOfPath(entry.path);
+  const parentDisplay = parentRaw.endsWith('\\') ? parentRaw : parentRaw + '\\';
   const addedLabel = entry.created ? `Added ${formatModified(entry.created)}` : '';
   const hideExt = entry.ext !== '' && browserState.showExtensions === false;
   const displayName = hideExt ? stemOf(entry.name) : entry.name;

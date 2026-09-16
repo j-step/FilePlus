@@ -348,6 +348,15 @@ function activateTab(id) {
   } else {
     showScreenDom(incoming.screen);
     updateSidebarActive(incoming.screen);
+    // browserState is global: a Home/Settings tab must not inherit the
+    // OUTGOING tab's search mode. It used to, and the first query typed on the
+    // new tab was swallowed whole — searchEnsureBrowser()'s loadDirectory()
+    // called leaveSearchMode(), which reset the bar and bumped the sequence
+    // runSearch() checks, so the run superseded itself (pass 2 #89). Safe to
+    // call here and not in resetToolbarForNonBrowser(): that one is shared
+    // with switchScreen(), whose Browser branch restores a same-tab search
+    // from exactly this flag.
+    if (typeof leaveSearchMode === 'function') leaveSearchMode();
     // The toolbar is outside .screen, so the outgoing tab's breadcrumb, search
     // bar and nav-button state would otherwise stay on display — and stay
     // clickable — over this tab's Home/Settings screen (pass 2 #12).
@@ -833,6 +842,9 @@ function initDeviceName() {
 // once per resize, never per frame.
 const TOOLBAR_SEARCH_MIN = 140;  // px the expanded search bar wants
 const TOOLBAR_PATH_MIN   = 120;  // px the breadcrumb wants before the bar folds
+// Extra room the toolbar must regain before it leaves narrow mode — wider than
+// the 12px the mode's own gap change is worth (pass 2 #163).
+const TOOLBAR_NARROW_HYSTERESIS = 24;
 
 function initToolbarNarrowMode() {
   const toolbar = document.getElementById('toolbar');
@@ -854,7 +866,15 @@ function initToolbarNarrowMode() {
     }
     const padding = (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0);
     const available = toolbar.clientWidth - padding - gap * Math.max(0, visible - 1);
-    toolbar.toggleAttribute('data-narrow', available < fixed + TOOLBAR_SEARCH_MIN + TOOLBAR_PATH_MIN);
+    // The gap IS mode-dependent (#toolbar[data-narrow] tightens it from 6px to
+    // 4px), so `available` is ~12px larger when measured in the mode it is
+    // deciding — entry and exit thresholds sat 12px apart and the bar flickered
+    // for that whole band of a window drag (pass 2 #163). Leaving narrow mode
+    // needs that much more room than entering it did, so no width can satisfy
+    // both tests at once.
+    const narrow = toolbar.hasAttribute('data-narrow');
+    const needed = fixed + TOOLBAR_SEARCH_MIN + TOOLBAR_PATH_MIN + (narrow ? TOOLBAR_NARROW_HYSTERESIS : 0);
+    toolbar.toggleAttribute('data-narrow', available < needed);
   }
 
   new ResizeObserver(recalc).observe(toolbar);
@@ -2110,7 +2130,7 @@ const IN_SCOPE_ACTIONS = new Set([
   // Toolbar search (Task 14)
   'search-clear', 'search-remove-chip', 'search-expand-filter', 'search-pick-filter',
   'search-more-filters', 'search-more-apply', 'search-more-cancel',
-  'search-history-run', 'search-history-clear', 'search-index-drives',
+  'search-history-run', 'search-history-clear', 'search-index-drives', 'search-retry',
   // Settings › Scan & Index (Task 14)
   'settings-index-add', 'settings-index-reindex', 'settings-index-remove',
   'modal-cancel', 'modal-confirm', 'modal-confirm-type',
@@ -2283,6 +2303,10 @@ document.addEventListener('click', e => {
       ];
       searchState.scope = 'pc';
       renderSearchChips();
+      // In narrow-toolbar mode the chips are display:none until the bar is
+      // expanded, so the two chips that define this search were invisible and
+      // unremovable (pass 2 #97). Same call addChip() makes after every pick.
+      focusSearchInput({ keepDropdownClosed: true });
       runSearch();
       break;
     }
@@ -2308,8 +2332,13 @@ document.addEventListener('click', e => {
     case 'search-more-cancel':
       closeMoreFilters();
       break;
+    case 'search-retry':
+      // The Retry button on the in-list "Search failed" banner (pass 2 #96) —
+      // pushHistory:false, it is the same search, not a new one.
+      runSearch({ pushHistory: false });
+      break;
     case 'search-history-run':
-      restoreSearchHistoryEntry(Number(btn.dataset.index));
+      restoreSearchHistoryEntry(btn.dataset.historyKey);
       break;
     case 'search-history-clear':
       clearSearchHistory();
@@ -3169,6 +3198,9 @@ document.addEventListener('keydown', e => {
     closeTagCanvas();
     closeProperties();
     closeAskPopout();
+    // The search More-filters dialog was the one overlay in the app with
+    // neither an Escape nor a backdrop-click way out (pass 2 #92).
+    if (typeof closeMoreFilters === 'function') closeMoreFilters();
   }
   // Browser-screen keyboard nav (selection, sort-order arrows, Enter, F5,
   // Ctrl+A, Alt+arrows) only applies when that screen is active and the
@@ -3343,6 +3375,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Properties panel backdrop click closes
   document.getElementById('properties-modal-scrim')?.addEventListener('click', e => {
     if (e.target === document.getElementById('properties-modal-scrim')) closeProperties();
+  });
+
+  // Search "More filters" backdrop click closes (pass 2 #92)
+  document.getElementById('search-filters-scrim')?.addEventListener('click', e => {
+    if (e.target === document.getElementById('search-filters-scrim')) closeMoreFilters();
   });
 
   // Ask File+ popout (Task 15) has no scrim — it's a lightweight anchored

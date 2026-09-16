@@ -2612,6 +2612,14 @@ body.is-dragging { cursor: default; }
   text-overflow: ellipsis;
   white-space: nowrap;
   direction: rtl;            /* keep the tail of a long path visible */
+  /* Same trick (and the same caveat) as #inspector-filepath below: direction:rtl
+     truncates from the LEFT, text-align:left keeps the text flush left, and
+     unicode-bidi:isolate — never `plaintext`, which recomputes the paragraph
+     direction from the content and silently moves the ellipsis back to the
+     wrong end — contains the content's own bidi resolution. The string itself
+     is wrapped in <bdi> by renderFsRow(), which is what stops a bare drive
+     spec ("C:\") from rendering reversed as ":C" (pass 2 #166). */
+  unicode-bidi: isolate;
   text-align: left;
 }
 .fp-row__mark {

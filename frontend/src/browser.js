@@ -390,7 +390,14 @@ function entryPath(entry) {
 function parentOfPath(p) {
   const norm = String(p || '').replace(/[\\\/]+$/, '');
   const idx = Math.max(norm.lastIndexOf('\\'), norm.lastIndexOf('/'));
-  return idx > 0 ? norm.slice(0, idx) : norm;
+  if (idx <= 0) return norm;
+  const parent = norm.slice(0, idx);
+  // A file sitting directly in a drive root has "C:" as its parent — which is
+  // not a folder (Windows reads a bare drive spec as "the current directory on
+  // C:"), and renders as ":C" in the RTL-trimmed location subline. Keep the
+  // separator: "C:\" is both the real root and an unambiguously LTR string
+  // (pass 2 #166).
+  return /^[A-Za-z]:$/.test(parent) ? `${parent}\\` : parent;
 }
 
 /**
@@ -534,11 +541,24 @@ function refreshDirectory() {
   }
   if (browserState.mode === 'search') {
     const searchBtn = document.getElementById('btn-refresh');
+    const searchList = document.getElementById('list-scroll');
+    // renderSearchResults() scrolls a fresh result set to the top; a re-run of
+    // the SAME search (F5, or the refresh every fileops.run() ends with) is not
+    // a fresh set, and dropping the viewport left the row the user just acted
+    // on hundreds of rows off-screen while staying selected (pass 2 #94).
+    // Same reqTabId guard the browse branch below carries.
+    const searchScrollTop = searchList ? searchList.scrollTop : 0;
+    const searchTabId = tabs.activeId;
     searchBtn?.classList.add('is-spinning');
     const rerun = typeof runSearch === 'function'
       ? Promise.resolve(runSearch({ pushHistory: false, preserveSelection: true }))
       : Promise.resolve();
-    return rerun.finally(() => searchBtn?.classList.remove('is-spinning'));
+    return rerun.finally(() => {
+      if (searchList && tabs.activeId === searchTabId && browserState.mode === 'search') {
+        searchList.scrollTop = searchScrollTop;
+      }
+      searchBtn?.classList.remove('is-spinning');
+    });
   }
   if (!browserState.path) return;
   const btn = document.getElementById('btn-refresh');
@@ -779,7 +799,7 @@ function renderFsRow(entry, parentPath) {
     ${isSearch
       ? `<span class="fp-row__namecell">
           <span class="fp-row__name"${nameTitleAttr}>${nameHtml}</span>
-          <span class="fp-row__location" title="${escapeHtml(location)}">${escapeHtml(location)}</span>
+          <span class="fp-row__location" title="${escapeHtml(location)}"><bdi>${escapeHtml(location)}</bdi></span>
         </span>`
       : `<span class="fp-row__name"${nameTitleAttr}>${nameHtml}</span>`}
     ${starHtml}
@@ -844,9 +864,13 @@ function setSearchHeader(text) {
 function appendSearchHeaderHint(text, actionLabel, actionName) {
   const el = document.getElementById('list-search-header');
   if (!el || el.hidden) return;
-  el.insertAdjacentHTML('beforeend', `<span class="list-search-header__hint">
-      ${escapeHtml(text)} —
-      <button class="fp-btn fp-btn--ghost fp-btn--sm" data-action="${escapeHtml(actionName)}">${escapeHtml(actionLabel)}</button>
+  // The text and the button both carry ids: search.js's indexMissingDrives()
+  // rewrites them in place to report progress, because the toasts it used to
+  // rely on are gated off by default (pass 2 #87).
+  el.insertAdjacentHTML('beforeend', `<span class="list-search-header__hint" id="list-search-header-hint">
+      <span id="list-search-header-hint-text">${escapeHtml(text)}</span> —
+      <button class="fp-btn fp-btn--ghost fp-btn--sm" id="list-search-header-hint-btn"
+              data-action="${escapeHtml(actionName)}">${escapeHtml(actionLabel)}</button>
     </span>`);
 }
 
@@ -1384,17 +1408,28 @@ function initRowInteractions() {
  * handler only when the Browser screen is active and no input/textarea/
  * contenteditable has focus. F2/Delete/Ctrl+C/X/V/Z/Y belong to Task 4.
  */
+function anyScrimOpen() {
+  return [...document.querySelectorAll('.fp-scrim')].some(el => {
+    if (el.hidden) return false;
+    // Every scrim in index.html ships with style="display:none" and is shown
+    // by setting it to 'flex'; getComputedStyle is the fallback for one that
+    // is driven by a class instead.
+    return el.style.display
+      ? el.style.display !== 'none'
+      : getComputedStyle(el).display !== 'none';
+  });
+}
+
 function browserKeydown(e) {
   // Never act on Browser shortcuts while a modal or the command palette has
   // focus/visibility — e.g. Ctrl+Z while a paste-conflict modal is open must
   // not also undo the last file op behind it, and typing in the palette
   // search box must not trigger F2/Delete/etc.
-  const modalScrim = document.getElementById('modal-scrim');
-  const propertiesScrim = document.getElementById('properties-modal-scrim');
-  const paletteOpen = paletteScrim && paletteScrim.style.display !== 'none';
-  if ((modalScrim && modalScrim.style.display !== 'none')
-      || (propertiesScrim && propertiesScrim.style.display !== 'none')
-      || paletteOpen) return;
+  // Hand-listing the scrims meant every dialog added later was missed: the
+  // search More-filters dialog let Delete through to the selection behind it
+  // (pass 2 #86). Ask the DOM instead — every overlay in the app is a
+  // .fp-scrim toggled through its own inline display.
+  if (anyScrimOpen()) return;
 
   const key = e.key;
   const ctrl = e.ctrlKey || e.metaKey;
