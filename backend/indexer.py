@@ -225,6 +225,104 @@ def _missing_paths(rows: list[tuple[int, str]]) -> list[int]:
     return [row_id for row_id, path_str in rows if not os.path.exists(path_str)]
 
 
+# ---------------------------------------------------------------------------
+# Index reconciliation -- the files table follows what the app does to disk.
+#
+# backend.mover performs every mutation and is the only other module that
+# needs the index to move with it; these helpers keep every write to `files`
+# inside this module (see module docstring) so there is still exactly one
+# writer of that table.
+# ---------------------------------------------------------------------------
+
+async def _delete_file_rows(conn: aiosqlite.Connection, where: str, params: tuple) -> int:
+    """Delete `files` rows matching *where*, taking their file_tags with them.
+
+    ``file_tags.file_id`` is declared ``ON DELETE CASCADE``, but SQLite
+    enforces foreign keys *per connection* and only connections that ran
+    ``PRAGMA foreign_keys=ON`` get the cascade. Callers hand in whatever
+    connection they already hold (backend.api's `_db()` does not set the
+    pragma), so the join rows are deleted explicitly rather than hoped for:
+    an orphaned file_tags row inflates GET /tags' count while
+    tagger.paths_for_tag -- an INNER JOIN on `files` -- cannot see it, so the
+    sidebar chip and the `tag:` search it runs disagree forever.
+    """
+    await conn.execute(
+        f"DELETE FROM file_tags WHERE file_id IN (SELECT id FROM files WHERE {where})", params)
+    cur = await conn.execute(f"DELETE FROM files WHERE {where}", params)
+    return cur.rowcount or 0
+
+
+def _self_and_descendants(path: Path) -> tuple[str, str]:
+    """(normalised path, LIKE pattern for everything strictly under it)."""
+    return (os.path.normpath(str(path)),
+            _like_prefix(path) + os.sep + "%")
+
+
+async def forget_rows_under(conn: aiosqlite.Connection, root: Path) -> int:
+    """Drop every `files` row at *root* or under it, existing or not.
+
+    Unlike remove_stale_entries this never consults the disk: it is what
+    "forget this root" (DELETE /index) and "the trash was emptied"
+    (mover.empty_trash) mean -- the rows go whether or not the files are
+    still there.
+    """
+    exact, pattern = _self_and_descendants(root)
+    return await _delete_file_rows(
+        conn,
+        f"path = ? COLLATE NOCASE OR path LIKE ? ESCAPE '{_LIKE_ESCAPE}'",
+        (exact, pattern),
+    )
+
+
+async def forget_root(root: Path) -> int:
+    """forget_rows_under on its own connection, committed. For DELETE /index."""
+    async with aiosqlite.connect(_config.FILEPLUS_DB_PATH) as conn:
+        removed = await forget_rows_under(conn, root)
+        await conn.commit()
+    if removed:
+        logger.info("Forgot %d indexed rows under %s", removed, root)
+    return removed
+
+
+async def reindex_move(conn: aiosqlite.Connection, src: Path, dest: Path,
+                       *, status: str | None = None) -> int:
+    """Point the index at *dest* after *src* was moved/renamed there.
+
+    Rewrites the row for *src* itself (path, filename, extension) and the
+    path prefix of every row beneath it, so a folder rename carries its whole
+    subtree. Any row already recorded at *dest* is dropped first: the
+    destination was replaced, and `files.path` is UNIQUE.
+
+    *status* is written alongside when given -- mover uses 'trashed' so a
+    trashed file stops answering This-PC searches without losing its tags,
+    and 'indexed' to put it back when the trash is undone.
+
+    Returns the number of rows rewritten (0 when nothing under *src* was
+    indexed, which is the common case).
+    """
+    src_exact, src_pattern = _self_and_descendants(src)
+    dest_exact, dest_pattern = _self_and_descendants(dest)
+    await _delete_file_rows(
+        conn,
+        f"path = ? COLLATE NOCASE OR path LIKE ? ESCAPE '{_LIKE_ESCAPE}'",
+        (dest_exact, dest_pattern),
+    )
+    extra = ", status = ?" if status else ""
+    tail = (status,) if status else ()
+    cur = await conn.execute(
+        f"UPDATE files SET path = ? || substr(path, ?){extra} "
+        f"WHERE path LIKE ? ESCAPE '{_LIKE_ESCAPE}'",
+        (dest_exact, len(src_exact) + 1) + tail + (src_pattern,),
+    )
+    rewritten = cur.rowcount or 0
+    cur = await conn.execute(
+        f"UPDATE files SET path = ?, filename = ?, extension = ?{extra} "
+        "WHERE path = ? COLLATE NOCASE",
+        (dest_exact, dest.name, dest.suffix.lower()) + tail + (src_exact,),
+    )
+    return rewritten + (cur.rowcount or 0)
+
+
 async def remove_stale_entries(root: Path | None = None) -> int:
     """Delete database records for files that no longer exist on disk.
 
@@ -252,6 +350,10 @@ async def remove_stale_entries(root: Path | None = None) -> int:
         Number of stale rows removed.
     """
     async with aiosqlite.connect(_config.FILEPLUS_DB_PATH) as conn:
+        # Foreign keys are per-connection in SQLite: without this, the DELETE
+        # below leaves file_tags rows pointing at ids that no longer exist
+        # (scan_directory sets the same pragma for the same reason).
+        await conn.execute("PRAGMA foreign_keys=ON")
         if root is None:
             cursor = await conn.execute("SELECT id, path FROM files")
             rows = list(await cursor.fetchall())
@@ -268,6 +370,7 @@ async def remove_stale_entries(root: Path | None = None) -> int:
         for start in range(0, len(stale_ids), 500):
             chunk = stale_ids[start:start + 500]
             placeholders = ",".join("?" * len(chunk))
+            await conn.execute(f"DELETE FROM file_tags WHERE file_id IN ({placeholders})", chunk)
             await conn.execute(f"DELETE FROM files WHERE id IN ({placeholders})", chunk)
         await conn.commit()
     removed = len(stale_ids)

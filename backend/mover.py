@@ -24,7 +24,7 @@ from pathlib import Path
 from send2trash import send2trash as _send2trash_impl
 
 import backend.config as _config
-from backend import operations_log as ol, stores, tagger, winshell
+from backend import indexer, operations_log as ol, stores, tagger, winshell
 from backend.errors import RefusedError
 from backend.hasher import hash_file
 
@@ -293,6 +293,34 @@ def _result(op_id, op_type, status, src, dest, batch_id) -> dict:
             "dest": str(dest) if dest else None, "batch_id": batch_id}
 
 
+# op types whose src -> dest move must be mirrored into the `files` index,
+# and the status each one leaves behind. GET /search reads that table
+# directly, so without this a rename or a delete done inside FilePlus leaves
+# a row pointing at a path that no longer exists: the This-PC result renders,
+# double-clicking it opens nothing, and GET /file 404s the Inspector.
+# 'trashed' rows keep their tags (a trash is undoable) but are filtered out
+# of GET /search; restore/undo puts them back to 'indexed'.
+_INDEX_FOLLOWS = {"move": "indexed", "rename": "indexed", "restore": "indexed", "trash": "trashed"}
+
+
+async def _reconcile_index(conn, op_type: str, src, dest) -> None:
+    """Move the index rows with the files, after the mutation succeeded.
+
+    Best-effort on purpose: the filesystem is the source of truth and the
+    operation is already done and logged, so a failure here is logged and
+    swallowed rather than turned into a 5xx for a move that worked. A later
+    POST /scan reconciles whatever this missed.
+    """
+    status = _INDEX_FOLLOWS.get(op_type)
+    if status is None or not src or not dest:
+        return
+    try:
+        await indexer.reindex_move(conn, Path(src), Path(dest), status=status)
+        await conn.commit()
+    except Exception:
+        logger.warning("could not reconcile the index for %s %s -> %s", op_type, src, dest, exc_info=True)
+
+
 async def _perform(conn, op_type, src, dest, batch_id, reason, fn, undo_of=None) -> dict:
     """The protocol: log -> act (thread) -> mark. Shared by every mutation."""
     op_id = await ol.log_operation(conn, op_type, str(src) if src else None, str(dest) if dest else None,
@@ -303,6 +331,7 @@ async def _perform(conn, op_type, src, dest, batch_id, reason, fn, undo_of=None)
         await ol.mark_error(conn, op_id, f"{type(exc).__name__}: {exc}")
         raise
     await ol.mark_executed(conn, op_id)
+    await _reconcile_index(conn, op_type, src, dest)
     logger.info("%s: %s -> %s", op_type, src, dest)
     return _result(op_id, op_type, "done", src, dest, batch_id)
 
@@ -372,6 +401,11 @@ async def rename(conn, path, new_name, *, batch_id=None, reason=None, _undo_of=N
     src = await _aguard_operand(path, "write")  # a junction is renamed as the link, not its target
     if not exists_as_link_or_file(src):
         raise RefusedError(f"Source does not exist: {src}")
+    if not src.name:
+        # A drive root (``C:\``) has no name, and Path.with_name() raises a
+        # bare ValueError for it -- which api.py has no handler for, so it
+        # escaped as a 500 with a non-JSON body and a meaningless toast.
+        raise RefusedError("A drive root cannot be renamed here.")
     target = await _aguard(src.with_name(new_name), "write")
     if target.exists() and target != src:
         raise ConflictError(f"'{new_name}' already exists here.")
@@ -678,6 +712,14 @@ async def empty_trash(conn) -> dict:
     except Exception as exc:
         await ol.mark_error(conn, op_id, str(exc)); raise
     await ol.mark_executed(conn, op_id)
+    # The trashed items are gone for good, so their (status='trashed') index
+    # rows go with them -- nothing ever re-scans the trash to notice.
+    try:
+        for r in roots:
+            await indexer.forget_rows_under(conn, r)
+        await conn.commit()
+    except Exception:
+        logger.warning("could not drop index rows for the emptied trash", exc_info=True)
     return {"batches": len(batches), "roots": [str(r) for r in roots], "skipped_roots": skipped_roots}
 
 

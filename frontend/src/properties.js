@@ -34,17 +34,25 @@ const PROPS_FOLDER_TYPES = [
 // which are tuned for a narrow list column rather than a Properties row) ───
 
 /** '1.23 MB (1,289,748 bytes)' — under 1 KB is just 'N bytes' (nothing to
- * round, so no parenthetical duplicate). */
-function formatPropSize(bytes) {
+ * round, so no parenthetical duplicate).
+ *
+ * `partial` prefixes '≥ ', for a folder whose recursive walk hit
+ * winshell.contains_counts' time budget: the byte total that comes back is
+ * whatever it had summed so far (the same partial sum `Contains` already
+ * hedges with '≥'), and printing it as an exact grouped byte count claimed a
+ * precision the backend never had — a re-open gave a different "exact"
+ * number depending on disk speed. */
+function formatPropSize(bytes, partial) {
   if (bytes == null) return '—';
   const n = Number(bytes);
+  const prefix = partial ? '≥ ' : '';
   const grouped = `${n.toLocaleString()} bytes`;
-  if (n < 1024) return grouped;
+  if (n < 1024) return `${prefix}${grouped}`;
   let label;
   if (n < 1048576) label = `${(n / 1024).toFixed(2)} KB`;
   else if (n < 1073741824) label = `${(n / 1048576).toFixed(2)} MB`;
   else label = `${(n / 1073741824).toFixed(2)} GB`;
-  return `${label} (${grouped})`;
+  return `${prefix}${label} (${grouped})`;
 }
 
 /** 'Thursday, September 11, 2026, 4:12:03 PM' from an epoch-seconds float
@@ -238,10 +246,13 @@ function renderGeneral(props) {
   const row = (label, valueHtml) => rows.push(`<dt>${escapeHtml(label)}</dt><dd>${valueHtml}</dd>`);
 
   if (props.is_dir) {
+    // A truncated walk makes size, size_on_disk and contains all lower
+    // bounds — they come from the same abandoned sum.
+    const partial = !!(props.contains && props.contains.truncated);
     row('Type', escapeHtml(props.type_description || 'File folder'));
     row('Location', escapeHtml(props.location));
-    row('Size', escapeHtml(formatPropSize(props.size)));
-    row('Size on disk', escapeHtml(formatPropSize(props.size_on_disk)));
+    row('Size', escapeHtml(formatPropSize(props.size, partial)));
+    row('Size on disk', escapeHtml(formatPropSize(props.size_on_disk, partial)));
     row('Contains', escapeHtml(formatPropContains(props.contains)));
     row('Created', escapeHtml(formatPropDate(props.created)));
     row('Attributes', renderAttributesCell(props, ['read_only', 'hidden', 'archive'], false));

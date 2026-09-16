@@ -30,7 +30,7 @@ from typing import Any
 import backend.config as _config
 from backend.config import BadPathError, OutOfSandboxError, ProtectedPathError, path_guard
 from backend.database import init_db
-from backend.indexer import index_file, scan_directory, remove_stale_entries
+from backend.indexer import index_file, scan_directory, remove_stale_entries, forget_root
 from backend import filetypes as ft, mover, operations_log as ol, searcher, stores, tagger, winshell
 
 logger = logging.getLogger(__name__)
@@ -237,6 +237,19 @@ _MAX_FILES_LIMIT = 1000
 # cannot be expressed in SQL, so it still runs in Python over a window.
 _SEARCH_SCAN_CAP = 5000
 
+# GET /search matches query words with LIKE. `%` and `_` are legal Windows
+# filename characters, so they are escaped rather than left to act as
+# wildcards -- searcher's own matcher does a literal substring find, and the
+# two routes must read the same typed text the same way.
+_LIKE_ESCAPE = "!"
+
+
+def _like_literal(text: str) -> str:
+    """*text* with LIKE's wildcards (and the escape char) neutralised."""
+    for ch in (_LIKE_ESCAPE, "%", "_"):
+        text = text.replace(ch, _LIKE_ESCAPE + ch)
+    return text
+
 # GET /file indexes an unseen file on demand. Hashing is a full read of the
 # file's bytes, so only files up to this size are hashed inline; anything
 # bigger is indexed without a hash (a later POST /scan fills it in). Selecting
@@ -437,11 +450,26 @@ async def search_files(
     whole_word: bool = Query(False),
     limit: int = Query(50),
 ):
-    """Substring search over the index (the `files` table), plus filters.
+    """Name search over the index (the `files` table), plus filters.
 
-    `q`/`limit` keep their original behaviour (LIKE substring on filename or
-    path, row cap) for callers that pass only those two -- e.g. the command
-    palette's file search. Every filter except `whole_word` is applied in
+    `q` is read exactly the way GET /fs/search reads it, because one search
+    bar drives both routes off one typed string and flipping the `in:` chip
+    must not change the query language: the text is split on whitespace and
+    **every** word must occur in the *filename* (AND semantics, case
+    insensitive, LIKE wildcards in the text escaped so `%` and `_` are
+    literal). It used to match the whole string as a single substring of
+    filename OR path, so an ordinary two-word query that worked in folder
+    scope returned nothing from This PC, and a folder-name query returned
+    that folder's whole subtree here but nothing there. Path matching is
+    deliberately gone rather than mirrored into searcher: the renderer
+    highlights index hits with the same per-word spans it computes for live
+    hits (normalizeIndexResults), and a path-only match has none.
+
+    Rows a mutation marked `status='trashed'` are excluded: the file still
+    exists, but inside `.FilePlusTrash`, and offering it as a search result
+    is offering a deleted file.
+
+    Every filter except `whole_word` is applied in
     SQL: `ext`/`min_size`/`max_size`/`modified_*`/`created_*` against their
     own columns, `type` as an extension set derived from
     backend.filetypes.GROUPS (the 'other' group is the complement, and
@@ -463,13 +491,19 @@ async def search_files(
     (`LIMIT ?`), except when `whole_word` is on, which is the one filter SQL
     LIKE cannot express (no word-boundary concept) and therefore still runs
     in Python over a capped `_SEARCH_SCAN_CAP` window.
+
+    `truncated` says whether more matches exist than were returned -- the
+    same signal GET /fs/search gives. The renderer used to fabricate it as
+    `len(results) >= limit`, which is wrong whenever the whole_word pass
+    drops rows after the scan cap.
     """
     limit = min(limit, 1000)
     conditions = []
     params: list = []
-    if q:
-        conditions.append("(filename LIKE ? OR path LIKE ?)")
-        params += [f"%{q}%", f"%{q}%"]
+    for word in (q.split() if q else []):
+        conditions.append(f"filename LIKE ? ESCAPE '{_LIKE_ESCAPE}'")
+        params.append(f"%{_like_literal(word)}%")
+    conditions.append("COALESCE(status, '') != 'trashed'")
     if ext:
         conditions.append("extension = ?")
         params.append("." + ext.lstrip(".").lower())
@@ -515,7 +549,10 @@ async def search_files(
 
     where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
     words = q.split() if (q and whole_word) else []
-    sql_limit = _SEARCH_SCAN_CAP if words else limit
+    # One row past `limit` when SQL can answer on its own: that extra row is
+    # what makes `truncated` a fact rather than the "we returned exactly
+    # `limit`, so probably" guess the renderer was making.
+    sql_limit = _SEARCH_SCAN_CAP if words else limit + 1
 
     async with _db() as conn:
         conn.row_factory = aiosqlite.Row
@@ -528,10 +565,12 @@ async def search_files(
         cur2 = await conn.execute("SELECT root FROM index_roots ORDER BY root")
         indexed_roots = [r[0] for r in await cur2.fetchall()]
 
+    scan_capped = bool(words) and len(rows) >= _SEARCH_SCAN_CAP
     if words:
         rows = [r for r in rows if searcher.match_spans(r["filename"], words, True) is not None]
+    truncated = scan_capped or len(rows) > limit
     results = rows[:limit]
-    return {"results": results, "indexed_roots": indexed_roots}
+    return {"results": results, "indexed_roots": indexed_roots, "truncated": truncated}
 
 
 @app.get("/files/{file_id}")
@@ -1050,20 +1089,43 @@ async def start_index(body: IndexRequest):
 
 @app.get("/index/status")
 async def index_status():
-    """Indexed roots (from index_roots, kept current by scan_directory) plus
-    whether a quick-index scan is running right now."""
+    """Indexed roots (from index_roots, kept current by scan_directory), plus
+    whether a quick-index scan is running right now and how the last one
+    ended.
+
+    `error` is the message _run_index recorded when the background scan
+    raised (None otherwise), alongside the `path`/`count`/`started` it also
+    tracks. Without it "stopped running" and "succeeded" were the same
+    answer, so a failed index reported as "Indexing finished" with nothing
+    to show for it.
+    """
     async with _db() as conn:
         conn.row_factory = aiosqlite.Row
         cur = await conn.execute("SELECT root, file_count, last_run FROM index_roots ORDER BY root")
         rows = await cur.fetchall()
-    return {"roots": [dict(row) for row in rows], "running": app.state.index_state["running"]}
+    state = app.state.index_state
+    return {
+        "roots": [dict(row) for row in rows],
+        "running": state["running"],
+        "error": state.get("error"),
+        "path": state.get("path"),
+        "count": state.get("count"),
+        "started": state.get("started"),
+    }
 
 
 @app.delete("/index")
 async def delete_index_root(root: str = Query(..., description="Absolute path of a previously-indexed root to forget")):
-    """Forget an indexed root: drop its now-stale files rows and its
+    """Forget an indexed root: drop every files row under it and its
     index_roots bookkeeping row. *root* need not still exist on disk --
     this is how a removed/unmounted root gets cleaned out of the index.
+
+    The rows go whether or not the files are still there. This used to call
+    remove_stale_entries, which by construction only deletes rows whose path
+    has *vanished* -- so every still-present file under the removed root kept
+    its row, and GET /search (which reads `files` with no index_roots join)
+    kept returning them, contradicting the confirm modal's promise that the
+    root "will stop appearing in This PC search results".
 
     Mirrors POST /index's guard checks: 403 for a protected system root, and
     409 while any quick-index scan is running -- not just one scanning this
@@ -1077,7 +1139,7 @@ async def delete_index_root(root: str = Query(..., description="Absolute path of
         raise HTTPException(status_code=403, detail="system folders are not indexed")
     if app.state.index_state["running"]:
         raise HTTPException(status_code=409, detail="An index is already running")
-    removed = await remove_stale_entries(resolved)
+    removed = await forget_root(resolved)
     async with _db() as conn:
         await conn.execute("DELETE FROM index_roots WHERE root = ?", (str(resolved),))
         await conn.commit()

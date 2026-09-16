@@ -245,13 +245,19 @@ async function loadIndexStatus() {
   const running = !!status.running;
   if (runningEl) runningEl.hidden = !running;
   const roots = status.roots || [];
+  // A background scan that raised leaves no index_roots row, so without this
+  // line the pane simply repaints with the root absent and says nothing —
+  // "it failed" and "it found nothing" looked identical.
+  const failure = (!running && status.error)
+    ? `<p class="settings-row__desc">Last index failed: ${escapeHtml(String(status.error))}</p>`
+    : '';
   if (!roots.length) {
-    host.innerHTML = `<p class="settings-row__desc">Nothing is indexed yet. Index a folder to search it from “This PC”.</p>`;
+    host.innerHTML = `${failure}<p class="settings-row__desc">Nothing is indexed yet. Index a folder to search it from “This PC”.</p>`;
   } else {
     // Two lines per root rather than four columns: the Settings pane shares
     // its width with the Inspector, and a 4-column table squeezes the path
     // (the one thing that must stay readable) down to nothing there.
-    host.innerHTML = `<div class="settings-index__table" role="list" aria-label="Indexed roots">
+    host.innerHTML = `${failure}<div class="settings-index__table" role="list" aria-label="Indexed roots">
       ${roots.map(r => `<div class="settings-index__row" role="listitem">
         <span class="settings-index__main">
           <span class="settings-index__root fp-mono" title="${escapeHtml(r.root)}">${escapeHtml(r.root)}</span>
@@ -302,7 +308,15 @@ function removeIndexRoot(root) {
     confirmLabel: 'Remove',
     onConfirm: () => {
       API.del('/index', { root })
-        .then(() => { showToast(`Removed ${pathBaseName(root) || root} from the index`, 'default'); loadIndexStatus(); })
+        .then((res) => {
+          // `removed` is now the real number of rows dropped (it used to be
+          // the stale-sweep's count, which was 0 whenever the files were
+          // still on disk — i.e. always).
+          const n = res && Number(res.removed);
+          const suffix = n ? ` (${n.toLocaleString()} files)` : '';
+          showToast(`Removed ${pathBaseName(root) || root} from the index${suffix}`, 'default');
+          loadIndexStatus();
+        })
         .catch(err => showToast(`Failed to remove: ${formatApiError(err)}`, 'error'));
     },
   });

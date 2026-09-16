@@ -258,6 +258,15 @@ async def init_db(db_path: Path | None = None) -> None:
         for stmt in ALL_INDEXES:
             await db.execute(stmt)
 
+        # One-off repair, cheap enough to run every start: until the
+        # foreign-keys pragma was added to remove_stale_entries, deleting a
+        # `files` row left its file_tags rows behind (SQLite enforces foreign
+        # keys per connection, so the ON DELETE CASCADE never fired). Those
+        # orphans inflate GET /tags' count while tagger.paths_for_tag -- an
+        # INNER JOIN on `files` -- cannot see them, so a sidebar tag chip
+        # searches to zero results. No schema change, hence no version bump.
+        await db.execute("DELETE FROM file_tags WHERE file_id NOT IN (SELECT id FROM files)")
+
         version = await _get_schema_version(db)
         if version < CURRENT_SCHEMA_VERSION:
             logger.info("Migrating schema v%d → v%d", version, CURRENT_SCHEMA_VERSION)

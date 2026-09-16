@@ -286,7 +286,11 @@ function buildParams() {
   const tag = searchChipValue('tag');
   if (tag) params.tag = tag;
 
-  if (searchChipValue('hidden')) params.hidden = true;
+  // The `hidden:` chip is a per-search override *on top of* the global
+  // ui.show_hidden setting GET /fs/list is always called with — without the
+  // browserState half, a hidden file the user can see in the listing was
+  // unfindable one keystroke later.
+  if (browserState.showHidden || searchChipValue('hidden')) params.hidden = true;
   if (searchChipValue('whole_word')) params.whole_word = true;
 
   return params;
@@ -322,7 +326,13 @@ function normalizeIndexResults(payload, query) {
   });
   return {
     results,
-    truncated: results.length >= SEARCH_LIMIT,
+    // GET /search reports truncation for real (it asks for one row past the
+    // limit, and knows when the whole_word pass ran against a capped scan
+    // window). The `results.length >= SEARCH_LIMIT` guess below is only the
+    // fallback for a backend that predates the field.
+    truncated: typeof payload.truncated === 'boolean'
+      ? payload.truncated
+      : results.length >= SEARCH_LIMIT,
     indexed_roots: payload.indexed_roots || [],
   };
 }
@@ -489,7 +499,13 @@ async function indexMissingDrives() {
     showToast(`Indexing ${drives[i]} (${i + 1} of ${drives.length})…`, 'default');
     try {
       await API.post('/index', { path: drives[i] });
-      await waitForIndexIdle();
+      // The scan runs in the background, so its failure arrives as
+      // /index/status's `error`, not as a rejection here.
+      const status = await waitForIndexIdle();
+      if (status && status.error) {
+        showToast(`Failed to index ${drives[i]}: ${status.error}`, 'error');
+        return;
+      }
     } catch (err) {
       showToast(`Failed to index ${drives[i]}: ${formatApiError(err)}`, 'error');
       return;
@@ -502,14 +518,16 @@ async function indexMissingDrives() {
 
 /** Polls GET /index/status until the running scan finishes (or the cap is
  * reached) — POST /index answers 409 while one is in flight, so a sequence of
- * them has to wait between calls. */
+ * them has to wait between calls. Returns the last status seen (whose
+ * `error` is how a background scan reports that it raised) or null. */
 async function waitForIndexIdle({ tries = 600, intervalMs = 500 } = {}) {
   for (let i = 0; i < tries; i++) {
     let status;
-    try { status = await API.get('/index/status'); } catch (_) { return; }
-    if (!status || !status.running) return;
+    try { status = await API.get('/index/status'); } catch (_) { return null; }
+    if (!status || !status.running) return status || null;
     await new Promise(resolve => setTimeout(resolve, intervalMs));
   }
+  return null;
 }
 
 // ── History ───────────────────────────────────────────────────────────────────

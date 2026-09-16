@@ -1368,9 +1368,9 @@ function browserKeydown(e) {
   }
   if (ctrl && key.toLowerCase() === 'x') { e.preventDefault(); fileops.cutSelection(); return; }
   if (ctrl && key.toLowerCase() === 'c') { e.preventDefault(); fileops.copySelection(); return; }
-  if (ctrl && key.toLowerCase() === 'v') { e.preventDefault(); if (browserState.path) fileops.pasteInto(browserState.path); return; }
+  if (ctrl && key.toLowerCase() === 'v') { e.preventDefault(); if (browserState.path) fileops.pasteInto(browserState.path).catch(fileopsReported); return; }
   if (key === 'F2') { e.preventDefault(); if (canRenameSelection() && browserState.focus) startInlineRename(browserState.focus); return; }
-  if (key === 'Delete') { e.preventDefault(); fileops.trashSelection(); return; }
+  if (key === 'Delete') { e.preventDefault(); fileops.trashSelection().catch(fileopsReported); return; }
 
   switch (key) {
     case 'ArrowDown': e.preventDefault(); moveFocus(1, { shift: e.shiftKey }); break;
@@ -1385,7 +1385,7 @@ function browserKeydown(e) {
       // no-ops on an empty selection, so "nothing selected" falls out for
       // free rather than needing its own check here.
       const backspaceDeletes = !!(window.__fpConfig && window.__fpConfig['ui.backspace_deletes']);
-      if (backspaceDeletes) fileops.trashSelection();
+      if (backspaceDeletes) fileops.trashSelection().catch(fileopsReported);
       else navUp();
       break;
     }

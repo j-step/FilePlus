@@ -356,6 +356,16 @@ scope chip, `/search` extended with the same filters over the SQLite index plus 
 `frontend/src/filetypes.js` by `scripts/build_filetypes.py`, gated in `verify.ps1`). Discord-style
 filter chips and results-in-the-list live in `search.js` (Task 1, Task 2, Task 14; spec §8).
 
+**Pass 2 (2026-09-15, api-contracts).** The two routes now read one typed `q` the same way: `GET
+/search` splits it on whitespace and requires every word in the **filename** (LIKE wildcards in the
+text escaped), exactly as `searcher.match_spans` does — it used to match the whole string as one
+substring of filename *or* path, so the same text meant two different queries either side of the
+`in:` chip. `GET /search` also returns a real `truncated` flag (it asks for one row past `limit`), and
+excludes rows a mutation marked `status='trashed'`. `GET /index/status` gained `error`/`path`/`count`/
+`started` so a background index that raised stops reporting as "finished". Every `mover` mutation now
+reconciles the `files` table in the same call (`indexer.reindex_move` / `forget_rows_under`), so a
+rename, move or delete done inside FilePlus no longer leaves This-PC search pointing at a dead path.
+
 ### 12. Properties panel and file icons (new in 2C)
 **Done (2026-09-13).** `GET /fs/properties`, `GET /fs/properties/details` (shell property store,
 `pywin32`, 503 when absent), `POST /fs/attributes` and `POST /fs/folder-type` (both logged + undoable)
@@ -790,6 +800,11 @@ density got its missing CSS rule (Task 8, spec §3.14); "Backspace deletes" live
 **Done in 2C (2026-09-13).** Real data replaces the placeholder: `GET /index/status` (indexed roots,
 file counts, last-run time), Re-index and Remove-from-index buttons per root. The folder context-menu
 item is relabelled "Index for This PC search" (Task 1, Task 14; spec §8.7).
+
+**Pass 2 (2026-09-15).** `DELETE /index` drops every `files` row under the root (whether or not the
+file still exists) instead of running the stale sweep, which only ever deleted rows whose path had
+vanished — so "Remove" now really does what the confirm modal promises, and `removed` is the real
+count. The pane also shows `GET /index/status`'s `error` when the last background index failed.
 
 - Indexed drives: `config['scan.indexed_drives']` JSON array. Add/remove via POST.
 - Ignore patterns: `config['scan.ignore_patterns']` JSON array.

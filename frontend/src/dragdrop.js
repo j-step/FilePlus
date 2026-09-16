@@ -358,7 +358,7 @@ function finishDrop() {
     return;
   }
   if (!paths.length) return;
-  fileops.moveTo(paths, target.path, mode === 'copy');
+  fileops.moveTo(paths, target.path, mode === 'copy').catch(fileopsReported);
 }
 
 /** Arms the one-shot click swallow for the click the browser is about to

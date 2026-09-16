@@ -2487,7 +2487,7 @@ document.addEventListener('click', e => {
       break;
     case 'cm-paste':
     case 'cm-paste-here':
-      fileops.pasteInto(contextTargetDir());
+      fileops.pasteInto(contextTargetDir()).catch(fileopsReported);
       break;
     case 'cm-rename': {
       const path = contextTargetPath();
@@ -2495,13 +2495,13 @@ document.addEventListener('click', e => {
       break;
     }
     case 'cm-delete':
-      fileops.trashSelection();
+      fileops.trashSelection().catch(fileopsReported);
       break;
     case 'cm-new-folder':
-      fileops.newFolder(contextTargetDir());
+      fileops.newFolder(contextTargetDir()).catch(fileopsReported);
       break;
     case 'cm-new-file':
-      fileops.newFile(contextTargetDir());
+      fileops.newFile(contextTargetDir()).catch(fileopsReported);
       break;
     case 'cm-refresh':
       refreshDirectory();
