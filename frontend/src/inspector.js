@@ -523,6 +523,9 @@ function setInspectorOpen(open, { persist = true } = {}) {
   if (!inspector) return;
   inspector.classList.toggle('inspector--open', open);
   toggleBtn?.classList.toggle('fp-icon-btn--active', open);
+  // The panel is display:none while closed, so its tab underline could not be
+  // measured until now (moveTabIndicator, app.js, skips a zero-width tab).
+  if (open) moveTabIndicator(inspector.querySelector('.fp-inspector__tabs'));
   if (persist && typeof saveSetting === 'function') saveSetting('ui.inspector_open', open);
 }
 

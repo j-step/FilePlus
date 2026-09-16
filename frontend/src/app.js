@@ -1572,32 +1572,86 @@ async function triggerScan(path) {
 }
 
 // ── Backend health ─────────────────────��──────────────────────���───────────────
+// Last state the pill was painted with. checkBackend() is polled every 30s,
+// and an offline/error -> ok transition is the only signal the renderer gets
+// that a backend which was down (or that started AFTER the renderer) is now
+// up -- every one-shot startup loader swallows its own failure silently, so
+// without this the sidebar/config/known-folders stayed empty for the rest of
+// the session. 'unknown' (the first poll) deliberately does NOT trigger a
+// refresh: init runs the same loaders itself.
+let _backendState = 'unknown';
+
 async function checkBackend() {
   const el = document.getElementById('status-backend');
   if (!el) return;
-  const dot = el.querySelector('.fp-statusbar__backend-dot');
   const label = el.querySelector('.fp-statusbar__backend-label');
+  const prev = _backendState;
+  const paint = (state, text) => {
+    _backendState = state;
+    el.dataset.state = state;
+    if (label) label.textContent = text;
+  };
   try {
     const data = await API.get('/health', null, { signal: AbortSignal.timeout(2000) });
-    el.dataset.state = 'ok';
-    if (label) label.textContent = 'Backend';
     window.__fpHealth = data; // read by settings.js's Data-pane "Writes" line
+    // /health is the ONE route the backend's token middleware exempts, so a
+    // 200 here does not prove our X-FilePlus-Token is the one it wants. It
+    // does report whether auth is on; when it is and the bridge handed us no
+    // token, every other route 401s -- say so instead of painting a green
+    // pill over an app that can't fetch anything.
+    if (data && data.auth && !apiToken()) {
+      paint('error', 'Backend auth');
+      return false;
+    }
+    paint('ok', 'Backend');
     setWriteLockHint(data.write_unlocked === false);
     if (typeof updateWritesStatusLine === 'function') updateWritesStatusLine();
+    if (prev === 'offline' || prev === 'error') refreshBackendData();
     return true;
   } catch (err) {
     // ApiError means the backend answered but with a non-2xx status; any
     // other rejection (network error, the 2s AbortSignal firing) means it
     // didn't answer at all.
-    if (err instanceof ApiError) {
-      el.dataset.state = 'error';
-      if (label) label.textContent = 'Backend error';
-    } else {
-      el.dataset.state = 'offline';
-      if (label) label.textContent = 'Backend offline';
-    }
+    paint(err instanceof ApiError ? 'error' : 'offline',
+          err instanceof ApiError ? 'Backend error' : 'Backend offline');
     return false;
   }
+}
+
+/** Re-runs every one-shot startup loader: the config cache and the settings
+ * derived from it, the known-folder map, the sidebar's drives/pins/tags/Quick
+ * Access, and Home's two lists when Home is what the active tab is showing.
+ *
+ * Called on an offline/error -> ok health transition and by the status pill's
+ * own 'retry-backend-connect' click. Every loader degrades silently on
+ * failure, so this is safe to call at any time and never throws. */
+async function refreshBackendData() {
+  await loadConfig();
+  applySettingsFromConfig();
+  // fpLoadKnownFolders() returns its cache when already populated; drop it so
+  // a reconnect actually re-fetches (on the failing path it was never set).
+  delete window.__fpKnownFolders;
+  await fpLoadKnownFolders();
+  await Promise.allSettled([loadDrives(), loadPins(), loadSidebarTags()]);
+  loadQuickAccess();
+  if (activeTab()?.screen === 'home') { loadRecent(); loadFavorites(); }
+}
+
+/** The status pill's click/Enter handler: re-probe /health now (rather than
+ * waiting out the rest of the 30s poll) and repopulate the shell if it
+ * answers. The only reconnect affordance in the UI -- the A.16 offline
+ * banner markup is still commented out in index.html. */
+async function refreshBackendConnection() {
+  const el = document.getElementById('status-backend');
+  const label = el?.querySelector('.fp-statusbar__backend-label');
+  if (el) {
+    _backendState = 'checking';
+    el.dataset.state = 'checking';
+    if (label) label.textContent = 'Checking…';
+  }
+  const ok = await checkBackend();
+  if (ok) await refreshBackendData();
+  else showToast('Backend is not reachable — is it running?', 'error');
 }
 
 /** Shows/hides the "writes: sandbox" status-bar hint (health.write_unlocked === false). */
@@ -1620,7 +1674,7 @@ async function loadDrives() {
   if (!container) return;
   let driveList;
   try {
-    driveList = await API.get('/drives');
+    driveList = await API.get('/drives', null, apiTimeout());
   } catch (err) {
     console.warn('[fp-drives] failed to load drives:', formatApiError(err));
     return;
@@ -1653,7 +1707,7 @@ async function loadPins() {
   if (!container) return;
   let pinList;
   try {
-    pinList = await API.get('/pins');
+    pinList = await API.get('/pins', null, apiTimeout());
   } catch (err) {
     console.warn('[fp-pins] failed to load pins:', formatApiError(err));
     return;
@@ -1686,9 +1740,15 @@ async function loadSidebarTags() {
   if (!chips) return;
   let tags;
   try {
-    tags = await API.get('/tags');
+    tags = await API.get('/tags', null, apiTimeout());
   } catch (err) {
+    // Hide the shelf on failure too: the markup authors it hidden and this
+    // function is what reveals it, so a failed /tags must not leave the
+    // "Tags" label and "View all" button standing over zero chips -- exactly
+    // the empty shelf this section exists to avoid.
     console.warn('[fp-tags] failed to load tags:', formatApiError(err));
+    if (section) section.hidden = true;
+    if (label) label.hidden = true;
     return;
   }
   window.__fpTags = Array.isArray(tags) ? tags : [];
@@ -1727,7 +1787,12 @@ function quickAccessHiddenIds() {
  * Safe to re-run any time either source changes (a Settings checkbox, the
  * sidebar-item "Remove from Quick Access" menu action). */
 function loadQuickAccess() {
-  const list = window.__fpKnownFolderList || [];
+  // fpLoadKnownFolders() only assigns __fpKnownFolderList when GET
+  // /known-folders actually answered, so "not an array" means the fetch never
+  // succeeded -- a different statement from "this PC has none", and the
+  // Settings copy below says so.
+  const loaded = Array.isArray(window.__fpKnownFolderList);
+  const list = loaded ? window.__fpKnownFolderList : [];
   const hidden = new Set(quickAccessHiddenIds());
 
   const sidebar = document.getElementById('sb-quick-access-folders');
@@ -1738,7 +1803,7 @@ function loadQuickAccess() {
     sidebar.innerHTML = visible.map(renderQuickAccessItem).join('');
   }
 
-  renderQuickAccessSettings(list, hidden);
+  renderQuickAccessSettings(list, hidden, loaded);
 }
 
 function renderQuickAccessItem(f) {
@@ -1755,12 +1820,14 @@ function renderQuickAccessItem(f) {
  * that can appear in Quick Access, checked = currently shown. `list` is the
  * raw GET /known-folders result, `hiddenIds` the Set of currently-hidden ids
  * (both already computed by loadQuickAccess(), the sole caller). */
-function renderQuickAccessSettings(list, hiddenIds) {
+function renderQuickAccessSettings(list, hiddenIds, loaded = true) {
   const container = document.getElementById('settings-quick-access-list');
   if (!container) return;
   const items = QUICK_ACCESS_IDS.map(id => list.find(f => f && f.id === id)).filter(Boolean);
   if (!items.length) {
-    container.innerHTML = '<div class="settings-row__desc">No known folders detected on this PC.</div>';
+    container.innerHTML = loaded
+      ? '<div class="settings-row__desc">No known folders detected on this PC.</div>'
+      : '<div class="settings-row__desc">Couldn’t read this PC’s folders — the backend isn’t reachable.</div>';
     return;
   }
   container.innerHTML = items.map((f, i) => `
@@ -1810,16 +1877,31 @@ function initWindowControls() {
 }
 
 // ── Underline tab indicator (sub-tabs within screens) ─────────────��──────────
+/** Slides a .fp-tabs container's accent underline under `tab` (default: the
+ * container's currently-active item). The single writer of
+ * indicator.style.left/width, so every way a tab becomes active -- a real
+ * click (initUnderlineTabs below), switchInspectorTab(), switchPropertiesTab()
+ * -- moves the underline with the active class instead of stranding it under
+ * whichever tab was last clicked. */
+function moveTabIndicator(container, tab) {
+  if (!container) return;
+  const indicator = container.querySelector('.fp-tabs__indicator');
+  const target = tab || container.querySelector('.fp-tabs__item--active');
+  // offsetWidth 0 = the container isn't laid out yet (a closed inspector is
+  // display:none, a closed Properties modal likewise). Measuring then would
+  // pin the underline at width 0; leave it where it is and let whoever
+  // reveals the container call again.
+  if (!indicator || !target || target.offsetWidth === 0) return;
+  indicator.style.left  = `${target.offsetLeft}px`;
+  indicator.style.width = `${target.offsetWidth}px`;
+}
+
 function initUnderlineTabs(container) {
   if (!container) return;
   const tabs     = container.querySelectorAll('.fp-tabs__item');
-  const indicator = container.querySelector('.fp-tabs__indicator');
   function setActive(tab) {
     tabs.forEach(t => t.classList.toggle('fp-tabs__item--active', t === tab));
-    if (indicator && tab) {
-      indicator.style.left  = `${tab.offsetLeft}px`;
-      indicator.style.width = `${tab.offsetWidth}px`;
-    }
+    moveTabIndicator(container, tab);
     const targetPane = tab?.dataset.tab;
     container.closest('.screen')?.querySelectorAll('[data-pane]').forEach(pane => {
       pane.style.display = pane.dataset.pane === targetPane ? '' : 'none';
@@ -1851,7 +1933,7 @@ function initUnderlineTabs(container) {
 // In-scope actions are handled here; out-of-scope show "not implemented" stub.
 const IN_SCOPE_ACTIONS = new Set([
   'navigate-screen', 'navigate-path', 'switch-tab', 'close-tab', 'new-tab', 'scan',
-  'toggle-sidebar', 'toggle-inspector', 'toggle-theme',
+  'toggle-sidebar', 'toggle-inspector', 'toggle-theme', 'retry-backend-connect',
   'focus-search', 'filter-by-tag', 'open-tag-canvas', 'close-tag-canvas',
   'tag-canvas-select',
   // Ask File+ (Task 15) — shell only, no model wired until Stage 3.
@@ -1921,6 +2003,7 @@ function switchInspectorTab(name) {
   inspector.querySelectorAll('.fp-inspector__pane').forEach(p => {
     p.hidden = p.dataset.pane !== name;
   });
+  moveTabIndicator(inspector.querySelector('.fp-inspector__tabs'), targetTab);
 }
 
 /** Flips ui.show_hidden — shared by the empty-area menu's "Show hidden
@@ -1944,6 +2027,9 @@ document.addEventListener('click', e => {
   switch (action) {
     case 'navigate-screen':
       switchScreen(btn.dataset.screen || btn.dataset.target);
+      break;
+    case 'retry-backend-connect':
+      refreshBackendConnection();
       break;
     case 'navigate-path': {
       // openBrowserAt() → loadDirectory() → onNavigated() sets the tab label
@@ -2986,6 +3072,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   initSearch();
   initToolbarNarrowMode();
   checkBackend();
+  // The status pill is the reconnect affordance (role="button" in the
+  // markup): its click reaches the delegated switch, but a <span> never
+  // activates on a key press by itself.
+  document.getElementById('status-backend')?.addEventListener('keydown', e => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); refreshBackendConnection(); }
+  });
   const _backendPollId = setInterval(checkBackend, 30_000);
   window.addEventListener('beforeunload', () => clearInterval(_backendPollId), { once: true });
 
@@ -3081,27 +3173,43 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Restore persisted settings (theme, density, accent, font scale)
   restoreSettings();
 
-  // Load the config cache, then everything that reads from it — Downloads'
-  // real path and the show-hidden default — followed by the sidebar's live
-  // drives/pins. Sequenced (not Promise.all'd) per the plan's init order;
-  // each step degrades to a harmless no-op on backend failure.
-  await loadConfig();
-  applySettingsFromConfig();
-  // Before the first listing renders: iconFor() decides the special folder
-  // icons (Desktop, Downloads, …) by matching a path against this map, and
-  // falls back to guessing from the folder's name until it has loaded.
-  await fpLoadKnownFolders();
-  await loadDrives();
-  await loadPins();
-  await loadSidebarTags();
-  loadQuickAccess();
-  await checkCrashRecovery();
-
   // Always start on Home — the previous "restore last active screen"
   // behaviour landed users on whatever they last visited (often Browser),
   // which was disorienting on cold start. Tabs preserve their own state
   // through `activateTab()`; this only sets the initial paint.
+  //
+  // Painted BEFORE the backend chain below, not after it: the click
+  // dispatcher is live from parse time, so a user who clicks a drive or
+  // Quick Access item while those awaits are still running used to be yanked
+  // back to Home the moment they finished. Home also shows its own empty
+  // states immediately this way instead of staying literally blank until the
+  // last await lands.
   switchScreen('home');
+
+  // Load the config cache, then everything that reads from it — Downloads'
+  // real path and the show-hidden default — followed by the sidebar's live
+  // drives/pins. loadConfig/fpLoadKnownFolders stay ordered (the settings
+  // apply and the icon map depend on them); the three independent sidebar
+  // loaders run together. Each step degrades to a harmless no-op on backend
+  // failure, and every request is bounded by apiTimeout() so a backend that
+  // has bound its port but not finished starting can't stall init forever.
+  try {
+    await loadConfig();
+    applySettingsFromConfig();
+    restoreSettingsPane();
+    // Before the first listing renders: iconFor() decides the special folder
+    // icons (Desktop, Downloads, …) by matching a path against this map, and
+    // falls back to guessing from the folder's name until it has loaded.
+    await fpLoadKnownFolders();
+    await Promise.allSettled([loadDrives(), loadPins(), loadSidebarTags()]);
+    loadQuickAccess();
+    await checkCrashRecovery();
+  } catch (err) {
+    // Nothing above is supposed to reject (each loader swallows its own
+    // failure), but an unhandled one here would silently abort the rest of
+    // init with no trace at all.
+    console.warn('[fp-init] startup data load failed:', err);
+  }
 
   // ── A.17 Edge case INTEGRATION stubs ──────────────────────────────────────
   // #2  External folder missing on navigation → show fp-error-banner "This folder no longer exists"
@@ -3127,8 +3235,14 @@ document.addEventListener('DOMContentLoaded', async () => {
  */
 async function checkCrashRecovery() {
   let rows;
-  try { rows = await API.get('/operations/pending'); } catch (_) { return; }
+  try { rows = await API.get('/operations/pending', null, apiTimeout()); } catch (_) { return; }
   if (!rows || !rows.length) return;
   const body = rows.map(r => `${r.op_type}: ${r.source_path || '—'} → ${r.dest_path || '—'} (${r.resolution || 'unresolved'})`).join('\n');
   openModal('warn', { title: 'Recovered operations', body, confirmLabel: 'OK' });
+  // The report is one-shot: the backend holds its startup reconciliation
+  // result in memory for the whole of its own lifetime, so without this ack a
+  // renderer reload (Ctrl+R) or an Electron relaunch against the same backend
+  // would re-open this exact modal on every start until the backend itself
+  // was restarted.
+  try { await API.post('/operations/pending/ack', {}, apiTimeout()); } catch (_) { /* shown either way */ }
 }

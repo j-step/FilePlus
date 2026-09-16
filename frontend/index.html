@@ -141,8 +141,12 @@
         <!-- The top 8 real tags by file count (GET /tags) — app.js's
              loadSidebarTags(). The whole section hides when nothing is
              tagged yet; a chip runs a This PC search filtered to that tag. -->
-        <div class="fp-sidebar__section-label" id="sb-tags-label">Tags</div>
-        <div id="sb-tags">
+        <!-- Authored hidden: app.js's loadSidebarTags() is what reveals the
+             section once GET /tags has answered with at least one used tag,
+             so neither a failed request nor the window before it resolves
+             leaves an empty "Tags" shelf standing in the sidebar. -->
+        <div class="fp-sidebar__section-label" id="sb-tags-label" hidden>Tags</div>
+        <div id="sb-tags" hidden>
           <div id="sb-tags-chips"></div>
           <button class="fp-btn fp-btn--ghost fp-sidebar__tags-more"
                   data-action="open-tag-canvas" title="View all tags">View all →</button>
@@ -2943,7 +2947,8 @@
       </span>
       <!-- Backend connection indicator -->
       <span class="fp-statusbar__backend" id="status-backend" data-state="unknown"
-            title="Backend connection" style="display:flex;align-items:center;gap:4px">
+            role="button" tabindex="0" data-action="retry-backend-connect"
+            title="Backend connection - click to reconnect" style="display:flex;align-items:center;gap:4px">
         <span class="fp-statusbar__backend-dot" style="width:6px;height:6px;border-radius:50%;flex-shrink:0"></span>
         <span class="fp-statusbar__backend-label" style="font:400 var(--t-small) var(--font-ui);color:var(--text-tertiary)">Backend</span>
       </span>

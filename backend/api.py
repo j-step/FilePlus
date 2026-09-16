@@ -1349,6 +1349,23 @@ async def operations_pending():
     return list(app.state.reconciled)  # filled at startup (Task 9); [] until then
 
 
+@app.post("/operations/pending/ack")
+async def operations_pending_ack():
+    """Acknowledge the startup reconciliation report, clearing it.
+
+    ``app.state.reconciled`` is computed once, in the lifespan, and nothing
+    else ever drains it -- so the renderer's crash-recovery modal
+    (checkCrashRecovery, frontend/src/app.js) re-opened on every renderer
+    start, and on every Ctrl+R reload, for as long as the *backend* process
+    lived. The renderer posts here once it has shown the report; the rows
+    themselves stay in ``operations_log`` (this touches no database row and no
+    file -- it only forgets the in-memory "show this once" report).
+    """
+    count = len(app.state.reconciled)
+    app.state.reconciled = []
+    return {"acknowledged": count}
+
+
 @app.post("/operations/{op_id}/undo")
 async def undo_operation(op_id: int):
     async with _db() as conn:

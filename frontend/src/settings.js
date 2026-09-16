@@ -12,7 +12,10 @@
 // `config['key'] || fallback` so a missing/empty cache degrades gracefully.
 async function loadConfig() {
   try {
-    window.__fpConfig = await API.get('/config');
+    // Bounded: uvicorn binds the port before the FastAPI lifespan finishes,
+    // so an unbounded GET /config can sit connected-but-unanswered for the
+    // whole of a slow startup and stall everything init awaits after it.
+    window.__fpConfig = await API.get('/config', null, apiTimeout());
   } catch (err) {
     window.__fpConfig = {};
   }
@@ -332,7 +335,19 @@ function switchSettingsPane(pane) {
   document.querySelectorAll('.settings-pane').forEach(p => {
     p.style.display = p.dataset.pane === pane ? '' : 'none';
   });
-  sessionStorage.setItem('fp-settings-pane', pane);
+  try { sessionStorage.setItem('fp-settings-pane', pane); } catch (_) { /* storage disabled */ }
+}
+
+/** Reopens the Settings screen on the pane last used in this window --
+ * the read side of switchSettingsPane()'s sessionStorage write, which had no
+ * reader at all (Settings always reverted to the statically-active
+ * Personalization pane). Ignores a stored pane the current markup no longer
+ * has, which would otherwise hide every pane. */
+function restoreSettingsPane() {
+  let pane = null;
+  try { pane = sessionStorage.getItem('fp-settings-pane'); } catch (_) { /* storage disabled */ }
+  if (!pane || !document.querySelector(`.settings-nav__item[data-pane="${pane}"]`)) return;
+  switchSettingsPane(pane);
 }
 
 function applyDensity(density) {

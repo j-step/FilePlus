@@ -5026,6 +5026,10 @@ body.is-dragging { cursor: default; }
 #status-backend[data-state="error"]    .fp-statusbar__backend-dot { background: var(--warn); }
 #status-backend[data-state="offline"]  .fp-statusbar__backend-dot { background: var(--bad); }
 #status-backend[data-state="ok"]       .fp-statusbar__backend-label { color: var(--good); }
+/* The pill is the reconnect affordance (data-action="retry-backend-connect"):
+   clicking it re-probes /health and repopulates the shell. */
+#status-backend { cursor: pointer; border-radius: var(--r-sm); }
+#status-backend:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 /* A.1.5 — Live task indicator pulse */
 @keyframes fp-statusbar-pulse {

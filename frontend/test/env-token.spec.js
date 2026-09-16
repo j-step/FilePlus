@@ -7,7 +7,8 @@ const { test, expect } = require('@playwright/test');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { parseEnvValue, readEnvFileToken, readEnvFileValue, readTokenFile, resolveApiToken } = require('../envToken');
+const { parseEnvValue, readEnvFileToken, readEnvFileValue, readTokenFile, resolveApiToken,
+        resolveApiPort, DEFAULT_API_PORT, CSP_ALLOWED_PORTS } = require('../envToken');
 
 test.describe('parseEnvValue', () => {
   test('plain value', () => {
@@ -152,5 +153,57 @@ test.describe('resolveApiToken', () => {
     fs.writeFileSync(path.join(dir, '.env'), 'FILEPLUS_API_TOKEN=from-env-file\n');
     fs.writeFileSync(path.join(dir, '.fileplus-token'), 'minted-token\n');
     expect(resolveApiToken(dir, {})).toBe('from-env-file');
+  });
+});
+
+// Pass 2, finding #31 -- index.html's CSP connect-src names exactly two ports,
+// so a FILEPLUS_PORT outside that pair is unreachable from the renderer: every
+// fetch is blocked inside the page and the app reports "Backend offline" for a
+// backend that is up. resolveApiPort still returns it (silently retargeting a
+// DIFFERENT backend would be worse) but must say so.
+test.describe('resolveApiPort', () => {
+  let dir;
+  let warnings;
+  const warn = (msg) => warnings.push(msg);
+
+  test.beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fileplus-apiport-'));
+    warnings = [];
+  });
+
+  test.afterEach(() => {
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  test('defaults to 9876 with nothing configured', () => {
+    expect(resolveApiPort(dir, {}, warn)).toBe(DEFAULT_API_PORT);
+    expect(warnings).toEqual([]);
+  });
+
+  test('reads the port from .env and from the process environment', () => {
+    fs.writeFileSync(path.join(dir, '.env'), 'FILEPLUS_PORT=9877\n');
+    expect(resolveApiPort(dir, {}, warn)).toBe(9877);
+    expect(resolveApiPort(dir, { FILEPLUS_PORT: '9876' }, warn)).toBe(9876);
+    expect(warnings).toEqual([]);
+  });
+
+  test('every CSP-allowed port resolves without a warning', () => {
+    for (const port of CSP_ALLOWED_PORTS) {
+      expect(resolveApiPort(dir, { FILEPLUS_PORT: String(port) }, warn)).toBe(port);
+    }
+    expect(warnings).toEqual([]);
+  });
+
+  test('a port outside the CSP list is returned WITH a warning naming the CSP', () => {
+    expect(resolveApiPort(dir, { FILEPLUS_PORT: '9880' }, warn)).toBe(9880);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain('Content-Security-Policy');
+    expect(warnings[0]).toContain('9880');
+  });
+
+  test('an unusable value falls back to the default with a warning', () => {
+    expect(resolveApiPort(dir, { FILEPLUS_PORT: 'not-a-port' }, warn)).toBe(DEFAULT_API_PORT);
+    expect(resolveApiPort(dir, { FILEPLUS_PORT: '70000' }, warn)).toBe(DEFAULT_API_PORT);
+    expect(warnings).toHaveLength(2);
   });
 });

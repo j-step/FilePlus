@@ -132,6 +132,10 @@ async function openProperties(path) {
 
   const scrim = document.getElementById('properties-modal-scrim');
   if (scrim) { scrim.style.display = 'flex'; scrim.removeAttribute('aria-hidden'); }
+  // Re-measure now the modal is actually laid out: offsetLeft/offsetWidth are
+  // 0 while it is display:none, so the reset above could only park the
+  // underline at width 0.
+  moveTabIndicator(document.getElementById('properties-tabs'));
 }
 
 function closeProperties() {
@@ -164,6 +168,10 @@ function switchPropertiesTab(name) {
   modal.querySelectorAll('.properties__pane').forEach(p => {
     p.hidden = p.dataset.pane !== name;
   });
+  // Keep the accent underline with the active class -- this function is also
+  // called programmatically (openProperties resets to General), where no
+  // click ever reaches initUnderlineTabs' own listener.
+  moveTabIndicator(document.getElementById('properties-tabs'));
   if (name === 'details' && !_propsDetailsLoaded) loadPropertiesDetails();
 }
 

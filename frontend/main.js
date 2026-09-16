@@ -4,11 +4,11 @@
  * Creates the application window, configures security settings,
  * and wires up the dev-tools shortcut.
  */
-const { app, BrowserWindow, globalShortcut, ipcMain, nativeTheme, nativeImage, shell, dialog, clipboard } = require('electron');
+const { app, BrowserWindow, ipcMain, nativeTheme, nativeImage, shell, dialog, clipboard } = require('electron');
 const path = require('path');
 const os   = require('os');
 const { spawn } = require('child_process');
-const { readEnvFileValue, resolveApiToken } = require('./envToken');
+const { resolveApiPort, resolveApiToken } = require('./envToken');
 const { LruCache, iconCacheKey, isSafeLocalPath, normalizeWinPath, clampPx } = require('./iconCache');
 
 let mainWindow;
@@ -37,7 +37,11 @@ function apiToken() {
 // default so the renderer's fetch() calls land on whichever backend is
 // actually listening (scripts/verify.ps1 sets FILEPLUS_PORT=9877 so its own
 // backend can run alongside a developer's already-running instance on 9876).
-const API_PORT = Number(process.env.FILEPLUS_PORT || readEnvFileValue(path.join(__dirname, '..'), 'FILEPLUS_PORT')) || 9876;
+// resolveApiPort also warns when the resolved port is one index.html's CSP
+// connect-src does not allow -- otherwise every renderer fetch is blocked
+// inside the page and the app reports "Backend offline" for a healthy backend
+// with nothing anywhere saying why.
+const API_PORT = resolveApiPort(REPO_DIR, process.env);
 
 // Mica needs Windows 11 22H2 (build 22621). Elsewhere Electron ignores the option
 // and the renderer paints solid --bg-chrome.
@@ -109,6 +113,17 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
     },
     autoHideMenuBar: true,
+  });
+
+  // F12 toggles DevTools. before-input-event (not globalShortcut): a global
+  // shortcut is an OS-level accelerator that fires even when FilePlus has no
+  // focus, so registering F12 there took the key away from every other
+  // application on the machine for as long as FilePlus was running.
+  mainWindow.webContents.on('before-input-event', (_event, input) => {
+    if (input.type === 'keyDown' && input.key === 'F12'
+        && !input.control && !input.alt && !input.shift && !input.meta) {
+      mainWindow.webContents.toggleDevTools();
+    }
   });
 
   mainWindow.loadFile(path.join(__dirname, 'index.html'));
@@ -306,11 +321,6 @@ app.whenReady().then(() => {
 
   createWindow();
 
-  // F12 toggles DevTools
-  globalShortcut.register('F12', () => {
-    if (mainWindow) mainWindow.webContents.toggleDevTools();
-  });
-
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
@@ -320,6 +330,4 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
 
-app.on('will-quit', () => {
-  globalShortcut.unregisterAll();
-});
+

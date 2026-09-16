@@ -89,7 +89,7 @@ async function fpLoadKnownFolders() {
   if (window.__fpKnownFolders) return window.__fpKnownFolders;
   let folders;
   try {
-    const data = await API.get('/known-folders');
+    const data = await API.get('/known-folders', null, apiTimeout());
     folders = (data && data.folders) || [];
   } catch (_) {
     return null; // backend down / older build — name heuristic stays in force

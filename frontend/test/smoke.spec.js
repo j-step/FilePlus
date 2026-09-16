@@ -1316,6 +1316,86 @@ test('every screen renders with no renderer errors', async () => {
     await page.locator('[data-action="close-tag-canvas"]').click();
     await expect(page.locator('#tag-canvas-scrim')).toBeHidden();
 
+    // --- Pass 2 (startup-init-order) ---
+
+    // 13. A backend that comes up AFTER the renderer repopulates the shell.
+    // checkBackend() remembers the state it last painted; an offline/error ->
+    // ok transition re-runs the one-shot startup loaders (refreshBackendData).
+    // Simulated here by emptying the sidebar's drives and telling it the pill
+    // was last painted 'offline' -- exactly what a renderer that started
+    // before the backend sees on its next 30s poll.
+    await page.evaluate(() => {
+      document.getElementById('sb-drives').innerHTML = '';
+      _backendState = 'offline';
+    });
+    await page.evaluate(() => checkBackend());
+    await expect.poll(() => page.locator('#sb-drives .fp-sidebar__drive-item').count(),
+      { timeout: 5000 }).toBeGreaterThan(0);
+
+    // ...and the status pill itself is the manual reconnect affordance
+    // (data-action="retry-backend-connect"), so the same recovery is one
+    // click away rather than waiting out the poll.
+    await page.evaluate(() => { document.getElementById('sb-drives').innerHTML = ''; });
+    await page.locator('#status-backend').click();
+    await expect(page.locator('#status-backend')).toHaveAttribute('data-state', 'ok', { timeout: 5000 });
+    await expect.poll(() => page.locator('#sb-drives .fp-sidebar__drive-item').count(),
+      { timeout: 5000 }).toBeGreaterThan(0);
+
+    // 14. A failed GET /tags hides the whole Tags shelf instead of leaving an
+    // empty 'Tags' label and 'View all' button standing in the sidebar.
+    await page.evaluate(async () => {
+      const orig = API.get.bind(API);
+      API.get = (route, ...rest) => (route === '/tags'
+        ? Promise.reject(new Error('simulated /tags failure'))
+        : orig(route, ...rest));
+      document.getElementById('sb-tags').hidden = false;
+      document.getElementById('sb-tags-label').hidden = false;
+      try { await loadSidebarTags(); } finally { API.get = orig; }
+    });
+    await expect(page.locator('#sb-tags')).toBeHidden();
+    await expect(page.locator('#sb-tags-label')).toBeHidden();
+    await page.evaluate(() => loadSidebarTags());
+
+    // 15. A programmatic tab switch moves the accent underline with the
+    // active class -- switchInspectorTab() used to leave it parked under
+    // whichever tab had last been clicked, showing two selected tabs at once.
+    await page.evaluate(() => {
+      const el = document.getElementById('inspector');
+      if (!el.classList.contains('inspector--open')) toggleInspector();
+      switchInspectorTab('history');
+    });
+    const underline = await page.evaluate(() => {
+      const bar = document.querySelector('.fp-inspector__tabs');
+      const ind = bar.querySelector('.fp-tabs__indicator');
+      const tab = bar.querySelector('.fp-inspector__tab[data-tab="history"]');
+      return { left: ind.style.left, width: ind.style.width,
+               tabLeft: `${tab.offsetLeft}px`, tabWidth: `${tab.offsetWidth}px` };
+    });
+    expect(underline.left).toBe(underline.tabLeft);
+    expect(underline.width).toBe(underline.tabWidth);
+    await page.evaluate(() => switchInspectorTab('preview'));
+
+    // 16. Settings: the pane persisted on every switch finally has a reader
+    // (restoreSettingsPane(), called from init), and an unreachable backend
+    // no longer reports "No known folders detected on this PC." as fact.
+    await page.evaluate(() => switchScreen('settings'));
+    await page.locator('.settings-nav__item[data-action="settings-nav"][data-pane="data"]').click();
+    await page.evaluate(() => switchSettingsPane('personalization'));
+    await expect(page.locator('.settings-nav__item[data-pane="personalization"]'))
+      .toHaveClass(/settings-nav__item--active/);
+    await page.evaluate(() => {
+      sessionStorage.setItem('fp-settings-pane', 'data');
+      restoreSettingsPane();
+    });
+    await expect(page.locator('.settings-nav__item[data-pane="data"]'))
+      .toHaveClass(/settings-nav__item--active/);
+    await page.evaluate(() => switchSettingsPane('personalization'));
+
+    await page.evaluate(() => renderQuickAccessSettings([], new Set(), false));
+    await expect(page.locator('#settings-quick-access-list')).toContainText('backend');
+    await page.evaluate(() => loadQuickAccess());
+    await expect(page.locator('#settings-quick-access-list [data-known-id="desktop"]')).toHaveCount(1);
+
     // Back to the Browser listing the screenshots below expect.
     await page.evaluate(() => switchScreen('browser'));
     await page.evaluate((p2) => loadDirectory(p2), docsDir);
