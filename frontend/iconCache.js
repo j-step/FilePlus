@@ -1,7 +1,7 @@
 /**
  * Pure helpers for the file-icon / shell-thumbnail bridge (Stage 2C Task 4;
  * extended Stage 2C pass 2 for the Windows-icon sharpness fix — see
- * .superpowers/sdd/2026-09-13-pass-2/icon-design.md §2-4.1).
+ * docs/superpowers/specs/2026-09-14-stage-2c-pass-2-icon-design.md §2-4.1).
  *
  * No `electron` import here (unlike main.js) so this stays requirable from
  * plain node, including from a Playwright test — mirrors envToken.js.
@@ -68,6 +68,17 @@ class LruCache {
     this._bytes -= LruCache._sizeOf(this._map.get(key));
     this._map.delete(key);
     return true;
+  }
+
+  /** Deletes every entry for which `predicate(value, key)` is true; returns
+   *  the number removed. Used by icons.js to drop cached "no icon" answers
+   *  (null values) when the shell-icon route state changes. */
+  deleteWhere(predicate) {
+    let removed = 0;
+    for (const [key, value] of [...this._map]) {
+      if (predicate(value, key)) { this.delete(key); removed++; }
+    }
+    return removed;
   }
 
   get size() {

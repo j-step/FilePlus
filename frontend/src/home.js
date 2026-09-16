@@ -4,9 +4,10 @@
  * unfavorite+undo flow, drag-to-reorder for Favorites, and the small helpers
  * app.js's dispatch switch and context-menu wiring call into.
  *
- * Script load order is api.js → filetypes.js → icons-sprite.js → icons.js →
- * fileops.js → browser.js → dragdrop.js → search.js → inspector.js → home.js
- * → settings.js → properties.js → app.js (see index.html) — this file can
+ * Script load order is api.js → filetypes.js → icons-sprite.js →
+ * iconCache.js → icons.js → fileops.js → browser.js → dragdrop.js →
+ * search.js → inspector.js → home.js → settings.js → properties.js → app.js
+ * (see index.html; CLAUDE.md's module-order bullet) — this file can
  * call anything defined in an earlier file at parse time (iconFor,
  * escapeHtml, parentOfPath, formatModified, ApiError,
  * formatApiError), but anything defined later in app.js (showSnackbar,
@@ -89,15 +90,20 @@ const HOME_ICON_COPY = icon('copy', 'fp-icon--14');
 // this <use> to the outline 'star' symbol for its brief pre-removal animation.
 const HOME_ICON_STAR = `<svg class="fp-icon fp-icon--14 fp-row__fav-star-icon" aria-hidden="true" style="color:var(--accent)"><use href="#fp-star-filled"></use></svg>`;
 
-/** Recent/Favorites entries never carry an is_dir flag from the API (neither
- * /recent nor /favorites join the files table for it) — ext === '' is the
- * best available signal that a path is a folder rather than an
- * extension-less file, so it's used consistently for icon choice and for
- * deciding Open behavior (openPath vs loadDirectory). Everything past that
- * is iconFor()'s job (icons.js): the file-type family sprite, the named
- * folder variants, or a real Windows shell icon when ui.icon_source says so. */
+/** Recent/Favorites entries carry a real is_dir from the API (backend/
+ * stores.py stats the path; a directory also answers ext '' whatever its
+ * name — pass 2 #36: "my.folder" used to render as a file and share the
+ * per-extension icon key with real ".folder" files). ext === '' stays the
+ * fallback for an older backend that did not send the flag. The same
+ * decision drives Open behaviour (openBrowserAt vs openPath). Everything
+ * past that is iconFor()'s job (icons.js): the file-type family sprite, the
+ * named folder variants, or a real Windows shell icon when ui.icon_source
+ * says so. */
+function homeIsDir(entry) {
+  return typeof entry.is_dir === 'boolean' ? entry.is_dir : entry.ext === '';
+}
 function homeIconFor(entry) {
-  return iconFor({ ...entry, is_dir: entry.ext === '' }, 16, 'fp-row__icon');
+  return iconFor({ ...entry, is_dir: homeIsDir(entry) }, 16, 'fp-row__icon');
 }
 
 // ── Empty states (existing .fp-empty-state pattern) ───────────────────────
@@ -139,12 +145,14 @@ function renderRecentRow(entry, bucketKey) {
   // appending one unconditionally spelled it "C:\\" (pass 2 #166).
   const parentRaw = parentOfPath(entry.path);
   const parentDisplay = parentRaw.endsWith('\\') ? parentRaw : parentRaw + '\\';
-  // Same show_extensions handling as browser.js's renderFsRow: folders (ext
-  // === '', see homeIconFor's note above) never hide anything; files hide the
-  // extension in the rendered label only, with the full name kept as a tooltip.
-  const hideExt = entry.ext !== '' && browserState.showExtensions === false;
+  // Same show_extensions handling as browser.js's renderFsRow: folders (see
+  // homeIsDir's note above) never hide anything; files hide the extension
+  // in the rendered label only, with the full name kept as a tooltip.
+  const isDir = homeIsDir(entry);
+  const hideExt = !isDir && entry.ext !== '' && browserState.showExtensions === false;
   const displayName = hideExt ? stemOf(entry.name) : entry.name;
   const nameTitleAttr = hideExt ? ` title="${escapeHtml(entry.name)}"` : '';
+  const dirAttr = isDir ? ' data-dir=""' : '';
   // Recent rows show the same favorite star as Browser rows (Task 11,
   // playtest pass 1 §4.3) — rendered into .fp-row__tags (already an empty,
   // flex-laid-out cell reserved for this row's own grid-template-columns)
@@ -153,7 +161,7 @@ function renderRecentRow(entry, bucketKey) {
     ? `<span class="fp-row__star" title="In Favorites">${icon('star')}</span>`
     : '';
   return `<div class="fp-row fp-row--recent" role="option" tabindex="0"
-       data-path="${escapeHtml(entry.path)}" data-ext="${escapeHtml(entry.ext)}" data-action="open-recent-file">
+       data-path="${escapeHtml(entry.path)}" data-ext="${escapeHtml(entry.ext)}"${dirAttr} data-action="open-recent-file">
     ${homeIconFor(entry)}
     <span class="fp-row__name"${nameTitleAttr}>${escapeHtml(displayName)}</span>
     <span class="fp-row__recent-path mono">${escapeHtml(parentDisplay)}</span>
@@ -181,11 +189,13 @@ function renderFavoriteRow(entry) {
   const parentRaw = parentOfPath(entry.path);
   const parentDisplay = parentRaw.endsWith('\\') ? parentRaw : parentRaw + '\\';
   const addedLabel = entry.created ? `Added ${formatModified(entry.created)}` : '';
-  const hideExt = entry.ext !== '' && browserState.showExtensions === false;
+  const isDir = homeIsDir(entry);
+  const hideExt = !isDir && entry.ext !== '' && browserState.showExtensions === false;
   const displayName = hideExt ? stemOf(entry.name) : entry.name;
   const nameTitleAttr = hideExt ? ` title="${escapeHtml(entry.name)}"` : '';
+  const dirAttr = isDir ? ' data-dir=""' : '';
   return `<div class="fp-row fp-row--recent" role="option" tabindex="0" draggable="true"
-       data-path="${escapeHtml(entry.path)}" data-ext="${escapeHtml(entry.ext)}" data-action="open-recent-file">
+       data-path="${escapeHtml(entry.path)}" data-ext="${escapeHtml(entry.ext)}"${dirAttr} data-action="open-recent-file">
     ${homeIconFor(entry)}
     <span class="fp-row__name"${nameTitleAttr}>${escapeHtml(displayName)}</span>
     <span class="fp-row__recent-path mono">${escapeHtml(parentDisplay)}</span>
@@ -257,15 +267,21 @@ function resolveHomeRowTarget(btn) {
   const fromContext = !fromBtn && typeof contextMenuTarget !== 'undefined' && contextMenuTarget
     && contextMenuTarget.closest && contextMenuTarget.closest('.fp-row[data-path]');
   const row = fromBtn || fromContext;
-  return row ? { path: row.dataset.path, ext: row.dataset.ext || '' } : null;
+  return row ? { path: row.dataset.path, ext: row.dataset.ext || '', is_dir: homeRowIsDir(row) } : null;
+}
+
+/** A rendered Home row's directory-ness: the data-dir the API's is_dir put
+ * there, else the ext === '' heuristic (an older backend). */
+function homeRowIsDir(row) {
+  return row.dataset.dir !== undefined || (row.dataset.ext || '') === '';
 }
 
 /** Open behavior shared by double-click, Enter-when-focused, the Open hover
  * action, and the home-row context menu's Open item: folders navigate into
  * the Browser, files launch via the OS and get logged as a recent action. */
-function homeOpenPath(path, ext) {
+function homeOpenPath(path, ext, isDir) {
   if (!path) return;
-  if (ext === '') {
+  if (isDir === undefined ? ext === '' : isDir) {
     openBrowserAt(path);
     return;
   }
@@ -498,7 +514,7 @@ function initHomeRowInteractions() {
   screen.addEventListener('dblclick', e => {
     const row = e.target.closest('.fp-row[data-path]');
     if (!row) return;
-    homeOpenPath(row.dataset.path, row.dataset.ext || '');
+    homeOpenPath(row.dataset.path, row.dataset.ext || '', homeRowIsDir(row));
   });
 }
 
@@ -515,7 +531,7 @@ function homeKeydown(e) {
   if (!row) return;
   if (e.key === 'Enter') {
     e.preventDefault();
-    homeOpenPath(row.dataset.path, row.dataset.ext || '');
+    homeOpenPath(row.dataset.path, row.dataset.ext || '', homeRowIsDir(row));
     return;
   }
   if (e.altKey && row.closest('#home-favorites') && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {

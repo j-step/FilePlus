@@ -60,13 +60,19 @@ const thumbnailCache = new LruCache(600, 32 * 1024 * 1024);
 // not fire 500 concurrent shell calls. makeQueue(concurrency) is a tiny FIFO
 // gate that also dedupes identical in-flight work by key — six rows sharing
 // one icon key become one shell call, not six.
-function makeQueue(concurrency) {
+function makeQueue(concurrency, { lifo = false } = {}) {
   let running = 0;
   const waiting = [];
   const inFlight = new Map(); // key -> Promise
+  // lifo: a fast scroll through a grid queues far more thumbnails than the
+  // gate lets through at once; serving the most recently requested (the
+  // tiles currently on screen) first means the user sees the viewport fill
+  // rather than tiles that have already scrolled away (pass 2 #35). The
+  // renderer separately drops requests nobody wants any more before they
+  // are sent (icons.js _fpFlushIconBatch).
   function drain() {
     if (running < concurrency) {
-      const next = waiting.shift();
+      const next = lifo ? waiting.pop() : waiting.shift();
       if (next) next();
     }
   }
@@ -94,7 +100,7 @@ function makeQueue(concurrency) {
 // stays 4 (IShellItemImageFactory-backed thumbnails are heavier per call).
 const THUMBNAIL_CONCURRENCY = 4;
 const iconQueue = makeQueue(8);
-const thumbQueue = makeQueue(THUMBNAIL_CONCURRENCY);
+const thumbQueue = makeQueue(THUMBNAIL_CONCURRENCY, { lifo: true });
 globalThis.__fpMainIconStats = { shellCalls: 0, thumbCalls: 0, batches: 0 };
 
 function createWindow() {
@@ -212,7 +218,10 @@ app.whenReady().then(() => {
   // never call either on it. Instead read the raw representation at its true
   // physical size via toPNG() and treat the PNG's own IHDR as ground truth.
   function rawRep(image) {
-    const s = (typeof image.getScaleFactors === 'function' && image.getScaleFactors()[0]) || 1;
+    // app.getFileIcon returns a single representation today; should a
+    // future Electron hand back several, the largest is the physical one.
+    const factors = (typeof image.getScaleFactors === 'function' && image.getScaleFactors()) || [];
+    const s = factors.length ? Math.max(...factors) : 1;
     const png = image.toPNG({ scaleFactor: s });
     return { png, w: png.readUInt32BE(16), h: png.readUInt32BE(20) };
   }
@@ -244,8 +253,13 @@ app.whenReady().then(() => {
     if (hit !== undefined) return hit;
     return iconQueue.run(key, async () => {
       try {
+        // A definitive "no icon" (the shell answered an empty image) is
+        // cached as null so the next renderer miss for that key — a second
+        // window, an evicted renderer entry — does not re-run two
+        // app.getFileIcon calls (pass 2 #38/#144). A throw is not cached:
+        // it is the unusual, possibly transient path.
         const res = await renderShellIcon(p, px);
-        if (res) iconCache.set(key, res);
+        iconCache.set(key, res || null);
         return res;
       } catch (_err) {
         return null;
@@ -281,13 +295,19 @@ app.whenReady().then(() => {
       try {
         globalThis.__fpMainIconStats.thumbCalls++;
         const image = await nativeImage.createThumbnailFromPath(p, { width: px, height: px });
-        if (!image || image.isEmpty()) return null;
+        if (!image || image.isEmpty()) { thumbnailCache.set(key, null); return null; }
         const png = image.toPNG();
         const w = png.readUInt32BE(16), h = png.readUInt32BE(20);
         const res = { url: 'data:image/png;base64,' + png.toString('base64'), w, h };
         thumbnailCache.set(key, res);
         return res;
       } catch (_err) {
+        // createThumbnailFromPath THROWS for everything it cannot picture
+        // (.txt, .exe, .pdf, an empty folder) — that is the normal negative
+        // answer, not an error, and it is cached so a renderer miss does not
+        // re-run a COM round trip per scroll (pass 2 #38/#144). The key
+        // carries mtime, so an edit invalidates it.
+        thumbnailCache.set(key, null);
         return null;
       }
     });

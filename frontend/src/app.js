@@ -1556,7 +1556,7 @@ function buildMenuContext(target) {
   let selection = [];
   if (type === 'home-row') {
     const row = target?.closest ? target.closest('.fp-row[data-path]') : null;
-    if (row) selection = [{ path: row.dataset.path, ext: row.dataset.ext || '', is_dir: (row.dataset.ext || '') === '' }];
+    if (row) selection = [{ path: row.dataset.path, ext: row.dataset.ext || '', is_dir: homeRowIsDir(row) }];
   } else if (type === 'file' || type === 'folder' || type === 'empty-area') {
     selection = getSelectedPaths().map(p => {
       const entry = entryForPath(p);
@@ -1809,6 +1809,15 @@ async function checkBackend() {
     if (data && data.auth && !apiToken()) {
       paint('error', 'Backend auth');
       return false;
+    }
+    // Windows-icon mode's Tier A (POST /shell/icons) is advertised by
+    // /health's shell_icons flag: tell icons.js whether to ask for it, so a
+    // backend that is too old for the route is never asked (a 404 logs an
+    // unsuppressible console error even when caught) and a restarted, newer
+    // backend gets its turn without a failed request first. Only on a change
+    // of the pill's state, so the poll does not churn the icon caches.
+    if (prev !== 'ok' && typeof fpShellIconRoute === 'function') {
+      fpShellIconRoute(data && data.shell_icons ? 'live' : 'absent');
     }
     paint('ok', 'Backend');
     setWriteLockHint(data.write_unlocked === false);
@@ -2609,7 +2618,7 @@ document.addEventListener('click', e => {
     // row; falls back to contextMenuTarget, captured at right-click time).
     case 'open-file': {
       const target = resolveHomeRowTarget(btn);
-      if (target) homeOpenPath(target.path, target.ext);
+      if (target) homeOpenPath(target.path, target.ext, target.is_dir);
       break;
     }
     case 'reveal-file': {

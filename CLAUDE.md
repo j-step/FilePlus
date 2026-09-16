@@ -80,6 +80,15 @@ April "one fix at a time" rule is retired (D10).
   `fileIcon`, `thumbnail`, `showProperties`, `openWithDialog`, `apiPort` — `icons.js` calls the
   first two, `properties.js` the native-dialog pair, `api.js` reads the port so the renderer and
   `verify.ps1`'s `FILEPLUS_PORT=9877` agree.
+- Windows-mode icons have two sources and one sizing contract (`docs/superpowers/specs/
+  2026-09-14-stage-2c-pass-2-icon-design.md`): `POST /shell/icons` (backend `winshell.shell_image`,
+  Explorer-exact at any px) first, `electronAPI.fileIcons` (Chromium `app.getFileIcon`) as the
+  fallback — the fallback is never asked for directories, extension-less files, `.lnk` or `.url`.
+  Every request carries physical px (`fpDevicePx`); the `<img>` is pinned to `px / dpr`; keys end in
+  px, so zoom / DPI / `--list-scale` changes re-resolve (`fpInvalidateLazyIcons`), never resample.
+  `fpShellIconRoute('live'|'absent'|'unknown')` is fed from `/health`'s `shell_icons` flag — do not
+  probe the route with a request that can 404 (Chromium logs it as a console error even when caught,
+  and the smoke's zero-console-errors gate fails).
 - `showSnackbar`/`showToast` are defined once, in `app.js`. Signature: `showSnackbar(msg, 'Undo', fn)`.
 - Snackbars/toasts are gated by `localStorage['fp-notifications-enabled']` (default off). Only
   `showToast(msg, 'error')` bypasses. No other exceptions.

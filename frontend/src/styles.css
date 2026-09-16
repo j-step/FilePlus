@@ -2578,19 +2578,24 @@ body.is-dragging { cursor: default; }
 .fp-row--disabled .fp-row__name { font-style: italic; color: var(--text-tertiary); }
 .fp-row--disabled:hover { background: transparent; box-shadow: none; cursor: not-allowed; }
 
-/* .fp-row .fp-row__icon (specificity 0,2,0), not bare .fp-row__icon: the
-   list-scale sizing must beat .fp-icon--16 (0,1,0, later in source at
-   :5864+ this insertion) so a row icon actually follows --list-scale as
-   spec §3.10 says — at equal specificity the later-in-source rule was
-   winning and every row icon was stuck at 16 CSS px regardless of scale
-   (pass 2 — icon-design.md §4.6). .home-pane[data-view="grid"] .fp-row__icon
-   (0,3,0) and .fp-tray__row .fp-row__icon (0,2,0, later in source) still
-   win over this, as before. */
-.fp-row .fp-row__icon {
+/* Sizing and colour are split on purpose. The SIZE lives on
+   .fp-row .fp-row__icon (specificity 0,2,0), not bare .fp-row__icon: it must
+   beat .fp-icon--16 (0,1,0, later in source) so a row icon actually follows
+   --list-scale as spec §3.10 says — at equal specificity the later rule won
+   and every row icon was stuck at 16 CSS px regardless of scale (pass 2 —
+   icon design §4.6). The COLOUR stays on the bare (0,1,0) rule: at (0,2,0)
+   it would also outrank .fp-row--selected .fp-row__icon and
+   .fp-row--folder .fp-row__icon (both 0,2,0 but earlier in source) and
+   silently drop the accent tint on selected and folder rows (Tier-B review).
+   .home-pane[data-view="grid"] .fp-row__icon (0,3,0) and
+   .fp-tray__row .fp-row__icon (0,2,0, later in source) still win, as before. */
+.fp-row__icon {
   flex-shrink: 0;
+  color: var(--text-secondary);
+}
+.fp-row .fp-row__icon {
   width: calc(16px * var(--list-scale, 1));
   height: calc(16px * var(--list-scale, 1));
-  color: var(--text-secondary);
 }
 .fp-row__name {
   flex: 1;
@@ -5909,7 +5914,26 @@ button.fp-pill:hover {
 .fp-icon--win { object-fit: contain; }
 
 /* Unknown extension in FilePlus mode: the blank page icon carries the
-   extension itself beside it rather than pretending to know the type. */
+   extension itself beside it rather than pretending to know the type. The
+   pair is one root (.fp-icon-badged) so a centring container centres the
+   ICON and the badge hangs off it, instead of the two being centred as a
+   unit and shoving the icon off-axis (pass 2 #146); in a grid tile the badge
+   drops under the icon and scales with --list-scale. */
+.fp-icon-badged {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex: none;
+}
+.fp-tile__thumb > .fp-icon-badged {
+  flex-direction: column;
+  gap: 2px;
+}
+.fp-tile__thumb > .fp-icon-badged > .fp-icon {
+  width: calc(96px * var(--list-scale, 1) * 0.58);
+  height: calc(96px * var(--list-scale, 1) * 0.58);
+}
+.fp-tile__thumb .fp-ext-badge { font-size: calc(9px * var(--list-scale, 1)); }
 .fp-ext-badge {
   flex: none;
   font: 500 9px/1 var(--font-data);
@@ -6178,7 +6202,15 @@ button.fp-pill:hover {
   *::after {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
+    /* 0s, not the customary 0.01ms: transition-property defaults to `all`,
+       so a 0.01ms duration turns EVERY style change on EVERY element into a
+       one-frame transition whose first frame samples the OLD value — an
+       IntersectionObserver record or getBoundingClientRect() taken in that
+       frame (icons.js re-measuring a row icon after a --list-scale change)
+       read the pre-change size and pinned the wrong bitmap. A 0s transition
+       never starts, which is what "instant" means; nothing in the renderer
+       waits on transitionend (pass 2, icons). */
+    transition-duration: 0s !important;
     scroll-behavior: auto !important;
   }
   /* Sole exception: live-data sparkline on Scan Progress */

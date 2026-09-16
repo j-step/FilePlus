@@ -207,6 +207,9 @@ function refreshIconSurfaces() {
   // 404 and blank the panel that is showing something perfectly valid.
   const selected = [...browserState.selection];
   if (selected.length === 1 && entryForPath(selected[0])) showInspectorFor(selected[0]);
+  // An open Properties panel paints its header icon once, on open — repaint
+  // it the same way a row would (pass 2 #42).
+  if (typeof propertiesRefreshIcon === 'function') propertiesRefreshIcon();
 }
 
 /** Updates the Data pane's read-only "Writes" line from the last /health

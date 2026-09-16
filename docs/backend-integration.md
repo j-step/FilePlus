@@ -375,6 +375,22 @@ routes Properties/Alt+Enter to the native dialog instead (`electronAPI.showPrope
 Windows shell icons (`electronAPI.fileIcon`); thumbnails always come from
 `electronAPI.thumbnail` (Task 4, Task 6).
 
+**Pass 2 (2026-09-16, icons — `docs/superpowers/specs/2026-09-14-stage-2c-pass-2-icon-design.md`).**
+Windows-mode icons come from **`POST /shell/icons`** (batch, ≤ 200 items, answers in order as
+`{png: base64 | null, pending}`) and **`GET /shell/icon?path=&px=`** (one PNG, `Cache-Control:
+private, max-age=3600`) — `backend/winshell.shell_image`, `IShellItemImageFactory::GetImage` at the
+requested physical px on a 2-thread STA pool (`winshell.icon_executor()`), so a folder, a known
+folder, a desktop.ini icon, a shortcut's target and an extension-less file all get exactly what
+Explorer draws. Both are read-only (`path_guard "read"`), token-gated, and `/health` advertises them
+as `shell_icons: true`; `checkBackend` (app.js) hands that flag to `fpShellIconRoute()` so an older
+backend is never asked. `electronAPI.fileIcons` (Chromium's `app.getFileIcon`, read at its raw
+physical rep) is the offline fallback — exact only at 16·S / 32·S (16/32/48 for exe/dll/ico), never
+for directories, extension-less files, `.lnk` or `.url` (those fall to the sprite). Thumbnails stay on
+`electronAPI.thumbnail` at physical px. Sizing contract everywhere: `px = clampPx(round(cssBox ×
+devicePixelRatio))`, the bitmap is exactly `px × px`, the `<img>` is pinned to `px / dpr` CSS px;
+zoom, monitor-DPI and `--list-scale` changes re-resolve every icon (`fpInvalidateLazyIcons`).
+`GET /fs/peek` items carry `modified`; `/recent` and `/favorites` entries carry a real `is_dir`.
+
 ---
 
 ## A.4 File Tree canvas

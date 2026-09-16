@@ -224,23 +224,59 @@ test('every screen renders with no renderer errors', async () => {
 
     // Settings ▸ Personalization ▸ File icons = Windows: rows swap to real
     // Windows shell icons (an <img>, not a sprite <use>).
+    const statsBefore = await page.evaluate(() => ({ ...window.__fpIconStats }));
     await page.evaluate(() => switchScreen('settings'));
     await page.locator('[data-action="settings-set-icon-source"][data-val="windows"]').click();
     await page.evaluate(() => switchScreen('browser'));
     await expect(page.locator('#list-scroll img.fp-icon--win[src^="data:image/png"]').first())
       .toBeVisible({ timeout: 3000 });
 
-    // --- Pass 2: Windows-icon sharpness fix, sizing contract (icon-design.md
-    // §2; landing steps 1-2 — Tier B only, since POST /shell/icons doesn't
-    // exist on this backend yet: the renderer discovers that via a 404 on
-    // its first batch and falls back for the rest of the run). dpr folds in
-    // any OS/Electron display scaling, so these assertions hold at whatever
-    // scale this machine happens to run at, not just 100%. ---
+    // --- Pass 2: Windows-icon sharpness fix (icon design §2, §5.3 — docs/
+    // superpowers/specs/2026-09-14-stage-2c-pass-2-icon-design.md). Two
+    // sources, one sizing contract: Tier A is POST /shell/icons (the
+    // backend's IShellItemImageFactory render — what Explorer draws, exact at
+    // any px, for every entry); Tier B is Electron's app.getFileIcon (exact
+    // only at the shell's own 16*S / 32*S reps, never for folders / no-ext /
+    // .lnk / .url). dpr folds in any OS/Electron display scaling, so these
+    // assertions hold at whatever scale this machine runs at. ---
     const dpr = await page.evaluate(() => window.devicePixelRatio || 1);
+    const shellIconB64 = async (p, px) => Buffer.from(await (await fetch(
+      `${API}/shell/icon?path=${encodeURIComponent(p)}&px=${px}`, { headers: apiHeaders })).arrayBuffer()).toString('base64');
+    const pngRowsProof = () => page.evaluate(() => [...document.querySelectorAll('#list-scroll img.fp-icon--win[src^="data:image/png"]')].map((el) => {
+      const r = el.getBoundingClientRect();
+      return { naturalWidth: el.naturalWidth, naturalHeight: el.naturalHeight, px: el.dataset.px, exact: el.dataset.exact, width: r.width };
+    }));
+    const pngRowsSettled = (n) => page.waitForFunction((want) =>
+      document.querySelectorAll('#list-scroll img.fp-icon--win[src^="data:image/png"]').length >= want
+      && !document.querySelector('#list-scroll img.fp-icon--win[data-fp-lazy="pending"]'), n, { timeout: 5000 });
 
-    // Sharpness proof: a .txt row's icon is exactly round(16*dpr) physical
-    // px -- not the pre-fix bug (always a 32-px shell image force-resized to
-    // a 16-px, 1x-tagged bitmap that the renderer then stretched again).
+    // 1. Sharpness, every row (still _gen\Pictures, details): the bitmap is
+    // exactly round(css * dpr) px, square, recorded in data-px, and the box
+    // is pinned so device px == bitmap px. Six .png rows share one icon key:
+    // six element requests collapse to fewer keys (the per-macrotask batch).
+    await pngRowsSettled(6);
+    const picsRows = await pngRowsProof();
+    expect(picsRows.length).toBeGreaterThanOrEqual(6);
+    for (const row of picsRows) {
+      expect(row.naturalWidth).toBe(Math.round(row.width * dpr));
+      expect(row.naturalHeight).toBe(row.naturalWidth);
+      expect(Number(row.px)).toBe(row.naturalWidth);
+      expect(Math.abs(row.width - 16)).toBeLessThan(0.01);
+    }
+    const statsAfter = await page.evaluate(() => ({ ...window.__fpIconStats }));
+    expect(statsAfter.requested - statsBefore.requested).toBeGreaterThanOrEqual(6);
+    expect(statsAfter.keys - statsBefore.keys).toBeLessThan(statsAfter.requested - statsBefore.requested);
+
+    // 2. Tier A byte proof: the row's bitmap IS the backend's render.
+    expect(await page.evaluate(() => fpShellIconRoute())).toBe('live');
+    const img1 = rowByName('IMG_0001.png').locator('img.fp-icon--win');
+    const img1Px = Number(await img1.getAttribute('data-px'));
+    expect(await img1.getAttribute('src')).toBe('data:image/png;base64,' + await shellIconB64(`${picsDir}\\IMG_0001.png`, img1Px));
+    expect(await img1.getAttribute('data-exact')).toBe('1');
+
+    // Sharpness proof on a .txt row too -- not the pre-fix bug (always a
+    // 32-px shell image force-resized to a 16-px, 1x-tagged bitmap that the
+    // renderer then stretched again).
     await page.evaluate((p) => loadDirectory(p), docsDir);
     await page.waitForFunction(() => document.querySelectorAll('.fp-row').length >= 10);
     const txtIcon = rowByName('doc-00.txt').locator('img.fp-icon--win');
@@ -255,39 +291,109 @@ test('every screen renders with no renderer errors', async () => {
     expect(txtProof.naturalHeight).toBe(txtProof.naturalWidth);
     expect(txtProof.naturalWidth).toBeGreaterThanOrEqual(16);
     expect(Math.abs(txtProof.width * dpr - txtProof.naturalWidth)).toBeLessThan(0.5);
-    // At zoom 1 (no Electron webContents zoom applied in this run), dpr IS
-    // the Windows system scale S, so round(16*dpr) is exactly the shell's
-    // own small-image-list representation's native size -- the bitmap main.js
-    // returned should therefore be that representation completely unresampled,
-    // never the old 32-px-to-16-px downscale.
     expect(txtProof.exact).toBe('1');
     await page.screenshot({ path: path.join(SHOTS, 'browser-windows-icons.png') });
 
-    // Folder rows in Windows mode stay the sprite (<use>), never a shell
-    // <img>: Chromium's app.getFileIcon answers the identical system-drive
-    // glyph for every directory (probe/out2b.json), so icons.js never sends
-    // a directory to Tier B at all.
+    // 3. Folder parity (the drive-glyph regression guard): a folder row in
+    // Windows mode is a real shell <img> — Tier A renders the folder's own
+    // icon, byte-identical to GET /shell/icon for that folder and different
+    // from a file's at the same px. Tier B alone could never do this:
+    // app.getFileIcon answers one system-drive glyph for every directory.
     await page.evaluate((p) => loadDirectory(p), `${root}\\_gen`);
     await page.waitForFunction(() => document.querySelectorAll('.fp-row').length >= 5);
-    const folderRow = rowByName('Documents');
-    await expect(folderRow.locator('use')).toHaveCount(1);
-    await expect(folderRow.locator('img.fp-icon--win')).toHaveCount(0);
+    const folderIcon = rowByName('Pictures').locator('img.fp-icon--win');
+    await expect(folderIcon).toHaveAttribute('src', /^data:image\/png/, { timeout: 3000 });
+    const folderPx = Number(await folderIcon.getAttribute('data-px'));
+    const folderSrc = await folderIcon.getAttribute('src');
+    expect(folderSrc).toBe('data:image/png;base64,' + await shellIconB64(`${root}\\_gen\\Pictures`, folderPx));
+    expect(folderSrc).not.toBe('data:image/png;base64,' + await shellIconB64(`${docsDir}\\doc-00.txt`, folderPx));
+    await expect(rowByName('Pictures').locator('svg.fp-row__icon')).toHaveCount(0);
 
-    // Grid thumbnails in Windows mode: the bitmap is exactly px*px and the
-    // <img> is pinned to px/dpr CSS px so the device box matches it 1:1.
+    // 4. Extension-less file + Tier B refusal. With the route forced 'absent'
+    // the renderer falls back to Tier B, which answers ordinary files at the
+    // shell's native small rep but is refused for directories / no-ext /
+    // .lnk / .url (the sprite is more honest than Chromium's shared drive
+    // glyph). Flipping the route state drops every cached "no icon", so the
+    // same rows get their Tier A render on the next visit.
+    const tierBBefore = (await page.evaluate(() => ({ ...window.__fpIconStats }))).tierB;
+    await page.evaluate(() => fpShellIconRoute('absent'));
+    await page.evaluate((p) => loadDirectory(p), `${root}\\_gen\\Music`);
+    await pngRowsSettled(4);
+    for (const row of await pngRowsProof()) {
+      expect(row.naturalWidth).toBe(Math.round(16 * dpr));
+      expect(row.exact).toBe('1'); // Tier B: the small image list is 16*S, exact at zoom 1 on the primary monitor
+    }
+    const tierBDelta = (await page.evaluate(() => ({ ...window.__fpIconStats }))).tierB - tierBBefore;
+    expect(tierBDelta).toBeGreaterThanOrEqual(1);
+    expect(tierBDelta).toBeLessThanOrEqual(2); // four .wav rows -> one key (one batch, maybe two)
+    await page.evaluate((p) => loadDirectory(p), `${root}\\_gen\\Projects`);
+    await page.waitForFunction(() => document.querySelectorAll('.fp-row').length >= 4);
+    await expect(rowByName('Makefile').locator('svg.fp-row__icon use[href="#fp-ft-generic"]')).toHaveCount(1, { timeout: 3000 });
+    for (const name of ['a', 'app', 'web']) {
+      await expect(rowByName(name).locator('svg.fp-row__icon use[href="#fp-ft-folder"]')).toHaveCount(1, { timeout: 3000 });
+    }
+    await page.evaluate((p) => loadDirectory(p), `${root}\\_gen\\Projects\\app`);
+    await pngRowsSettled(2);
+    for (const row of await pngRowsProof()) expect(row.naturalWidth).toBe(Math.round(16 * dpr));
+    await page.evaluate(() => fpShellIconRoute('unknown'));
+    await page.evaluate((p) => loadDirectory(p), `${root}\\_gen\\Projects`);
+    await expect(rowByName('Makefile').locator('img.fp-icon--win[src^="data:image/png"]')).toHaveCount(1, { timeout: 3000 });
+    await expect(rowByName('app').locator('img.fp-icon--win[src^="data:image/png"]')).toHaveCount(1, { timeout: 3000 });
+    expect(await page.evaluate(() => fpShellIconRoute())).toBe('live');
+
+    // 5. Grid thumbnails in Windows mode: every bitmap's longer edge is
+    // exactly the tile box x dpr, the <img> is pinned to px/dpr CSS px so the
+    // device box matches it 1:1, and it fits inside its box.
     await page.evaluate((p) => loadDirectory(p), picsDir);
     await page.waitForFunction(() => document.querySelectorAll('.fp-row').length >= 6);
     await page.evaluate(() => setViewMode('grid'));
     await expect(page.locator('#list-scroll img.fp-thumb--ready[src^="data:image/png"]').first())
       .toBeVisible({ timeout: 3000 });
-    const gridProof = await page.locator('#list-scroll img.fp-thumb--ready').first().evaluate((el) => {
+    const gridProofs = await page.evaluate(() => [...document.querySelectorAll('#list-scroll img.fp-thumb--ready')].map((el) => {
       const r = el.getBoundingClientRect();
-      return { naturalWidth: el.naturalWidth, naturalHeight: el.naturalHeight, px: el.dataset.px, width: r.width, height: r.height };
-    });
-    expect(Number(gridProof.px)).toBe(Math.max(gridProof.naturalWidth, gridProof.naturalHeight));
-    const expectedCss = Number(gridProof.px) / dpr;
-    expect(Math.abs(Math.max(gridProof.width, gridProof.height) - expectedCss)).toBeLessThan(0.5);
+      const b = el.parentElement.getBoundingClientRect();
+      return { naturalWidth: el.naturalWidth, naturalHeight: el.naturalHeight, px: el.dataset.px, width: r.width, height: r.height, boxW: b.width, boxH: b.height };
+    }));
+    expect(gridProofs.length).toBeGreaterThanOrEqual(1);
+    for (const g of gridProofs) {
+      expect(Number(g.px)).toBe(Math.max(g.naturalWidth, g.naturalHeight));
+      expect(Number(g.px)).toBe(Math.round(Math.max(g.boxW, g.boxH) * dpr));
+      expect(Math.abs(Math.max(g.width, g.height) - Number(g.px) / dpr)).toBeLessThan(0.5);
+      expect(g.width).toBeLessThanOrEqual(g.boxW + 0.5);
+      expect(g.height).toBeLessThanOrEqual(g.boxH + 0.5);
+    }
     await page.evaluate(() => setViewMode('details'));
+
+    // 6. List-scale re-request: --list-scale 1.5 makes the row box 24 CSS px
+    // and every icon re-resolves at round(24 * dpr) instead of Chromium
+    // stretching the 16-px bitmap (needs the styles.css cascade fix:
+    // .fp-row .fp-row__icon beats .fp-icon--16). Then back.
+    const rowsAt = (css) => page.waitForFunction(({ want, css }) => {
+      const rows = [...document.querySelectorAll('#list-scroll img.fp-icon--win[src^="data:image/png"]')];
+      return rows.length >= 6 && !document.querySelector('#list-scroll img.fp-icon--win[data-fp-lazy="pending"]')
+        && rows.every((el) => el.naturalWidth === want && Math.abs(el.getBoundingClientRect().width - css) < 0.01);
+    }, { want: Math.round(css * dpr), css }, { timeout: 5000 });
+    await page.evaluate(() => setListScale(1.5, { persist: false }));
+    await rowsAt(24);
+    await page.evaluate(() => setListScale(1, { persist: false }));
+    await rowsAt(16);
+
+    // 7. Zoom round trip: Electron zoom changes devicePixelRatio; the
+    // matchMedia(resolution) watcher re-resolves every icon at the new px
+    // (Tier A: an exact shell render at the new size, not a resample of the
+    // old bitmap), and zoomReset brings it back.
+    await page.evaluate(() => zoomIn());
+    await page.waitForFunction((base) => Math.abs((window.devicePixelRatio || 1) - base * 1.1) < 0.01, dpr);
+    await page.waitForFunction(() => {
+      const want = Math.round(16 * window.devicePixelRatio);
+      const rows = [...document.querySelectorAll('#list-scroll img.fp-icon--win[src^="data:image/png"]')];
+      return rows.length >= 6 && !document.querySelector('#list-scroll img.fp-icon--win[data-fp-lazy="pending"]')
+        && rows.every((el) => el.naturalWidth === want && el.dataset.exact === '1');
+    }, null, { timeout: 5000 });
+    expect(await page.evaluate(() => Math.round(16 * window.devicePixelRatio))).not.toBe(Math.round(16 * dpr));
+    await page.evaluate(() => zoomReset());
+    await page.waitForFunction((base) => Math.abs((window.devicePixelRatio || 1) - base) < 0.01, dpr);
+    await rowsAt(16);
 
     // ...and back to FilePlus restores the sprite family icons.
     await page.evaluate(() => switchScreen('settings'));
@@ -982,6 +1088,17 @@ test('every screen renders with no renderer errors', async () => {
     await expect(propsModal.locator('.properties__footer button', { hasText: 'Close' })).toHaveCount(1);
     await expect(applyBtn).toBeDisabled();
     await page.screenshot({ path: path.join(SHOTS, 'properties-file.png') });
+    // Pass 2: the "Opens with" icon rides the same shell-icon pipeline as a
+    // row (Tier A at round(16 * dpr) px, pinned to px/dpr) — asserted only
+    // when this PC has an association for .txt at all.
+    const docProps = await (await fetch(`${API}/fs/properties?path=${encodeURIComponent(`${docsDir}\\doc-00.txt`)}`, { headers: apiHeaders })).json();
+    if (docProps.opens_with_exe) {
+      const opensWithImg = propsModal.locator('#properties-opens-with-icon img');
+      await expect(opensWithImg).toHaveCount(1, { timeout: 3000 });
+      const opensWithProof = await opensWithImg.evaluate((el) => ({ naturalWidth: el.naturalWidth, width: el.getBoundingClientRect().width }));
+      expect(opensWithProof.naturalWidth).toBe(Math.round(16 * dpr));
+      expect(Math.abs(opensWithProof.width - 16)).toBeLessThan(0.5);
+    }
 
     // Read-only round trip: tick → Apply → backend reports true; untick →
     // Apply → false. Together these leave the fixture exactly as they found
@@ -1473,15 +1590,49 @@ test('shell bitmaps are device-pixel exact at a forced 150% scale', async () => 
     const proof = await txtIcon.evaluate((el) => ({
       naturalWidth: el.naturalWidth,
       px: el.dataset.px,
+      exact: el.dataset.exact,
+      src: el.src,
       width: el.getBoundingClientRect().width,
     }));
-    // css 16 * dpr 1.5 = 24: not the OS's own 100%-scale small representation
-    // (16px), so this also exercises the resize/resample branch of
-    // renderShellIcon (main.js) independently of this machine's real display
-    // scale.
+    // css 16 * dpr 1.5 = 24 physical px in a 16-CSS-px box.
     expect(proof.px).toBe('24');
     expect(proof.naturalWidth).toBe(24);
     expect(Math.abs(proof.width - 16)).toBeLessThan(0.5); // pinned to px/dpr = 24/1.5 = 16 CSS px
+    // Tier A proof: the bitmap IS the backend's 24-px render (24 alone would
+    // not prove it -- Tier B also yields 24 here, by resampling its 32).
+    expect(proof.exact).toBe('1');
+    const routeB64 = Buffer.from(await (await fetch(
+      `${API}/shell/icon?path=${encodeURIComponent(`${docsDir}\\doc-00.txt`)}&px=24`, { headers: apiHeaders })).arrayBuffer()).toString('base64');
+    expect(proof.src).toBe('data:image/png;base64,' + routeB64);
+
+    // Tier B at 150%: with the route forced absent, a fresh extension goes
+    // through app.getFileIcon -- still exactly 24 physical px in a 16-CSS-px
+    // box (main.js's IHDR/DIP maths and its resample branch, independent of
+    // the backend), while an extension-less file is refused to the sprite.
+    await page.evaluate(() => fpShellIconRoute('absent'));
+    await page.evaluate((p) => loadDirectory(p), `${root}\\_gen\\Music`);
+    const wavIcon = rowByName('take-01.wav').locator('img.fp-icon--win');
+    await expect(wavIcon).toHaveAttribute('src', /^data:image\/png/, { timeout: 8000 });
+    const wavProof = await wavIcon.evaluate((el) => ({ naturalWidth: el.naturalWidth, px: el.dataset.px, width: el.getBoundingClientRect().width }));
+    expect(wavProof.px).toBe('24');
+    expect(wavProof.naturalWidth).toBe(24);
+    expect(Math.abs(wavProof.width - 16)).toBeLessThan(0.5);
+    await page.evaluate((p) => loadDirectory(p), `${root}\\_gen\\Projects`);
+    await expect(rowByName('Makefile').locator('svg.fp-row__icon use[href="#fp-ft-generic"]')).toHaveCount(1, { timeout: 5000 });
+
+    // Grid thumbnails at 150%: a 96-CSS-px tile box -> a 144-px bitmap.
+    await page.evaluate(() => fpShellIconRoute('unknown'));
+    await page.evaluate((p) => loadDirectory(p), `${root}\\_gen\\Pictures`);
+    await page.waitForFunction(() => document.querySelectorAll('.fp-row').length >= 6);
+    await page.evaluate(() => setViewMode('grid'));
+    const thumb = page.locator('#list-scroll img.fp-thumb--ready[src^="data:image/png"]').first();
+    await expect(thumb).toBeVisible({ timeout: 5000 });
+    const thumbProof = await thumb.evaluate((el) => {
+      const b = el.parentElement.getBoundingClientRect();
+      return { long: Math.max(el.naturalWidth, el.naturalHeight), box: Math.max(b.width, b.height) };
+    });
+    expect(thumbProof.long).toBe(Math.round(thumbProof.box * 1.5));
+    await page.evaluate(() => setViewMode('details'));
   } finally {
     // The icon-source setting is persisted server-side (POST /config), not
     // per-window -- reset it so it doesn't leak into a later run.

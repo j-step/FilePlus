@@ -362,17 +362,32 @@ function formatSize(bytes) {
   return (bytes / 1073741824).toFixed(2) + ' GB';
 }
 
+// Module-level formatters and a once-per-second "now": renderDirectory calls
+// formatModified once per entry with no virtualisation (up to LISTING_CAP =
+// 10,000 rows), and building an Intl.DateTimeFormat plus two Date objects and
+// two toDateString() calls per row cost ~34 µs each — a third of a second per
+// render of a large folder, paid again on every sort/view/extension toggle
+// (pass 2 #37). Locale is the user's default ([]), as before.
+const _FMT_TIME = new Intl.DateTimeFormat([], { hour: '2-digit', minute: '2-digit' });
+const _FMT_WEEKDAY = new Intl.DateTimeFormat([], { weekday: 'short' });
+const _FMT_DATE = new Intl.DateTimeFormat([], { month: 'short', day: 'numeric', year: 'numeric' });
+let _nowCache = { at: 0, now: null };
+function _nowForFormat() {
+  const t = Date.now();
+  if (!_nowCache.now || t - _nowCache.at > 1000) _nowCache = { at: t, now: new Date(t) };
+  return _nowCache.now;
+}
 function formatModified(isoStr) {
   if (!isoStr) return '—';
   const d = new Date(isoStr);
   if (isNaN(d)) return isoStr;
-  const now = new Date();
+  const now = _nowForFormat();
   const diff = now - d;
-  const sameDay = d.toDateString() === now.toDateString();
-  if (sameDay) return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const sameDay = d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
+  if (sameDay) return _FMT_TIME.format(d);
   if (diff < 86400000 * 2) return 'Yesterday';
-  if (diff < 86400000 * 7) return d.toLocaleDateString([], { weekday: 'short' });
-  return d.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
+  if (diff < 86400000 * 7) return _FMT_WEEKDAY.format(d);
+  return _FMT_DATE.format(d);
 }
 
 function escapeHtml(str) {

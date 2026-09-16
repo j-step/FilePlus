@@ -191,6 +191,16 @@ function renderPropertiesHeader() {
   if (nameInput) nameInput.value = _propsData.name;
 }
 
+/** Repaints the header icon (and the "Opens with" icon) of an open panel
+ * after ui.icon_source changed — called by refreshIconSurfaces (settings.js).
+ * No-op when the panel is closed. */
+function propertiesRefreshIcon() {
+  if (!_propsPath || !_propsEntry) return;
+  const iconEl = document.getElementById('properties-icon');
+  if (iconEl) iconEl.innerHTML = iconFor(_propsEntry, 24);
+  if (_propsData && !_propsData.is_dir) loadOpensWithIcon(_propsData);
+}
+
 function renderAttributesCell(props, keys, includeAdvanced) {
   const labels = { read_only: 'Read-only', hidden: 'Hidden', archive: 'Archive' };
   const boxes = keys.map(k => `
@@ -226,10 +236,12 @@ function renderOpensWithCell(props) {
  * fpDevicePx/fpTierBIconUrl/FpIconCache are defined at call time. */
 function loadOpensWithIcon(props) {
   const el = document.getElementById('properties-opens-with-icon');
-  if (!el || !props.opens_with_exe || !window.electronAPI?.fileIcon) return;
+  if (!el || !props.opens_with_exe) return;
+  // Same pipeline as a row icon (icons.js: Tier A, then the Electron bridge):
+  // a 16-CSS-px box at the current devicePixelRatio, pinned to px/dpr.
   const px = fpDevicePx(16);
   const key = window.FpIconCache.shellIconKey(props.opens_with_exe, 'exe', false, px);
-  fpTierBIconUrl(key, { path: props.opens_with_exe, ext: 'exe', isDir: false, px }).then((res) => {
+  fpShellIconUrl(key, { path: props.opens_with_exe, ext: 'exe', isDir: false, px }).then((res) => {
     if (!res || !res.url || _propsPath !== props.path) return;
     const el2 = document.getElementById('properties-opens-with-icon');
     if (!el2) return;

@@ -98,6 +98,20 @@ test.describe('LruCache', () => {
     expect(cache.get('a')).toBeNull();
   });
 
+  test('deleteWhere removes every matching entry and credits their bytes', () => {
+    const cache = new LruCache(10, 100);
+    cache.set('a', { url: 'xxxx' });
+    cache.set('b', null);
+    cache.set('c', null);
+    cache.set('d', 'yy');
+    expect(cache.deleteWhere((v) => v === null)).toBe(2);
+    expect(cache.size).toBe(2);
+    expect(cache.get('b')).toBeUndefined();
+    expect(cache.get('a')).toEqual({ url: 'xxxx' });
+    expect(cache.bytes).toBe(6);
+    expect(cache.deleteWhere(() => false)).toBe(0);
+  });
+
   test('default maxBytes is unbounded (count-only, Stage 2C Task 4 shape)', () => {
     const cache = new LruCache(2);
     cache.set('a', 'x'.repeat(10_000));
