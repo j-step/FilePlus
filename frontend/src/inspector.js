@@ -47,6 +47,13 @@ function updateInspector(mode, data = {}) {
 
   if (mode === 'multi') {
     _inspectorEntry = null;
+    // The single-file identity goes with it. Leaving _inspectorFileId behind
+    // meant a tag typed into the (single-file) Tags pane while several files
+    // were selected posted to whichever file had been inspected LAST — a
+    // silent write to the wrong record, with that file's own chips updating
+    // as if it had worked (pass 2 #199).
+    _inspectorFileId = null;
+    _inspectorHistoryPath = null;
     // Show multi-select aggregate; hide single-file UI
     singlePanes.forEach(p => { p.hidden = true; });
     if (tabBar)   tabBar.hidden = true;

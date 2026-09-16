@@ -113,21 +113,23 @@ function sameVolume(a, b) {
  *  'current'    — destDir is the directory already open
  *  'descendant' — destDir is nested inside one of the dragged folders
  *
- *  In search mode browserState.path is the search ROOT, not any result's real
- *  parent — results can live scattered across its subfolders, so a single
- *  "directory already open" comparison is wrong there (it refused a
- *  perfectly legitimate drop of a subfolder result onto the search root).
- *  'current' in search mode instead means every dragged item's OWN parent
- *  already is destDir — a true no-op only when the whole set is already
- *  sitting there. */
+ *  'current' is decided from the DRAGGED ITEMS' OWN parents, never from the
+ *  folder currently displayed. Comparing against browserState.path was wrong
+ *  in both directions: in search mode the listing is not one directory at all
+ *  (results scatter across subfolders, and a legitimate drop of a result onto
+ *  the search root was refused), and in browse mode a spring-load navigation
+ *  moves browserState.path to the folder just entered — which made the folder
+ *  the user had just sprung into the one place the drag could no longer land,
+ *  while the parent crumb, no longer "current", accepted a move of every item
+ *  into the folder it already sat in (pass 2 #197). Per-item parents say
+ *  exactly what the rule means: a no-op only when the whole set is already
+ *  sitting in destDir. */
 function dropViolation(destDir, paths) {
   if (!destDir || !paths || !paths.length) return 'self';
   const norm = p => String(p).replace(/[\\\/]+$/, '').toLowerCase();
   const destLower = norm(destDir);
   if (paths.some(p => norm(p) === destLower)) return 'self';
-  const alreadyThere = browserState.mode === 'search'
-    ? paths.every(p => norm(parentOfPath(p)) === destLower)
-    : destLower === norm(browserState.path || '');
+  const alreadyThere = paths.every(p => norm(parentOfPath(p)) === destLower);
   if (alreadyThere) return 'current';
   if (paths.some(p => destLower.startsWith(norm(p) + '\\'))) return 'descendant';
   return null;
@@ -165,6 +167,12 @@ function resolveDropTarget(x, y) {
 
   const upBtn = hit.closest('[data-action="nav-up"]');
   if (upBtn) {
+    // In search mode the button is still enabled but it no longer means "the
+    // parent of the folder on screen" — navUp() there leaves the results
+    // (exitSearchResults), while browserState.parent is the parent of the
+    // invisible pre-search folder. One gesture, two destinations: refuse the
+    // drop rather than move files somewhere the user never saw (pass 2 #49).
+    if (browserState.mode === 'search') return null;
     if (upBtn.disabled || browserState.isRoot || !browserState.parent) return null;
     kind = 'up'; path = browserState.parent; el = upBtn; cls = 'fp-icon-btn--drag-target';
   }
@@ -179,6 +187,19 @@ function resolveDropTarget(x, y) {
   if (!kind) {
     const crumb = hit.closest('.fp-breadcrumb__crumb[data-path]');
     if (crumb) { kind = 'crumb'; path = crumb.dataset.path; el = crumb; cls = 'fp-breadcrumb__crumb--drag-target'; }
+  }
+  // The listing's own background (blank space, or a file row — neither is a
+  // container) resolves to the folder ON SCREEN. Without it the obvious place
+  // to release after a spring-load — inside the folder you just descended
+  // into — was the one place a drop did nothing at all (pass 2 #197). Not in
+  // search mode: the results are not one directory, and browserState.path is
+  // a folder the user cannot see. dropViolation still makes this a silent
+  // no-op when every dragged item already lives there.
+  if (!kind && browserState.mode !== 'search') {
+    const list = hit.closest('#list-scroll');
+    if (list && browserState.path) {
+      kind = 'list'; path = browserState.path; el = list; cls = 'fp-list--drag-target';
+    }
   }
   if (!kind || !isAbsolutePath(path)) return null;
 
@@ -504,7 +525,10 @@ function initDragDrop() {
       if (next) next.el.classList.add(next.cls);
       // Re-arm the hover timer only on a real target change, so standing
       // still over one folder springs once at 700 ms rather than never.
-      if (next) beginSpring(next); else cancelSpring();
+      // The list background is never a spring target — "descend into the
+      // folder already open" is a no-op that would reload the listing under
+      // the pointer every 700 ms.
+      if (next && next.kind !== 'list') beginSpring(next); else cancelSpring();
     }
     refreshDragMode();
     e.preventDefault();

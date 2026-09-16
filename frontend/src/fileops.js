@@ -139,8 +139,11 @@ const fileops = {
     finally { this._inFlight = false; }
   },
 
-  copySelection() { this.clipboard = { mode: 'copy', paths: getSelectedPaths() }; },
-  cutSelection()  { this.clipboard = { mode: 'cut',  paths: getSelectedPaths() }; },
+  // Both no-op on an empty selection rather than replacing a real clipboard
+  // with an empty one: a stray Ctrl+C after a deselect used to wipe the copy
+  // the user had just made, greying Paste out with no feedback (pass 2 #50).
+  copySelection() { const paths = getSelectedPaths(); if (!paths.length) return; this.clipboard = { mode: 'copy', paths }; },
+  cutSelection()  { const paths = getSelectedPaths(); if (!paths.length) return; this.clipboard = { mode: 'cut',  paths }; },
 
   /** Number of paths currently on the clipboard — the Paste context-menu
    * item's enabled(ctx) predicate (Task 11, playtest pass 1 §4.2) reads this

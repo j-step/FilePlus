@@ -258,6 +258,23 @@ function initMarqueeSelection() {
   const marqueeRect = document.getElementById('marquee-rect');
   if (!listScroll || !marqueeRect) return;
   let dragging = false, startX = 0, startY = 0, ctrlDrag = false;
+  // #marquee-rect is position:absolute, so its left/top are measured from its
+  // containing block (#screen-browser — .content/.list-pane are static), NOT
+  // from the viewport. Pointer coordinates are viewport-space, so they have to
+  // be translated into that box before they are written as styles: writing
+  // clientX/clientY straight in painted the band a sidebar-width right and a
+  // chrome-height down from the pointer, where .content's overflow:hidden
+  // usually clipped it away entirely (pass 2 #48). Hit-testing below stays in
+  // viewport space, which is where getBoundingClientRect() already answers.
+  let originX = 0, originY = 0;
+  const captureMarqueeOrigin = () => {
+    // offsetParent is null while the element is display:none, so this is only
+    // ever called once the band has been shown.
+    const host = marqueeRect.offsetParent || document.getElementById('screen-browser');
+    const r = host && host.getBoundingClientRect ? host.getBoundingClientRect() : null;
+    originX = r ? r.left : 0;
+    originY = r ? r.top : 0;
+  };
 
   listScroll.addEventListener('mousedown', e => {
     if (e.target.closest('.fp-row, .fp-row__icon, .fp-row__name')) return;
@@ -266,8 +283,9 @@ function initMarqueeSelection() {
     ctrlDrag = e.ctrlKey;
     startX = e.clientX; startY = e.clientY;
     marqueeRect.style.display = 'block';
-    marqueeRect.style.left = startX + 'px';
-    marqueeRect.style.top  = startY + 'px';
+    captureMarqueeOrigin();
+    marqueeRect.style.left = (startX - originX) + 'px';
+    marqueeRect.style.top  = (startY - originY) + 'px';
     marqueeRect.style.width = '0px';
     marqueeRect.style.height = '0px';
     e.preventDefault();
@@ -279,8 +297,8 @@ function initMarqueeSelection() {
     const y = Math.min(e.clientY, startY);
     const w = Math.abs(e.clientX - startX);
     const h = Math.abs(e.clientY - startY);
-    marqueeRect.style.left   = x + 'px';
-    marqueeRect.style.top    = y + 'px';
+    marqueeRect.style.left   = (x - originX) + 'px';
+    marqueeRect.style.top    = (y - originY) + 'px';
     marqueeRect.style.width  = w + 'px';
     marqueeRect.style.height = h + 'px';
     // Highlight intersecting rows — Ctrl+drag also keeps the pre-existing
@@ -1389,7 +1407,12 @@ function initRowInteractions() {
     if (!row) return;
     const path = row.dataset.path;
     const clickMode = window.__fpConfig && window.__fpConfig['ui.click_mode'];
-    if (clickMode === 'single' && row.dataset.type === 'folder') {
+    // A MODIFIED click is always a selection gesture, in either click mode:
+    // checking click_mode first sent Ctrl+click / Shift+click on a folder row
+    // to openEntry(), which navigated away and threw the selection the user
+    // was building away with it (pass 2 #198).
+    const modified = e.ctrlKey || e.shiftKey || e.metaKey;
+    if (clickMode === 'single' && row.dataset.type === 'folder' && !modified) {
       openEntry(path);
       return;
     }
@@ -1418,6 +1441,15 @@ function anyScrimOpen() {
       ? el.style.display !== 'none'
       : getComputedStyle(el).display !== 'none';
   });
+}
+
+/** True when a real (non-collapsed) text selection exists on the page — a
+ *  path dragged out in the Inspector, a breadcrumb, a status-bar figure. The
+ *  Browser's Ctrl+C/Ctrl+X must leave that to the browser's native copy
+ *  instead of swallowing it (pass 2 #50). */
+function hasTextSelection() {
+  const sel = typeof window.getSelection === 'function' ? window.getSelection() : null;
+  return !!(sel && !sel.isCollapsed && String(sel).trim().length);
 }
 
 function browserKeydown(e) {
@@ -1464,9 +1496,27 @@ function browserKeydown(e) {
   if (ctrl && !e.repeat && ((key.toLowerCase() === 'y' && !e.shiftKey) || (key.toLowerCase() === 'z' && e.shiftKey))) {
     e.preventDefault(); fileops.redoLast(); return;
   }
-  if (ctrl && key.toLowerCase() === 'x') { e.preventDefault(); fileops.cutSelection(); return; }
-  if (ctrl && key.toLowerCase() === 'c') { e.preventDefault(); fileops.copySelection(); return; }
-  if (ctrl && key.toLowerCase() === 'v') { e.preventDefault(); if (browserState.path) fileops.pasteInto(browserState.path).catch(fileopsReported); return; }
+  // Ctrl+X / Ctrl+C only belong to the file clipboard when there IS a row
+  // selection and the user is not copying text. With nothing selected they
+  // used to preventDefault() the native copy and then overwrite a perfectly
+  // good file clipboard with an empty one (Paste silently greyed out) — so
+  // fall through to the browser instead (pass 2 #50).
+  if (ctrl && (key.toLowerCase() === 'x' || key.toLowerCase() === 'c')) {
+    if (!browserState.selection.size || hasTextSelection()) return;
+    e.preventDefault();
+    if (key.toLowerCase() === 'x') fileops.cutSelection(); else fileops.copySelection();
+    return;
+  }
+  // Ctrl+V pastes into the folder ON SCREEN. In search mode that folder is not
+  // on screen — browserState.path is still the pre-search directory — so a
+  // paste there would move/copy the clipboard into a directory the user cannot
+  // see and the re-run search would not show (pass 2 #51).
+  if (ctrl && key.toLowerCase() === 'v') {
+    e.preventDefault();
+    if (browserState.mode === 'search') { showToast('Leave search results to paste here', 'error'); return; }
+    if (browserState.path) fileops.pasteInto(browserState.path).catch(fileopsReported);
+    return;
+  }
   if (key === 'F2') { e.preventDefault(); if (canRenameSelection() && browserState.focus) startInlineRename(browserState.focus); return; }
   if (key === 'Delete') { e.preventDefault(); fileops.trashSelection().catch(fileopsReported); return; }
 

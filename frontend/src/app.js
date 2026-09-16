@@ -1286,8 +1286,19 @@ function cmSingleFolderEnabled(ctx) {
 }
 /** Cut, Copy, Delete, Add tag, Add/Remove favorites: any (non-empty) count. */
 function cmAnyEnabled(ctx) { return (ctx.selection || []).length > 0; }
-/** Paste: only when the clipboard actually holds something. */
-function cmClipboardEnabled(ctx) { return (ctx.clipboard || 0) > 0; }
+/** Paste: only when the clipboard actually holds something — and only when
+ * the directory it would paste into is the one on screen (see
+ * cmTargetDirVisible). */
+function cmClipboardEnabled(ctx) { return (ctx.clipboard || 0) > 0 && cmTargetDirVisible(); }
+/** True when contextTargetDir() resolves to a directory the user can actually
+ * see. The folder menu names its own right-clicked folder, so it always can;
+ * every other menu type falls back to browserState.path, which in search mode
+ * is the pre-search folder hidden behind a result set — creating or pasting
+ * there mutated an off-screen directory and showed nothing for it (pass 2
+ * #51). New folder / New file / Paste are disabled instead. */
+function cmTargetDirVisible() {
+  return browserState.mode !== 'search' || contextMenuType === 'folder';
+}
 /** Add/Remove Favorites label — "Remove" only when EVERY selected item (or
  * the single Home row) is already favorited; "Add" otherwise, including an
  * empty selection (the item is disabled then anyway, via cmAnyEnabled). */
@@ -1319,7 +1330,11 @@ const CONTEXT_MENUS = {
     { label: 'Rename', action: 'cm-rename', kbd: 'F2', enabled: () => canRenameSelection() },
     { label: 'Delete', action: 'cm-delete', kbd: 'Del', danger: true, icon: icon('delete', 'fp-icon--14'), enabled: cmAnyEnabled },
     'sep',
-    { label: 'Add tag…',         action: 'cm-add-tag',     icon: icon('tag', 'fp-icon--14'), enabled: cmAnyEnabled },
+    // Single selection only: the item just focuses the Inspector's tag input,
+    // and the Inspector only ever tags ONE file — the one it is showing. From
+    // a multi-selection it used to tag whichever file was inspected last
+    // (pass 2 #199). A real batch-tag path is backlog, not a silent lie.
+    { label: 'Add tag…',         action: 'cm-add-tag',     icon: icon('tag', 'fp-icon--14'), enabled: cmSingleEnabled },
     { label: cmFavoriteLabel,    action: 'cm-favorite',    enabled: cmAnyEnabled },
     'sep',
     { label: 'Properties',             action: 'cm-properties', enabled: cmSingleEnabled },
@@ -1351,8 +1366,8 @@ const CONTEXT_MENUS = {
   // A.10.3 — Empty area context menu (targets the current folder itself, not
   // a selection — Properties and the rest stay unconditionally enabled).
   'empty-area': [
-    { label: 'New folder', action: 'cm-new-folder', icon: icon('folder-add', 'fp-icon--14') },
-    { label: 'New file',   action: 'cm-new-file' },
+    { label: 'New folder', action: 'cm-new-folder', icon: icon('folder-add', 'fp-icon--14'), enabled: cmTargetDirVisible },
+    { label: 'New file',   action: 'cm-new-file',  enabled: cmTargetDirVisible },
     { label: 'Paste',      action: 'cm-paste',      kbd: 'Ctrl+V', enabled: cmClipboardEnabled },
     { label: 'Refresh',    action: 'cm-refresh',    kbd: 'F5' },
     'sep',
@@ -1418,11 +1433,24 @@ const INSPECTOR_MORE_MENU_ITEMS = [
 // click point, and {ctx: menuContext()} drives each item's checked(ctx)
 // predicate (Task 11 adds enabled(ctx) to the same item shape — unknown
 // fields are simply ignored by showContextMenu, not an error).
+/** Which icon-size item a grid scale belongs to. The four menu presets are
+ * 0.75 / 1 / 1.5 / 2, but Ctrl+wheel steps through all eight of
+ * LIST_SCALE_STEPS — so an exact-equality check left the whole View menu with
+ * no checkmark at all at 0.875, 1.125, 1.25 or 1.75 (pass 2 #202). Each item
+ * claims the band around its own preset instead. */
+function viewScaleBucket(scale) {
+  const s = Number(scale) || 1;
+  if (s >= 1.75) return 'xl';
+  if (s >= 1.25) return 'large';
+  if (s >= 0.875) return 'medium';
+  return 'small';
+}
+
 const VIEW_MENU_ITEMS = [
-  { label: 'Extra large icons', action: 'view-xl',      checked: ctx => ctx.view === 'grid' && ctx.scale === 2 },
-  { label: 'Large icons',       action: 'view-large',   checked: ctx => ctx.view === 'grid' && ctx.scale === 1.5 },
-  { label: 'Medium icons',      action: 'view-medium',  checked: ctx => ctx.view === 'grid' && ctx.scale === 1 },
-  { label: 'Small icons',       action: 'view-small',   checked: ctx => ctx.view === 'grid' && ctx.scale === 0.75 },
+  { label: 'Extra large icons', action: 'view-xl',      checked: ctx => ctx.view === 'grid' && viewScaleBucket(ctx.scale) === 'xl' },
+  { label: 'Large icons',       action: 'view-large',   checked: ctx => ctx.view === 'grid' && viewScaleBucket(ctx.scale) === 'large' },
+  { label: 'Medium icons',      action: 'view-medium',  checked: ctx => ctx.view === 'grid' && viewScaleBucket(ctx.scale) === 'medium' },
+  { label: 'Small icons',       action: 'view-small',   checked: ctx => ctx.view === 'grid' && viewScaleBucket(ctx.scale) === 'small' },
   'sep',
   // "List" is deliberately not Explorer's multi-column flowing list — ours
   // is a single-column, name-only row (see browser.js's setViewMode).
@@ -2177,6 +2205,15 @@ function switchInspectorTab(name) {
   inspector.querySelectorAll('.fp-inspector__pane').forEach(p => {
     p.hidden = p.dataset.pane !== name;
   });
+  // Switching to a single-file pane also restores the chrome that multi mode
+  // hid (updateInspector('multi') hides both) — otherwise the Inspector ends
+  // up showing a lone pane with no tab strip and no way back (pass 2 #200).
+  if (name !== 'multi') {
+    const tabBar = inspector.querySelector('.fp-tabs.fp-inspector__tabs');
+    const preview = document.getElementById('inspector-preview');
+    if (tabBar) tabBar.hidden = false;
+    if (preview) preview.hidden = false;
+  }
   moveTabIndicator(inspector.querySelector('.fp-inspector__tabs'), targetTab);
 }
 
@@ -2766,8 +2803,14 @@ document.addEventListener('click', e => {
     case 'cm-copy':
       fileops.copySelection();
       break;
+    // The three "act on the target directory" actions share one guard: in
+    // search mode contextTargetDir() falls back to the invisible pre-search
+    // folder, so they are refused rather than mutating a directory the user
+    // cannot see (pass 2 #51). The menu items are already disabled — this
+    // covers every other way the case can be reached.
     case 'cm-paste':
     case 'cm-paste-here':
+      if (!cmTargetDirVisible()) { showToast('Leave search results to paste here', 'error'); break; }
       fileops.pasteInto(contextTargetDir()).catch(fileopsReported);
       break;
     case 'cm-rename': {
@@ -2779,9 +2822,11 @@ document.addEventListener('click', e => {
       fileops.trashSelection().catch(fileopsReported);
       break;
     case 'cm-new-folder':
+      if (!cmTargetDirVisible()) { showToast('Leave search results to create here', 'error'); break; }
       fileops.newFolder(contextTargetDir()).catch(fileopsReported);
       break;
     case 'cm-new-file':
+      if (!cmTargetDirVisible()) { showToast('Leave search results to create here', 'error'); break; }
       fileops.newFile(contextTargetDir()).catch(fileopsReported);
       break;
     case 'cm-refresh':
@@ -2804,18 +2849,28 @@ document.addEventListener('click', e => {
       // (/favorites, /fs/list) race independently, so firing them merely in
       // parallel could re-render the row from a still-stale favoritesSet.
       const settle = async () => { await favoritesReload(); await refreshDirectory(); };
-      if (allFav) {
-        Promise.all(paths.map(p => API.del('/favorites', { path: p })))
-          .then(() => { showToast('Removed from Favorites', 'default'); settle(); })
-          .catch(err => showToast(`Failed to remove favorite: ${formatApiError(err)}`, 'error'));
-      } else {
-        Promise.all(paths.map(p => API.post('/favorites', { path: p })))
-          .then(() => { showToast('Added to Favorites', 'default'); settle(); })
-          .catch(err => showToast(`Failed to favorite: ${formatApiError(err)}`, 'error'));
-      }
+      // allSettled, not all: one rejected request used to abort the whole
+      // batch's settle(), leaving the stars and the Add/Remove label stale for
+      // the entries that HAD changed server-side (pass 2 #201). Resync
+      // unconditionally, then report only what actually failed.
+      const verb = allFav ? 'remove' : 'add';
+      const request = p => (allFav ? API.del('/favorites', { path: p }) : API.post('/favorites', { path: p }));
+      Promise.allSettled(paths.map(request)).then(async results => {
+        await settle();
+        const failed = results.filter(r => r.status === 'rejected');
+        if (!failed.length) {
+          showToast(allFav ? 'Removed from Favorites' : 'Added to Favorites', 'default');
+        } else if (failed.length === paths.length) {
+          showToast(`Failed to ${verb} favorite: ${formatApiError(failed[0].reason)}`, 'error');
+        } else {
+          showToast(`Failed to ${verb} ${failed.length} of ${paths.length}: ${formatApiError(failed[0].reason)}`, 'error');
+        }
+      });
       break;
     }
     case 'cm-add-tag': {
+      // Single selection only — see the menu item's cmSingleEnabled above.
+      if (browserState.selection.size !== 1) break;
       // The row was already selected by the 'contextmenu' listener
       // (ensureRowSelected) before this menu item could be clicked — just
       // surface the Inspector's existing tag-add input for it. The Tags pane

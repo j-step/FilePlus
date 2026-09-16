@@ -54,6 +54,33 @@ function favoritesIdFor(path) { return favoritesPathToId.get(favoritesNormalize(
  * rather than reaching for the loader function directly. */
 function favoritesReload() { return loadFavorites(); }
 
+/** Re-paints the favorite star on every ALREADY-RENDERED row that shows one —
+ * Home's Recent rows and the Browser listing — from the current favoritesSet.
+ *
+ * loadFavorites() rewrites only #home-favorites, so a star toggled in one pane
+ * used to leave the other pane's rows stale indefinitely (switchScreen
+ * ('browser') deliberately does not re-fetch a tab that already has a path),
+ * with the row and its own context-menu label contradicting each other
+ * (pass 2 #52). This is markup surgery, not a re-fetch: those rows are already
+ * correct apart from one glyph. */
+function syncFavoriteStars() {
+  const starHtml = `<span class="fp-row__star" title="In Favorites">${icon('star')}</span>`;
+  document.querySelectorAll('#list-scroll .fp-row[data-path], #home-recent .fp-row[data-path]').forEach(row => {
+    const has = favoritesHas(row.dataset.path);
+    const existing = row.querySelector('.fp-row__star');
+    if (has === !!existing) return;
+    if (!has) { existing.remove(); return; }
+    // Recent rows hang the star in their reserved .fp-row__tags cell; a
+    // Browser row is a flex row whose star sits between the name and the size
+    // column (see renderRecentRow / renderFsRow).
+    const tagsCell = row.classList.contains('fp-row--recent') ? row.querySelector('.fp-row__tags') : null;
+    const sizeCell = tagsCell ? null : row.querySelector('.fp-row__size');
+    if (tagsCell) tagsCell.insertAdjacentHTML('beforeend', starHtml);
+    else if (sizeCell) sizeCell.insertAdjacentHTML('beforebegin', starHtml);
+    else row.insertAdjacentHTML('beforeend', starHtml);
+  });
+}
+
 // ── Icons (hover-action buttons + favorite star) ──────────────────────────
 const HOME_ICON_OPEN = icon('open', 'fp-icon--14');
 const HOME_ICON_REVEAL = icon('reveal', 'fp-icon--14');
@@ -213,6 +240,9 @@ async function loadFavorites() {
     favoritesPathToId.set(norm, f.id);
   });
   container.innerHTML = files.length ? files.map(renderFavoriteRow).join('') : HOME_FAVORITES_EMPTY_HTML;
+  // Every other pane that draws a star reads favoritesSet at render time, so
+  // whoever just changed it has to repaint them (pass 2 #52).
+  syncFavoriteStars();
 }
 
 // ── Open / Reveal / Copy path (hover actions + home-row context menu) ──────
