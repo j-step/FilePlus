@@ -5,6 +5,7 @@ The Electron frontend communicates exclusively through this API.
 All business logic lives here; the renderer never touches the filesystem directly.
 """
 import asyncio
+import base64
 import ctypes
 import errno
 import logging
@@ -23,7 +24,7 @@ import aiosqlite
 import psutil
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel
 from typing import Any
 
@@ -49,6 +50,10 @@ async def lifespan(app: FastAPI):
     async with _db() as conn:
         app.state.reconciled = await ol.reconcile_pending(conn)  # classifies crash leftovers; warns per row
     yield
+    # The shell-icon STA workers (backend.winshell.ICON_EXECUTOR) must not
+    # keep the process alive past shutdown; an icon handler still running is
+    # abandoned, not awaited.
+    winshell.shutdown_icon_executor()
 
 
 app = FastAPI(title="FilePlus API", version="0.1.0", lifespan=lifespan)
@@ -304,6 +309,12 @@ async def health() -> dict:
         "pending_ops": pending_ops,
         "index_running": app.state.index_state["running"],
         "auth": bool(_config.FILEPLUS_API_TOKEN),
+        # Capability flag for the renderer's Windows-icon mode: true when
+        # POST /shell/icons can actually render (IShellItemImageFactory is
+        # Windows-only). Read by checkBackend (app.js) so the renderer never
+        # has to discover the route by a failed request -- a 404 logs an
+        # unsuppressible Chromium console error even when caught.
+        "shell_icons": os.name == "nt",
     }
 
 
@@ -744,16 +755,17 @@ def _peek_entries(directory: Path, n: int) -> list[dict]:
             try:
                 if de.is_dir(follow_symlinks=False):
                     continue
-                if os.name == "nt":
-                    attrs = de.stat(follow_symlinks=False).st_file_attributes  # type: ignore[attr-defined]
-                    if attrs & 0x2:  # FILE_ATTRIBUTE_HIDDEN
-                        continue
+                st = de.stat(follow_symlinks=False)
+                if os.name == "nt" and st.st_file_attributes & 0x2:  # type: ignore[attr-defined]  FILE_ATTRIBUTE_HIDDEN
+                    continue
             except OSError:
                 continue
             ext = os.path.splitext(de.name)[1].lstrip(".").lower()
             if not ft.is_media(ext):
                 continue
-            items.append({"name": de.name, "path": str(directory / de.name), "ext": ext})
+            # modified keys the renderer's thumbnail cache for the peeked
+            # picture (pass 2 #143) -- the same field a /fs/list entry carries.
+            items.append({"name": de.name, "path": str(directory / de.name), "ext": ext, "modified": st.st_mtime})
     items.sort(key=lambda item: item["name"].lower())
     return items
 
@@ -959,6 +971,122 @@ async def fs_properties_details(path: str = Query(..., description="Absolute pat
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc))
     return {"details": details}
+
+
+# ---------------------------------------------------------------------------
+# Shell icons at physical pixels (Stage 2C pass 2 -- Windows-icon sharpness,
+# docs/superpowers/specs/2026-09-14-stage-2c-pass-2-icon-design.md §4.8).
+# Read-only (path_guard "read"): the renderer's Windows-icon mode asks here
+# first ("Tier A", Explorer-exact for every entry at every px) and falls back
+# to Electron's app.getFileIcon ("Tier B") only when this backend is down,
+# too old to have the route, or did not answer an item within the batch
+# timeout. Both routes sit behind the token gate like everything else.
+# ---------------------------------------------------------------------------
+
+class ShellIconItem(BaseModel):
+    path: str
+    px: int
+    is_dir: bool = False
+
+
+class ShellIconsRequest(BaseModel):
+    items: list[ShellIconItem]
+
+
+_SHELL_ICONS_MAX_ITEMS = 200
+_SHELL_ICON_TIMEOUT_S = 5.0      # single route
+_SHELL_ICONS_TIMEOUT_S = 2.5     # batch: finished items are returned, the rest `pending`
+
+
+def _shell_icon_png_headers() -> dict:
+    # The renderer's LRU is the real cache; this lets a plain <img src> of the
+    # single route (or a curious developer's browser tab) hold it for an hour.
+    return {"Cache-Control": "private, max-age=3600"}
+
+
+def _shell_icon_key_for(path: str, px: int, is_dir_hint: bool) -> tuple | None:
+    """Blocking: guard, exists, key. None for a bad path / px / missing item --
+    a null batch entry, never a batch failure."""
+    if not winshell.ICON_PX_MIN <= px <= winshell.ICON_PX_MAX:
+        return None
+    try:
+        resolved = path_guard(Path(path), "read")
+    except Exception:
+        return None
+    if not resolved.exists():
+        return None
+    return winshell.shell_icon_key(resolved, is_dir_hint or resolved.is_dir(), px), resolved
+
+
+@app.get("/shell/icon")
+async def shell_icon(
+    path: str = Query(..., description="Absolute path of the file or folder"),
+    px: int = Query(..., description="Physical pixel size, 8..512"),
+):
+    """Explorer-exact shell icon for one path at exactly px x px
+    (IShellItemImageFactory::GetImage, SIIGBF_ICONONLY|SIIGBF_SCALEUP), as
+    image/png. 400 for px outside 8..512 or a malformed path, 404 for a
+    missing path or when the shell has no image / did not answer within 5 s.
+    """
+    if not winshell.ICON_PX_MIN <= px <= winshell.ICON_PX_MAX:
+        raise HTTPException(status_code=400, detail=f"px must be {winshell.ICON_PX_MIN}..{winshell.ICON_PX_MAX}")
+    resolved = await aguard(path)  # relative/driveless -> BadPathError -> 400
+    if not await asyncio.to_thread(resolved.exists):
+        raise HTTPException(status_code=404, detail=f"Not found: {path}")
+    key = winshell.shell_icon_key(resolved, resolved.is_dir(), px)
+    loop = asyncio.get_running_loop()
+    fut = loop.run_in_executor(winshell.icon_executor(), winshell.shell_image_cached, key, resolved, px, True)
+    done, _ = await asyncio.wait({fut}, timeout=_SHELL_ICON_TIMEOUT_S)
+    png = fut.result() if (fut in done and not fut.exception()) else None
+    if png is None:
+        raise HTTPException(status_code=404, detail="no shell image")
+    return Response(content=png, media_type="image/png", headers=_shell_icon_png_headers())
+
+
+@app.post("/shell/icons")
+async def shell_icons(req: ShellIconsRequest):
+    """Batch form of GET /shell/icon for a viewport of rows: one HTTP round
+    trip, de-duplicated by icon key (per extension; per path for
+    exe/dll/ico/lnk/url/cpl/scr and for every directory). Answers in request
+    order as {png: base64 | null, pending: bool}. A bad path or px is a null
+    entry, never a batch failure; an item the executor has not finished
+    within 2.5 s is `pending` (it keeps running and fills the cache for the
+    next request) so one hung icon handler cannot hold the whole viewport.
+    """
+    if len(req.items) > _SHELL_ICONS_MAX_ITEMS:
+        raise HTTPException(status_code=400, detail=f"at most {_SHELL_ICONS_MAX_ITEMS} items")
+    if not req.items:
+        return {"items": []}
+    # One worker thread for all the guards/stats (path_guard can block on a
+    # slow volume; 200 separate to_thread hops would be the slower choice).
+    keyed = await asyncio.to_thread(
+        lambda: [_shell_icon_key_for(it.path, it.px, it.is_dir) for it in req.items]
+    )
+    loop = asyncio.get_running_loop()
+    futs: dict[tuple, asyncio.Future] = {}
+    for hit, it in zip(keyed, req.items):
+        if hit is None:
+            continue
+        key, resolved = hit
+        if key not in futs:
+            futs[key] = loop.run_in_executor(
+                winshell.icon_executor(), winshell.shell_image_cached, key, resolved, it.px, True,
+            )
+    done: set = set()
+    if futs:
+        done, _ = await asyncio.wait(set(futs.values()), timeout=_SHELL_ICONS_TIMEOUT_S)
+    out = []
+    for hit in keyed:
+        if hit is None:
+            out.append({"png": None, "pending": False})
+            continue
+        fut = futs[hit[0]]
+        if fut not in done:
+            out.append({"png": None, "pending": True})
+            continue
+        png = None if fut.exception() else fut.result()
+        out.append({"png": base64.b64encode(png).decode("ascii") if png else None, "pending": False})
+    return {"items": out}
 
 
 # ---------------------------------------------------------------------------

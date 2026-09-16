@@ -229,3 +229,78 @@ def test_fs_search_tag_filter_survives_case_only_rename(sandbox, db):
 
         r = client.get("/fs/search", params={"root": str(sandbox), "tag": "keep"})
         assert [x["name"] for x in r.json()["results"]] == ["doc.txt"]
+
+
+# ---------------------------------------------------------------------------
+# Pass 2: GET /shell/icon and POST /shell/icons (Windows-icon sharpness,
+# design step 3) -- Explorer-exact icons at physical px for the renderer.
+# ---------------------------------------------------------------------------
+
+nt_only = pytest.mark.skipif(os.name != "nt", reason="IShellItemImageFactory is windows only")
+
+
+def _ihdr(png: bytes) -> tuple[int, int]:
+    return int.from_bytes(png[16:20], "big"), int.from_bytes(png[20:24], "big")
+
+
+@nt_only
+def test_shell_icon_answers_png_at_exact_px(client):
+    r = client.get("/shell/icon", params={"path": r"C:\Windows", "px": 24})
+    assert r.status_code == 200
+    assert r.headers["content-type"] == "image/png"
+    assert "max-age" in r.headers.get("cache-control", "")
+    assert _ihdr(r.content) == (24, 24)
+
+
+def test_shell_icon_rejects_px_out_of_range(client):
+    assert client.get("/shell/icon", params={"path": r"C:\Windows", "px": 4}).status_code == 400
+    assert client.get("/shell/icon", params={"path": r"C:\Windows", "px": 513}).status_code == 400
+
+
+def test_shell_icon_missing_path_is_404(client, sandbox):
+    r = client.get("/shell/icon", params={"path": str(sandbox / "nope.txt"), "px": 16})
+    assert r.status_code == 404
+
+
+def test_shell_icon_relative_path_is_400(client):
+    assert client.get("/shell/icon", params={"path": "relative\\x.txt", "px": 16}).status_code == 400
+
+
+@nt_only
+def test_shell_icons_batch_in_order_with_shared_ext_key(client, sandbox):
+    import base64
+    (sandbox / "a.txt").write_text("a")
+    (sandbox / "b.txt").write_text("b")
+    body = {"items": [
+        {"path": r"C:\Windows", "px": 16, "is_dir": True},
+        {"path": str(sandbox / "a.txt"), "px": 16},
+        {"path": str(sandbox / "b.txt"), "px": 16},
+        {"path": str(sandbox / "missing.txt"), "px": 16},
+        {"path": str(sandbox / "a.txt"), "px": 4},
+    ]}
+    r = client.post("/shell/icons", json=body)
+    assert r.status_code == 200
+    items = r.json()["items"]
+    assert len(items) == 5
+    assert items[0]["png"] and items[1]["png"] and items[2]["png"]
+    assert items[1]["png"] == items[2]["png"], "same extension -> one shared key -> identical bytes"
+    assert items[0]["png"] != items[1]["png"]
+    assert items[3] == {"png": None, "pending": False}
+    assert items[4] == {"png": None, "pending": False}, "a bad px is a null entry, never a batch failure"
+    assert _ihdr(base64.b64decode(items[0]["png"])) == (16, 16)
+
+
+def test_shell_icons_batch_caps_at_200(client):
+    r = client.post("/shell/icons", json={"items": [{"path": r"C:\Windows", "px": 16}] * 201})
+    assert r.status_code == 400
+
+
+def test_shell_icons_empty_batch(client):
+    r = client.post("/shell/icons", json={"items": []})
+    assert r.status_code == 200 and r.json() == {"items": []}
+
+
+def test_health_advertises_shell_icons(client):
+    r = client.get("/health")
+    assert r.status_code == 200
+    assert r.json()["shell_icons"] is (os.name == "nt")

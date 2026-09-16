@@ -179,3 +179,12 @@ def test_electron_file_origin_preflight_is_allowed(client):
     })
     assert r.status_code == 200
     assert r.headers.get("access-control-allow-origin") == "null"
+
+
+def test_shell_icon_routes_are_token_gated(client, monkeypatch):
+    """Pass 2 (icon design step 3): the shell-icon routes sit behind the same
+    X-FilePlus-Token gate as every other non-/health route."""
+    monkeypatch.setattr(_config, "FILEPLUS_API_TOKEN", "t")
+    assert client.get("/shell/icon", params={"path": r"C:\Windows", "px": 16}).status_code == 401
+    assert client.post("/shell/icons", json={"items": []}).status_code == 401
+    assert client.post("/shell/icons", json={"items": []}, headers={"X-FilePlus-Token": "t"}).status_code == 200

@@ -344,3 +344,143 @@ def test_property_details_cache_is_bounded_fifo(tmp_path, monkeypatch):
     cached_paths = {k[0] for k in winshell._property_details_cache}
     assert str(files[0]) not in cached_paths and str(files[1]) not in cached_paths
     assert str(files[4]) in cached_paths
+
+
+# ---------------------------------------------------------------------------
+# Pass 2 (Windows-icon sharpness, design steps 3-4): shell_image renders the
+# shell's own image for a path at exactly px x px through
+# IShellItemImageFactory::GetImage -- the interface Explorer's views draw
+# with -- so a folder, a known folder, an extension-less file and a .lnk all
+# get the icon Explorer shows, not Chromium's grouped-by-extension guess.
+# ---------------------------------------------------------------------------
+
+import io
+import re
+from pathlib import Path
+
+nt_only = pytest.mark.skipif(os.name != "nt", reason="IShellItemImageFactory is windows only")
+
+
+def _png_size(data: bytes):
+    from PIL import Image
+    img = Image.open(io.BytesIO(data))
+    return img.size, img.mode, img
+
+
+@nt_only
+@pytest.mark.parametrize("px", [16, 20, 24, 28, 40, 48, 96, 144])
+def test_shell_image_exact_size(px):
+    png = winshell.shell_image(Path(r"C:\Windows"), px)
+    assert png and png[:8] == b"\x89PNG\r\n\x1a\n"
+    size, mode, img = _png_size(png)
+    assert size == (px, px)
+    assert mode == "RGBA"
+    assert img.getpixel((0, 0))[3] == 0, "a folder icon's corner is transparent"
+    assert img.getextrema()[3][1] == 255, "and its body is opaque"
+
+
+@nt_only
+def test_shell_image_clamps_px():
+    assert _png_size(winshell.shell_image(Path(r"C:\Windows"), 4))[0] == (8, 8)
+    assert _png_size(winshell.shell_image(Path(r"C:\Windows"), 10000))[0] == (512, 512)
+
+
+@nt_only
+def test_shell_image_dir_differs_from_extensionless_file(tmp_path):
+    (tmp_path / "d").mkdir()
+    (tmp_path / "Makefile").write_text("all:\n")
+    d = winshell.shell_image(tmp_path / "d", 16)
+    f = winshell.shell_image(tmp_path / "Makefile", 16)
+    assert d and f
+    assert d != f  # the Chromium regression this replaces: one drive glyph for both
+
+
+@nt_only
+def test_shell_image_txt_differs_from_dir(tmp_path):
+    (tmp_path / "d").mkdir()
+    (tmp_path / "a.txt").write_text("hi")
+    assert winshell.shell_image(tmp_path / "a.txt", 24) != winshell.shell_image(tmp_path / "d", 24)
+
+
+@nt_only
+def test_shell_image_lnk_resolves_target(tmp_path):
+    win32com = pytest.importorskip("win32com.client")
+    shell = win32com.Dispatch("WScript.Shell")
+    lnk = shell.CreateShortcut(str(tmp_path / "np.lnk"))
+    lnk.TargetPath = r"C:\Windows\notepad.exe"
+    lnk.Save()
+    (tmp_path / "a.txt").write_text("hi")
+    via_lnk = winshell.shell_image(tmp_path / "np.lnk", 32)
+    assert via_lnk
+    assert via_lnk != winshell.shell_image(tmp_path / "a.txt", 32)
+    assert via_lnk == winshell.shell_image(Path(r"C:\Windows\notepad.exe"), 32)
+
+
+@nt_only
+def test_shell_image_missing_path_is_none(tmp_path):
+    assert winshell.shell_image(tmp_path / "missing.txt", 16) is None
+
+
+@nt_only
+def test_shell_image_forward_slashes():
+    assert _png_size(winshell.shell_image(Path("C:/Windows"), 16))[0] == (16, 16)
+
+
+@nt_only
+def test_shell_image_on_sta_executor():
+    fut = winshell.icon_executor().submit(winshell.shell_image, Path(r"C:\Windows"), 16)
+    png = fut.result(timeout=10)
+    assert png and png[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+def test_shell_image_is_none_off_windows(monkeypatch, tmp_path):
+    monkeypatch.setattr(winshell.os, "name", "posix")
+    assert winshell.shell_image(tmp_path, 16) is None
+
+
+def test_per_path_icon_exts_match_frontend():
+    js = (Path(__file__).resolve().parents[1] / "frontend" / "iconCache.js").read_text(encoding="utf-8")
+    m = re.search(r"PER_PATH_SHELL_EXTS = new Set\(\[(.*?)\]\)", js)
+    assert m, "frontend/iconCache.js must define PER_PATH_SHELL_EXTS"
+    js_set = {s.strip().strip("'\"") for s in m.group(1).split(",") if s.strip()}
+    assert js_set == set(winshell.PER_PATH_ICON_EXTS)
+
+
+def test_shell_icon_key(tmp_path):
+    k = winshell.shell_icon_key
+    assert k(tmp_path / "x", True, 16) != k(tmp_path / "x", False, 16)
+    assert k(tmp_path / "a.txt", False, 16) == k(tmp_path / "b.txt", False, 16)
+    assert k(tmp_path / "a.txt", False, 16) != k(tmp_path / "a.txt", False, 24)
+    assert k(tmp_path / "a.lnk", False, 16) != k(tmp_path / "b.lnk", False, 16)
+    assert k(tmp_path / "A.EXE", False, 16) == k(tmp_path / "a.exe", False, 16)
+    assert k(tmp_path / "D", True, 16) == k(tmp_path / "d", True, 16)
+
+
+@nt_only
+def test_shell_image_cached_dedupes_and_bounds(tmp_path, monkeypatch):
+    winshell._icon_cache.clear()
+    monkeypatch.setattr(winshell, "_ICON_CACHE_MAX", 2)
+    calls = []
+    real = winshell.shell_image
+
+    def counting(path, px, icon_only=True):
+        calls.append((str(path), px))
+        return real(path, px, icon_only)
+
+    monkeypatch.setattr(winshell, "shell_image", counting)
+    (tmp_path / "a.txt").write_text("a")
+    (tmp_path / "b.txt").write_text("b")
+    key = winshell.shell_icon_key(tmp_path / "a.txt", False, 16)
+    first = winshell.shell_image_cached(key, tmp_path / "a.txt", 16)
+    second = winshell.shell_image_cached(key, tmp_path / "b.txt", 16)  # same ext key -> hit, b never rendered
+    assert first == second and len(calls) == 1
+    # a miss (no image) is NOT cached: a transient failure must not pin "no icon" for the session
+    # (.zzz, not .txt -- a .txt would be a hit on the shared ext key just rendered above)
+    missing_key = winshell.shell_icon_key(tmp_path / "missing.zzz", False, 16)
+    assert winshell.shell_image_cached(missing_key, tmp_path / "missing.zzz", 16) is None
+    assert missing_key not in winshell._icon_cache
+    # bounded: a third distinct success evicts the oldest
+    for px in (20, 24):
+        winshell.shell_image_cached(winshell.shell_icon_key(tmp_path / "a.txt", False, px), tmp_path / "a.txt", px)
+    assert len(winshell._icon_cache) == 2
+    assert key not in winshell._icon_cache

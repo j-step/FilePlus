@@ -154,9 +154,7 @@ async def recent_groups(conn: aiosqlite.Connection, limit: int = 200) -> dict:
             labels[key] = label
         p = row["path"]
         buckets[key].append({
-            "path": p,
-            "name": Path(p).name,
-            "ext": Path(p).suffix.lower(),
+            **_file_entry(p, {}),
             "action": row["action"],
             "action_at": ts_raw,
         })
@@ -171,10 +169,18 @@ async def recent_groups(conn: aiosqlite.Connection, limit: int = 200) -> dict:
 # ---------------------------------------------------------------------------
 
 def _file_entry(path: str, extra: dict) -> dict:
+    """{path, name, ext, is_dir, ...extra}. is_dir is a real stat (pass 2
+    #36): a folder called "my.folder" is a folder, not a ".folder" file, and
+    a directory's ext is '' whatever its name -- the renderer keys its
+    per-extension icon cache on ext, so a dotted folder must never share a
+    bucket with files. A path that no longer exists is not a directory."""
+    p = Path(path)
+    is_dir = p.is_dir()
     return {
         "path": path,
-        "name": Path(path).name,
-        "ext": Path(path).suffix.lower(),
+        "name": p.name,
+        "ext": "" if is_dir else p.suffix.lower(),
+        "is_dir": is_dir,
         **extra,
     }
 

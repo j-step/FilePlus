@@ -118,3 +118,20 @@ def test_recent_groups_buckets():
     assert _bucket_for(datetime(2026, 3, 1, 12, 0, 0), now) == ("earlier-this-year", "Earlier this year")
     assert _bucket_for(now - timedelta(days=400), now) == ("year-2025", "2025")  # Aug 7, 2025
     assert _bucket_for(now - timedelta(days=365 * 5), now) == ("ancient", "A long time ago")
+
+
+def test_recent_and_favorites_carry_real_is_dir(client, sandbox):
+    """Pass 2 #36: a folder whose name contains a dot is a folder (is_dir
+    True, ext ''), not a ".folder" file -- the renderer keys its per-extension
+    icon cache on ext and decides Open-behaviour on is_dir."""
+    dotted = sandbox / "my.folder"; dotted.mkdir()
+    f = sandbox / "a.txt"; f.write_text("a")
+    client.post("/recent", json={"path": str(dotted), "action": "opened"})
+    client.post("/recent", json={"path": str(f), "action": "opened"})
+    files = {x["name"]: x for x in client.get("/recent").json()["groups"][0]["files"]}
+    assert files["my.folder"]["is_dir"] is True and files["my.folder"]["ext"] == ""
+    assert files["a.txt"]["is_dir"] is False and files["a.txt"]["ext"] == ".txt"
+    client.post("/favorites", json={"path": str(dotted)}); client.post("/favorites", json={"path": str(f)})
+    favs = {x["name"]: x for x in client.get("/favorites").json()["files"]}
+    assert favs["my.folder"]["is_dir"] is True and favs["my.folder"]["ext"] == ""
+    assert favs["a.txt"]["is_dir"] is False
