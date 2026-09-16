@@ -52,4 +52,25 @@ function readEnvFileToken(repoDir) {
   return readEnvFileValue(repoDir, 'FILEPLUS_API_TOKEN');
 }
 
-module.exports = { parseEnvValue, readEnvFileToken, readEnvFileValue };
+/**
+ * Read the token the backend minted for itself from <repoDir>/.fileplus-token.
+ *
+ * backend/config.py's ensure_api_token() writes that file when
+ * FILEPLUS_API_TOKEN is unset, so auth is on even in a bare dev launch. This
+ * is the last of the three sources main.js tries (env -> .env -> this file);
+ * '' when the file is missing or unreadable.
+ */
+function readTokenFile(repoDir) {
+  try {
+    return fs.readFileSync(path.join(repoDir, '.fileplus-token'), 'utf8').trim();
+  } catch (_) {
+    return '';
+  }
+}
+
+/** The effective API token for *repoDir*: env -> .env -> minted token file. */
+function resolveApiToken(repoDir, env) {
+  return (env && env.FILEPLUS_API_TOKEN) || readEnvFileToken(repoDir) || readTokenFile(repoDir);
+}
+
+module.exports = { parseEnvValue, readEnvFileToken, readEnvFileValue, readTokenFile, resolveApiToken };

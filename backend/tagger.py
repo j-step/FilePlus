@@ -100,7 +100,7 @@ async def get_tags(conn, file_id: int) -> list[dict]:
 
 async def remove_tag(conn, file_id: int, tag_id: int, *,
                      batch_id: str | None = None, reason: str | None = None,
-                     undo_of: int | None = None) -> int:
+                     undo_of: int | None = None) -> int | None:
     """Detach a tag from a file, logging the removal before acting.
 
     Follows the app-wide log-before-act protocol: log a 'tag-remove'
@@ -121,8 +121,17 @@ async def remove_tag(conn, file_id: int, tag_id: int, *,
             'tag-add' (an undo or redo), the id of the operation it undoes.
 
     Returns:
-        The id of the logged 'tag-remove' operation.
+        The id of the logged 'tag-remove' operation, or None when the file
+        never carried that tag -- in which case nothing is logged either, the
+        same way apply_tags stays silent for a tag already present. Logging a
+        removal that removed nothing would put a mutation in the log that
+        never happened, and undo (which only checks the executed/undone
+        flags) would then re-attach a tag the file never had.
     """
+    cur = await conn.execute(
+        "SELECT 1 FROM file_tags WHERE file_id = ? AND tag_id = ?", (file_id, tag_id))
+    if await cur.fetchone() is None:
+        return None
     file_path = await _file_path(conn, file_id)
     cur = await conn.execute("SELECT name FROM tags WHERE id = ?", (tag_id,))
     trow = await cur.fetchone()

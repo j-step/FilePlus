@@ -35,6 +35,11 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Auth is never off: an unset FILEPLUS_API_TOKEN is replaced here by a
+    # minted, persisted one (config.ensure_api_token) before the first
+    # request can be served. Assigned onto the module so _require_token's
+    # request-time read sees it.
+    _config.FILEPLUS_API_TOKEN = _config.ensure_api_token()
     await init_db()
     app.state.index_state = {"running": False, "path": None, "count": 0, "started": None, "error": None}
     app.state.index_task = None  # holds the running quick-index asyncio.Task, if any
@@ -47,9 +52,11 @@ app = FastAPI(title="FilePlus API", version="0.1.0", lifespan=lifespan)
 
 
 # ---------------------------------------------------------------------------
-# Request auth — X-FilePlus-Token gates every route except /health when
-# FILEPLUS_API_TOKEN is set. Read at request time (not import time) so tests
-# can monkeypatch it and so a future packaged build can set it per-launch.
+# Request auth — X-FilePlus-Token gates every route except /health (and CORS
+# preflight). The token is always set in a running backend: lifespan mints and
+# persists one when FILEPLUS_API_TOKEN is unset, so there is no "open by
+# default" mode. Read at request time (not import time) so lifespan/tests can
+# set it and so a packaged build can set it per-launch.
 #
 # Registered (via add_middleware, below CORSMiddleware in this file) *before*
 # CORSMiddleware so that CORSMiddleware ends up outermost in the resulting
@@ -79,9 +86,14 @@ async def _require_token(request, call_next):
     return await call_next(request)
 
 
+# The Electron renderer loads index.html over file://, so its Origin header is
+# the literal string "null" — that is the only origin allowed. A wildcard here
+# would let any web page the user has open preflight and then issue
+# POST /fs/trash, /fs/move, ... against http://localhost:9876 and read the
+# reply; the token gate is the other half of that defence, not a substitute.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Electron file:// pages have origin "null"; the token gates writes instead
+    allow_origins=["null"],
     allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Content-Type", "X-FilePlus-Token"],
 )
@@ -818,8 +830,20 @@ class ScanRequest(BaseModel):
 
 @app.post("/scan")
 async def trigger_scan(body: Optional[ScanRequest] = None):
-    """Index a directory. Uses FILEPLUS_SANDBOX_PATH when no path is provided."""
-    root = Path(body.path) if (body and body.path) else _config.FILEPLUS_SANDBOX_PATH
+    """Index a directory. Uses FILEPLUS_SANDBOX_PATH when no path is provided.
+
+    Guarded exactly like POST /index and DELETE /index: the path is
+    canonicalised through path_guard, a protected system root is refused with
+    403 (scan_directory would otherwise record an index_roots row that
+    DELETE /index then refuses to remove), and a concurrent quick index is
+    refused with 409.
+    """
+    raw = Path(body.path) if (body and body.path) else _config.FILEPLUS_SANDBOX_PATH
+    root = path_guard(raw, "read")
+    if _config.is_protected_read(root):
+        raise HTTPException(status_code=403, detail="system folders are not indexed")
+    if app.state.index_state["running"]:
+        raise HTTPException(status_code=409, detail="An index is already running")
     do_hash = body.hash if body else True
     count = await scan_directory(root, hash=do_hash)
     stale = await remove_stale_entries(root)

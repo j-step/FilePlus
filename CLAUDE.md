@@ -19,6 +19,11 @@ Frontend Electron 41, plain HTML/CSS/JS, no framework, no build step. Tests: pyt
 - `path_guard(path, mode)` gates every filesystem touch: reads anywhere; writes inside
   `FILEPLUS_SANDBOX_PATH` until `WRITE_UNLOCKED=true` in `.env`; Windows system roots are never
   writable; the app directory is never writable except the sandbox inside it (`ProtectedPathError`).
+  Mutations take their operand from `guard_operand(path, mode)`: same containment decisions on the
+  resolved path, but a junction/symlink is acted on as the link, never as its target.
+- Every route except `/health` requires `X-FilePlus-Token`: the backend mints one at startup into
+  `<app dir>/.fileplus-token` (git-ignored) when `FILEPLUS_API_TOKEN` is unset, and CORS allows only
+  the Electron renderer's `file://` origin (`"null"`).
 - Delete is a same-volume move into `.FilePlusTrash`; `POST /fs/trash/empty` sends it to the Recycle
   Bin. The app never hard-deletes. Every mutation: guard → log (`executed=0`) → act → mark; undo is a
   logged inverse (`undo_of`).

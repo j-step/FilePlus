@@ -7,7 +7,7 @@ const { test, expect } = require('@playwright/test');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { parseEnvValue, readEnvFileToken, readEnvFileValue } = require('../envToken');
+const { parseEnvValue, readEnvFileToken, readEnvFileValue, readTokenFile, resolveApiToken } = require('../envToken');
 
 test.describe('parseEnvValue', () => {
   test('plain value', () => {
@@ -114,5 +114,43 @@ test.describe('readEnvFileValue', () => {
 
   test('returns "" when .env is missing', () => {
     expect(readEnvFileValue(path.join(dir, 'does-not-exist'), 'FILEPLUS_PORT')).toBe('');
+  });
+});
+
+// Pass 2, finding #45 -- the backend always requires a token, minting one into
+// <repo>/.fileplus-token when nothing is configured. main.js resolves it as
+// env -> .env -> that file, so a bare dev launch still authenticates.
+test.describe('resolveApiToken', () => {
+  let dir;
+
+  test.beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fileplus-apitoken-'));
+  });
+
+  test.afterEach(() => {
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  test('reads the minted token file', () => {
+    fs.writeFileSync(path.join(dir, '.fileplus-token'), 'minted-token\n');
+    expect(readTokenFile(dir)).toBe('minted-token');
+    expect(resolveApiToken(dir, {})).toBe('minted-token');
+  });
+
+  test('returns "" when no token file exists', () => {
+    expect(readTokenFile(dir)).toBe('');
+    expect(resolveApiToken(dir, {})).toBe('');
+  });
+
+  test('the process environment wins over both files', () => {
+    fs.writeFileSync(path.join(dir, '.env'), 'FILEPLUS_API_TOKEN=from-env-file\n');
+    fs.writeFileSync(path.join(dir, '.fileplus-token'), 'minted-token\n');
+    expect(resolveApiToken(dir, { FILEPLUS_API_TOKEN: 'from-process-env' })).toBe('from-process-env');
+  });
+
+  test('.env wins over the minted token file', () => {
+    fs.writeFileSync(path.join(dir, '.env'), 'FILEPLUS_API_TOKEN=from-env-file\n');
+    fs.writeFileSync(path.join(dir, '.fileplus-token'), 'minted-token\n');
+    expect(resolveApiToken(dir, {})).toBe('from-env-file');
   });
 });

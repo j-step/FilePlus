@@ -7,8 +7,9 @@ Responsible for:
 
 Every public function calls path_guard() before touching the filesystem.
 """
-import os
+import asyncio
 import logging
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -110,8 +111,12 @@ async def index_file(path: Path, conn: aiosqlite.Connection, hash: bool = True) 
         OSError: If the file cannot be read or hashed.
     """
     path = _config.path_guard(path)
-    stat = path.stat()
-    file_hash = hash_file(path) if hash else None
+    # stat() and, far more importantly, hash_file() (a chunked read of the
+    # whole file) are blocking. GET /file indexes on demand, so hashing a
+    # large unindexed file inline would stall every other request on the
+    # event loop for the duration of the read.
+    stat = await asyncio.to_thread(path.stat)
+    file_hash = await asyncio.to_thread(hash_file, path) if hash else None
     created = datetime.fromtimestamp(stat.st_ctime).isoformat()
     modified = datetime.fromtimestamp(stat.st_mtime).isoformat()
 

@@ -221,16 +221,27 @@ async def favorites_add(conn: aiosqlite.Connection, path: str, *,
 
 async def favorites_remove(conn: aiosqlite.Connection, path: str, *,
                            batch_id: str | None = None, reason: str | None = None,
-                           undo_of: int | None = None) -> None:
-    """Remove *path* from favorites. *batch_id*/*reason*/*undo_of* are for
-    backend.mover's undo of 'favorite-add'; ordinary callers (DELETE
-    /favorites) never pass them.
+                           undo_of: int | None = None) -> bool:
+    """Remove *path* from favorites; return whether a row was actually removed.
+
+    Idempotent in the same way favorites_add is: a path that isn't favorited
+    is a no-op and writes NO operations_log row. Logging one would record a
+    mutation that never happened -- and since undo only checks the
+    executed/undone flags, that phantom row is undoable, so undoing it would
+    invent a favorite the user never had.
+
+    *batch_id*/*reason*/*undo_of* are for backend.mover's undo of
+    'favorite-add'; ordinary callers (DELETE /favorites) never pass them.
     """
+    cur = await conn.execute("SELECT 1 FROM favorites WHERE path = ?", (path,))
+    if await cur.fetchone() is None:
+        return False
     op_id = await ol.log_operation(conn, "favorite-remove", path, batch_id=batch_id, reason=reason, undo_of=undo_of)
     await conn.execute("DELETE FROM favorites WHERE path = ?", (path,))
     await conn.commit()
     await ol.mark_executed(conn, op_id)
     await _repack_positions(conn, "favorites")
+    return True
 
 
 async def favorites_reorder(conn: aiosqlite.Connection, paths: list[str]) -> None:

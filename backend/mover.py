@@ -82,15 +82,37 @@ def keep_both_name(target: Path) -> Path:
         n += 1
 
 
+def _volume_of(path: Path) -> str:
+    """The drive letter the path itself lives on.
+
+    A junction/symlink is NOT followed: os.rename moves the link, which lives
+    on the link's own volume, not the target's -- resolving here would send a
+    same-volume rename down the copy-then-delete cross-volume path (or the
+    reverse) for every reparse point.
+    """
+    p = Path(path)
+    if not _config.is_reparse_point(p):
+        p = p.resolve()
+    return os.path.splitdrive(str(p))[0].lower()
+
+
 def same_volume(a: Path, b: Path) -> bool:
-    return os.path.splitdrive(str(a.resolve()))[0].lower() == os.path.splitdrive(str(b.resolve()))[0].lower()
+    return _volume_of(a) == _volume_of(b)
 
 
 def trash_root_for(path: Path) -> Path:
-    p = Path(path).resolve()
-    if _config.is_under(p, _config.FILEPLUS_SANDBOX_PATH):
-        return _config.FILEPLUS_SANDBOX_PATH.resolve() / _config.TRASH_DIRNAME
-    drive = os.path.splitdrive(str(p))[0] + "\\"
+    """The .FilePlusTrash root serving *path* -- the sandbox's, or the root of
+    the volume *path* itself is on.
+
+    Containment is judged on the path's own (lexical) spelling first: a
+    junction inside the sandbox belongs to the sandbox trash even when it
+    points somewhere else entirely, since it is the link that gets moved.
+    """
+    lexical = Path(os.path.normpath(str(path)))
+    sandbox = _config.FILEPLUS_SANDBOX_PATH.resolve()
+    if _config.is_under(lexical, sandbox) or _config.is_under(Path(path).resolve(), sandbox):
+        return sandbox / _config.TRASH_DIRNAME
+    drive = os.path.splitdrive(str(lexical))[0] + "\\"
     return Path(drive) / _config.TRASH_DIRNAME
 
 
@@ -115,11 +137,50 @@ def _hide(path: Path) -> None:
         logger.warning("could not hide %s", path)
 
 
-def _append_manifest(batch_dir: Path, original: Path, trashed: Path) -> None:
-    mf = batch_dir / "manifest.json"
+def manifest_path_for(root: Path, batch_id: str) -> Path:
+    """Where a trash batch's bookkeeping lives: <trash root>/<batch id>.manifest.json.
+
+    Deliberately NOT inside the batch folder: everything in there is a file
+    the user trashed, under its own name, so a file actually named
+    manifest.json would land on the manifest's path and then be read back and
+    rewritten as one (or abort the whole batch when it isn't JSON). The batch
+    id is a fresh uuid4 hex, so this name can never collide with a trashed
+    item.
+    """
+    return root / f"{batch_id}.manifest.json"
+
+
+def _append_manifest(root: Path, batch_id: str, original: Path, trashed: Path) -> None:
+    mf = manifest_path_for(root, batch_id)
     data = json.loads(mf.read_text(encoding="utf-8")) if mf.exists() else {"items": []}
     data["items"].append({"original": str(original), "trashed": str(trashed), "ts": datetime.now(timezone.utc).isoformat(timespec="seconds")})
     mf.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+
+def _append_manifest_safe(root: Path, batch_id: str, original: Path, trashed: Path) -> None:
+    """_append_manifest, but never raising: the rename has already happened
+    by the time this runs, and a bookkeeping failure must not turn a
+    completed trash into an errored (and therefore un-undoable)
+    operations_log row. The operations_log is the authoritative record; the
+    manifest is a convenience for reading the trash folder without the
+    database.
+    """
+    try:
+        _append_manifest(root, batch_id, original, trashed)
+    except (OSError, ValueError) as exc:  # ValueError covers json.JSONDecodeError
+        logger.warning("could not update the trash manifest for batch %s: %s", batch_id, exc)
+
+
+def exists_as_link_or_file(path: Path) -> bool:
+    """True when *path* exists as an entry in its parent folder.
+
+    os.path.lexists does not follow the final component, so a junction whose
+    target has been deleted (which Path.exists() reports as gone) still counts
+    -- otherwise a dangling junction could never be renamed or trashed
+    through the app, which is exactly the state a mis-targeted delete used to
+    leave behind.
+    """
+    return os.path.lexists(str(path))
 
 
 def _copy_tree_or_file(src: Path, dest: Path) -> None:
@@ -223,9 +284,9 @@ def _move_fn(src: Path, dest: Path):
 
 async def move(conn, src, dest_dir, *, batch_id=None, on_conflict="fail", reason=None, _op_type="move", _undo_of=None) -> dict:
     _validate_conflict_policy(on_conflict)
-    src = _config.path_guard(src, "write")
+    src = _config.guard_operand(src, "write")  # a junction moves as the link, not its target
     dest_dir = _config.path_guard(dest_dir, "write")
-    if not src.exists():
+    if not exists_as_link_or_file(src):
         raise RefusedError(f"Source does not exist: {src}")
     if src.is_dir() and _config.is_under(dest_dir, src):
         raise RefusedError("Cannot move a folder into itself.")
@@ -251,8 +312,8 @@ async def move(conn, src, dest_dir, *, batch_id=None, on_conflict="fail", reason
 
 async def rename(conn, path, new_name, *, batch_id=None, reason=None, _undo_of=None) -> dict:
     validate_name(new_name)
-    src = _config.path_guard(path, "write")
-    if not src.exists():
+    src = _config.guard_operand(path, "write")  # a junction is renamed as the link, not its target
+    if not exists_as_link_or_file(src):
         raise RefusedError(f"Source does not exist: {src}")
     target = _config.path_guard(src.with_name(new_name), "write")
     if target.exists() and target != src:
@@ -262,22 +323,31 @@ async def rename(conn, path, new_name, *, batch_id=None, reason=None, _undo_of=N
 
 async def copy(conn, src, dest_dir, *, batch_id=None, on_conflict="fail", reason=None) -> dict:
     _validate_conflict_policy(on_conflict)
-    src = _config.path_guard(src, "read")
+    src = _config.guard_operand(src, "read")
     dest_dir = _config.path_guard(dest_dir, "write")
     if not src.exists():
         raise RefusedError(f"Source does not exist: {src}")
     if src.is_dir() and _config.is_under(dest_dir, src):
         raise RefusedError("Cannot copy a folder into itself.")
+    candidate = dest_dir / src.name
+    if os.path.normcase(str(candidate)) == os.path.normcase(str(src)):
+        # The same guard move() has, and for a sharper reason: without it,
+        # on_conflict="replace" resolves the *source itself* as the target to
+        # replace, trashes it, and then fails the copy with FileNotFoundError
+        # -- a copy that deletes the file it was asked to duplicate.
+        raise RefusedError("Source is already in the destination folder.")
     minted = batch_id is None
     batch_id = batch_id or ol.new_batch_id()
-    target, action = _resolve_target(dest_dir / src.name, on_conflict)
+    target, action = _resolve_target(candidate, on_conflict)
     if action in ("conflict", "skipped"):
-        return _result(None, "copy", action, src, dest_dir / src.name, None if minted else batch_id)
+        return _result(None, "copy", action, src, candidate, None if minted else batch_id)
     target = _config.path_guard(target, "write")
     need = await asyncio.to_thread(_tree_size, src)
     if await asyncio.to_thread(_free_bytes, dest_dir) < need + SPACE_MARGIN:
         raise RefusedError("Not enough free space on the destination volume.")
     if action == "replace":
+        if os.path.normcase(str(target)) == os.path.normcase(str(src)):
+            raise RefusedError("Source is already in the destination folder.")  # defence in depth
         await trash(conn, target, batch_id=batch_id, reason="replaced")
 
     def run():
@@ -287,8 +357,8 @@ async def copy(conn, src, dest_dir, *, batch_id=None, on_conflict="fail", reason
 
 
 async def trash(conn, path, *, batch_id=None, reason=None, _undo_of=None) -> dict:
-    src = _config.path_guard(path, "write")
-    if not src.exists():
+    src = _config.guard_operand(path, "write")  # a junction is trashed as the link, not its target
+    if not exists_as_link_or_file(src):
         raise RefusedError(f"Source does not exist: {src}")
     batch_id = batch_id or ol.new_batch_id()
     root = trash_root_for(src)
@@ -300,12 +370,14 @@ async def trash(conn, path, *, batch_id=None, reason=None, _undo_of=None) -> dic
     target = _config.path_guard(keep_both_name(batch_dir / src.name), "write")
 
     def run():
-        if not root.exists():
-            root.mkdir(parents=True)
-            _hide(root)
+        # exist_ok everywhere: run() executes on a worker thread, so two
+        # concurrent /fs/trash requests genuinely race here and a
+        # check-then-create would fail the loser with FileExistsError.
+        root.mkdir(parents=True, exist_ok=True)
+        _hide(root)  # idempotent, and logs+swallows its own failures
         batch_dir.mkdir(exist_ok=True)
         os.rename(src, target)
-        _append_manifest(batch_dir, src, target)
+        _append_manifest_safe(root, batch_id, src, target)
     return await _perform(conn, "trash", src, target, batch_id, reason, run, undo_of=_undo_of)
 
 
@@ -441,11 +513,32 @@ async def _undo_folder_type_set(conn, op_id: int, target: Path, before_bytes: by
         "folder_bits_before": current_folder_bits,
         "after": winshell.folder_type_from_ini_bytes(before_bytes),
     })
+    if before_bytes is None and current_bytes is not None:
+        # There was no desktop.ini before the forward op, so undoing means
+        # removing the one FilePlus wrote. "The app never hard-deletes"
+        # (CLAUDE.md) applies here too: route it through trash() -- logged,
+        # in this undo's own batch, recoverable from .FilePlusTrash -- rather
+        # than letting winshell.restore_desktop_ini unlink whatever is on
+        # disk now (Explorer may have rewritten it since).
+        if os.name == "nt":
+            try:
+                winshell.set_attributes(ini_path, 0)  # clear hidden/system so the move isn't refused
+            except OSError:
+                pass
+        await trash(conn, ini_path, batch_id=batch_id, reason=f"undo of #{op_id}: desktop.ini removed")
     return await _perform(conn, "folder-type-set", target, None, batch_id, reason,
                           lambda: winshell.restore_desktop_ini(target, before_bytes, folder_bits_before), undo_of=op_id)
 
 
 async def _batch(conn, items, fn) -> dict:
+    # One approval moves at most MAX_BATCH_SIZE items (config.py / .env.example).
+    # Enforced here, the single funnel every batch_* helper goes through, so the
+    # setting is a real ceiling rather than documentation.
+    items = list(items)
+    if len(items) > _config.MAX_BATCH_SIZE:
+        raise RefusedError(
+            f"Batch of {len(items)} items exceeds MAX_BATCH_SIZE ({_config.MAX_BATCH_SIZE})."
+        )
     batch_id = ol.new_batch_id()
     out = {"batch_id": batch_id, "ops": [], "conflicts": [], "skipped": [], "errors": []}
     for item in items:
@@ -500,10 +593,14 @@ async def empty_trash(conn) -> dict:
             logger.warning("skipping trash root %s: %s", r, exc)
             skipped_roots.append(str(r))
     batches = [d for r in roots for d in r.iterdir() if d.is_dir()]
+    # <batch id>.manifest.json sits next to the batch folders (see
+    # manifest_path_for), so emptying the trash has to take those too --
+    # otherwise they accumulate in the trash root forever.
+    manifests = [f for r in roots for f in r.glob("*.manifest.json") if f.is_file()]
     op_id = await ol.log_operation(conn, "trash-empty:final", None, None, reason=f"{len(batches)} batch folders -> Recycle Bin")
 
     def run():
-        for d in batches:
+        for d in batches + manifests:
             _send2trash(d)
     try:
         await asyncio.to_thread(run)
@@ -543,6 +640,8 @@ async def _undo_tag_add(conn, op_id: int, file_path: str | None, tag_name: str |
         raise RefusedError("The tag no longer exists.")
     await tagger.remove_tag(conn, file_id, tag_id, batch_id=batch_id, reason=f"undo of #{op_id}", undo_of=op_id)
     inv = await ol.get_operation_by_undo_of(conn, op_id)
+    if inv is None:  # the tag was already off the file: nothing was removed, nothing logged
+        raise RefusedError("The tag is no longer on that file; nothing to undo.")
     return _result(inv["id"], "tag-remove", "done", file_path, tag_name, batch_id)
 
 
@@ -567,6 +666,8 @@ async def _undo_favorite_add(conn, op_id: int, path: str | None, batch_id: str) 
         raise RefusedError("Malformed favorite-add log entry; nothing to undo.")
     await stores.favorites_remove(conn, path, batch_id=batch_id, reason=f"undo of #{op_id}", undo_of=op_id)
     inv = await ol.get_operation_by_undo_of(conn, op_id)
+    if inv is None:  # not favorited any more: nothing was removed, nothing logged
+        raise RefusedError("No longer favorited; nothing to undo.")
     return _result(inv["id"], "favorite-remove", "done", path, None, batch_id)
 
 
@@ -589,6 +690,8 @@ async def _undo_pin_add(conn, op_id: int, path: str | None, batch_id: str) -> di
         raise RefusedError("The pin no longer exists.")
     await stores.pins_remove(conn, row[0], batch_id=batch_id, reason=f"undo of #{op_id}", undo_of=op_id)
     inv = await ol.get_operation_by_undo_of(conn, op_id)
+    if inv is None:  # the pin vanished between the lookup and the delete
+        raise RefusedError("The pin no longer exists.")
     return _result(inv["id"], "pin-remove", "done", path, None, batch_id)
 
 
@@ -678,7 +781,9 @@ async def undo_operation(conn, op_id: int, *, batch_id: str | None = None) -> di
         if folder_bits_before is None:
             raise RefusedError("Malformed folder-type-set log entry; nothing to undo.")
         before_ini_b64 = data.get("before_ini")
-        before_bytes = base64.b64decode(before_ini_b64) if before_ini_b64 else None
+        # "" is a *zero-byte* desktop.ini that existed, not "no file": test for
+        # None, or undo deletes the user's empty file instead of restoring it.
+        before_bytes = base64.b64decode(before_ini_b64) if before_ini_b64 is not None else None
         result = await _undo_folder_type_set(conn, op_id, Path(src), before_bytes, folder_bits_before, batch_id)
     else:
         raise RefusedError(f"Operation type '{t}' has no inverse.")

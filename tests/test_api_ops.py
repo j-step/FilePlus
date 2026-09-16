@@ -40,7 +40,8 @@ def test_trash_empty_endpoint(client, sandbox, monkeypatch):
     (sandbox / "e.txt").write_text("e")
     client.post("/fs/trash", json={"paths": [str(sandbox / "e.txt")]})
     r = client.post("/fs/trash/empty")
-    assert r.status_code == 200 and r.json()["batches"] == 1 and len(sent) == 1
+    # One batch folder plus that batch's manifest file (which lives beside it).
+    assert r.status_code == 200 and r.json()["batches"] == 1 and len(sent) == 2
 
 
 def test_tag_add_undo_via_operations_route(client, sandbox):

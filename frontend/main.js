@@ -8,19 +8,28 @@ const { app, BrowserWindow, globalShortcut, ipcMain, nativeTheme, nativeImage, s
 const path = require('path');
 const os   = require('os');
 const { spawn } = require('child_process');
-const { readEnvFileToken, readEnvFileValue } = require('./envToken');
+const { readEnvFileValue, resolveApiToken } = require('./envToken');
 const { LruCache, iconCacheKey, isSafeLocalPath, normalizeWinPath, clampPx } = require('./iconCache');
 
 let mainWindow;
 
 // ── API token ────────────────────────────────────────────────────────────
-// FILEPLUS_API_TOKEN from our own process environment, else parsed from
-// <repo>/.env (see envToken.js — mirrors python-dotenv's value parsing, the
-// same file backend/config.py loads via load_dotenv()). Stage 5 packaging
-// will instead generate this at startup and pass it to the spawned backend
-// process's environment; for now (dev flow) both the backend and this
-// process read the same source so they agree without any IPC between them.
-const API_TOKEN = process.env.FILEPLUS_API_TOKEN || readEnvFileToken(path.join(__dirname, '..'));
+// Three sources, in order: FILEPLUS_API_TOKEN from our own process
+// environment, then <repo>/.env (see envToken.js — mirrors python-dotenv's
+// value parsing, the same file backend/config.py loads via load_dotenv()),
+// then <repo>/.fileplus-token, which the backend writes at startup when
+// nothing is configured (config.ensure_api_token). The backend always
+// requires a token, so the third source is what makes a bare dev launch
+// work; the renderer keeps receiving it over the preload bridge.
+// Resolved lazily (not at module load) so a backend started after this
+// process — the launch order verify.ps1 uses — still hands us its token.
+const REPO_DIR = path.join(__dirname, '..');
+let API_TOKEN = resolveApiToken(REPO_DIR, process.env);
+
+function apiToken() {
+  if (!API_TOKEN) API_TOKEN = resolveApiToken(REPO_DIR, process.env);
+  return API_TOKEN;
+}
 
 // ── API port ─────────────────────────────────────────────────────────────
 // FILEPLUS_PORT from our own process environment, else parsed from .env,
@@ -148,7 +157,7 @@ app.whenReady().then(() => {
   });
 
   ipcMain.on('get-api-token', (event) => {
-    event.returnValue = API_TOKEN;
+    event.returnValue = apiToken();
   });
 
   ipcMain.on('get-api-port', (event) => {
