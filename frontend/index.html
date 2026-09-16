@@ -216,7 +216,10 @@
              splits the inner one out as a sibling. The tab itself is a <div>
              (not a <button>) for the same reason: it hosts the close span as
              a real descendant with no nested-interactive-content trouble. -->
-        <div class="fp-tab fp-tab--active" role="tab" aria-selected="true"
+        <!-- tabindex="0": the active tab is the strip's single tab stop
+             (roving tabindex — activateTab() moves the 0 with aria-selected,
+             and the strip's Arrow/Home/End keys walk from there). -->
+        <div class="fp-tab fp-tab--active" role="tab" aria-selected="true" tabindex="0"
              data-tab-id="tab-1" data-action="switch-tab"
              title="Home" draggable="true">
           <svg class="fp-icon fp-icon--14" aria-hidden="true"><use href="#fp-home"></use></svg>
@@ -259,7 +262,12 @@
         <!-- middot separator, never > or / — per spec A.1.4 -->
         <div class="fp-breadcrumb-wrap" id="breadcrumb-wrap">
           <nav class="fp-breadcrumb" id="breadcrumb" aria-label="Location">
-            <button class="fp-breadcrumb__crumb" data-action="navigate-crumb" data-path="home">Home</button>
+            <!-- Seed crumb, live only until the first updateBreadcrumb(). It
+                 navigates to the HOME SCREEN, not to a path: "home" is not a
+                 directory, and passing it to loadDirectory() relabelled the
+                 tab and flipped it to Browser before the backend's 400 landed
+                 (pass 2 #13). -->
+            <button class="fp-breadcrumb__crumb" data-action="navigate-screen" data-screen="home">Home</button>
             <!-- Sample deeper path:
             <span class="fp-breadcrumb__sep">·</span>
             <button class="fp-breadcrumb__crumb" data-action="navigate-crumb" data-path="D:\">D:\</button>

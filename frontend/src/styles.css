@@ -5820,30 +5820,15 @@ button.fp-pill:hover {
   animation: fp-tray-scan-pulse 2s ease-in-out infinite;
 }
 
-/* A.17 #14 — Tab bar overflow (many tabs) */
+/* A.17 #14 - Tab bar overflow (many tabs).
+   Toggled by app.js's updateTabbarOverflow() while there are tabs clipped off
+   the RIGHT edge of the strip. The scrollbar is hidden (.fp-tabbar above), so
+   this fade is the only signal that there are more tabs; a mask, not the
+   ::before/::after it used to be, because a pseudo-element inside a scroll
+   container scrolls away with the content it is supposed to be fading. */
 .fp-tabbar--overflow {
-  overflow-x: auto;
-  scrollbar-width: none;
-}
-.fp-tabbar--overflow::-webkit-scrollbar { display: none; }
-/* Fade gradient edges to signal clipped content */
-.fp-tabbar--overflow::before,
-.fp-tabbar--overflow::after {
-  content: "";
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  width: 24px;
-  pointer-events: none;
-  z-index: 1;
-}
-.fp-tabbar--overflow::before {
-  left: 0;
-  background: linear-gradient(to right, var(--bg-chrome), transparent);
-}
-.fp-tabbar--overflow::after {
-  right: 0;
-  background: linear-gradient(to left, var(--bg-chrome), transparent);
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent 100%);
+  mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent 100%);
 }
 
 /* A.17 #11 — Inspector preview fail (already commented inline in HTML) */

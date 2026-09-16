@@ -147,6 +147,10 @@ function createTabElement(record) {
   el.className = 'fp-tab';
   el.setAttribute('role', 'tab');
   el.setAttribute('aria-selected', 'false');
+  // Roving tabindex: the active tab is the strip's single tab stop, the rest
+  // are reachable from it with the arrow keys. activateTab() moves the 0
+  // along with aria-selected (pass 2 #158).
+  el.setAttribute('tabindex', '-1');
   el.setAttribute('data-tab-id', record.id);
   el.setAttribute('data-action', 'switch-tab');
   el.setAttribute('title', record.label);
@@ -165,8 +169,17 @@ function createTab({ screen = 'home', path = null, history = [], historyIndex = 
     history: history.slice(),
     historyIndex,
     view: null,
+    // This tab's own --list-scale (a LIST_SCALE_STEPS member), or null until
+    // it has had a listing of its own. The custom property is global, so
+    // without a per-tab value a Ctrl+wheel zoom in one tab silently resized
+    // every other tab's listing on the next switch (pass 2 #19).
+    listScale: null,
     scrollTop: 0,
     selection: [],
+    // True when this tab was opened at the root entry point ("This PC") rather
+    // than at a folder that happens to share its resolved path — keeps its
+    // label from collapsing to the folder's basename (pass 2 #16).
+    isRootTarget: false,
     // Task 14: this tab's own search (chips + text + the rendered results),
     // or null when it is showing a plain folder listing. Captured on every
     // deactivation and repainted on reactivation, so switching tabs and back
@@ -179,7 +192,53 @@ function createTab({ screen = 'home', path = null, history = [], historyIndex = 
   const newTabBtn = document.getElementById('btn-new-tab');
   if (tabbar) tabbar.insertBefore(el, newTabBtn);
   initTabDrag(el);
+  updateTabbarOverflow();
   return record;
+}
+
+/**
+ * The tab strip is `overflow-x: auto` with its scrollbar hidden (styles.css's
+ * .fp-tabbar), so once the tabs overflow it there is nothing on screen that
+ * says so and nothing that brings a clipped tab back — a 12th Ctrl+T used to
+ * create a tab (and push the "+" button) past the right edge where neither
+ * could be seen or clicked (pass 2 #156). These two keep it reachable:
+ * scrollTabIntoView() on every activation, and a wheel handler that maps a
+ * vertical wheel onto scrollLeft (Chromium does not scroll an overflow-x
+ * container from a plain wheel).
+ */
+function scrollTabIntoView(id) {
+  const el = document.querySelector(`.fp-tab[data-tab-id="${id}"]`);
+  if (el && typeof el.scrollIntoView === 'function') {
+    el.scrollIntoView({ inline: 'nearest', block: 'nearest' });
+  }
+  updateTabbarOverflow();
+}
+
+/** Tab ids in the order they appear in the strip — the DOM is the authority on
+ * order (drag-reorder never touches tabs.list, which is why closeTabById picks
+ * its fallback neighbour off the DOM too). */
+function tabsInStripOrder() {
+  return [...document.querySelectorAll('.fp-tab')].map(t => t.dataset.tabId);
+}
+
+/** Activates the tab `step` places from the active one, wrapping at both ends
+ * (Ctrl+Tab / Ctrl+Shift+Tab, and the tablist's Arrow keys). */
+function cycleTab(step) {
+  const order = tabsInStripOrder();
+  if (order.length < 2) return;
+  const at = order.indexOf(tabs.activeId);
+  const next = ((at === -1 ? 0 : at + step) % order.length + order.length) % order.length;
+  activateTab(order[next]);
+  document.querySelector(`.fp-tab[data-tab-id="${order[next]}"]`)?.focus();
+}
+
+/** Marks the strip as having tabs clipped off its right edge, which is the
+ * only hint the user gets that there are more (the scrollbar is hidden). */
+function updateTabbarOverflow() {
+  const tabbar = document.getElementById('tabbar');
+  if (!tabbar) return;
+  const clipped = tabbar.scrollWidth - tabbar.clientWidth - tabbar.scrollLeft > 1;
+  tabbar.classList.toggle('fp-tabbar--overflow', clipped);
 }
 
 /** Copies the live browserState/nav into the currently active tab's own
@@ -190,6 +249,7 @@ function syncActiveTabRecord() {
   if (!tab) return;
   tab.path = browserState.path;
   tab.view = browserState.view;
+  tab.listScale = browserState.listScale;
   tab.selection = [...browserState.selection];
   tab.historyIndex = nav.index;
   // The live search bar + its results, or null when this tab is showing a
@@ -219,12 +279,21 @@ function activateTab(id) {
     const isActive = t.dataset.tabId === id;
     t.classList.toggle('fp-tab--active', isActive);
     t.setAttribute('aria-selected', isActive ? 'true' : 'false');
+    t.setAttribute('tabindex', isActive ? '0' : '-1');
   });
 
   nav.history = incoming.history;
   nav.index = incoming.historyIndex;
+  // Read the incoming tab's search snapshot NOW: loadDirectory()'s synchronous
+  // prefix calls leaveSearchMode(), which clears `activeTab().search` — and
+  // tabs.activeId is already this tab, so it would wipe the very snapshot the
+  // resume check below is about to look for (pass 2 #14).
+  const pendingSearch = incoming.search;
+  // A new tab created past the right edge of the strip is invisible (the
+  // scrollbar is hidden) until something scrolls it in — nothing did (pass 2 #156).
+  scrollTabIntoView(id);
 
-  if (incoming.screen === 'browser' && incoming.search && incoming.search.results
+  if (incoming.screen === 'browser' && pendingSearch && pendingSearch.results
       && typeof restoreSearchResultsForTab === 'function') {
     // This tab was showing search results: repaint them from the tab's own
     // snapshot rather than re-running the walk. browserState.path stays the
@@ -244,31 +313,45 @@ function activateTab(id) {
     if (typeof setViewMode === 'function') setViewMode(incoming.view || cfgView);
     if (typeof setListScale === 'function' && typeof LIST_SCALE_STEPS !== 'undefined') {
       const cfgScale = LIST_SCALE_STEPS.includes(cfg['ui.list_scale']) ? cfg['ui.list_scale'] : 1;
-      setListScale(cfgScale, { persist: false });
+      setListScale(incoming.listScale || cfgScale, { persist: false });
     }
-    restoreSearchResultsForTab(incoming.search);
+    // This tab's own selection + scroll offset come back with its results, the
+    // same two things the folder branch below restores (pass 2 #153).
+    restoreSearchResultsForTab(pendingSearch, {
+      selection: incoming.selection,
+      scrollTop: incoming.scrollTop,
+    });
     updateSidebarActive(incoming.path);
     refreshNavButtons();
   } else if (incoming.screen === 'browser') {
     showScreenDom('browser');
     if (typeof searchResetBar === 'function') searchResetBar();
-    const loaded = loadDirectory(incoming.path, {
+    const loaded = loadDirectory(incoming.isRootTarget ? null : incoming.path, {
       // Empty history means this tab was staged in the background (openBrowserAt
       // on an inactive tab) and is only now getting its first real fetch — treat
       // that as a real navigation (push it) rather than a pure restore.
       addToHistory: incoming.history.length === 0,
-      restore: { scrollTop: incoming.scrollTop, selection: incoming.selection, view: incoming.view },
+      restore: {
+        scrollTop: incoming.scrollTop,
+        selection: incoming.selection,
+        view: incoming.view,
+        listScale: incoming.listScale,
+      },
     });
     // A search this tab had typed but not finished (its request was aborted
     // when it was switched away) re-runs once the folder listing underneath it
     // has landed — running the two concurrently would let the listing paint
     // over the results.
-    if (incoming.search && typeof resumeSearchForTab === 'function') {
-      Promise.resolve(loaded).then(() => resumeSearchForTab(incoming.search, incoming.id));
+    if (pendingSearch && typeof resumeSearchForTab === 'function') {
+      Promise.resolve(loaded).then(() => resumeSearchForTab(pendingSearch, incoming.id));
     }
   } else {
     showScreenDom(incoming.screen);
     updateSidebarActive(incoming.screen);
+    // The toolbar is outside .screen, so the outgoing tab's breadcrumb, search
+    // bar and nav-button state would otherwise stay on display — and stay
+    // clickable — over this tab's Home/Settings screen (pass 2 #12).
+    resetToolbarForNonBrowser(incoming.screen);
   }
   updateTabElementAppearance(incoming);
 }
@@ -287,6 +370,30 @@ function showScreenDom(id) {
   }
 }
 
+/**
+ * Takes the Browser's chrome off the toolbar when a non-Browser screen
+ * becomes the visible one.
+ *
+ * The toolbar (nav group, breadcrumb, search bar) is a sibling of `.screens`,
+ * not a child of any `.screen`, so leaving the Browser screen leaves all of it
+ * on display — describing, and still acting on, a listing the user can no
+ * longer see (pass 2 #12). refreshNavButtons() now reads the active screen
+ * itself, so calling it here is what actually disables Back/Forward/Up.
+ */
+function resetToolbarForNonBrowser(screenId) {
+  if (typeof searchResetBar === 'function') searchResetBar();
+  const crumb = document.getElementById('breadcrumb');
+  if (crumb) {
+    // A plain (non-interactive) label, not a data-action="navigate-crumb"
+    // button: there is no path here to navigate to.
+    const label = typeof getScreenLabel === 'function' ? getScreenLabel(screenId) : '';
+    crumb.innerHTML = label
+      ? `<span class="fp-breadcrumb__crumb fp-breadcrumb__crumb--current">${escapeHtml(label)}</span>`
+      : '';
+  }
+  if (typeof refreshNavButtons === 'function') refreshNavButtons();
+}
+
 function switchScreen(id, labelOverride) {
   // Mutate the ACTIVE tab's screen state — never switch tabs from here.
   const tab = activeTab();
@@ -298,14 +405,47 @@ function switchScreen(id, labelOverride) {
       // same fallback the old global navHistory-empty check used to give.
       showScreenDom('browser');
       loadDirectory(null);
+    } else if (browserState.mode === 'search' && tab.search && tab.search.results
+               && typeof restoreSearchResultsForTab === 'function') {
+      // This tab left the Browser screen mid-search. #list-scroll still holds
+      // its results (screens are hidden, not torn down), but
+      // resetToolbarForNonBrowser() took the bar and the "Search in x"
+      // breadcrumb with it — put those back rather than painting a folder
+      // breadcrumb over a results listing.
+      showScreenDom('browser');
+      const listEl = document.getElementById('list-scroll');
+      restoreSearchResultsForTab(tab.search, {
+        selection: [...browserState.selection],
+        scrollTop: listEl ? listEl.scrollTop : 0,
+      });
+      updateSidebarActive(tab.path);
+      if (typeof refreshNavButtons === 'function') refreshNavButtons();
+    } else if (browserState.path !== tab.path || browserState.listingStale) {
+      // #list-scroll is DOM shared by every tab, so what is sitting in it may
+      // belong to ANOTHER tab (this tab was on Home while that one browsed) or
+      // have been fetched with settings a Settings toggle has since changed
+      // (browserState.listingStale, pass 2 #155). Re-fetch rather than reveal
+      // somebody else's listing.
+      showScreenDom('browser');
+      loadDirectory(tab.isRootTarget ? null : tab.path, {
+        addToHistory: false,
+        restore: {
+          scrollTop: tab.scrollTop,
+          selection: tab.selection,
+          view: tab.view,
+          listScale: tab.listScale,
+        },
+      });
     } else {
       // Already has a folder loaded, still sitting in #list-scroll from
       // earlier in this tab's life (screens are hidden, not torn down) — just
       // reveal it, no re-fetch.
-      tab.label = labelOverride || tabLabelFor(tab.path);
+      tab.label = labelOverride || (tab.isRootTarget ? tabLabelFor(null) : tabLabelFor(tab.path));
       updateTabElementAppearance(tab);
       showScreenDom('browser');
-      updateSidebarActive(tab.path);
+      updateSidebarActive(tab.isRootTarget ? null : tab.path);
+      updateBreadcrumb(tab.path);
+      if (typeof refreshNavButtons === 'function') refreshNavButtons();
     }
     return;
   }
@@ -313,6 +453,7 @@ function switchScreen(id, labelOverride) {
   updateTabElementAppearance(tab);
   showScreenDom(id);
   updateSidebarActive(id);
+  resetToolbarForNonBrowser(id);
 }
 
 /**
@@ -373,6 +514,7 @@ function closeTabById(id) {
   } else if (wasActive) {
     activateTab(neighborEl ? neighborEl.dataset.tabId : tabs.list[0].id);
   }
+  updateTabbarOverflow();
   showSnackbar('Tab closed · Ctrl+Shift+T to reopen', null, null);
 }
 
@@ -393,8 +535,15 @@ function reopenLastTab() {
     label: record.label,
   });
   restored.view = record.view;
+  restored.listScale = record.listScale;
   restored.scrollTop = record.scrollTop;
   restored.selection = record.selection;
+  restored.isRootTarget = record.isRootTarget;
+  // The closed record carried its search (closeTabById pushes the whole thing,
+  // syncActiveTabRecord having just refreshed it) — createTab() starts every
+  // tab at search:null, so it has to be carried across explicitly or Ctrl+W /
+  // Ctrl+Shift+T silently drops the results (pass 2 #18).
+  restored.search = record.search;
   activateTab(restored.id);
 }
 
@@ -411,8 +560,13 @@ function duplicateTab(id) {
     label: source.label,
   });
   copy.view = source.view;
+  copy.listScale = source.listScale;
   copy.selection = source.selection.slice();
   copy.scrollTop = source.scrollTop;
+  copy.isRootTarget = source.isRootTarget;
+  // Duplicating a results tab duplicates the results, not the folder under
+  // them — deep-cloned so the two tabs' snapshots never alias (pass 2 #18).
+  copy.search = source.search ? JSON.parse(JSON.stringify(source.search)) : null;
   // Place the duplicate right after its source, matching a browser's
   // "Duplicate tab" placement, instead of at the end of the strip.
   const copyEl = document.querySelector(`.fp-tab[data-tab-id="${copy.id}"]`);
@@ -431,7 +585,7 @@ function closeOtherTabs(id) {
 function seedInitialTab() {
   const el = document.querySelector('.fp-tab[data-tab-id]');
   const id = el ? el.dataset.tabId : 'tab-1';
-  const record = { id, screen: 'home', label: 'Home', path: null, history: [], historyIndex: -1, view: null, scrollTop: 0, selection: [], search: null };
+  const record = { id, screen: 'home', label: 'Home', path: null, history: [], historyIndex: -1, view: null, listScale: null, scrollTop: 0, selection: [], isRootTarget: false, search: null };
   tabs.list.push(record);
   tabs.activeId = id;
   nav.history = record.history;
@@ -2051,20 +2205,32 @@ document.addEventListener('click', e => {
       setThisPcOpen(!expanded);
       break;
     }
+    // The whole nav group + breadcrumb + Refresh live in the toolbar, which
+    // sits OUTSIDE .screen and is therefore painted (and clickable) on Home,
+    // Settings and every stub screen. refreshNavButtons() disables the three
+    // buttons off the Browser screen; these guards are the second half of the
+    // same rule, for the paths a disabled attribute cannot cover (the error
+    // banner's own Go back / Retry, a crumb left over from a previous screen).
+    // Without them the load lands in a hidden #list-scroll while onNavigated()
+    // silently turns the visible Home/Settings tab into a folder tab (#11).
     case 'nav-back':
-      navBack();
+      if (browserScreenActive()) navBack();
       break;
     case 'nav-forward':
-      navForward();
+      if (browserScreenActive()) navForward();
       break;
     case 'nav-up':
-      navUp();
+      if (browserScreenActive()) navUp();
       break;
     case 'navigate-crumb':
-      if (btn.dataset.path) loadDirectory(btn.dataset.path);
+      // isAbsolutePath rejects the sentinels a crumb can carry (index.html
+      // seeds "home" before the first real updateBreadcrumb) — loadDirectory()
+      // would relabel the tab and flip it to the Browser screen synchronously,
+      // before the backend's 400 for a driveless path is even known (#13).
+      if (browserScreenActive() && isAbsolutePath(btn.dataset.path)) loadDirectory(btn.dataset.path);
       break;
     case 'nav-retry':
-      retryLoad();
+      if (browserScreenActive()) retryLoad();
       break;
     case 'refresh-directory':
       refreshDirectory();
@@ -2855,10 +3021,17 @@ function setNotificationsEnabled(enabled) {
 // anything order-sensitive; closeTabById() picks its fallback-active
 // neighbor off the DOM for exactly this reason).
 let _dragTab = null;
+// Set by the drop handler when it actually moves a tab. dragend fires for
+// every drag — including one cancelled with Escape or released over nothing —
+// so without this flag the strip claimed a reorder that never happened
+// (pass 2 #157). The message no longer claims persistence either: nothing
+// writes the order anywhere yet (see the INTEGRATION note below).
+let _tabDragReordered = false;
 
 function initTabDrag(tab) {
   tab.addEventListener('dragstart', e => {
     _dragTab = tab;
+    _tabDragReordered = false;
     tab.style.opacity = '0.4';
     e.dataTransfer.effectAllowed = 'move';
   });
@@ -2868,8 +3041,12 @@ function initTabDrag(tab) {
     document.querySelectorAll('.fp-tab').forEach(t => {
       t.classList.remove('fp-tab--drag-over-before', 'fp-tab--drag-over-after');
     });
-    showSnackbar('Tab order saved', null, null);
-    // INTEGRATION: POST /ui/tabs with new order for persistence
+    if (_tabDragReordered) showSnackbar('Tab moved', null, null);
+    _tabDragReordered = false;
+    updateTabbarOverflow();
+    // INTEGRATION: POST /ui/tabs with new order for persistence — until that
+    // exists the new order lives only in the DOM and is gone on next launch,
+    // which is why the snackbar above does not say "saved".
   });
   tab.addEventListener('dragover', e => {
     if (!_dragTab || _dragTab === tab) return;
@@ -2894,13 +3071,56 @@ function initTabDrag(tab) {
     e.preventDefault();
     const tabbar = tab.parentElement;
     const rect = tab.getBoundingClientRect();
-    if (e.clientX < rect.left + rect.width / 2) {
-      tabbar.insertBefore(_dragTab, tab);
-    } else {
-      tabbar.insertBefore(_dragTab, tab.nextSibling);
+    const ref = e.clientX < rect.left + rect.width / 2 ? tab : tab.nextSibling;
+    // A drop that leaves the dragged tab exactly where it already sat (it is
+    // the reference node, or already immediately before it) is not a reorder —
+    // don't announce one (pass 2 #157).
+    if (ref !== _dragTab && _dragTab.nextSibling !== ref) {
+      tabbar.insertBefore(_dragTab, ref);
+      _tabDragReordered = true;
     }
     tab.classList.remove('fp-tab--drag-over-before', 'fp-tab--drag-over-after');
   });
+}
+
+// The strip only scrolls horizontally and its scrollbar is hidden, so a plain
+// vertical wheel (which Chromium does not apply to an overflow-x container)
+// has to be mapped onto scrollLeft by hand — otherwise clipped tabs are
+// reachable only by a Shift+wheel or a trackpad swipe (pass 2 #156).
+function initTabbarScroll() {
+  const tabbar = document.getElementById('tabbar');
+  if (!tabbar) return;
+  tabbar.addEventListener('wheel', e => {
+    if (e.ctrlKey || e.metaKey) return;          // Ctrl+wheel is the list zoom
+    const delta = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+    if (!delta) return;
+    if (tabbar.scrollWidth <= tabbar.clientWidth) return;
+    e.preventDefault();
+    tabbar.scrollLeft += delta;
+  }, { passive: false });
+  tabbar.addEventListener('scroll', updateTabbarOverflow);
+  window.addEventListener('resize', updateTabbarOverflow);
+  // Tablist keyboard model (pass 2 #158): the active tab is the single tab
+  // stop (roving tabindex, createTabElement/activateTab), Arrow keys move
+  // along the strip, Home/End jump to its ends, Delete closes.
+  tabbar.addEventListener('keydown', e => {
+    const tabEl = e.target.closest?.('.fp-tab');
+    if (!tabEl) return;
+    const order = tabsInStripOrder();
+    if (e.key === 'ArrowRight') { e.preventDefault(); cycleTab(1); }
+    else if (e.key === 'ArrowLeft') { e.preventDefault(); cycleTab(-1); }
+    else if (e.key === 'Home' && order.length) {
+      e.preventDefault(); activateTab(order[0]);
+      document.querySelector(`.fp-tab[data-tab-id="${order[0]}"]`)?.focus();
+    } else if (e.key === 'End' && order.length) {
+      const last = order[order.length - 1];
+      e.preventDefault(); activateTab(last);
+      document.querySelector(`.fp-tab[data-tab-id="${last}"]`)?.focus();
+    } else if (e.key === 'Delete') {
+      e.preventDefault(); closeTabById(tabEl.dataset.tabId);
+    }
+  });
+  updateTabbarOverflow();
 }
 
 // ── Keyboard shortcuts ────────────────────────────────────────────────────────
@@ -2927,7 +3147,20 @@ document.addEventListener('keydown', e => {
   if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key === 'w') { e.preventDefault(); closeCurrentTab(); }
   // Ctrl+Shift+T — reopen last closed tab
   if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'T') { e.preventDefault(); reopenLastTab(); }
-  // Ctrl+1..9 — numbered shortcuts (screen navigation stubs)
+  // Ctrl+1..8 jump to that tab position, Ctrl+9 to the last one (every
+  // browser's rule, and what docs/UI-SPEC.md already documented); Ctrl+Tab /
+  // Ctrl+Shift+Tab cycle. Until pass 2 #158 none of this existed — a keyboard
+  // user could open and close tabs but never switch between them.
+  if ((e.metaKey || e.ctrlKey) && !e.shiftKey && /^[1-9]$/.test(e.key)) {
+    e.preventDefault();
+    const order = tabsInStripOrder();
+    const target = e.key === '9' ? order[order.length - 1] : order[Number(e.key) - 1];
+    if (target) activateTab(target);
+  }
+  if ((e.metaKey || e.ctrlKey) && e.key === 'Tab') {
+    e.preventDefault();
+    cycleTab(e.shiftKey ? -1 : 1);
+  }
   // Escape — close all overlays
   if (e.key === 'Escape') {
     closePalette();
@@ -3071,6 +3304,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   restoreSidebarState();
   initSearch();
   initToolbarNarrowMode();
+  // Tab strip: wheel-to-scrollLeft, the overflow hint, and the tablist's own
+  // keyboard model (pass 2 #156/#158). The seed tab is already in the DOM, so
+  // this also has to run after seedInitialTab().
+  initTabbarScroll();
   checkBackend();
   // The status pill is the reconnect affordance (role="button" in the
   // markup): its click reaches the delegated switch, but a <span> never

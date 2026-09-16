@@ -74,6 +74,12 @@ const browserState = {
   // root) — whatever the load's outcome. Used by the error banner's "Retry"
   // action so it can re-attempt the exact same load that just failed.
   lastAttemptedPath: null,
+  // Set by refreshDirectory() when it is called from off the Browser screen
+  // (the Settings show-hidden checkbox) and it therefore declines to reload:
+  // whatever is sitting in #list-scroll no longer matches the settings it was
+  // fetched with, so switchScreen()'s reveal branch re-fetches instead of
+  // revealing it. Cleared by every completed loadDirectory().
+  listingStale: false,
   // Monotonic counter, bumped by every loadDirectory() call before its
   // fetch — lets a call whose fetch resolves late detect it's been
   // superseded (by a tab switch OR a newer navigation in the same tab) and
@@ -449,7 +455,16 @@ async function loadDirectory(absPath, opts = {}) {
   // never loaded a folder" (path still null, createTab()'s default) apart
   // from "this tab is sitting at the sandbox root" (a real resolved path).
   const tab = activeTab();
-  if (tab) { tab.path = data.path; tab.screen = 'browser'; }
+  if (tab) {
+    tab.path = data.path;
+    tab.screen = 'browser';
+    // Remember that this tab was opened AT the root entry point rather than at
+    // a folder of that name: the resolved path is a real directory, so without
+    // this the "This PC" label would be recomputed as its basename the first
+    // time the tab is re-activated or duplicated (pass 2 #16).
+    tab.isRootTarget = !absPath;
+  }
+  browserState.listingStale = false;
   // onNavigated(null) (the sandbox-root request) couldn't build breadcrumb
   // crumbs from nothing — finalize them now that the real path is known.
   if (!absPath) updateBreadcrumb(data.path);
@@ -474,6 +489,10 @@ async function loadDirectory(absPath, opts = {}) {
 
   renderDirectory(data);
   if (restore && restore.view) {
+    // --list-scale is a single global custom property, so a restore has to
+    // re-assert THIS tab's scale too — otherwise the tab inherits whatever
+    // scale the outgoing tab (or a Ctrl+wheel zoom in it) last set (pass 2 #19).
+    if (restore.listScale) setListScale(restore.listScale, { persist: false });
     setViewMode(restore.view);
   } else if (decidedView) {
     setListScale(decidedView.scale, { persist: false });
@@ -502,6 +521,17 @@ async function loadDirectory(absPath, opts = {}) {
  * performed on a result row needs so the vanished/renamed row disappears from
  * the results the same way it would from a folder listing. */
 function refreshDirectory() {
+  // Not every caller is on the Browser screen: Settings › Personalization's
+  // "View hidden files" checkbox and the View menu both call this from a
+  // screen of their own. Reloading from there would repaint a hidden
+  // #list-scroll AND let onNavigated() turn the Settings tab into a folder tab
+  // (label, icon, sidebar highlight and all), losing the Settings tab for
+  // good. Mark the listing stale instead — switchScreen()'s reveal branch and
+  // activateTab() both re-fetch before it is next seen (pass 2 #155).
+  if (!browserScreenActive()) {
+    browserState.listingStale = true;
+    return Promise.resolve();
+  }
   if (browserState.mode === 'search') {
     const searchBtn = document.getElementById('btn-refresh');
     searchBtn?.classList.add('is-spinning');
@@ -514,10 +544,15 @@ function refreshDirectory() {
   const btn = document.getElementById('btn-refresh');
   const listScroll = document.getElementById('list-scroll');
   const scrollTop = listScroll ? listScroll.scrollTop : 0;
+  // #list-scroll is DOM shared by every tab: if the user switches tabs while
+  // this refresh is in flight, loadDirectory() bails on its own reqTabId guard
+  // but this finally() would still stamp THIS tab's offset onto the tab that
+  // is now showing (pass 2 #20).
+  const reqTabId = tabs.activeId;
   btn?.classList.add('is-spinning');
   const p = loadDirectory(browserState.path, { addToHistory: false, preserveSelection: true });
   return p.finally(() => {
-    if (listScroll) listScroll.scrollTop = scrollTop;
+    if (listScroll && tabs.activeId === reqTabId) listScroll.scrollTop = scrollTop;
     btn?.classList.remove('is-spinning');
   });
 }
@@ -559,6 +594,11 @@ function retryLoad() {
 }
 
 function pushHistory(path) {
+  // A navigation that lands on the folder already showing changes nothing —
+  // decide that BEFORE the truncation below, or re-opening the current folder
+  // (its Quick Access row, its own breadcrumb crumb) after a Back throws the
+  // forward stack away for a navigation that went nowhere (pass 2 #17).
+  if (nav.history[nav.index] === path) { refreshNavButtons(); return; }
   // If we navigated forward from a non-tail position, drop the forward
   // stack — truncate nav.history IN PLACE (never reassign it to a new
   // array) so it stays the same object activateTab() pointed the active
@@ -566,20 +606,24 @@ function pushHistory(path) {
   if (nav.index < nav.history.length - 1) {
     nav.history.length = nav.index + 1;
   }
-  if (nav.history[nav.index] !== path) {
-    nav.history.push(path);
-    nav.index = nav.history.length - 1;
-  }
+  nav.history.push(path);
+  nav.index = nav.history.length - 1;
   refreshNavButtons();
 }
 
 function navBack() {
+  // Same Explorer rule navUp() follows: the first Back out of a results
+  // listing leaves the search and returns to the folder that was searched —
+  // searching never pushed a history entry of its own, so without this Back
+  // silently skips PAST the searched folder to the previous one (pass 2 #154).
+  if (browserState.mode === 'search') { exitSearchResults(); return; }
   if (nav.index <= 0) return;
   nav.index -= 1;
   loadDirectory(nav.history[nav.index], { addToHistory: false });
 }
 
 function navForward() {
+  if (browserState.mode === 'search') { exitSearchResults(); return; }
   if (nav.index >= nav.history.length - 1) return;
   nav.index += 1;
   loadDirectory(nav.history[nav.index], { addToHistory: false });
@@ -595,16 +639,35 @@ function navUp() {
   loadDirectory(browserState.parent);
 }
 
+/**
+ * Is the Browser screen the one actually on display?
+ *
+ * The toolbar (nav group, breadcrumb, search bar) lives OUTSIDE `.screen`
+ * (index.html) and Settings' own controls live on another screen entirely, so
+ * both can reach browser.js while the user is looking at Home/Settings/any
+ * stub screen. Acting on the listing from there paints into a hidden
+ * #list-scroll and lets onNavigated() silently rewrite the active tab into a
+ * folder tab (pass 2 #11 / #155) — every such entry point is gated on this.
+ */
+function browserScreenActive() {
+  const el = document.getElementById('screen-browser');
+  return !!(el && el.classList.contains('active'));
+}
+
 function refreshNavButtons() {
   const back = document.querySelector('[data-action="nav-back"]');
   const fwd  = document.querySelector('[data-action="nav-forward"]');
   const up   = document.querySelector('[data-action="nav-up"]');
-  if (back) back.disabled = nav.index <= 0;
-  if (fwd)  fwd.disabled  = nav.index >= nav.history.length - 1;
+  // The toolbar is painted on every screen, so off the Browser screen the
+  // whole nav group is dead rather than acting on a listing the user cannot
+  // see (pass 2 #11/#12).
+  const onBrowser = browserScreenActive();
+  if (back) back.disabled = !onBrowser || nav.index <= 0;
+  if (fwd)  fwd.disabled  = !onBrowser || nav.index >= nav.history.length - 1;
   // In search mode Up always has somewhere to go (back to the searched
   // folder), regardless of whether that folder has a parent of its own.
-  if (up)   up.disabled   = browserState.mode !== 'search'
-    && (!browserState.path || browserState.isRoot || !browserState.parent);
+  if (up)   up.disabled   = !onBrowser || (browserState.mode !== 'search'
+    && (!browserState.path || browserState.isRoot || !browserState.parent));
 }
 
 function renderDirectory(data) {

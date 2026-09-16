@@ -253,7 +253,12 @@ function buildParams() {
   const params = { q: searchState.text.trim(), limit: SEARCH_LIMIT };
 
   if (searchState.scope !== 'pc') {
-    params.root = searchState.scope === 'current' ? (browserState.path || '') : searchState.scope;
+    // "in: current location" means THIS tab's folder. browserState is global
+    // and still holds whichever tab last listed something, so reading it
+    // directly silently scopes the search to another tab's folder (pass 2 #15).
+    const tab = typeof activeTab === 'function' ? activeTab() : null;
+    const currentRoot = (tab && tab.path) || browserState.path || '';
+    params.root = searchState.scope === 'current' ? currentRoot : searchState.scope;
   }
 
   const type = searchChipValue('type');
@@ -344,11 +349,17 @@ function normalizeIndexResults(payload, query) {
  * scope). */
 async function searchEnsureBrowser() {
   const browserActive = document.getElementById('screen-browser')?.classList.contains('active');
-  if (browserActive && browserState.path) return;
   const tab = typeof activeTab === 'function' ? activeTab() : null;
+  // browserState is global: on a tab that has never listed anything (or one
+  // that was on Home while another tab browsed), browserState.path is the
+  // OTHER tab's folder. Testing it instead of this tab's own record is what
+  // let a search run silently against a folder this tab never opened (pass 2
+  // #15) — compare the two and load when they disagree.
+  const stale = !browserState.path || (tab && browserState.path !== tab.path);
+  if (browserActive && !stale) return;
   if (tab) tab.screen = 'browser';
   showScreenDom('browser');
-  if (!browserState.path) await loadDirectory(tab ? tab.path : null);
+  if (stale) await loadDirectory(tab ? tab.path : null);
 }
 
 /**
@@ -850,8 +861,14 @@ function syncSearchToTab() {
   if (tab) tab.search = captureSearchState();
 }
 
-/** Repaints a tab's stored search (bar + results) with no network call. */
-function restoreSearchResultsForTab(snapshot) {
+/** Repaints a tab's stored search (bar + results) with no network call.
+ *
+ * `restore` ({selection, scrollTop}) carries the same per-tab view state a
+ * folder tab gets back through loadDirectory()'s `restore` option — without it
+ * a results tab came back scrolled to the top with nothing selected and a
+ * blank Inspector, while the identical round-trip on a folder tab restored
+ * both (pass 2 #153). */
+function restoreSearchResultsForTab(snapshot, restore = null) {
   if (!snapshot) { searchResetBar(); return; }
   searchState.chips = (snapshot.chips || []).map(c => ({ ...c }));
   searchState.text = snapshot.text || '';
@@ -863,10 +880,23 @@ function restoreSearchResultsForTab(snapshot) {
   const input = document.getElementById('search-input');
   if (input) input.value = searchState.text;
   renderSearchChips();
+  // Seed the selection BEFORE the render and ask it to preserve what it finds:
+  // renderSearchResults() filters it down to the paths actually present in the
+  // snapshot, exactly as loadDirectory()'s restore branch does for a folder.
+  const wanted = restore && Array.isArray(restore.selection) ? restore.selection : null;
+  if (wanted) {
+    browserState.selection = new Set(wanted);
+    browserState.anchor = wanted.length ? wanted[0] : null;
+    browserState.focus = wanted.length ? wanted[wanted.length - 1] : null;
+  }
   renderSearchResults(
     { results: searchState.results, truncated: searchState.truncated },
-    { query: searchState.query, root: searchState.root },
+    { query: searchState.query, root: searchState.root, preserveSelection: !!wanted },
   );
+  if (restore && restore.scrollTop) {
+    const listScroll = document.getElementById('list-scroll');
+    if (listScroll) listScroll.scrollTop = restore.scrollTop;
+  }
 }
 
 /** Re-runs a tab's unfinished search after its folder listing has landed.
