@@ -455,6 +455,11 @@ function switchScreen(id, labelOverride) {
       updateSidebarActive(tab.isRootTarget ? null : tab.path);
       updateBreadcrumb(tab.path);
       if (typeof refreshNavButtons === 'function') refreshNavButtons();
+      // Nothing re-fetches on this path (the listing is already in
+      // #list-scroll), so the inspector is whatever the last writer left —
+      // including a Home row the user clicked while this screen was hidden.
+      // Repaint it from THIS listing's own selection (pass 2 #75).
+      if (typeof syncInspectorToBrowserSelection === 'function') syncInspectorToBrowserSelection();
     }
     return;
   }
@@ -2170,6 +2175,9 @@ const IN_SCOPE_ACTIONS = new Set([
   'settings-set-icon-source', 'settings-quick-access-toggle', 'settings-set-backspace-deletes',
   'settings-empty-trash',
   'settings-set-font-scale', 'settings-reset-shortcuts',
+  // Handled by the 'input'/'change' listeners at the bottom of this file, not
+  // by a click case — listed so a click on the slider is a silent no-op.
+  'settings-inspector-width',
   'zoom-reset',
   // File operations (Task 4) — context-menu actions wired in the switch below.
   'cm-open', 'cm-open-with', 'cm-reveal-explorer',
@@ -2502,9 +2510,13 @@ document.addEventListener('click', e => {
       // Legacy: only applies if dataset.accent or dataset.val is a valid hex
       applyAccent(btn.dataset.accent || btn.dataset.val);
       break;
-    case 'settings-set-accent-hex':
-      applyAccentHex(btn.value);
-      break;
+    // 'settings-set-accent-hex' has no click case on purpose: clicking INTO
+    // the field resolved this data-action and ran applyAccentHex('') — the
+    // red "Enter a valid hex color" error, announced by its aria-live, before
+    // a single character was typed (pass 2 #79). The 'input' listener at the
+    // bottom of this file is the one that applies and persists the value, and
+    // only when it parses; the action stays in IN_SCOPE_ACTIONS so the click
+    // is a deliberate silent no-op.
     case 'settings-reset-accent':
       resetAccentToDefault();
       deleteSetting('ui.accent_hex');
@@ -2582,10 +2594,12 @@ document.addEventListener('click', e => {
         if (r !== row) r.classList.remove('fp-row--selected');
       });
       row.classList.add('fp-row--selected');
-      // Populate + open the global inspector. INTEGRATION: real meta/preview
-      // data per backend-integration.md §A.2.1 item 2 (time-label formatter)
-      // and §A.3 (file/info, file/preview, file/hash).
-      updateInspector('single', { name, path });
+      // Populate the (browser-screen) inspector through the SAME pipeline a
+      // Browser selection uses. updateInspector('single', …) only rewrote the
+      // header: the meta grid, preview, tag chips and History stayed on the
+      // previously-inspected file, and _inspectorFileId with them — so the
+      // Tags pane then tagged that other file (pass 2 #75).
+      showInspectorFor(path);
       break;
     }
     // Home hover actions (Recent + Favorites rows) and the home-row context
@@ -3049,6 +3063,11 @@ document.addEventListener('input', e => {
     // value ("#4C") shouldn't overwrite the last-good saved accent.
     if (applyAccentHex(t.value)) saveSetting('ui.accent_hex', t.value.trim());
   }
+  // Inspector width slider (Settings › Personalization): live while dragging,
+  // persisted on 'change' below so one drag is one POST /config (pass 2 #83).
+  if (t && t.dataset && t.dataset.action === 'settings-inspector-width') {
+    applyInspectorWidth(t.value);
+  }
   // Properties panel's editable name field — any keystroke enables Apply.
   if (t && t.id === 'properties-name-input') propertiesMarkDirty();
 });
@@ -3084,6 +3103,12 @@ document.addEventListener('change', e => {
   }
   if (t.dataset.action === 'settings-set-backspace-deletes') {
     saveSetting('ui.backspace_deletes', t.checked);
+    return;
+  }
+  // Range input: 'change' fires once the drag ends — persist there, so the
+  // live 'input' updates above stay local (pass 2 #83).
+  if (t.dataset.action === 'settings-inspector-width') {
+    applyInspectorWidth(t.value, { persist: true });
     return;
   }
   // Properties panel — an attribute checkbox or the folder-type select was

@@ -481,7 +481,13 @@ function initFavoritesDragDrop() {
  * screen the same way browser.js's clearSelection() covers Browser. */
 function homeClearSelection() {
   document.querySelectorAll('#screen-home .fp-row--selected').forEach(r => r.classList.remove('fp-row--selected'));
-  if (typeof updateInspector === 'function') updateInspector('none');
+  // The inspector belongs to the Browser screen: resetting it to "No file
+  // selected" from here wiped a live Browser selection's panel even though
+  // that selection had not changed. Hand it back to whatever the Browser has
+  // selected instead (pass 2 #75) — which IS updateInspector('none') when the
+  // Browser has nothing selected.
+  if (typeof syncInspectorToBrowserSelection === 'function') syncInspectorToBrowserSelection();
+  else if (typeof updateInspector === 'function') updateInspector('none');
 }
 
 /** Double-click on any Home row (Recent or Favorites) opens it — delegated

@@ -21,6 +21,12 @@ let _propsPath = null;     // GET /fs/properties's own `path` (updates after a r
 let _propsData = null;     // last-fetched /fs/properties response
 let _propsEntry = null;    // {name, path, is_dir, ext} for iconFor()
 let _propsDetailsLoaded = false;
+// The folder type the panel LOADED (renderFolderTypeSelect's own `current`),
+// not whatever the <select> resolved to. desktop.ini can hold a FolderType
+// outside the five options below, in which case no <option> is selected and
+// the element reports 'Generic' — which propertiesApply() then read as "the
+// user picked Generic" and wrote over the real value (pass 2 #78).
+let _propsFolderTypeLoaded = null;
 
 const PROPS_FOLDER_TYPES = [
   { value: 'Generic',   label: 'General items' },
@@ -146,6 +152,7 @@ function closeProperties() {
   _propsPath = null;
   _propsData = null;
   _propsEntry = null;
+  _propsFolderTypeLoaded = null;
 }
 
 /** Enables Apply — called from app.js's delegated 'input'/'change' handlers
@@ -237,13 +244,20 @@ function loadOpensWithIcon(props) {
 }
 
 function renderFolderTypeSelect(props) {
-  const current = props.folder_type || props.folder_type_detected;
+  const current = props.folder_type || props.folder_type_detected || 'Generic';
   const isDetected = !props.folder_type;
-  const options = PROPS_FOLDER_TYPES.map(t => {
+  _propsFolderTypeLoaded = current;
+  let options = PROPS_FOLDER_TYPES.map(t => {
     const label = (isDetected && t.value === current) ? `${t.label} (detected)` : t.label;
     const selected = t.value === current ? ' selected' : '';
     return `<option value="${t.value}"${selected}>${escapeHtml(label)}</option>`;
   }).join('');
+  // Windows accepts any FolderType string (Contacts, Music.Artist, a custom
+  // GUID-backed template…). Report the truth as its own selected option
+  // instead of silently showing "General items" for it.
+  if (!PROPS_FOLDER_TYPES.some(t => t.value === current)) {
+    options += `<option value="${escapeHtml(current)}" selected>${escapeHtml(current)}${isDetected ? ' (detected)' : ''}</option>`;
+  }
   return `<select class="fp-input" id="properties-folder-type-select" data-action="props-folder-type-select">${options}</select>`;
 }
 
@@ -293,8 +307,13 @@ async function loadPropertiesDetails() {
     res = await API.get('/fs/properties/details', { path });
   } catch (err) {
     if (_propsPath !== path) return; // modal moved on to a different item
-    _propsDetailsLoaded = true;
-    const msg = (err instanceof ApiError && err.status === 503)
+    // Latch only the permanent answer: 503 means pywin32 is missing on this
+    // PC and no re-activation can change that. A 502 (a COM failure on a
+    // locked file, say) is transient — leaving the latch set meant the tab
+    // never retried for the life of the modal (pass 2 #151).
+    const permanent = (err instanceof ApiError && err.status === 503);
+    _propsDetailsLoaded = permanent;
+    const msg = permanent
       ? 'Details need pywin32 on this PC'
       : `Failed to load details: ${formatApiError(err)}`;
     container.innerHTML = `<p class="properties__details-empty">${escapeHtml(msg)}</p>`;
@@ -346,8 +365,19 @@ async function reloadProperties(path) {
   _propsPath = fresh.path;
   _propsData = fresh;
   _propsEntry = propsEntryFrom(fresh);
+  // The Details tab caches its fetch behind _propsDetailsLoaded. After an
+  // Apply that renamed the item, that cache described the OLD path and
+  // switchPropertiesTab('details') refused to re-fetch, so Details kept
+  // showing the pre-rename file — Name, Item type and all (pass 2 #151).
+  _propsDetailsLoaded = false;
+  const detailsEl = document.getElementById('properties-details-content');
+  if (detailsEl) detailsEl.innerHTML = '';
   renderPropertiesHeader();
   renderGeneral(fresh);
+  // Re-fetch now if Details is the pane the user is actually looking at —
+  // otherwise the next activation does it.
+  const detailsPane = document.querySelector('.properties__pane[data-pane="details"]');
+  if (detailsPane && !detailsPane.hidden) loadPropertiesDetails();
   const applyBtn = document.getElementById('properties-apply');
   if (applyBtn) applyBtn.disabled = true;
 }
@@ -395,7 +425,10 @@ async function propertiesApply() {
 
   if (_propsData.is_dir) {
     const select = document.getElementById('properties-folder-type-select');
-    const currentType = _propsData.folder_type || _propsData.folder_type_detected;
+    // Compare against what the select was RENDERED with (pass 2 #78), never
+    // against props alone: an unrepresented value used to leave the element
+    // reporting the first option, which read as a change the user never made.
+    const currentType = _propsFolderTypeLoaded;
     if (select && select.value && select.value !== currentType) {
       try {
         await fileops.run('Set folder type', async () => {

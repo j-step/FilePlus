@@ -1969,23 +1969,23 @@
                       <button class="fp-segmented__opt" data-action="settings-set-density" data-val="spacious">Spacious</button>
                     </div>
                   </div>
-                  <div class="settings-sep"></div>
-                  <div class="settings-row">
-                    <div class="settings-row__label">Tab style</div>
-                    <div class="fp-segmented">
-                      <button class="fp-segmented__opt active" data-action="settings-set-tab-style" data-val="compact">Compact</button>
-                      <button class="fp-segmented__opt" data-action="settings-set-tab-style" data-val="standard">Standard</button>
-                    </div>
-                  </div>
+                  <!-- "Tab style" (Compact/Standard) lived here until pass 2
+                       #83: it was wired to nothing — no click case, no ui.*
+                       key, not even the `active` class — between two controls
+                       that work, in a pane the user has every reason to
+                       trust. Removed rather than faked; it comes back with
+                       the Stage 3 tab restyle that gives it something to
+                       switch. -->
                   <div class="settings-sep"></div>
                   <div class="settings-row">
                     <div class="settings-row__label">
-                      Inspector default width
-                      <span class="fp-mono settings-slider-value" id="val-inspector-width">360px</span>
+                      Inspector width
+                      <span class="fp-mono settings-slider-value" id="val-inspector-width">340px</span>
                     </div>
                     <input type="range" class="fp-slider" id="slider-inspector-width"
-                           min="280" max="520" value="360" step="8"
+                           min="280" max="520" value="340" step="8"
                            data-action="settings-inspector-width"
+                           aria-label="Inspector width in pixels"
                            style="width:180px" />
                   </div>
                   <div class="settings-sep"></div>

@@ -4268,7 +4268,11 @@ body.is-dragging { cursor: default; }
 .inspector {
   width: 280px;
   min-width: 220px;
-  max-width: 480px;
+  /* One bound for the panel's width, shared with initResizer's drag clamp and
+     the Settings "Inspector default width" slider (inspector.js's
+     INSPECTOR_WIDTH_MAX). A 480px cap here made the last 40px of drag travel
+     dead — the handle moved, the panel did not (pass 2 #82). */
+  max-width: 520px;
   background: var(--bg-chrome);
   border-left: 1px solid var(--border-subtle);
   display: flex;
@@ -6120,6 +6124,11 @@ button.fp-pill:hover {
    ============================================================================= */
 .inspector__header { flex-shrink: 0; height: 56px; overflow: hidden; }
 .inspector__preview { width: 100%; aspect-ratio: 16 / 10; }
+/* [hidden]'s UA display:none loses to the inline display:flex the element
+   carries in index.html (and to the one inspector.js rewrites on every
+   render) — restate it, as .fp-drag-badge/.list-search-header do, so a
+   multi-selection actually hides the preview box (pass 2 #148). */
+.inspector__preview[hidden] { display: none !important; }
 .fp-inspector__tabs { height: 44px; flex-shrink: 0; }
 .inspector__body { min-height: 0; flex: 1; overflow: auto; }
 /* Panes container: fixed min-height so the shortest pane (Tags/History's

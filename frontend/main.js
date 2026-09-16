@@ -135,6 +135,11 @@ function createWindow() {
 
 const ZOOM_STEPS   = [0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.33, 1.5, 1.75, 2.0];
 
+// How long show-properties waits for the PowerShell helper to fail before
+// concluding the dialog is up: the failure paths throw within milliseconds,
+// while a successful run blocks until the property sheet closes.
+const SHOW_PROPERTIES_EARLY_EXIT_MS = 1200;
+
 app.whenReady().then(() => {
   ipcMain.on('win-minimize', () => mainWindow?.minimize());
   ipcMain.on('win-maximize', () => {
@@ -292,16 +297,28 @@ app.whenReady().then(() => {
   // ever reaches a spawned shell process — see iconCache.js.
   ipcMain.handle('show-properties', async (_e, filePath) => {
     if (!isSafeLocalPath(filePath)) return false;
+    let child;
     try {
-      spawn(
+      child = spawn(
         'powershell',
         ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', path.join(__dirname, 'native', 'show-properties.ps1'), '-Path', filePath],
         { detached: true, stdio: 'ignore', windowsHide: true }
-      ).unref();
-      return true;
+      );
     } catch (_err) {
       return false;
     }
+    // The script blocks for as long as the dialog is up, so "still running a
+    // moment later" IS success. An early non-zero exit (a shell item that
+    // could not be resolved) used to be invisible: this handler reported only
+    // whether the SPAWN worked, so the renderer never toasted and the user
+    // got absolute silence (pass 2 #147).
+    return await new Promise((resolve) => {
+      let settled = false;
+      const done = (value) => { if (!settled) { settled = true; resolve(value); } };
+      const timer = setTimeout(() => { child.unref(); done(true); }, SHOW_PROPERTIES_EARLY_EXIT_MS);
+      child.once('exit', (code) => { clearTimeout(timer); child.unref(); done(code === 0); });
+      child.once('error', () => { clearTimeout(timer); done(false); });
+    });
   });
 
   // Native "Open with" dialog, gated the same way as showProperties: validates

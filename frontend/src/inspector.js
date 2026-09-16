@@ -54,10 +54,21 @@ function updateInspector(mode, data = {}) {
     // as if it had worked (pass 2 #199).
     _inspectorFileId = null;
     _inspectorHistoryPath = null;
+    // …and so do the chips that named that one file's tags: the Tags pane is
+    // hidden here, but leaving a stale chip list behind means anything that
+    // un-hides it (cm-add-tag's switchInspectorTab, a later tab click)
+    // displays another file's tags under "N items selected" (pass 2 #149).
+    const tagsEl = document.getElementById('inspector-tags');
+    if (tagsEl) tagsEl.innerHTML = '';
     // Show multi-select aggregate; hide single-file UI
     singlePanes.forEach(p => { p.hidden = true; });
     if (tabBar)   tabBar.hidden = true;
+    // The preview box carries an inline display:flex (index.html) that beats
+    // the UA's [hidden]{display:none} — styles.css restates the rule for
+    // .inspector__preview[hidden] so this actually hides it (pass 2 #148).
+    // The last single selection's image blob goes with it.
     if (preview)  preview.hidden = true;
+    if (_inspectorPreviewUrl) { URL.revokeObjectURL(_inspectorPreviewUrl); _inspectorPreviewUrl = null; }
     if (filenameEl) { filenameEl.textContent = `${data.count} items selected`; filenameEl.removeAttribute('title'); }
     if (filepathEl) filepathEl.textContent = '';
     if (multiPane) {
@@ -102,6 +113,10 @@ function updateInspector(mode, data = {}) {
     const activeTab = inspector.querySelector('.fp-inspector__tab.fp-tabs__item--active')?.dataset.tab || 'preview';
     switchInspectorTab(activeTab);
   }
+
+  // 'single' leaves this to showInspectorFor, which only learns the file's
+  // DB id (or null, for a folder) once GET /file answers.
+  if (mode !== 'single') updateTagInputAvailability();
 }
 
 // ── Single selection ──────────────────────────────────────────────────────────
@@ -125,6 +140,7 @@ async function showInspectorFor(path) {
   } catch (err) {
     if (seq !== _inspectorSeq) return;
     _inspectorFileId = null;
+    updateTagInputAvailability();
     renderInspectorMeta(null);
     renderTagChips([]);
     renderPreviewNone();
@@ -134,6 +150,7 @@ async function showInspectorFor(path) {
   if (seq !== _inspectorSeq) return;
 
   _inspectorFileId = data.id ?? null;
+  updateTagInputAvailability();
   renderInspectorMeta(data);
   renderTagChips(data.tags || []);
 
@@ -218,7 +235,14 @@ async function loadInspectorPreview(path, seq) {
   const ct = res.headers.get('content-type') || '';
   if (ct.startsWith('image/')) {
     let blob;
-    try { blob = await res.blob(); } catch (_) { renderPreviewNone(); return; }
+    try { blob = await res.blob(); } catch (_) {
+      // Same guard as every other await here: a superseded request's decode
+      // failure must not revoke the LIVE selection's blob: URL (leaving a
+      // broken <img>) or repaint the box with another file's icon (pass 2 #85).
+      if (seq !== _inspectorSeq) return;
+      renderPreviewNone();
+      return;
+    }
     if (seq !== _inspectorSeq) return;
     if (_inspectorPreviewUrl) URL.revokeObjectURL(_inspectorPreviewUrl);
     _inspectorPreviewUrl = URL.createObjectURL(blob);
@@ -234,7 +258,11 @@ async function loadInspectorPreview(path, seq) {
   }
 
   let data;
-  try { data = await res.json(); } catch (_) { renderPreviewNone(); return; }
+  try { data = await res.json(); } catch (_) {
+    if (seq !== _inspectorSeq) return;   // pass 2 #85, as above
+    renderPreviewNone();
+    return;
+  }
   if (seq !== _inspectorSeq) return;
 
   if (data.kind === 'text') {
@@ -267,6 +295,20 @@ function renderTagChips(tags) {
   const container = document.getElementById('inspector-tags');
   if (!container) return;
   container.innerHTML = tags.map(t => `<span class="fp-chip">${escapeHtml(t.name)}<button class="fp-chip__remove" data-action="inspector-remove-tag" data-tag-id="${t.id}" aria-label="Remove tag ${escapeHtml(t.name)}">×</button></span>`).join('');
+}
+
+/** Enables/disables "Add tag…" to match what the panel can actually do.
+ * GET /file returns id: null for a directory, so addInspectorTag() below can
+ * only no-op for a folder — and the Enter handler had already cleared the
+ * field by then, so the pane silently ate whatever was typed (pass 2 #81).
+ * A disabled field with a plain-language placeholder says why instead. */
+function updateTagInputAvailability() {
+  const input = document.getElementById('inspector-tag-input');
+  if (!input) return;
+  const taggable = _inspectorFileId != null;
+  input.disabled = !taggable;
+  input.placeholder = taggable ? 'Add tag…' : 'Only files can be tagged';
+  if (!taggable) input.value = '';
 }
 
 async function refreshInspectorTags() {
@@ -348,6 +390,36 @@ function renderInspectorHistory(rows) {
   container.innerHTML = rows.map(renderHistoryRow).join('');
 }
 
+// Windows file-attribute bits, for the attr-set rows below. mover.py logs
+// attr-set's before/after as raw bit masks (FILE_ATTRIBUTE_READONLY = 1,
+// _HIDDEN = 2, _ARCHIVE = 32) — the only three the Properties panel offers.
+const INSPECTOR_ATTR_BITS = [[1, 'Read-only'], [2, 'Hidden'], [32, 'Archive']];
+
+/** The History row's subtitle. `reason` is a human string for most ops
+ * ('undo of #12', 'replaced'), but the Properties panel's two op types write
+ * their undo payload into it as JSON — attr-set's bit masks and, worse,
+ * folder-type-set's base64 copy of the whole desktop.ini, which the panel
+ * rendered verbatim (pass 2 #77). Parse those two into a sentence; anything
+ * that isn't the JSON we expect falls back to the raw string, so a reason
+ * this function has never heard of is still shown rather than swallowed. */
+function humanizeHistoryReason(row) {
+  const raw = row && row.reason ? String(row.reason) : '';
+  const opType = String((row && row.op_type) || '');
+  if (!raw || (opType !== 'attr-set' && opType !== 'folder-type-set')) return raw;
+  let data;
+  try { data = JSON.parse(raw); } catch (_) { return raw; }
+  if (!data || typeof data !== 'object') return raw;
+  if (opType === 'folder-type-set') {
+    return data.after ? `Folder type → ${data.after}` : raw;
+  }
+  const before = Number(data.before), after = Number(data.after);
+  if (!Number.isFinite(before) || !Number.isFinite(after)) return raw;
+  const changed = INSPECTOR_ATTR_BITS
+    .filter(([bit]) => ((before ^ after) & bit) !== 0)
+    .map(([bit, label]) => `${label} ${(after & bit) ? 'on' : 'off'}`);
+  return changed.length ? changed.join(', ') : 'Attributes unchanged';
+}
+
 function renderHistoryRow(row) {
   const srcName  = basenameOf(row.source_path);
   const destName = basenameOf(row.dest_path);
@@ -367,8 +439,11 @@ function renderHistoryRow(row) {
   const undoBtn = canUndo
     ? `<button class="fp-btn fp-btn--ghost fp-btn--sm" data-action="inspector-undo-op" data-op-id="${row.id}" data-batch-id="${escapeHtml(row.batch_id || '')}">Undo</button>`
     : '';
-  const reasonHtml = row.reason
-    ? `<div class="mono" style="font-size:10px;color:var(--text-tertiary)">${escapeHtml(row.reason)}</div>`
+  // word-break matches the summary line above: the panel is ~340px wide and
+  // an unbroken value (a path, or a reason we could not parse) overflowed it.
+  const reasonText = humanizeHistoryReason(row);
+  const reasonHtml = reasonText
+    ? `<div class="mono" style="font-size:10px;color:var(--text-tertiary);word-break:break-all">${escapeHtml(reasonText)}</div>`
     : '';
   const errorHtml = row.error
     ? `<div class="mono" style="font-size:10px;color:var(--bad)">${escapeHtml(row.error)}</div>`
@@ -446,8 +521,14 @@ async function inspectorUndoOp(opId, batchId) {
     else await reloadInspectorHistoryFor(destPath);
   } else if (currentStillValid) {
     // The current selection survived the refresh as-is (the undone op
-    // didn't change this file's identity/path) — just reload History.
+    // didn't change this file's identity/path) — reload History, and the tag
+    // chips with it: tag-add/tag-remove are ordinary operations_log rows, so
+    // undoing one from this very list changed what the Tags pane is showing
+    // (and the sidebar's TAGS counts) without anything repainting them
+    // (pass 2 #80).
     await reloadInspectorHistoryFor(currentPath);
+    await refreshInspectorTags();
+    if (typeof loadSidebarTags === 'function') loadSidebarTags();
   } else {
     // Neither the restored path nor the prior selection exists in the
     // current listing (e.g. undoing a copy/mkdir/touch sends the item to
@@ -486,12 +567,39 @@ async function showInspectorMulti(paths) {
 
   const container = document.getElementById('inspector-multi-tags');
   if (!container) return;
+  // Full opacity means "every selected item carries this tag". The 50-path
+  // cap above makes that claim unprovable for a bigger selection — the sample
+  // says nothing about items 51..N — so past the cap every chip renders at
+  // partial opacity and a note says what was actually looked at (pass 2 #152).
+  const sampled = capped.length < paths.length;
   const names = [...counts.keys()].sort((a, b) => a.localeCompare(b));
-  container.innerHTML = names.map(name => {
-    const shared = consulted > 0 && counts.get(name) === consulted;
+  const chips = names.map(name => {
+    const shared = !sampled && consulted > 0 && counts.get(name) === consulted;
     const style = shared ? '' : ' style="opacity:.5"';
     return `<span class="fp-chip"${style}>${escapeHtml(name)}</span>`;
   }).join('');
+  const note = (sampled && names.length)
+    ? `<p style="font:400 var(--t-compact) var(--font-ui);color:var(--text-tertiary);margin:6px 0 0">Sampled from the first ${capped.length} of ${paths.length} items</p>`
+    : '';
+  container.innerHTML = chips + note;
+}
+
+/** Repaints the inspector from the BROWSER's current selection — the one
+ * thing that owns the panel. Home's own row clicks write into the same
+ * (browser-screen) panel, so returning to the Browser used to reveal another
+ * screen's file over a listing selecting something else (pass 2 #75). Same
+ * three-way branch as browser.js's onSelectionChanged, minus the debounce. */
+function syncInspectorToBrowserSelection() {
+  const selection = (typeof browserState !== 'undefined' && browserState.selection) || null;
+  const n = selection ? selection.size : 0;
+  if (n === 0) {
+    _inspectorSeq++;   // invalidate any fetch still in flight
+    updateInspector('none');
+  } else if (n === 1) {
+    showInspectorFor([...selection][0]);
+  } else {
+    showInspectorMulti(typeof getSelectedPaths === 'function' ? getSelectedPaths() : [...selection]);
+  }
 }
 
 // ── Actions row: Open / Reveal ────────────────────────────────────────────────
@@ -543,7 +651,30 @@ function toggleInspector() {
 }
 
 
-// ── Resizer (inspector drag handle) ────────────────────────────────────────────
+// ── Panel width (resizer + the Settings slider) ───────────────────────────────
+// ONE bound, in one place: the drag clamp, the Settings slider's min/max and
+// .inspector's CSS max-width all used to disagree (the drag ran 40px past a
+// 480px CSS cap, and the slider was wired to nothing at all — pass 2 #82/#83).
+const INSPECTOR_WIDTH_MIN = 280;
+const INSPECTOR_WIDTH_MAX = 520;
+
+/** Sets the panel's width and keeps the Settings slider + its px label with
+ * it, whichever of the two moved. `persist` writes ui.inspector_width, which
+ * applySettingsFromConfig (settings.js) re-applies on the next start. */
+function applyInspectorWidth(px, { persist = false } = {}) {
+  const n = Number(px);
+  if (!Number.isFinite(n)) return null;
+  const width = Math.round(Math.max(INSPECTOR_WIDTH_MIN, Math.min(INSPECTOR_WIDTH_MAX, n)));
+  const inspector = document.getElementById('inspector');
+  if (inspector) inspector.style.width = `${width}px`;
+  const slider = document.getElementById('slider-inspector-width');
+  if (slider) slider.value = String(width);
+  const label = document.getElementById('val-inspector-width');
+  if (label) label.textContent = `${width}px`;
+  if (persist && typeof saveSetting === 'function') saveSetting('ui.inspector_width', width);
+  return width;
+}
+
 function initResizer() {
   const resizer   = document.getElementById('resizer');
   const listPane  = document.getElementById('list-pane');
@@ -556,14 +687,15 @@ function initResizer() {
     startW = inspector.getBoundingClientRect().width;
     document.body.style.cursor = 'col-resize';
     document.body.style.userSelect = 'none';
+    let lastW = startW;
     const onMove = ev => {
-      const delta = startX - ev.clientX;
-      const newW  = Math.max(280, Math.min(520, startW + delta));
-      inspector.style.width = `${newW}px`;
+      lastW = applyInspectorWidth(startW + (startX - ev.clientX)) ?? lastW;
     };
     const onUp = () => {
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
+      // One write per drag, at the end — not one per mousemove.
+      applyInspectorWidth(lastW, { persist: true });
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup', onUp);
     };
