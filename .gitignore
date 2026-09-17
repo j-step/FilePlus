@@ -1,5 +1,8 @@
 # Secrets and local config
 .env
+# Minted API token (backend/config.py's ensure_api_token writes it when
+# FILEPLUS_API_TOKEN is unset; frontend/main.js reads it back).
+.fileplus-token
 
 # SQLite database files
 *.db

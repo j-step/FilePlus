@@ -29,6 +29,18 @@ function uniqueNameFor(dir, baseName) {
   return candidate;
 }
 
+/** `.catch()` handler for a fileops call whose failure is already reported.
+ *
+ * fileops.run() toasts every failure and then rethrows, so callers that want
+ * to react (browser.js's inline rename, properties.js's Apply sequence) can.
+ * The fire-and-forget call sites — the context-menu switch, the keyboard
+ * shortcuts, the drop handler — have nothing to react with, and an
+ * un-awaited rejection there becomes an "Uncaught (in promise)" console
+ * error on top of the toast (a 403 from a write-locked sandbox, a 409, a
+ * backend restart), which is exactly what the smoke gate counts as a
+ * failure. They pass this instead of swallowing it anonymously. */
+function fileopsReported() { /* run() already showed the toast */ }
+
 const fileops = {
   clipboard: { mode: null, paths: [] },          // 'copy' | 'cut'
   undoStack: [], redoStack: [],                  // batch ids
@@ -42,7 +54,17 @@ const fileops = {
       if (res && res.batch_id && res.ops && res.ops.length) { this.undoStack.push(res.batch_id); this.redoStack.length = 0; }
       if (res && res.errors && res.errors.length) showToast(`${label}: ${res.errors[0].error}`, 'error');
       if (res && res.conflicts && res.conflicts.length) return this.resolveConflicts(label, res, fn);
-      if (res && res.ops && res.ops.length) showSnackbar(`${label} (${res.ops.length})`, 'Undo', () => this.undoBatch(res.batch_id));
+      // `skipped` is the fourth bucket mover._batch returns (on_conflict:
+      // 'skip'). Without it, choosing Skip in the conflict dialog closed the
+      // modal and reported nothing at all — indistinguishable from a request
+      // that silently did nothing.
+      const skipped = (res && res.skipped && res.skipped.length) || 0;
+      if (res && res.ops && res.ops.length) {
+        const suffix = skipped ? `, ${skipped} skipped` : '';
+        showSnackbar(`${label} (${res.ops.length}${suffix})`, 'Undo', () => this.undoBatch(res.batch_id));
+      } else if (skipped) {
+        showToast(`${label}: skipped ${skipped} item${skipped === 1 ? '' : 's'}`, 'default');
+      }
       await refreshDirectory();
       return res;
     } catch (err) { showToast(`${label} failed: ${formatApiError(err)}`, 'error'); throw err; }
@@ -99,15 +121,29 @@ const fileops = {
     this._inFlight = true;
     try {
       const res = await API.post(`/operations/batch/${id}/undo`);
-      this.redoStack = this.redoStack.filter(b => b !== id);
-      if (res.batch_id) this.undoStack.push(res.batch_id);
+      // Mirror undoBatch: the inverse of an op can be refused (the item moved
+      // or vanished behind our back) and the backend reports that in
+      // `errors`. Dropping the entry regardless made a wholly-failed redo
+      // look exactly like a successful one, with the entry gone for good.
+      if (res.errors && res.errors.length) showToast(`Redo: ${res.errors[0].error}`, 'error');
+      if (res.ops && res.ops.length) {
+        this.redoStack = this.redoStack.filter(b => b !== id);
+        if (res.batch_id) this.undoStack.push(res.batch_id);
+      } else if (!res.errors || !res.errors.length) {
+        // Nothing to redo and nothing wrong (already undone elsewhere):
+        // drop the stale entry so Ctrl+Y moves on instead of retrying it.
+        this.redoStack = this.redoStack.filter(b => b !== id);
+      }
       await refreshDirectory();
     } catch (err) { showToast(`Redo failed: ${formatApiError(err)}`, 'error'); }
     finally { this._inFlight = false; }
   },
 
-  copySelection() { this.clipboard = { mode: 'copy', paths: getSelectedPaths() }; },
-  cutSelection()  { this.clipboard = { mode: 'cut',  paths: getSelectedPaths() }; },
+  // Both no-op on an empty selection rather than replacing a real clipboard
+  // with an empty one: a stray Ctrl+C after a deselect used to wipe the copy
+  // the user had just made, greying Paste out with no feedback (pass 2 #50).
+  copySelection() { const paths = getSelectedPaths(); if (!paths.length) return; this.clipboard = { mode: 'copy', paths }; },
+  cutSelection()  { const paths = getSelectedPaths(); if (!paths.length) return; this.clipboard = { mode: 'cut',  paths }; },
 
   /** Number of paths currently on the clipboard — the Paste context-menu
    * item's enabled(ctx) predicate (Task 11, playtest pass 1 §4.2) reads this

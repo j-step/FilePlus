@@ -675,3 +675,258 @@ def property_details(path: Path) -> list[dict]:
         if len(_property_details_cache) > _PROPERTY_DETAILS_CACHE_MAX:
             _property_details_cache.popitem(last=False)  # FIFO: oldest inserted evicted first
     return out
+
+
+# ---------------------------------------------------------------------------
+# Shell images at physical pixels (Stage 2C pass 2 -- Windows-icon sharpness,
+# docs/superpowers/specs/2026-09-14-stage-2c-pass-2-icon-design.md §4.7).
+#
+# shell_image(path, px) is IShellItemImageFactory::GetImage(SIZE{px,px},
+# SIIGBF_ICONONLY | SIIGBF_SCALEUP) -- the interface Explorer's own views
+# draw with. It yields the hand-hinted 16/20/24/32/40/48/.../256 resources at
+# any px (and scales exactly as Explorer does when none exists), real folder /
+# known-folder / desktop.ini icons, shortcut-TARGET icons, and exact tile
+# icons -- everything Chromium's app.getFileIcon (the Electron fallback, "Tier
+# B") gets wrong: one system-drive glyph for every directory and extension-
+# less file, one blank page for every .lnk/.url, and only 16*S / 32*S sizes.
+#
+# The raw vtable call (slot 3 of IShellItemImageFactory, after IUnknown's
+# QueryInterface/AddRef/Release) is made through ctypes rather than pywin32
+# because pywin32 does not wrap this interface. Measured on this machine
+# (scratchpad probe, 2026-09-16): every px in 8..512 answers px x px RGBA with
+# a transparent corner and an opaque body; a .lnk answers byte-identical to
+# its target; a directory and an extension-less file differ; 200 calls cost
+# ~90 ms on the executor.
+#
+# Every call runs on ICON_EXECUTOR, a 2-thread pool whose threads are
+# initialised COINIT_APARTMENTTHREADED: shell icon handlers are STA objects
+# and the default asyncio.to_thread pool is not COM-initialised at all. A
+# hung third-party icon handler holds one worker (the route times out and
+# answers `pending`; the thread is not cancellable) -- SIIGBF_ICONONLY keeps
+# thumbnail providers, the heavy ones, out of this path entirely.
+#
+# HRESULTs are read as c_long and compared explicitly (a ctypes.HRESULT
+# restype raises OSError, which would turn "the shell has no image for this"
+# into an exception path). Nothing here raises: None means no image.
+# ---------------------------------------------------------------------------
+
+import concurrent.futures
+import io
+import threading
+
+SIIGBF_ICONONLY = 0x4
+SIIGBF_SCALEUP = 0x100
+_IID_ISHELLITEMIMAGEFACTORY = "{BCC18B79-BA16-442F-80C4-8A59C30C463B}"
+ICON_PX_MIN, ICON_PX_MAX = 8, 512
+# Extensions whose shell icon is per FILE rather than per extension (the icon
+# lives in, or is resolved through, the file itself). Parity-tested against
+# frontend/iconCache.js's PER_PATH_SHELL_EXTS (tests/test_winshell.py) so the
+# renderer's request identity and this cache agree on what is shareable.
+PER_PATH_ICON_EXTS = frozenset({"exe", "dll", "ico", "lnk", "url", "cpl", "scr"})
+
+
+class _SIZE(ctypes.Structure):
+    _fields_ = [("cx", ctypes.c_long), ("cy", ctypes.c_long)]
+
+
+class _BITMAP(ctypes.Structure):
+    _fields_ = [
+        ("bmType", ctypes.c_long), ("bmWidth", ctypes.c_long), ("bmHeight", ctypes.c_long),
+        ("bmWidthBytes", ctypes.c_long), ("bmPlanes", ctypes.c_ushort), ("bmBitsPixel", ctypes.c_ushort),
+        ("bmBits", ctypes.c_void_p),
+    ]
+
+
+class _BITMAPINFOHEADER(ctypes.Structure):
+    _fields_ = [
+        ("biSize", ctypes.c_uint32), ("biWidth", ctypes.c_long), ("biHeight", ctypes.c_long),
+        ("biPlanes", ctypes.c_ushort), ("biBitCount", ctypes.c_ushort), ("biCompression", ctypes.c_uint32),
+        ("biSizeImage", ctypes.c_uint32), ("biXPelsPerMeter", ctypes.c_long), ("biYPelsPerMeter", ctypes.c_long),
+        ("biClrUsed", ctypes.c_uint32), ("biClrImportant", ctypes.c_uint32),
+    ]
+
+
+class _BITMAPINFO(ctypes.Structure):
+    _fields_ = [("bmiHeader", _BITMAPINFOHEADER), ("bmiColors", ctypes.c_uint32 * 3)]
+
+
+# HRESULT GetImage(SIZE size, SIIGBF flags, HBITMAP *phbm) -- vtable slot 3.
+# _SIZE is passed by value: on x64 an 8-byte POD struct travels in one
+# register exactly like a c_uint64, which is what the shell expects.
+_GETIMAGE = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p, _SIZE, ctypes.c_int, ctypes.POINTER(ctypes.c_void_p)) if os.name == "nt" else None
+_RELEASE = ctypes.WINFUNCTYPE(ctypes.c_ulong, ctypes.c_void_p) if os.name == "nt" else None  # IUnknown slot 2
+
+if os.name == "nt":
+    _ole32i = ctypes.WinDLL("ole32")
+    _ole32i.CoInitializeEx.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+    _ole32i.CoInitializeEx.restype = ctypes.c_long
+    _ole32i.CLSIDFromString.argtypes = [ctypes.c_wchar_p, ctypes.POINTER(_GUID)]
+    _ole32i.CLSIDFromString.restype = ctypes.c_long
+    _shell32i = ctypes.WinDLL("shell32")
+    _shell32i.SHCreateItemFromParsingName.argtypes = [
+        ctypes.c_wchar_p, ctypes.c_void_p, ctypes.POINTER(_GUID), ctypes.POINTER(ctypes.c_void_p),
+    ]
+    _shell32i.SHCreateItemFromParsingName.restype = ctypes.c_long
+    _gdi32 = ctypes.WinDLL("gdi32")
+    _gdi32.GetObjectW.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p]
+    _gdi32.GetObjectW.restype = ctypes.c_int
+    _gdi32.CreateCompatibleDC.argtypes = [ctypes.c_void_p]
+    _gdi32.CreateCompatibleDC.restype = ctypes.c_void_p  # a 64-bit handle: restype MUST be c_void_p
+    _gdi32.GetDIBits.argtypes = [
+        ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint, ctypes.c_uint, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint,
+    ]
+    _gdi32.GetDIBits.restype = ctypes.c_int
+    _gdi32.DeleteDC.argtypes = [ctypes.c_void_p]
+    _gdi32.DeleteDC.restype = ctypes.c_int
+    _gdi32.DeleteObject.argtypes = [ctypes.c_void_p]
+    _gdi32.DeleteObject.restype = ctypes.c_int
+else:
+    _ole32i = _shell32i = _gdi32 = None
+
+
+_com_ready = threading.local()
+
+
+def _co_init_sta() -> None:
+    """Once per thread: CoInitializeEx(COINIT_APARTMENTTHREADED). Idempotent
+    (S_FALSE on a second call; RPC_E_CHANGED_MODE on an MTA thread, which the
+    shell item calls below still tolerate) and never balanced with
+    CoUninitialize -- the thread keeps its apartment for its lifetime, which
+    is what an icon handler cache expects. The executor's initializer and
+    every direct shell_image call go through this, so a caller on the pytest
+    main thread (or any other un-initialised thread) works too."""
+    if os.name == "nt" and not getattr(_com_ready, "done", False):
+        _ole32i.CoInitializeEx(None, 0x2)
+        _com_ready.done = True
+
+
+def _make_icon_executor() -> concurrent.futures.ThreadPoolExecutor:
+    return concurrent.futures.ThreadPoolExecutor(
+        max_workers=2, thread_name_prefix="fp-shell-icon", initializer=_co_init_sta,
+    )
+
+
+ICON_EXECUTOR = _make_icon_executor()
+_icon_executor_lock = threading.Lock()
+
+
+def icon_executor() -> concurrent.futures.ThreadPoolExecutor:
+    """The live STA pool. A pool that lifespan already shut down (a second
+    TestClient in one process; uvicorn's reload) is replaced, so a route can
+    never see "cannot schedule new futures after shutdown"."""
+    global ICON_EXECUTOR
+    with _icon_executor_lock:
+        if ICON_EXECUTOR._shutdown:  # noqa: SLF001 -- the only signal the class exposes
+            ICON_EXECUTOR = _make_icon_executor()
+        return ICON_EXECUTOR
+
+
+def shutdown_icon_executor() -> None:
+    """Abandon queued and running icon work without waiting (a hung handler
+    must not hold process exit); icon_executor() will mint a fresh pool if
+    anything asks again."""
+    with _icon_executor_lock:
+        ICON_EXECUTOR.shutdown(wait=False, cancel_futures=True)
+
+# (kind, ident, px) -> PNG bytes. Only successes are cached; a miss is
+# re-asked (the shell may answer next time -- a file being written, a network
+# target that just came back). No mtime: Explorer holds icons for the session
+# too, and an icon key is per extension / per path, never per content.
+_icon_cache: OrderedDict[tuple, bytes] = OrderedDict()
+_icon_cache_lock = threading.Lock()
+_ICON_CACHE_MAX = 2048
+
+
+def shell_icon_key(path: Path, is_dir: bool, px: int) -> tuple:
+    """Cache identity for a shell image: every directory per path (desktop.ini
+    custom icons, known-folder glyphs), PER_PATH_ICON_EXTS per path, any other
+    extension shared. Mirrors frontend/iconCache.js's shellIconKey."""
+    norm = os.path.normcase(str(path))
+    if is_dir:
+        return ("dir", norm, px)
+    ext = Path(path).suffix.lower().lstrip(".")
+    if ext in PER_PATH_ICON_EXTS:
+        return ("path", norm, px)
+    return ("ext", ext, px)
+
+
+def shell_image(path: Path, px: int, icon_only: bool = True) -> bytes | None:
+    """px x px PNG (straight alpha, RGBA) of the shell's image for *path* --
+    IShellItemImageFactory::GetImage, what Explorer's views draw. px is
+    clamped to ICON_PX_MIN..ICON_PX_MAX. None on any failure (a missing path,
+    an item the shell has no image for, a COM error) and on a non-Windows OS.
+    Call it on ICON_EXECUTOR (STA threads), never on the default pool."""
+    if os.name != "nt":
+        return None
+    px = max(ICON_PX_MIN, min(ICON_PX_MAX, int(px)))
+    _co_init_sta()
+    iid = _GUID()
+    if _ole32i.CLSIDFromString(_IID_ISHELLITEMIMAGEFACTORY, ctypes.byref(iid)) != 0:
+        return None
+    ppv = ctypes.c_void_p()
+    # str(Path) has already folded forward slashes; SHCreateItemFromParsingName
+    # rejects a mixed-separator spelling, and a UNC/relative one never gets
+    # here (path_guard / isSafeLocalPath ahead of every caller).
+    if _shell32i.SHCreateItemFromParsingName(str(path), None, ctypes.byref(iid), ctypes.byref(ppv)) != 0 or not ppv:
+        return None
+    vtbl = ctypes.cast(ppv, ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p))).contents
+    release, get_image = _RELEASE(vtbl[2]), _GETIMAGE(vtbl[3])
+    hbm = ctypes.c_void_p()
+    try:
+        flags = SIIGBF_SCALEUP | (SIIGBF_ICONONLY if icon_only else 0)
+        if get_image(ppv, _SIZE(px, px), flags, ctypes.byref(hbm)) != 0 or not hbm:
+            return None
+        return _hbitmap_to_png(hbm)
+    except Exception:
+        return None
+    finally:
+        if hbm:
+            _gdi32.DeleteObject(hbm)
+        release(ppv)
+
+
+def _hbitmap_to_png(hbm) -> bytes | None:
+    """Top-down 32-bpp DIB of *hbm* -> PNG bytes. GetImage hands back
+    PREMULTIPLIED BGRA; Pillow's 'BGRa' raw mode un-premultiplies ('BGRA'
+    would fringe every anti-aliased edge dark)."""
+    bm = _BITMAP()
+    if _gdi32.GetObjectW(hbm, ctypes.sizeof(bm), ctypes.byref(bm)) == 0:
+        return None
+    w, h = bm.bmWidth, abs(bm.bmHeight)
+    if w <= 0 or h <= 0:
+        return None
+    bmi = _BITMAPINFO()
+    bmi.bmiHeader.biSize = ctypes.sizeof(_BITMAPINFOHEADER)
+    bmi.bmiHeader.biWidth, bmi.bmiHeader.biHeight = w, -h  # negative height = top-down rows
+    bmi.bmiHeader.biPlanes, bmi.bmiHeader.biBitCount, bmi.bmiHeader.biCompression = 1, 32, 0
+    buf = (ctypes.c_ubyte * (w * h * 4))()
+    hdc = _gdi32.CreateCompatibleDC(None)
+    try:
+        lines = _gdi32.GetDIBits(hdc, hbm, 0, h, buf, ctypes.byref(bmi), 0)
+    finally:
+        _gdi32.DeleteDC(hdc)
+    if lines != h:
+        return None
+    from PIL import Image  # pillow is a hard requirement (requirements.txt); imported lazily like propsys
+    img = Image.frombuffer("RGBA", (w, h), bytes(buf), "raw", "BGRa", 0, 1)
+    out = io.BytesIO()
+    img.save(out, "PNG")
+    return out.getvalue()
+
+
+def shell_image_cached(key: tuple, path: Path, px: int, icon_only: bool = True) -> bytes | None:
+    """shell_image through the bounded, thread-safe LRU keyed by *key*
+    (shell_icon_key). Only a rendered image is stored."""
+    with _icon_cache_lock:
+        hit = _icon_cache.get(key)
+        if hit is not None:
+            _icon_cache.move_to_end(key)
+            return hit
+    png = shell_image(path, px, icon_only)
+    if png:
+        with _icon_cache_lock:
+            _icon_cache[key] = png
+            _icon_cache.move_to_end(key)
+            while len(_icon_cache) > _ICON_CACHE_MAX:
+                _icon_cache.popitem(last=False)
+    return png

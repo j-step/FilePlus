@@ -8,9 +8,31 @@
  * API wraps the FastAPI backend at API.base with get/post/patch/del helpers
  * that throw ApiError on non-2xx responses.
  */
+// electronAPI.apiToken() is ipcRenderer.sendSync('get-api-token') -- a
+// BLOCKING renderer->main round trip -- and apiHeaders() runs on every single
+// request()/blob(). The token never changes once main.js has one, so the
+// first non-empty answer is memoised here (the port beside it is already read
+// once, at parse time). Empty answers are not cached: main.js resolves the
+// token lazily, so a renderer that launched before the backend wrote
+// <repo>/.fileplus-token still picks it up on a later call.
+let _apiToken = '';
+function apiToken() {
+  if (!_apiToken) _apiToken = window.electronAPI?.apiToken?.() || '';
+  return _apiToken;
+}
+
 function apiHeaders(extra = {}) {
-  const t = window.electronAPI?.apiToken?.();
+  const t = apiToken();
   return t ? { 'X-FilePlus-Token': t, ...extra } : extra;
+}
+
+// Default bound for a call that must not hang the caller. Startup's loaders
+// use it so a backend that has bound its port but not finished its lifespan
+// (DB open, migrations, reconcile) can't leave the shell waiting forever;
+// checkBackend's health poll passes its own, much tighter, 2s.
+const API_TIMEOUT_MS = 10_000;
+function apiTimeout(ms = API_TIMEOUT_MS) {
+  return { signal: AbortSignal.timeout(ms) };
 }
 
 class ApiError extends Error { constructor(status, detail) { super(detail || `HTTP ${status}`); this.status = status; this.detail = detail; } }

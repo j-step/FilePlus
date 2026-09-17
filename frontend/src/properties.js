@@ -21,6 +21,12 @@ let _propsPath = null;     // GET /fs/properties's own `path` (updates after a r
 let _propsData = null;     // last-fetched /fs/properties response
 let _propsEntry = null;    // {name, path, is_dir, ext} for iconFor()
 let _propsDetailsLoaded = false;
+// The folder type the panel LOADED (renderFolderTypeSelect's own `current`),
+// not whatever the <select> resolved to. desktop.ini can hold a FolderType
+// outside the five options below, in which case no <option> is selected and
+// the element reports 'Generic' — which propertiesApply() then read as "the
+// user picked Generic" and wrote over the real value (pass 2 #78).
+let _propsFolderTypeLoaded = null;
 
 const PROPS_FOLDER_TYPES = [
   { value: 'Generic',   label: 'General items' },
@@ -34,17 +40,25 @@ const PROPS_FOLDER_TYPES = [
 // which are tuned for a narrow list column rather than a Properties row) ───
 
 /** '1.23 MB (1,289,748 bytes)' — under 1 KB is just 'N bytes' (nothing to
- * round, so no parenthetical duplicate). */
-function formatPropSize(bytes) {
+ * round, so no parenthetical duplicate).
+ *
+ * `partial` prefixes '≥ ', for a folder whose recursive walk hit
+ * winshell.contains_counts' time budget: the byte total that comes back is
+ * whatever it had summed so far (the same partial sum `Contains` already
+ * hedges with '≥'), and printing it as an exact grouped byte count claimed a
+ * precision the backend never had — a re-open gave a different "exact"
+ * number depending on disk speed. */
+function formatPropSize(bytes, partial) {
   if (bytes == null) return '—';
   const n = Number(bytes);
+  const prefix = partial ? '≥ ' : '';
   const grouped = `${n.toLocaleString()} bytes`;
-  if (n < 1024) return grouped;
+  if (n < 1024) return `${prefix}${grouped}`;
   let label;
   if (n < 1048576) label = `${(n / 1024).toFixed(2)} KB`;
   else if (n < 1073741824) label = `${(n / 1048576).toFixed(2)} MB`;
   else label = `${(n / 1073741824).toFixed(2)} GB`;
-  return `${label} (${grouped})`;
+  return `${prefix}${label} (${grouped})`;
 }
 
 /** 'Thursday, September 11, 2026, 4:12:03 PM' from an epoch-seconds float
@@ -124,6 +138,10 @@ async function openProperties(path) {
 
   const scrim = document.getElementById('properties-modal-scrim');
   if (scrim) { scrim.style.display = 'flex'; scrim.removeAttribute('aria-hidden'); }
+  // Re-measure now the modal is actually laid out: offsetLeft/offsetWidth are
+  // 0 while it is display:none, so the reset above could only park the
+  // underline at width 0.
+  moveTabIndicator(document.getElementById('properties-tabs'));
 }
 
 function closeProperties() {
@@ -134,6 +152,7 @@ function closeProperties() {
   _propsPath = null;
   _propsData = null;
   _propsEntry = null;
+  _propsFolderTypeLoaded = null;
 }
 
 /** Enables Apply — called from app.js's delegated 'input'/'change' handlers
@@ -156,6 +175,10 @@ function switchPropertiesTab(name) {
   modal.querySelectorAll('.properties__pane').forEach(p => {
     p.hidden = p.dataset.pane !== name;
   });
+  // Keep the accent underline with the active class -- this function is also
+  // called programmatically (openProperties resets to General), where no
+  // click ever reaches initUnderlineTabs' own listener.
+  moveTabIndicator(document.getElementById('properties-tabs'));
   if (name === 'details' && !_propsDetailsLoaded) loadPropertiesDetails();
 }
 
@@ -166,6 +189,16 @@ function renderPropertiesHeader() {
   const nameInput = document.getElementById('properties-name-input');
   if (iconEl) iconEl.innerHTML = iconFor(_propsEntry, 24);
   if (nameInput) nameInput.value = _propsData.name;
+}
+
+/** Repaints the header icon (and the "Opens with" icon) of an open panel
+ * after ui.icon_source changed — called by refreshIconSurfaces (settings.js).
+ * No-op when the panel is closed. */
+function propertiesRefreshIcon() {
+  if (!_propsPath || !_propsEntry) return;
+  const iconEl = document.getElementById('properties-icon');
+  if (iconEl) iconEl.innerHTML = iconFor(_propsEntry, 24);
+  if (_propsData && !_propsData.is_dir) loadOpensWithIcon(_propsData);
 }
 
 function renderAttributesCell(props, keys, includeAdvanced) {
@@ -193,33 +226,50 @@ function renderOpensWithCell(props) {
     `</div>`;
 }
 
-/** Fills in the "Opens with" app icon once electronAPI.fileIcon resolves —
- * separate from the lazy IntersectionObserver system in icons.js (this is a
- * single explicit icon, not a scrolling list of rows). Guards against a
- * since-closed or since-replaced modal before touching the DOM. */
+/** Fills in the "Opens with" app icon via the same shared Tier-B icon
+ * pipeline as icons.js's lazy rows (fpTierBIconUrl) — separate from the
+ * IntersectionObserver system there only because this is a single explicit
+ * icon, not a scrolling list. Sized per the sizing contract (icon-design.md
+ * §2): px = clampPx(round(16 * dpr)), the <img> pinned to px/dpr CSS px.
+ * Guards against a since-closed or since-replaced modal before touching the
+ * DOM. icons.js loads before properties.js, so
+ * fpDevicePx/fpTierBIconUrl/FpIconCache are defined at call time. */
 function loadOpensWithIcon(props) {
   const el = document.getElementById('properties-opens-with-icon');
-  if (!el || !props.opens_with_exe || !window.electronAPI?.fileIcon) return;
-  window.electronAPI.fileIcon(props.opens_with_exe, 'exe', 16).then(dataUrl => {
-    if (!dataUrl || _propsPath !== props.path) return;
+  if (!el || !props.opens_with_exe) return;
+  // Same pipeline as a row icon (icons.js: Tier A, then the Electron bridge):
+  // a 16-CSS-px box at the current devicePixelRatio, pinned to px/dpr.
+  const px = fpDevicePx(16);
+  const key = window.FpIconCache.shellIconKey(props.opens_with_exe, 'exe', false, px);
+  fpShellIconUrl(key, { path: props.opens_with_exe, ext: 'exe', isDir: false, px }).then((res) => {
+    if (!res || !res.url || _propsPath !== props.path) return;
     const el2 = document.getElementById('properties-opens-with-icon');
     if (!el2) return;
     el2.innerHTML = '';
     const img = document.createElement('img');
-    img.src = dataUrl;
+    img.src = res.url;
     img.alt = '';
+    img.dataset.px = String(res.px);
+    img.style.width = img.style.height = (res.px / (window.devicePixelRatio || 1)) + 'px';
     el2.appendChild(img);
   }).catch(() => { /* best-effort */ });
 }
 
 function renderFolderTypeSelect(props) {
-  const current = props.folder_type || props.folder_type_detected;
+  const current = props.folder_type || props.folder_type_detected || 'Generic';
   const isDetected = !props.folder_type;
-  const options = PROPS_FOLDER_TYPES.map(t => {
+  _propsFolderTypeLoaded = current;
+  let options = PROPS_FOLDER_TYPES.map(t => {
     const label = (isDetected && t.value === current) ? `${t.label} (detected)` : t.label;
     const selected = t.value === current ? ' selected' : '';
     return `<option value="${t.value}"${selected}>${escapeHtml(label)}</option>`;
   }).join('');
+  // Windows accepts any FolderType string (Contacts, Music.Artist, a custom
+  // GUID-backed template…). Report the truth as its own selected option
+  // instead of silently showing "General items" for it.
+  if (!PROPS_FOLDER_TYPES.some(t => t.value === current)) {
+    options += `<option value="${escapeHtml(current)}" selected>${escapeHtml(current)}${isDetected ? ' (detected)' : ''}</option>`;
+  }
   return `<select class="fp-input" id="properties-folder-type-select" data-action="props-folder-type-select">${options}</select>`;
 }
 
@@ -230,10 +280,13 @@ function renderGeneral(props) {
   const row = (label, valueHtml) => rows.push(`<dt>${escapeHtml(label)}</dt><dd>${valueHtml}</dd>`);
 
   if (props.is_dir) {
+    // A truncated walk makes size, size_on_disk and contains all lower
+    // bounds — they come from the same abandoned sum.
+    const partial = !!(props.contains && props.contains.truncated);
     row('Type', escapeHtml(props.type_description || 'File folder'));
     row('Location', escapeHtml(props.location));
-    row('Size', escapeHtml(formatPropSize(props.size)));
-    row('Size on disk', escapeHtml(formatPropSize(props.size_on_disk)));
+    row('Size', escapeHtml(formatPropSize(props.size, partial)));
+    row('Size on disk', escapeHtml(formatPropSize(props.size_on_disk, partial)));
     row('Contains', escapeHtml(formatPropContains(props.contains)));
     row('Created', escapeHtml(formatPropDate(props.created)));
     row('Attributes', renderAttributesCell(props, ['read_only', 'hidden', 'archive'], false));
@@ -266,8 +319,13 @@ async function loadPropertiesDetails() {
     res = await API.get('/fs/properties/details', { path });
   } catch (err) {
     if (_propsPath !== path) return; // modal moved on to a different item
-    _propsDetailsLoaded = true;
-    const msg = (err instanceof ApiError && err.status === 503)
+    // Latch only the permanent answer: 503 means pywin32 is missing on this
+    // PC and no re-activation can change that. A 502 (a COM failure on a
+    // locked file, say) is transient — leaving the latch set meant the tab
+    // never retried for the life of the modal (pass 2 #151).
+    const permanent = (err instanceof ApiError && err.status === 503);
+    _propsDetailsLoaded = permanent;
+    const msg = permanent
       ? 'Details need pywin32 on this PC'
       : `Failed to load details: ${formatApiError(err)}`;
     container.innerHTML = `<p class="properties__details-empty">${escapeHtml(msg)}</p>`;
@@ -319,8 +377,19 @@ async function reloadProperties(path) {
   _propsPath = fresh.path;
   _propsData = fresh;
   _propsEntry = propsEntryFrom(fresh);
+  // The Details tab caches its fetch behind _propsDetailsLoaded. After an
+  // Apply that renamed the item, that cache described the OLD path and
+  // switchPropertiesTab('details') refused to re-fetch, so Details kept
+  // showing the pre-rename file — Name, Item type and all (pass 2 #151).
+  _propsDetailsLoaded = false;
+  const detailsEl = document.getElementById('properties-details-content');
+  if (detailsEl) detailsEl.innerHTML = '';
   renderPropertiesHeader();
   renderGeneral(fresh);
+  // Re-fetch now if Details is the pane the user is actually looking at —
+  // otherwise the next activation does it.
+  const detailsPane = document.querySelector('.properties__pane[data-pane="details"]');
+  if (detailsPane && !detailsPane.hidden) loadPropertiesDetails();
   const applyBtn = document.getElementById('properties-apply');
   if (applyBtn) applyBtn.disabled = true;
 }
@@ -368,7 +437,10 @@ async function propertiesApply() {
 
   if (_propsData.is_dir) {
     const select = document.getElementById('properties-folder-type-select');
-    const currentType = _propsData.folder_type || _propsData.folder_type_detected;
+    // Compare against what the select was RENDERED with (pass 2 #78), never
+    // against props alone: an unrepresented value used to leave the element
+    // reporting the first option, which read as a change the user never made.
+    const currentType = _propsFolderTypeLoaded;
     if (select && select.value && select.value !== currentType) {
       try {
         await fileops.run('Set folder type', async () => {

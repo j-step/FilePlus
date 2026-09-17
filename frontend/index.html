@@ -141,8 +141,12 @@
         <!-- The top 8 real tags by file count (GET /tags) — app.js's
              loadSidebarTags(). The whole section hides when nothing is
              tagged yet; a chip runs a This PC search filtered to that tag. -->
-        <div class="fp-sidebar__section-label" id="sb-tags-label">Tags</div>
-        <div id="sb-tags">
+        <!-- Authored hidden: app.js's loadSidebarTags() is what reveals the
+             section once GET /tags has answered with at least one used tag,
+             so neither a failed request nor the window before it resolves
+             leaves an empty "Tags" shelf standing in the sidebar. -->
+        <div class="fp-sidebar__section-label" id="sb-tags-label" hidden>Tags</div>
+        <div id="sb-tags" hidden>
           <div id="sb-tags-chips"></div>
           <button class="fp-btn fp-btn--ghost fp-sidebar__tags-more"
                   data-action="open-tag-canvas" title="View all tags">View all →</button>
@@ -212,7 +216,10 @@
              splits the inner one out as a sibling. The tab itself is a <div>
              (not a <button>) for the same reason: it hosts the close span as
              a real descendant with no nested-interactive-content trouble. -->
-        <div class="fp-tab fp-tab--active" role="tab" aria-selected="true"
+        <!-- tabindex="0": the active tab is the strip's single tab stop
+             (roving tabindex — activateTab() moves the 0 with aria-selected,
+             and the strip's Arrow/Home/End keys walk from there). -->
+        <div class="fp-tab fp-tab--active" role="tab" aria-selected="true" tabindex="0"
              data-tab-id="tab-1" data-action="switch-tab"
              title="Home" draggable="true">
           <svg class="fp-icon fp-icon--14" aria-hidden="true"><use href="#fp-home"></use></svg>
@@ -255,7 +262,12 @@
         <!-- middot separator, never > or / — per spec A.1.4 -->
         <div class="fp-breadcrumb-wrap" id="breadcrumb-wrap">
           <nav class="fp-breadcrumb" id="breadcrumb" aria-label="Location">
-            <button class="fp-breadcrumb__crumb" data-action="navigate-crumb" data-path="home">Home</button>
+            <!-- Seed crumb, live only until the first updateBreadcrumb(). It
+                 navigates to the HOME SCREEN, not to a path: "home" is not a
+                 directory, and passing it to loadDirectory() relabelled the
+                 tab and flipped it to Browser before the backend's 400 landed
+                 (pass 2 #13). -->
+            <button class="fp-breadcrumb__crumb" data-action="navigate-screen" data-screen="home">Home</button>
             <!-- Sample deeper path:
             <span class="fp-breadcrumb__sep">·</span>
             <button class="fp-breadcrumb__crumb" data-action="navigate-crumb" data-path="D:\">D:\</button>
@@ -1957,23 +1969,23 @@
                       <button class="fp-segmented__opt" data-action="settings-set-density" data-val="spacious">Spacious</button>
                     </div>
                   </div>
-                  <div class="settings-sep"></div>
-                  <div class="settings-row">
-                    <div class="settings-row__label">Tab style</div>
-                    <div class="fp-segmented">
-                      <button class="fp-segmented__opt active" data-action="settings-set-tab-style" data-val="compact">Compact</button>
-                      <button class="fp-segmented__opt" data-action="settings-set-tab-style" data-val="standard">Standard</button>
-                    </div>
-                  </div>
+                  <!-- "Tab style" (Compact/Standard) lived here until pass 2
+                       #83: it was wired to nothing — no click case, no ui.*
+                       key, not even the `active` class — between two controls
+                       that work, in a pane the user has every reason to
+                       trust. Removed rather than faked; it comes back with
+                       the Stage 3 tab restyle that gives it something to
+                       switch. -->
                   <div class="settings-sep"></div>
                   <div class="settings-row">
                     <div class="settings-row__label">
-                      Inspector default width
-                      <span class="fp-mono settings-slider-value" id="val-inspector-width">360px</span>
+                      Inspector width
+                      <span class="fp-mono settings-slider-value" id="val-inspector-width">340px</span>
                     </div>
                     <input type="range" class="fp-slider" id="slider-inspector-width"
-                           min="280" max="520" value="360" step="8"
+                           min="280" max="520" value="340" step="8"
                            data-action="settings-inspector-width"
+                           aria-label="Inspector width in pixels"
                            style="width:180px" />
                   </div>
                   <div class="settings-sep"></div>
@@ -2943,7 +2955,8 @@
       </span>
       <!-- Backend connection indicator -->
       <span class="fp-statusbar__backend" id="status-backend" data-state="unknown"
-            title="Backend connection" style="display:flex;align-items:center;gap:4px">
+            role="button" tabindex="0" data-action="retry-backend-connect"
+            title="Backend connection - click to reconnect" style="display:flex;align-items:center;gap:4px">
         <span class="fp-statusbar__backend-dot" style="width:6px;height:6px;border-radius:50%;flex-shrink:0"></span>
         <span class="fp-statusbar__backend-label" style="font:400 var(--t-small) var(--font-ui);color:var(--text-tertiary)">Backend</span>
       </span>
@@ -3478,6 +3491,7 @@
 <script src="src/api.js"></script>
 <script src="src/filetypes.js"></script>
 <script src="src/icons-sprite.js"></script>
+<script src="iconCache.js"></script>
 <script src="src/icons.js"></script>
 <script src="src/fileops.js"></script>
 <script src="src/browser.js"></script>

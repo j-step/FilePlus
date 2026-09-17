@@ -147,6 +147,10 @@ function createTabElement(record) {
   el.className = 'fp-tab';
   el.setAttribute('role', 'tab');
   el.setAttribute('aria-selected', 'false');
+  // Roving tabindex: the active tab is the strip's single tab stop, the rest
+  // are reachable from it with the arrow keys. activateTab() moves the 0
+  // along with aria-selected (pass 2 #158).
+  el.setAttribute('tabindex', '-1');
   el.setAttribute('data-tab-id', record.id);
   el.setAttribute('data-action', 'switch-tab');
   el.setAttribute('title', record.label);
@@ -165,8 +169,17 @@ function createTab({ screen = 'home', path = null, history = [], historyIndex = 
     history: history.slice(),
     historyIndex,
     view: null,
+    // This tab's own --list-scale (a LIST_SCALE_STEPS member), or null until
+    // it has had a listing of its own. The custom property is global, so
+    // without a per-tab value a Ctrl+wheel zoom in one tab silently resized
+    // every other tab's listing on the next switch (pass 2 #19).
+    listScale: null,
     scrollTop: 0,
     selection: [],
+    // True when this tab was opened at the root entry point ("This PC") rather
+    // than at a folder that happens to share its resolved path — keeps its
+    // label from collapsing to the folder's basename (pass 2 #16).
+    isRootTarget: false,
     // Task 14: this tab's own search (chips + text + the rendered results),
     // or null when it is showing a plain folder listing. Captured on every
     // deactivation and repainted on reactivation, so switching tabs and back
@@ -179,7 +192,53 @@ function createTab({ screen = 'home', path = null, history = [], historyIndex = 
   const newTabBtn = document.getElementById('btn-new-tab');
   if (tabbar) tabbar.insertBefore(el, newTabBtn);
   initTabDrag(el);
+  updateTabbarOverflow();
   return record;
+}
+
+/**
+ * The tab strip is `overflow-x: auto` with its scrollbar hidden (styles.css's
+ * .fp-tabbar), so once the tabs overflow it there is nothing on screen that
+ * says so and nothing that brings a clipped tab back — a 12th Ctrl+T used to
+ * create a tab (and push the "+" button) past the right edge where neither
+ * could be seen or clicked (pass 2 #156). These two keep it reachable:
+ * scrollTabIntoView() on every activation, and a wheel handler that maps a
+ * vertical wheel onto scrollLeft (Chromium does not scroll an overflow-x
+ * container from a plain wheel).
+ */
+function scrollTabIntoView(id) {
+  const el = document.querySelector(`.fp-tab[data-tab-id="${id}"]`);
+  if (el && typeof el.scrollIntoView === 'function') {
+    el.scrollIntoView({ inline: 'nearest', block: 'nearest' });
+  }
+  updateTabbarOverflow();
+}
+
+/** Tab ids in the order they appear in the strip — the DOM is the authority on
+ * order (drag-reorder never touches tabs.list, which is why closeTabById picks
+ * its fallback neighbour off the DOM too). */
+function tabsInStripOrder() {
+  return [...document.querySelectorAll('.fp-tab')].map(t => t.dataset.tabId);
+}
+
+/** Activates the tab `step` places from the active one, wrapping at both ends
+ * (Ctrl+Tab / Ctrl+Shift+Tab, and the tablist's Arrow keys). */
+function cycleTab(step) {
+  const order = tabsInStripOrder();
+  if (order.length < 2) return;
+  const at = order.indexOf(tabs.activeId);
+  const next = ((at === -1 ? 0 : at + step) % order.length + order.length) % order.length;
+  activateTab(order[next]);
+  document.querySelector(`.fp-tab[data-tab-id="${order[next]}"]`)?.focus();
+}
+
+/** Marks the strip as having tabs clipped off its right edge, which is the
+ * only hint the user gets that there are more (the scrollbar is hidden). */
+function updateTabbarOverflow() {
+  const tabbar = document.getElementById('tabbar');
+  if (!tabbar) return;
+  const clipped = tabbar.scrollWidth - tabbar.clientWidth - tabbar.scrollLeft > 1;
+  tabbar.classList.toggle('fp-tabbar--overflow', clipped);
 }
 
 /** Copies the live browserState/nav into the currently active tab's own
@@ -190,6 +249,7 @@ function syncActiveTabRecord() {
   if (!tab) return;
   tab.path = browserState.path;
   tab.view = browserState.view;
+  tab.listScale = browserState.listScale;
   tab.selection = [...browserState.selection];
   tab.historyIndex = nav.index;
   // The live search bar + its results, or null when this tab is showing a
@@ -219,12 +279,21 @@ function activateTab(id) {
     const isActive = t.dataset.tabId === id;
     t.classList.toggle('fp-tab--active', isActive);
     t.setAttribute('aria-selected', isActive ? 'true' : 'false');
+    t.setAttribute('tabindex', isActive ? '0' : '-1');
   });
 
   nav.history = incoming.history;
   nav.index = incoming.historyIndex;
+  // Read the incoming tab's search snapshot NOW: loadDirectory()'s synchronous
+  // prefix calls leaveSearchMode(), which clears `activeTab().search` — and
+  // tabs.activeId is already this tab, so it would wipe the very snapshot the
+  // resume check below is about to look for (pass 2 #14).
+  const pendingSearch = incoming.search;
+  // A new tab created past the right edge of the strip is invisible (the
+  // scrollbar is hidden) until something scrolls it in — nothing did (pass 2 #156).
+  scrollTabIntoView(id);
 
-  if (incoming.screen === 'browser' && incoming.search && incoming.search.results
+  if (incoming.screen === 'browser' && pendingSearch && pendingSearch.results
       && typeof restoreSearchResultsForTab === 'function') {
     // This tab was showing search results: repaint them from the tab's own
     // snapshot rather than re-running the walk. browserState.path stays the
@@ -244,31 +313,54 @@ function activateTab(id) {
     if (typeof setViewMode === 'function') setViewMode(incoming.view || cfgView);
     if (typeof setListScale === 'function' && typeof LIST_SCALE_STEPS !== 'undefined') {
       const cfgScale = LIST_SCALE_STEPS.includes(cfg['ui.list_scale']) ? cfg['ui.list_scale'] : 1;
-      setListScale(cfgScale, { persist: false });
+      setListScale(incoming.listScale || cfgScale, { persist: false });
     }
-    restoreSearchResultsForTab(incoming.search);
+    // This tab's own selection + scroll offset come back with its results, the
+    // same two things the folder branch below restores (pass 2 #153).
+    restoreSearchResultsForTab(pendingSearch, {
+      selection: incoming.selection,
+      scrollTop: incoming.scrollTop,
+    });
     updateSidebarActive(incoming.path);
     refreshNavButtons();
   } else if (incoming.screen === 'browser') {
     showScreenDom('browser');
     if (typeof searchResetBar === 'function') searchResetBar();
-    const loaded = loadDirectory(incoming.path, {
+    const loaded = loadDirectory(incoming.isRootTarget ? null : incoming.path, {
       // Empty history means this tab was staged in the background (openBrowserAt
       // on an inactive tab) and is only now getting its first real fetch — treat
       // that as a real navigation (push it) rather than a pure restore.
       addToHistory: incoming.history.length === 0,
-      restore: { scrollTop: incoming.scrollTop, selection: incoming.selection, view: incoming.view },
+      restore: {
+        scrollTop: incoming.scrollTop,
+        selection: incoming.selection,
+        view: incoming.view,
+        listScale: incoming.listScale,
+      },
     });
     // A search this tab had typed but not finished (its request was aborted
     // when it was switched away) re-runs once the folder listing underneath it
     // has landed — running the two concurrently would let the listing paint
     // over the results.
-    if (incoming.search && typeof resumeSearchForTab === 'function') {
-      Promise.resolve(loaded).then(() => resumeSearchForTab(incoming.search, incoming.id));
+    if (pendingSearch && typeof resumeSearchForTab === 'function') {
+      Promise.resolve(loaded).then(() => resumeSearchForTab(pendingSearch, incoming.id));
     }
   } else {
     showScreenDom(incoming.screen);
     updateSidebarActive(incoming.screen);
+    // browserState is global: a Home/Settings tab must not inherit the
+    // OUTGOING tab's search mode. It used to, and the first query typed on the
+    // new tab was swallowed whole — searchEnsureBrowser()'s loadDirectory()
+    // called leaveSearchMode(), which reset the bar and bumped the sequence
+    // runSearch() checks, so the run superseded itself (pass 2 #89). Safe to
+    // call here and not in resetToolbarForNonBrowser(): that one is shared
+    // with switchScreen(), whose Browser branch restores a same-tab search
+    // from exactly this flag.
+    if (typeof leaveSearchMode === 'function') leaveSearchMode();
+    // The toolbar is outside .screen, so the outgoing tab's breadcrumb, search
+    // bar and nav-button state would otherwise stay on display — and stay
+    // clickable — over this tab's Home/Settings screen (pass 2 #12).
+    resetToolbarForNonBrowser(incoming.screen);
   }
   updateTabElementAppearance(incoming);
 }
@@ -287,6 +379,30 @@ function showScreenDom(id) {
   }
 }
 
+/**
+ * Takes the Browser's chrome off the toolbar when a non-Browser screen
+ * becomes the visible one.
+ *
+ * The toolbar (nav group, breadcrumb, search bar) is a sibling of `.screens`,
+ * not a child of any `.screen`, so leaving the Browser screen leaves all of it
+ * on display — describing, and still acting on, a listing the user can no
+ * longer see (pass 2 #12). refreshNavButtons() now reads the active screen
+ * itself, so calling it here is what actually disables Back/Forward/Up.
+ */
+function resetToolbarForNonBrowser(screenId) {
+  if (typeof searchResetBar === 'function') searchResetBar();
+  const crumb = document.getElementById('breadcrumb');
+  if (crumb) {
+    // A plain (non-interactive) label, not a data-action="navigate-crumb"
+    // button: there is no path here to navigate to.
+    const label = typeof getScreenLabel === 'function' ? getScreenLabel(screenId) : '';
+    crumb.innerHTML = label
+      ? `<span class="fp-breadcrumb__crumb fp-breadcrumb__crumb--current">${escapeHtml(label)}</span>`
+      : '';
+  }
+  if (typeof refreshNavButtons === 'function') refreshNavButtons();
+}
+
 function switchScreen(id, labelOverride) {
   // Mutate the ACTIVE tab's screen state — never switch tabs from here.
   const tab = activeTab();
@@ -298,14 +414,52 @@ function switchScreen(id, labelOverride) {
       // same fallback the old global navHistory-empty check used to give.
       showScreenDom('browser');
       loadDirectory(null);
+    } else if (browserState.mode === 'search' && tab.search && tab.search.results
+               && typeof restoreSearchResultsForTab === 'function') {
+      // This tab left the Browser screen mid-search. #list-scroll still holds
+      // its results (screens are hidden, not torn down), but
+      // resetToolbarForNonBrowser() took the bar and the "Search in x"
+      // breadcrumb with it — put those back rather than painting a folder
+      // breadcrumb over a results listing.
+      showScreenDom('browser');
+      const listEl = document.getElementById('list-scroll');
+      restoreSearchResultsForTab(tab.search, {
+        selection: [...browserState.selection],
+        scrollTop: listEl ? listEl.scrollTop : 0,
+      });
+      updateSidebarActive(tab.path);
+      if (typeof refreshNavButtons === 'function') refreshNavButtons();
+    } else if (browserState.path !== tab.path || browserState.listingStale) {
+      // #list-scroll is DOM shared by every tab, so what is sitting in it may
+      // belong to ANOTHER tab (this tab was on Home while that one browsed) or
+      // have been fetched with settings a Settings toggle has since changed
+      // (browserState.listingStale, pass 2 #155). Re-fetch rather than reveal
+      // somebody else's listing.
+      showScreenDom('browser');
+      loadDirectory(tab.isRootTarget ? null : tab.path, {
+        addToHistory: false,
+        restore: {
+          scrollTop: tab.scrollTop,
+          selection: tab.selection,
+          view: tab.view,
+          listScale: tab.listScale,
+        },
+      });
     } else {
       // Already has a folder loaded, still sitting in #list-scroll from
       // earlier in this tab's life (screens are hidden, not torn down) — just
       // reveal it, no re-fetch.
-      tab.label = labelOverride || tabLabelFor(tab.path);
+      tab.label = labelOverride || (tab.isRootTarget ? tabLabelFor(null) : tabLabelFor(tab.path));
       updateTabElementAppearance(tab);
       showScreenDom('browser');
-      updateSidebarActive(tab.path);
+      updateSidebarActive(tab.isRootTarget ? null : tab.path);
+      updateBreadcrumb(tab.path);
+      if (typeof refreshNavButtons === 'function') refreshNavButtons();
+      // Nothing re-fetches on this path (the listing is already in
+      // #list-scroll), so the inspector is whatever the last writer left —
+      // including a Home row the user clicked while this screen was hidden.
+      // Repaint it from THIS listing's own selection (pass 2 #75).
+      if (typeof syncInspectorToBrowserSelection === 'function') syncInspectorToBrowserSelection();
     }
     return;
   }
@@ -313,6 +467,7 @@ function switchScreen(id, labelOverride) {
   updateTabElementAppearance(tab);
   showScreenDom(id);
   updateSidebarActive(id);
+  resetToolbarForNonBrowser(id);
 }
 
 /**
@@ -373,6 +528,7 @@ function closeTabById(id) {
   } else if (wasActive) {
     activateTab(neighborEl ? neighborEl.dataset.tabId : tabs.list[0].id);
   }
+  updateTabbarOverflow();
   showSnackbar('Tab closed · Ctrl+Shift+T to reopen', null, null);
 }
 
@@ -393,8 +549,15 @@ function reopenLastTab() {
     label: record.label,
   });
   restored.view = record.view;
+  restored.listScale = record.listScale;
   restored.scrollTop = record.scrollTop;
   restored.selection = record.selection;
+  restored.isRootTarget = record.isRootTarget;
+  // The closed record carried its search (closeTabById pushes the whole thing,
+  // syncActiveTabRecord having just refreshed it) — createTab() starts every
+  // tab at search:null, so it has to be carried across explicitly or Ctrl+W /
+  // Ctrl+Shift+T silently drops the results (pass 2 #18).
+  restored.search = record.search;
   activateTab(restored.id);
 }
 
@@ -411,8 +574,13 @@ function duplicateTab(id) {
     label: source.label,
   });
   copy.view = source.view;
+  copy.listScale = source.listScale;
   copy.selection = source.selection.slice();
   copy.scrollTop = source.scrollTop;
+  copy.isRootTarget = source.isRootTarget;
+  // Duplicating a results tab duplicates the results, not the folder under
+  // them — deep-cloned so the two tabs' snapshots never alias (pass 2 #18).
+  copy.search = source.search ? JSON.parse(JSON.stringify(source.search)) : null;
   // Place the duplicate right after its source, matching a browser's
   // "Duplicate tab" placement, instead of at the end of the strip.
   const copyEl = document.querySelector(`.fp-tab[data-tab-id="${copy.id}"]`);
@@ -431,7 +599,7 @@ function closeOtherTabs(id) {
 function seedInitialTab() {
   const el = document.querySelector('.fp-tab[data-tab-id]');
   const id = el ? el.dataset.tabId : 'tab-1';
-  const record = { id, screen: 'home', label: 'Home', path: null, history: [], historyIndex: -1, view: null, scrollTop: 0, selection: [], search: null };
+  const record = { id, screen: 'home', label: 'Home', path: null, history: [], historyIndex: -1, view: null, listScale: null, scrollTop: 0, selection: [], isRootTarget: false, search: null };
   tabs.list.push(record);
   tabs.activeId = id;
   nav.history = record.history;
@@ -679,6 +847,9 @@ function initDeviceName() {
 // once per resize, never per frame.
 const TOOLBAR_SEARCH_MIN = 140;  // px the expanded search bar wants
 const TOOLBAR_PATH_MIN   = 120;  // px the breadcrumb wants before the bar folds
+// Extra room the toolbar must regain before it leaves narrow mode — wider than
+// the 12px the mode's own gap change is worth (pass 2 #163).
+const TOOLBAR_NARROW_HYSTERESIS = 24;
 
 function initToolbarNarrowMode() {
   const toolbar = document.getElementById('toolbar');
@@ -700,7 +871,15 @@ function initToolbarNarrowMode() {
     }
     const padding = (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0);
     const available = toolbar.clientWidth - padding - gap * Math.max(0, visible - 1);
-    toolbar.toggleAttribute('data-narrow', available < fixed + TOOLBAR_SEARCH_MIN + TOOLBAR_PATH_MIN);
+    // The gap IS mode-dependent (#toolbar[data-narrow] tightens it from 6px to
+    // 4px), so `available` is ~12px larger when measured in the mode it is
+    // deciding — entry and exit thresholds sat 12px apart and the bar flickered
+    // for that whole band of a window drag (pass 2 #163). Leaving narrow mode
+    // needs that much more room than entering it did, so no width can satisfy
+    // both tests at once.
+    const narrow = toolbar.hasAttribute('data-narrow');
+    const needed = fixed + TOOLBAR_SEARCH_MIN + TOOLBAR_PATH_MIN + (narrow ? TOOLBAR_NARROW_HYSTERESIS : 0);
+    toolbar.toggleAttribute('data-narrow', available < needed);
   }
 
   new ResizeObserver(recalc).observe(toolbar);
@@ -1112,8 +1291,19 @@ function cmSingleFolderEnabled(ctx) {
 }
 /** Cut, Copy, Delete, Add tag, Add/Remove favorites: any (non-empty) count. */
 function cmAnyEnabled(ctx) { return (ctx.selection || []).length > 0; }
-/** Paste: only when the clipboard actually holds something. */
-function cmClipboardEnabled(ctx) { return (ctx.clipboard || 0) > 0; }
+/** Paste: only when the clipboard actually holds something — and only when
+ * the directory it would paste into is the one on screen (see
+ * cmTargetDirVisible). */
+function cmClipboardEnabled(ctx) { return (ctx.clipboard || 0) > 0 && cmTargetDirVisible(); }
+/** True when contextTargetDir() resolves to a directory the user can actually
+ * see. The folder menu names its own right-clicked folder, so it always can;
+ * every other menu type falls back to browserState.path, which in search mode
+ * is the pre-search folder hidden behind a result set — creating or pasting
+ * there mutated an off-screen directory and showed nothing for it (pass 2
+ * #51). New folder / New file / Paste are disabled instead. */
+function cmTargetDirVisible() {
+  return browserState.mode !== 'search' || contextMenuType === 'folder';
+}
 /** Add/Remove Favorites label — "Remove" only when EVERY selected item (or
  * the single Home row) is already favorited; "Add" otherwise, including an
  * empty selection (the item is disabled then anyway, via cmAnyEnabled). */
@@ -1145,7 +1335,11 @@ const CONTEXT_MENUS = {
     { label: 'Rename', action: 'cm-rename', kbd: 'F2', enabled: () => canRenameSelection() },
     { label: 'Delete', action: 'cm-delete', kbd: 'Del', danger: true, icon: icon('delete', 'fp-icon--14'), enabled: cmAnyEnabled },
     'sep',
-    { label: 'Add tag…',         action: 'cm-add-tag',     icon: icon('tag', 'fp-icon--14'), enabled: cmAnyEnabled },
+    // Single selection only: the item just focuses the Inspector's tag input,
+    // and the Inspector only ever tags ONE file — the one it is showing. From
+    // a multi-selection it used to tag whichever file was inspected last
+    // (pass 2 #199). A real batch-tag path is backlog, not a silent lie.
+    { label: 'Add tag…',         action: 'cm-add-tag',     icon: icon('tag', 'fp-icon--14'), enabled: cmSingleEnabled },
     { label: cmFavoriteLabel,    action: 'cm-favorite',    enabled: cmAnyEnabled },
     'sep',
     { label: 'Properties',             action: 'cm-properties', enabled: cmSingleEnabled },
@@ -1177,8 +1371,8 @@ const CONTEXT_MENUS = {
   // A.10.3 — Empty area context menu (targets the current folder itself, not
   // a selection — Properties and the rest stay unconditionally enabled).
   'empty-area': [
-    { label: 'New folder', action: 'cm-new-folder', icon: icon('folder-add', 'fp-icon--14') },
-    { label: 'New file',   action: 'cm-new-file' },
+    { label: 'New folder', action: 'cm-new-folder', icon: icon('folder-add', 'fp-icon--14'), enabled: cmTargetDirVisible },
+    { label: 'New file',   action: 'cm-new-file',  enabled: cmTargetDirVisible },
     { label: 'Paste',      action: 'cm-paste',      kbd: 'Ctrl+V', enabled: cmClipboardEnabled },
     { label: 'Refresh',    action: 'cm-refresh',    kbd: 'F5' },
     'sep',
@@ -1244,11 +1438,24 @@ const INSPECTOR_MORE_MENU_ITEMS = [
 // click point, and {ctx: menuContext()} drives each item's checked(ctx)
 // predicate (Task 11 adds enabled(ctx) to the same item shape — unknown
 // fields are simply ignored by showContextMenu, not an error).
+/** Which icon-size item a grid scale belongs to. The four menu presets are
+ * 0.75 / 1 / 1.5 / 2, but Ctrl+wheel steps through all eight of
+ * LIST_SCALE_STEPS — so an exact-equality check left the whole View menu with
+ * no checkmark at all at 0.875, 1.125, 1.25 or 1.75 (pass 2 #202). Each item
+ * claims the band around its own preset instead. */
+function viewScaleBucket(scale) {
+  const s = Number(scale) || 1;
+  if (s >= 1.75) return 'xl';
+  if (s >= 1.25) return 'large';
+  if (s >= 0.875) return 'medium';
+  return 'small';
+}
+
 const VIEW_MENU_ITEMS = [
-  { label: 'Extra large icons', action: 'view-xl',      checked: ctx => ctx.view === 'grid' && ctx.scale === 2 },
-  { label: 'Large icons',       action: 'view-large',   checked: ctx => ctx.view === 'grid' && ctx.scale === 1.5 },
-  { label: 'Medium icons',      action: 'view-medium',  checked: ctx => ctx.view === 'grid' && ctx.scale === 1 },
-  { label: 'Small icons',       action: 'view-small',   checked: ctx => ctx.view === 'grid' && ctx.scale === 0.75 },
+  { label: 'Extra large icons', action: 'view-xl',      checked: ctx => ctx.view === 'grid' && viewScaleBucket(ctx.scale) === 'xl' },
+  { label: 'Large icons',       action: 'view-large',   checked: ctx => ctx.view === 'grid' && viewScaleBucket(ctx.scale) === 'large' },
+  { label: 'Medium icons',      action: 'view-medium',  checked: ctx => ctx.view === 'grid' && viewScaleBucket(ctx.scale) === 'medium' },
+  { label: 'Small icons',       action: 'view-small',   checked: ctx => ctx.view === 'grid' && viewScaleBucket(ctx.scale) === 'small' },
   'sep',
   // "List" is deliberately not Explorer's multi-column flowing list — ours
   // is a single-column, name-only row (see browser.js's setViewMode).
@@ -1349,7 +1556,7 @@ function buildMenuContext(target) {
   let selection = [];
   if (type === 'home-row') {
     const row = target?.closest ? target.closest('.fp-row[data-path]') : null;
-    if (row) selection = [{ path: row.dataset.path, ext: row.dataset.ext || '', is_dir: (row.dataset.ext || '') === '' }];
+    if (row) selection = [{ path: row.dataset.path, ext: row.dataset.ext || '', is_dir: homeRowIsDir(row) }];
   } else if (type === 'file' || type === 'folder' || type === 'empty-area') {
     selection = getSelectedPaths().map(p => {
       const entry = entryForPath(p);
@@ -1572,32 +1779,95 @@ async function triggerScan(path) {
 }
 
 // ── Backend health ─────────────────────��──────────────────────���───────────────
+// Last state the pill was painted with. checkBackend() is polled every 30s,
+// and an offline/error -> ok transition is the only signal the renderer gets
+// that a backend which was down (or that started AFTER the renderer) is now
+// up -- every one-shot startup loader swallows its own failure silently, so
+// without this the sidebar/config/known-folders stayed empty for the rest of
+// the session. 'unknown' (the first poll) deliberately does NOT trigger a
+// refresh: init runs the same loaders itself.
+let _backendState = 'unknown';
+
 async function checkBackend() {
   const el = document.getElementById('status-backend');
   if (!el) return;
-  const dot = el.querySelector('.fp-statusbar__backend-dot');
   const label = el.querySelector('.fp-statusbar__backend-label');
+  const prev = _backendState;
+  const paint = (state, text) => {
+    _backendState = state;
+    el.dataset.state = state;
+    if (label) label.textContent = text;
+  };
   try {
     const data = await API.get('/health', null, { signal: AbortSignal.timeout(2000) });
-    el.dataset.state = 'ok';
-    if (label) label.textContent = 'Backend';
     window.__fpHealth = data; // read by settings.js's Data-pane "Writes" line
+    // /health is the ONE route the backend's token middleware exempts, so a
+    // 200 here does not prove our X-FilePlus-Token is the one it wants. It
+    // does report whether auth is on; when it is and the bridge handed us no
+    // token, every other route 401s -- say so instead of painting a green
+    // pill over an app that can't fetch anything.
+    if (data && data.auth && !apiToken()) {
+      paint('error', 'Backend auth');
+      return false;
+    }
+    // Windows-icon mode's Tier A (POST /shell/icons) is advertised by
+    // /health's shell_icons flag: tell icons.js whether to ask for it, so a
+    // backend that is too old for the route is never asked (a 404 logs an
+    // unsuppressible console error even when caught) and a restarted, newer
+    // backend gets its turn without a failed request first. Only on a change
+    // of the pill's state, so the poll does not churn the icon caches.
+    if (prev !== 'ok' && typeof fpShellIconRoute === 'function') {
+      fpShellIconRoute(data && data.shell_icons ? 'live' : 'absent');
+    }
+    paint('ok', 'Backend');
     setWriteLockHint(data.write_unlocked === false);
     if (typeof updateWritesStatusLine === 'function') updateWritesStatusLine();
+    if (prev === 'offline' || prev === 'error') refreshBackendData();
     return true;
   } catch (err) {
     // ApiError means the backend answered but with a non-2xx status; any
     // other rejection (network error, the 2s AbortSignal firing) means it
     // didn't answer at all.
-    if (err instanceof ApiError) {
-      el.dataset.state = 'error';
-      if (label) label.textContent = 'Backend error';
-    } else {
-      el.dataset.state = 'offline';
-      if (label) label.textContent = 'Backend offline';
-    }
+    paint(err instanceof ApiError ? 'error' : 'offline',
+          err instanceof ApiError ? 'Backend error' : 'Backend offline');
     return false;
   }
+}
+
+/** Re-runs every one-shot startup loader: the config cache and the settings
+ * derived from it, the known-folder map, the sidebar's drives/pins/tags/Quick
+ * Access, and Home's two lists when Home is what the active tab is showing.
+ *
+ * Called on an offline/error -> ok health transition and by the status pill's
+ * own 'retry-backend-connect' click. Every loader degrades silently on
+ * failure, so this is safe to call at any time and never throws. */
+async function refreshBackendData() {
+  await loadConfig();
+  applySettingsFromConfig();
+  // fpLoadKnownFolders() returns its cache when already populated; drop it so
+  // a reconnect actually re-fetches (on the failing path it was never set).
+  delete window.__fpKnownFolders;
+  await fpLoadKnownFolders();
+  await Promise.allSettled([loadDrives(), loadPins(), loadSidebarTags()]);
+  loadQuickAccess();
+  if (activeTab()?.screen === 'home') { loadRecent(); loadFavorites(); }
+}
+
+/** The status pill's click/Enter handler: re-probe /health now (rather than
+ * waiting out the rest of the 30s poll) and repopulate the shell if it
+ * answers. The only reconnect affordance in the UI -- the A.16 offline
+ * banner markup is still commented out in index.html. */
+async function refreshBackendConnection() {
+  const el = document.getElementById('status-backend');
+  const label = el?.querySelector('.fp-statusbar__backend-label');
+  if (el) {
+    _backendState = 'checking';
+    el.dataset.state = 'checking';
+    if (label) label.textContent = 'Checking…';
+  }
+  const ok = await checkBackend();
+  if (ok) await refreshBackendData();
+  else showToast('Backend is not reachable — is it running?', 'error');
 }
 
 /** Shows/hides the "writes: sandbox" status-bar hint (health.write_unlocked === false). */
@@ -1620,7 +1890,7 @@ async function loadDrives() {
   if (!container) return;
   let driveList;
   try {
-    driveList = await API.get('/drives');
+    driveList = await API.get('/drives', null, apiTimeout());
   } catch (err) {
     console.warn('[fp-drives] failed to load drives:', formatApiError(err));
     return;
@@ -1653,7 +1923,7 @@ async function loadPins() {
   if (!container) return;
   let pinList;
   try {
-    pinList = await API.get('/pins');
+    pinList = await API.get('/pins', null, apiTimeout());
   } catch (err) {
     console.warn('[fp-pins] failed to load pins:', formatApiError(err));
     return;
@@ -1686,9 +1956,15 @@ async function loadSidebarTags() {
   if (!chips) return;
   let tags;
   try {
-    tags = await API.get('/tags');
+    tags = await API.get('/tags', null, apiTimeout());
   } catch (err) {
+    // Hide the shelf on failure too: the markup authors it hidden and this
+    // function is what reveals it, so a failed /tags must not leave the
+    // "Tags" label and "View all" button standing over zero chips -- exactly
+    // the empty shelf this section exists to avoid.
     console.warn('[fp-tags] failed to load tags:', formatApiError(err));
+    if (section) section.hidden = true;
+    if (label) label.hidden = true;
     return;
   }
   window.__fpTags = Array.isArray(tags) ? tags : [];
@@ -1727,7 +2003,12 @@ function quickAccessHiddenIds() {
  * Safe to re-run any time either source changes (a Settings checkbox, the
  * sidebar-item "Remove from Quick Access" menu action). */
 function loadQuickAccess() {
-  const list = window.__fpKnownFolderList || [];
+  // fpLoadKnownFolders() only assigns __fpKnownFolderList when GET
+  // /known-folders actually answered, so "not an array" means the fetch never
+  // succeeded -- a different statement from "this PC has none", and the
+  // Settings copy below says so.
+  const loaded = Array.isArray(window.__fpKnownFolderList);
+  const list = loaded ? window.__fpKnownFolderList : [];
   const hidden = new Set(quickAccessHiddenIds());
 
   const sidebar = document.getElementById('sb-quick-access-folders');
@@ -1738,7 +2019,7 @@ function loadQuickAccess() {
     sidebar.innerHTML = visible.map(renderQuickAccessItem).join('');
   }
 
-  renderQuickAccessSettings(list, hidden);
+  renderQuickAccessSettings(list, hidden, loaded);
 }
 
 function renderQuickAccessItem(f) {
@@ -1755,12 +2036,14 @@ function renderQuickAccessItem(f) {
  * that can appear in Quick Access, checked = currently shown. `list` is the
  * raw GET /known-folders result, `hiddenIds` the Set of currently-hidden ids
  * (both already computed by loadQuickAccess(), the sole caller). */
-function renderQuickAccessSettings(list, hiddenIds) {
+function renderQuickAccessSettings(list, hiddenIds, loaded = true) {
   const container = document.getElementById('settings-quick-access-list');
   if (!container) return;
   const items = QUICK_ACCESS_IDS.map(id => list.find(f => f && f.id === id)).filter(Boolean);
   if (!items.length) {
-    container.innerHTML = '<div class="settings-row__desc">No known folders detected on this PC.</div>';
+    container.innerHTML = loaded
+      ? '<div class="settings-row__desc">No known folders detected on this PC.</div>'
+      : '<div class="settings-row__desc">Couldn’t read this PC’s folders — the backend isn’t reachable.</div>';
     return;
   }
   container.innerHTML = items.map((f, i) => `
@@ -1810,16 +2093,31 @@ function initWindowControls() {
 }
 
 // ── Underline tab indicator (sub-tabs within screens) ─────────────��──────────
+/** Slides a .fp-tabs container's accent underline under `tab` (default: the
+ * container's currently-active item). The single writer of
+ * indicator.style.left/width, so every way a tab becomes active -- a real
+ * click (initUnderlineTabs below), switchInspectorTab(), switchPropertiesTab()
+ * -- moves the underline with the active class instead of stranding it under
+ * whichever tab was last clicked. */
+function moveTabIndicator(container, tab) {
+  if (!container) return;
+  const indicator = container.querySelector('.fp-tabs__indicator');
+  const target = tab || container.querySelector('.fp-tabs__item--active');
+  // offsetWidth 0 = the container isn't laid out yet (a closed inspector is
+  // display:none, a closed Properties modal likewise). Measuring then would
+  // pin the underline at width 0; leave it where it is and let whoever
+  // reveals the container call again.
+  if (!indicator || !target || target.offsetWidth === 0) return;
+  indicator.style.left  = `${target.offsetLeft}px`;
+  indicator.style.width = `${target.offsetWidth}px`;
+}
+
 function initUnderlineTabs(container) {
   if (!container) return;
   const tabs     = container.querySelectorAll('.fp-tabs__item');
-  const indicator = container.querySelector('.fp-tabs__indicator');
   function setActive(tab) {
     tabs.forEach(t => t.classList.toggle('fp-tabs__item--active', t === tab));
-    if (indicator && tab) {
-      indicator.style.left  = `${tab.offsetLeft}px`;
-      indicator.style.width = `${tab.offsetWidth}px`;
-    }
+    moveTabIndicator(container, tab);
     const targetPane = tab?.dataset.tab;
     container.closest('.screen')?.querySelectorAll('[data-pane]').forEach(pane => {
       pane.style.display = pane.dataset.pane === targetPane ? '' : 'none';
@@ -1851,7 +2149,7 @@ function initUnderlineTabs(container) {
 // In-scope actions are handled here; out-of-scope show "not implemented" stub.
 const IN_SCOPE_ACTIONS = new Set([
   'navigate-screen', 'navigate-path', 'switch-tab', 'close-tab', 'new-tab', 'scan',
-  'toggle-sidebar', 'toggle-inspector', 'toggle-theme',
+  'toggle-sidebar', 'toggle-inspector', 'toggle-theme', 'retry-backend-connect',
   'focus-search', 'filter-by-tag', 'open-tag-canvas', 'close-tag-canvas',
   'tag-canvas-select',
   // Ask File+ (Task 15) — shell only, no model wired until Stage 3.
@@ -1874,7 +2172,7 @@ const IN_SCOPE_ACTIONS = new Set([
   // Toolbar search (Task 14)
   'search-clear', 'search-remove-chip', 'search-expand-filter', 'search-pick-filter',
   'search-more-filters', 'search-more-apply', 'search-more-cancel',
-  'search-history-run', 'search-history-clear', 'search-index-drives',
+  'search-history-run', 'search-history-clear', 'search-index-drives', 'search-retry',
   // Settings › Scan & Index (Task 14)
   'settings-index-add', 'settings-index-reindex', 'settings-index-remove',
   'modal-cancel', 'modal-confirm', 'modal-confirm-type',
@@ -1886,6 +2184,9 @@ const IN_SCOPE_ACTIONS = new Set([
   'settings-set-icon-source', 'settings-quick-access-toggle', 'settings-set-backspace-deletes',
   'settings-empty-trash',
   'settings-set-font-scale', 'settings-reset-shortcuts',
+  // Handled by the 'input'/'change' listeners at the bottom of this file, not
+  // by a click case — listed so a click on the slider is a silent no-op.
+  'settings-inspector-width',
   'zoom-reset',
   // File operations (Task 4) — context-menu actions wired in the switch below.
   'cm-open', 'cm-open-with', 'cm-reveal-explorer',
@@ -1921,6 +2222,16 @@ function switchInspectorTab(name) {
   inspector.querySelectorAll('.fp-inspector__pane').forEach(p => {
     p.hidden = p.dataset.pane !== name;
   });
+  // Switching to a single-file pane also restores the chrome that multi mode
+  // hid (updateInspector('multi') hides both) — otherwise the Inspector ends
+  // up showing a lone pane with no tab strip and no way back (pass 2 #200).
+  if (name !== 'multi') {
+    const tabBar = inspector.querySelector('.fp-tabs.fp-inspector__tabs');
+    const preview = document.getElementById('inspector-preview');
+    if (tabBar) tabBar.hidden = false;
+    if (preview) preview.hidden = false;
+  }
+  moveTabIndicator(inspector.querySelector('.fp-inspector__tabs'), targetTab);
 }
 
 /** Flips ui.show_hidden — shared by the empty-area menu's "Show hidden
@@ -1945,6 +2256,9 @@ document.addEventListener('click', e => {
     case 'navigate-screen':
       switchScreen(btn.dataset.screen || btn.dataset.target);
       break;
+    case 'retry-backend-connect':
+      refreshBackendConnection();
+      break;
     case 'navigate-path': {
       // openBrowserAt() → loadDirectory() → onNavigated() sets the tab label
       // and the sidebar highlight synchronously, before the fetch even
@@ -1965,20 +2279,32 @@ document.addEventListener('click', e => {
       setThisPcOpen(!expanded);
       break;
     }
+    // The whole nav group + breadcrumb + Refresh live in the toolbar, which
+    // sits OUTSIDE .screen and is therefore painted (and clickable) on Home,
+    // Settings and every stub screen. refreshNavButtons() disables the three
+    // buttons off the Browser screen; these guards are the second half of the
+    // same rule, for the paths a disabled attribute cannot cover (the error
+    // banner's own Go back / Retry, a crumb left over from a previous screen).
+    // Without them the load lands in a hidden #list-scroll while onNavigated()
+    // silently turns the visible Home/Settings tab into a folder tab (#11).
     case 'nav-back':
-      navBack();
+      if (browserScreenActive()) navBack();
       break;
     case 'nav-forward':
-      navForward();
+      if (browserScreenActive()) navForward();
       break;
     case 'nav-up':
-      navUp();
+      if (browserScreenActive()) navUp();
       break;
     case 'navigate-crumb':
-      if (btn.dataset.path) loadDirectory(btn.dataset.path);
+      // isAbsolutePath rejects the sentinels a crumb can carry (index.html
+      // seeds "home" before the first real updateBreadcrumb) — loadDirectory()
+      // would relabel the tab and flip it to the Browser screen synchronously,
+      // before the backend's 400 for a driveless path is even known (#13).
+      if (browserScreenActive() && isAbsolutePath(btn.dataset.path)) loadDirectory(btn.dataset.path);
       break;
     case 'nav-retry':
-      retryLoad();
+      if (browserScreenActive()) retryLoad();
       break;
     case 'refresh-directory':
       refreshDirectory();
@@ -2031,6 +2357,10 @@ document.addEventListener('click', e => {
       ];
       searchState.scope = 'pc';
       renderSearchChips();
+      // In narrow-toolbar mode the chips are display:none until the bar is
+      // expanded, so the two chips that define this search were invisible and
+      // unremovable (pass 2 #97). Same call addChip() makes after every pick.
+      focusSearchInput({ keepDropdownClosed: true });
       runSearch();
       break;
     }
@@ -2056,8 +2386,13 @@ document.addEventListener('click', e => {
     case 'search-more-cancel':
       closeMoreFilters();
       break;
+    case 'search-retry':
+      // The Retry button on the in-list "Search failed" banner (pass 2 #96) —
+      // pushHistory:false, it is the same search, not a new one.
+      runSearch({ pushHistory: false });
+      break;
     case 'search-history-run':
-      restoreSearchHistoryEntry(Number(btn.dataset.index));
+      restoreSearchHistoryEntry(btn.dataset.historyKey);
       break;
     case 'search-history-clear':
       clearSearchHistory();
@@ -2184,9 +2519,13 @@ document.addEventListener('click', e => {
       // Legacy: only applies if dataset.accent or dataset.val is a valid hex
       applyAccent(btn.dataset.accent || btn.dataset.val);
       break;
-    case 'settings-set-accent-hex':
-      applyAccentHex(btn.value);
-      break;
+    // 'settings-set-accent-hex' has no click case on purpose: clicking INTO
+    // the field resolved this data-action and ran applyAccentHex('') — the
+    // red "Enter a valid hex color" error, announced by its aria-live, before
+    // a single character was typed (pass 2 #79). The 'input' listener at the
+    // bottom of this file is the one that applies and persists the value, and
+    // only when it parses; the action stays in IN_SCOPE_ACTIONS so the click
+    // is a deliberate silent no-op.
     case 'settings-reset-accent':
       resetAccentToDefault();
       deleteSetting('ui.accent_hex');
@@ -2264,10 +2603,12 @@ document.addEventListener('click', e => {
         if (r !== row) r.classList.remove('fp-row--selected');
       });
       row.classList.add('fp-row--selected');
-      // Populate + open the global inspector. INTEGRATION: real meta/preview
-      // data per backend-integration.md §A.2.1 item 2 (time-label formatter)
-      // and §A.3 (file/info, file/preview, file/hash).
-      updateInspector('single', { name, path });
+      // Populate the (browser-screen) inspector through the SAME pipeline a
+      // Browser selection uses. updateInspector('single', …) only rewrote the
+      // header: the meta grid, preview, tag chips and History stayed on the
+      // previously-inspected file, and _inspectorFileId with them — so the
+      // Tags pane then tagged that other file (pass 2 #75).
+      showInspectorFor(path);
       break;
     }
     // Home hover actions (Recent + Favorites rows) and the home-row context
@@ -2277,7 +2618,7 @@ document.addEventListener('click', e => {
     // row; falls back to contextMenuTarget, captured at right-click time).
     case 'open-file': {
       const target = resolveHomeRowTarget(btn);
-      if (target) homeOpenPath(target.path, target.ext);
+      if (target) homeOpenPath(target.path, target.ext, target.is_dir);
       break;
     }
     case 'reveal-file': {
@@ -2485,9 +2826,15 @@ document.addEventListener('click', e => {
     case 'cm-copy':
       fileops.copySelection();
       break;
+    // The three "act on the target directory" actions share one guard: in
+    // search mode contextTargetDir() falls back to the invisible pre-search
+    // folder, so they are refused rather than mutating a directory the user
+    // cannot see (pass 2 #51). The menu items are already disabled — this
+    // covers every other way the case can be reached.
     case 'cm-paste':
     case 'cm-paste-here':
-      fileops.pasteInto(contextTargetDir());
+      if (!cmTargetDirVisible()) { showToast('Leave search results to paste here', 'error'); break; }
+      fileops.pasteInto(contextTargetDir()).catch(fileopsReported);
       break;
     case 'cm-rename': {
       const path = contextTargetPath();
@@ -2495,13 +2842,15 @@ document.addEventListener('click', e => {
       break;
     }
     case 'cm-delete':
-      fileops.trashSelection();
+      fileops.trashSelection().catch(fileopsReported);
       break;
     case 'cm-new-folder':
-      fileops.newFolder(contextTargetDir());
+      if (!cmTargetDirVisible()) { showToast('Leave search results to create here', 'error'); break; }
+      fileops.newFolder(contextTargetDir()).catch(fileopsReported);
       break;
     case 'cm-new-file':
-      fileops.newFile(contextTargetDir());
+      if (!cmTargetDirVisible()) { showToast('Leave search results to create here', 'error'); break; }
+      fileops.newFile(contextTargetDir()).catch(fileopsReported);
       break;
     case 'cm-refresh':
       refreshDirectory();
@@ -2523,18 +2872,28 @@ document.addEventListener('click', e => {
       // (/favorites, /fs/list) race independently, so firing them merely in
       // parallel could re-render the row from a still-stale favoritesSet.
       const settle = async () => { await favoritesReload(); await refreshDirectory(); };
-      if (allFav) {
-        Promise.all(paths.map(p => API.del('/favorites', { path: p })))
-          .then(() => { showToast('Removed from Favorites', 'default'); settle(); })
-          .catch(err => showToast(`Failed to remove favorite: ${formatApiError(err)}`, 'error'));
-      } else {
-        Promise.all(paths.map(p => API.post('/favorites', { path: p })))
-          .then(() => { showToast('Added to Favorites', 'default'); settle(); })
-          .catch(err => showToast(`Failed to favorite: ${formatApiError(err)}`, 'error'));
-      }
+      // allSettled, not all: one rejected request used to abort the whole
+      // batch's settle(), leaving the stars and the Add/Remove label stale for
+      // the entries that HAD changed server-side (pass 2 #201). Resync
+      // unconditionally, then report only what actually failed.
+      const verb = allFav ? 'remove' : 'add';
+      const request = p => (allFav ? API.del('/favorites', { path: p }) : API.post('/favorites', { path: p }));
+      Promise.allSettled(paths.map(request)).then(async results => {
+        await settle();
+        const failed = results.filter(r => r.status === 'rejected');
+        if (!failed.length) {
+          showToast(allFav ? 'Removed from Favorites' : 'Added to Favorites', 'default');
+        } else if (failed.length === paths.length) {
+          showToast(`Failed to ${verb} favorite: ${formatApiError(failed[0].reason)}`, 'error');
+        } else {
+          showToast(`Failed to ${verb} ${failed.length} of ${paths.length}: ${formatApiError(failed[0].reason)}`, 'error');
+        }
+      });
       break;
     }
     case 'cm-add-tag': {
+      // Single selection only — see the menu item's cmSingleEnabled above.
+      if (browserState.selection.size !== 1) break;
       // The row was already selected by the 'contextmenu' listener
       // (ensureRowSelected) before this menu item could be clicked — just
       // surface the Inspector's existing tag-add input for it. The Tags pane
@@ -2713,6 +3072,11 @@ document.addEventListener('input', e => {
     // value ("#4C") shouldn't overwrite the last-good saved accent.
     if (applyAccentHex(t.value)) saveSetting('ui.accent_hex', t.value.trim());
   }
+  // Inspector width slider (Settings › Personalization): live while dragging,
+  // persisted on 'change' below so one drag is one POST /config (pass 2 #83).
+  if (t && t.dataset && t.dataset.action === 'settings-inspector-width') {
+    applyInspectorWidth(t.value);
+  }
   // Properties panel's editable name field — any keystroke enables Apply.
   if (t && t.id === 'properties-name-input') propertiesMarkDirty();
 });
@@ -2750,6 +3114,12 @@ document.addEventListener('change', e => {
     saveSetting('ui.backspace_deletes', t.checked);
     return;
   }
+  // Range input: 'change' fires once the drag ends — persist there, so the
+  // live 'input' updates above stay local (pass 2 #83).
+  if (t.dataset.action === 'settings-inspector-width') {
+    applyInspectorWidth(t.value, { persist: true });
+    return;
+  }
   // Properties panel — an attribute checkbox or the folder-type select was
   // touched; propertiesApply() re-reads the live DOM state itself, so this
   // only needs to enable Apply, not track the new value.
@@ -2769,10 +3139,17 @@ function setNotificationsEnabled(enabled) {
 // anything order-sensitive; closeTabById() picks its fallback-active
 // neighbor off the DOM for exactly this reason).
 let _dragTab = null;
+// Set by the drop handler when it actually moves a tab. dragend fires for
+// every drag — including one cancelled with Escape or released over nothing —
+// so without this flag the strip claimed a reorder that never happened
+// (pass 2 #157). The message no longer claims persistence either: nothing
+// writes the order anywhere yet (see the INTEGRATION note below).
+let _tabDragReordered = false;
 
 function initTabDrag(tab) {
   tab.addEventListener('dragstart', e => {
     _dragTab = tab;
+    _tabDragReordered = false;
     tab.style.opacity = '0.4';
     e.dataTransfer.effectAllowed = 'move';
   });
@@ -2782,8 +3159,12 @@ function initTabDrag(tab) {
     document.querySelectorAll('.fp-tab').forEach(t => {
       t.classList.remove('fp-tab--drag-over-before', 'fp-tab--drag-over-after');
     });
-    showSnackbar('Tab order saved', null, null);
-    // INTEGRATION: POST /ui/tabs with new order for persistence
+    if (_tabDragReordered) showSnackbar('Tab moved', null, null);
+    _tabDragReordered = false;
+    updateTabbarOverflow();
+    // INTEGRATION: POST /ui/tabs with new order for persistence — until that
+    // exists the new order lives only in the DOM and is gone on next launch,
+    // which is why the snackbar above does not say "saved".
   });
   tab.addEventListener('dragover', e => {
     if (!_dragTab || _dragTab === tab) return;
@@ -2808,13 +3189,56 @@ function initTabDrag(tab) {
     e.preventDefault();
     const tabbar = tab.parentElement;
     const rect = tab.getBoundingClientRect();
-    if (e.clientX < rect.left + rect.width / 2) {
-      tabbar.insertBefore(_dragTab, tab);
-    } else {
-      tabbar.insertBefore(_dragTab, tab.nextSibling);
+    const ref = e.clientX < rect.left + rect.width / 2 ? tab : tab.nextSibling;
+    // A drop that leaves the dragged tab exactly where it already sat (it is
+    // the reference node, or already immediately before it) is not a reorder —
+    // don't announce one (pass 2 #157).
+    if (ref !== _dragTab && _dragTab.nextSibling !== ref) {
+      tabbar.insertBefore(_dragTab, ref);
+      _tabDragReordered = true;
     }
     tab.classList.remove('fp-tab--drag-over-before', 'fp-tab--drag-over-after');
   });
+}
+
+// The strip only scrolls horizontally and its scrollbar is hidden, so a plain
+// vertical wheel (which Chromium does not apply to an overflow-x container)
+// has to be mapped onto scrollLeft by hand — otherwise clipped tabs are
+// reachable only by a Shift+wheel or a trackpad swipe (pass 2 #156).
+function initTabbarScroll() {
+  const tabbar = document.getElementById('tabbar');
+  if (!tabbar) return;
+  tabbar.addEventListener('wheel', e => {
+    if (e.ctrlKey || e.metaKey) return;          // Ctrl+wheel is the list zoom
+    const delta = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+    if (!delta) return;
+    if (tabbar.scrollWidth <= tabbar.clientWidth) return;
+    e.preventDefault();
+    tabbar.scrollLeft += delta;
+  }, { passive: false });
+  tabbar.addEventListener('scroll', updateTabbarOverflow);
+  window.addEventListener('resize', updateTabbarOverflow);
+  // Tablist keyboard model (pass 2 #158): the active tab is the single tab
+  // stop (roving tabindex, createTabElement/activateTab), Arrow keys move
+  // along the strip, Home/End jump to its ends, Delete closes.
+  tabbar.addEventListener('keydown', e => {
+    const tabEl = e.target.closest?.('.fp-tab');
+    if (!tabEl) return;
+    const order = tabsInStripOrder();
+    if (e.key === 'ArrowRight') { e.preventDefault(); cycleTab(1); }
+    else if (e.key === 'ArrowLeft') { e.preventDefault(); cycleTab(-1); }
+    else if (e.key === 'Home' && order.length) {
+      e.preventDefault(); activateTab(order[0]);
+      document.querySelector(`.fp-tab[data-tab-id="${order[0]}"]`)?.focus();
+    } else if (e.key === 'End' && order.length) {
+      const last = order[order.length - 1];
+      e.preventDefault(); activateTab(last);
+      document.querySelector(`.fp-tab[data-tab-id="${last}"]`)?.focus();
+    } else if (e.key === 'Delete') {
+      e.preventDefault(); closeTabById(tabEl.dataset.tabId);
+    }
+  });
+  updateTabbarOverflow();
 }
 
 // ── Keyboard shortcuts ────────────────────────────────────────────────────────
@@ -2841,7 +3265,20 @@ document.addEventListener('keydown', e => {
   if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key === 'w') { e.preventDefault(); closeCurrentTab(); }
   // Ctrl+Shift+T — reopen last closed tab
   if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'T') { e.preventDefault(); reopenLastTab(); }
-  // Ctrl+1..9 — numbered shortcuts (screen navigation stubs)
+  // Ctrl+1..8 jump to that tab position, Ctrl+9 to the last one (every
+  // browser's rule, and what docs/UI-SPEC.md already documented); Ctrl+Tab /
+  // Ctrl+Shift+Tab cycle. Until pass 2 #158 none of this existed — a keyboard
+  // user could open and close tabs but never switch between them.
+  if ((e.metaKey || e.ctrlKey) && !e.shiftKey && /^[1-9]$/.test(e.key)) {
+    e.preventDefault();
+    const order = tabsInStripOrder();
+    const target = e.key === '9' ? order[order.length - 1] : order[Number(e.key) - 1];
+    if (target) activateTab(target);
+  }
+  if ((e.metaKey || e.ctrlKey) && e.key === 'Tab') {
+    e.preventDefault();
+    cycleTab(e.shiftKey ? -1 : 1);
+  }
   // Escape — close all overlays
   if (e.key === 'Escape') {
     closePalette();
@@ -2850,6 +3287,9 @@ document.addEventListener('keydown', e => {
     closeTagCanvas();
     closeProperties();
     closeAskPopout();
+    // The search More-filters dialog was the one overlay in the app with
+    // neither an Escape nor a backdrop-click way out (pass 2 #92).
+    if (typeof closeMoreFilters === 'function') closeMoreFilters();
   }
   // Browser-screen keyboard nav (selection, sort-order arrows, Enter, F5,
   // Ctrl+A, Alt+arrows) only applies when that screen is active and the
@@ -2985,7 +3425,17 @@ document.addEventListener('DOMContentLoaded', async () => {
   restoreSidebarState();
   initSearch();
   initToolbarNarrowMode();
+  // Tab strip: wheel-to-scrollLeft, the overflow hint, and the tablist's own
+  // keyboard model (pass 2 #156/#158). The seed tab is already in the DOM, so
+  // this also has to run after seedInitialTab().
+  initTabbarScroll();
   checkBackend();
+  // The status pill is the reconnect affordance (role="button" in the
+  // markup): its click reaches the delegated switch, but a <span> never
+  // activates on a key press by itself.
+  document.getElementById('status-backend')?.addEventListener('keydown', e => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); refreshBackendConnection(); }
+  });
   const _backendPollId = setInterval(checkBackend, 30_000);
   window.addEventListener('beforeunload', () => clearInterval(_backendPollId), { once: true });
 
@@ -3014,6 +3464,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Properties panel backdrop click closes
   document.getElementById('properties-modal-scrim')?.addEventListener('click', e => {
     if (e.target === document.getElementById('properties-modal-scrim')) closeProperties();
+  });
+
+  // Search "More filters" backdrop click closes (pass 2 #92)
+  document.getElementById('search-filters-scrim')?.addEventListener('click', e => {
+    if (e.target === document.getElementById('search-filters-scrim')) closeMoreFilters();
   });
 
   // Ask File+ popout (Task 15) has no scrim — it's a lightweight anchored
@@ -3081,27 +3536,43 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Restore persisted settings (theme, density, accent, font scale)
   restoreSettings();
 
-  // Load the config cache, then everything that reads from it — Downloads'
-  // real path and the show-hidden default — followed by the sidebar's live
-  // drives/pins. Sequenced (not Promise.all'd) per the plan's init order;
-  // each step degrades to a harmless no-op on backend failure.
-  await loadConfig();
-  applySettingsFromConfig();
-  // Before the first listing renders: iconFor() decides the special folder
-  // icons (Desktop, Downloads, …) by matching a path against this map, and
-  // falls back to guessing from the folder's name until it has loaded.
-  await fpLoadKnownFolders();
-  await loadDrives();
-  await loadPins();
-  await loadSidebarTags();
-  loadQuickAccess();
-  await checkCrashRecovery();
-
   // Always start on Home — the previous "restore last active screen"
   // behaviour landed users on whatever they last visited (often Browser),
   // which was disorienting on cold start. Tabs preserve their own state
   // through `activateTab()`; this only sets the initial paint.
+  //
+  // Painted BEFORE the backend chain below, not after it: the click
+  // dispatcher is live from parse time, so a user who clicks a drive or
+  // Quick Access item while those awaits are still running used to be yanked
+  // back to Home the moment they finished. Home also shows its own empty
+  // states immediately this way instead of staying literally blank until the
+  // last await lands.
   switchScreen('home');
+
+  // Load the config cache, then everything that reads from it — Downloads'
+  // real path and the show-hidden default — followed by the sidebar's live
+  // drives/pins. loadConfig/fpLoadKnownFolders stay ordered (the settings
+  // apply and the icon map depend on them); the three independent sidebar
+  // loaders run together. Each step degrades to a harmless no-op on backend
+  // failure, and every request is bounded by apiTimeout() so a backend that
+  // has bound its port but not finished starting can't stall init forever.
+  try {
+    await loadConfig();
+    applySettingsFromConfig();
+    restoreSettingsPane();
+    // Before the first listing renders: iconFor() decides the special folder
+    // icons (Desktop, Downloads, …) by matching a path against this map, and
+    // falls back to guessing from the folder's name until it has loaded.
+    await fpLoadKnownFolders();
+    await Promise.allSettled([loadDrives(), loadPins(), loadSidebarTags()]);
+    loadQuickAccess();
+    await checkCrashRecovery();
+  } catch (err) {
+    // Nothing above is supposed to reject (each loader swallows its own
+    // failure), but an unhandled one here would silently abort the rest of
+    // init with no trace at all.
+    console.warn('[fp-init] startup data load failed:', err);
+  }
 
   // ── A.17 Edge case INTEGRATION stubs ──────────────────────────────────────
   // #2  External folder missing on navigation → show fp-error-banner "This folder no longer exists"
@@ -3127,8 +3598,14 @@ document.addEventListener('DOMContentLoaded', async () => {
  */
 async function checkCrashRecovery() {
   let rows;
-  try { rows = await API.get('/operations/pending'); } catch (_) { return; }
+  try { rows = await API.get('/operations/pending', null, apiTimeout()); } catch (_) { return; }
   if (!rows || !rows.length) return;
   const body = rows.map(r => `${r.op_type}: ${r.source_path || '—'} → ${r.dest_path || '—'} (${r.resolution || 'unresolved'})`).join('\n');
   openModal('warn', { title: 'Recovered operations', body, confirmLabel: 'OK' });
+  // The report is one-shot: the backend holds its startup reconciliation
+  // result in memory for the whole of its own lifetime, so without this ack a
+  // renderer reload (Ctrl+R) or an Electron relaunch against the same backend
+  // would re-open this exact modal on every start until the backend itself
+  // was restarted.
+  try { await API.post('/operations/pending/ack', {}, apiTimeout()); } catch (_) { /* shown either way */ }
 }

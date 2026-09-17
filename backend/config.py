@@ -6,15 +6,23 @@ path_guard(path, mode) is the single gate for filesystem access:
           roots are never writable, and the FilePlus app directory is never
           writable except the sandbox inside it.
 
-Write-mode containment order (see path_guard): (1) any SYSTEM_WRITE_ROOTS entry
-wins unconditionally -> ProtectedPathError; (2) the sandbox is allowed; (3) any
-other PROTECTED_WRITE_ROOTS entry (the app dir, or a test-injected root) ->
-ProtectedPathError; (4) WRITE_UNLOCKED -> allowed, else OutOfSandboxError.
+Write-mode containment order (see _enforce_write_containment): (1) any
+SYSTEM_WRITE_ROOTS entry wins unconditionally -> ProtectedPathError; (2) the
+sandbox is allowed; (3) any other PROTECTED_WRITE_ROOTS entry (the app dir, or
+a test-injected root) -> ProtectedPathError; (4) WRITE_UNLOCKED -> allowed,
+else OutOfSandboxError.
+
+path_guard always returns the *resolved* path, which follows junctions and
+symlinks. Callers that are about to mutate the path itself (rename/move/trash)
+use guard_operand instead: same containment decisions on the resolved path,
+but the operand returned is the link's own spelling when the input is a
+reparse point, so the link is what moves -- never its target.
 """
 from dotenv import load_dotenv
 import ipaddress
 import os
 import re
+import secrets
 import socket
 import threading
 from pathlib import Path
@@ -50,8 +58,12 @@ FILEPLUS_EVERYTHING_PATH = Path(os.getenv("FILEPLUS_EVERYTHING_PATH", r"C:\Every
 FILEPLUS_PORT = int(os.getenv("FILEPLUS_PORT", "9876"))
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-# When set, every route except /health requires header X-FilePlus-Token to match.
+# Every route except /health (and CORS preflight) requires header
+# X-FilePlus-Token. When FILEPLUS_API_TOKEN is unset the backend mints one at
+# startup (see ensure_api_token) and persists it in FILEPLUS_TOKEN_FILE, which
+# frontend/main.js reads as its last fallback -- so auth is never off.
 FILEPLUS_API_TOKEN = os.getenv("FILEPLUS_API_TOKEN", "")
+FILEPLUS_TOKEN_FILE = Path(os.getenv("FILEPLUS_TOKEN_FILE", str(FILEPLUS_APP_DIR / ".fileplus-token")))
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.1:8b")
 
@@ -63,6 +75,60 @@ MAX_BATCH_SIZE = int(os.getenv("MAX_BATCH_SIZE", "100"))
 
 TRASH_DIRNAME = ".FilePlusTrash"
 LISTING_CAP = 10_000
+
+# GetFileAttributes bit for a junction/symlink (winnt.h FILE_ATTRIBUTE_REPARSE_POINT).
+FILE_ATTRIBUTE_REPARSE_POINT = 0x400
+
+
+def ensure_api_token() -> str:
+    """Return the effective API token, minting and persisting one when unset.
+
+    FILEPLUS_API_TOKEN from the environment/.env always wins (that is how
+    scripts/verify.ps1 and a packaged launcher pin a shared value). Otherwise
+    the token is read from FILEPLUS_TOKEN_FILE, or freshly minted with
+    secrets.token_hex(32) and written there with owner-only permissions
+    (0o600 via os.open; on Windows the file also inherits the user profile's
+    ACL). It is reused across restarts on purpose: frontend/main.js resolves
+    the token as env -> .env -> this file, and a token that changed on every
+    backend restart would leave an already-running renderer holding a stale
+    one.
+
+    Called once from the API's lifespan startup, never at import time -- so
+    importing backend.config never writes to disk.
+    """
+    if FILEPLUS_API_TOKEN:
+        return FILEPLUS_API_TOKEN
+    try:
+        existing = FILEPLUS_TOKEN_FILE.read_text(encoding="utf-8").strip()
+    except OSError:
+        existing = ""
+    if existing:
+        return existing
+    token = secrets.token_hex(32)
+    try:
+        FILEPLUS_TOKEN_FILE.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(str(FILEPLUS_TOKEN_FILE), os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(token + "\n")
+    except OSError:
+        # A token that can't be persisted still protects this process; the
+        # renderer then has to get it from the environment instead.
+        pass
+    return token
+
+
+def is_reparse_point(path: Path | str) -> bool:
+    """True when *path* is itself a junction or symlink (never followed).
+
+    os.lstat does not follow the final component, so this answers for the
+    link, not its target. Anything that can't be stat'ed (gone, denied, or a
+    platform without st_file_attributes) is reported as not a reparse point.
+    """
+    try:
+        st = os.lstat(str(path))
+    except (OSError, ValueError):
+        return False
+    return bool(getattr(st, "st_file_attributes", 0) & FILE_ATTRIBUTE_REPARSE_POINT)
 
 
 def _env_path(name: str, default: str) -> Path:
@@ -297,25 +363,13 @@ def _strip_resolved_extended_length_prefix(s: str) -> Path:
     return Path(s)
 
 
-def _canonicalize(path: Path | str) -> Path:
-    r"""Resolve *path* and reject spellings that would defeat containment checks.
-
-    Win32 accepts (and silently normalises away) an extended-length \\?\
-    prefix, a drive-relative spelling, and path components with a trailing
-    space or dot -- any of which could make a path that is really inside a
-    protected or sandboxed location look like it isn't, or vice versa.
-    Path.resolve() absolutises a drive-relative or relative spelling before
-    it can be rejected, so the absolute-input check below runs on the raw
-    *path* first, ahead of any resolving.
-
-    Everything else -- the \\?\ prefix strip, the loopback admin-share
-    mapping, and the trailing space/dot check -- also runs on the raw string
-    before any resolving, for the same reason: Path.resolve() on a UNC path
-    opens an SMB session, which can hang for ~20s against an unroutable host.
-    A loopback admin share (this machine, reached via \\localhost\C$\... or
-    similar) is mapped to its local drive form first so only that local path
-    is ever resolved; a genuine non-loopback UNC path still resolves here
-    exactly as before.
+def _sanitize_input(path: Path | str) -> str:
+    r"""Everything _canonicalize does *before* resolving: reject a
+    non-absolute spelling, strip an extended-length prefix, map a loopback
+    admin share to its local drive form, and refuse a component with a
+    trailing space or dot. Split out so the lexical (unresolved) spelling of
+    an input can be derived through exactly the same validation as the
+    resolved one (see lexical_path / guard_operand).
     """
     p = Path(path)
     s = str(p)
@@ -337,6 +391,40 @@ def _canonicalize(path: Path | str) -> Path:
                 f"that spelling but normalises it away, which would defeat containment "
                 f"checks: {s}"
             )
+    return s
+
+
+def lexical_path(path: Path | str) -> Path:
+    """The input's own absolute spelling, normalised but never resolved.
+
+    Same validation as _canonicalize (via _sanitize_input) and the same
+    '..'/separator collapsing, but no symlink/junction following -- so a
+    junction stays the junction rather than becoming its target.
+    """
+    return Path(os.path.normpath(_sanitize_input(path)))
+
+
+def _canonicalize(path: Path | str) -> Path:
+    r"""Resolve *path* and reject spellings that would defeat containment checks.
+
+    Win32 accepts (and silently normalises away) an extended-length \\?\
+    prefix, a drive-relative spelling, and path components with a trailing
+    space or dot -- any of which could make a path that is really inside a
+    protected or sandboxed location look like it isn't, or vice versa.
+    Path.resolve() absolutises a drive-relative or relative spelling before
+    it can be rejected, so the absolute-input check below runs on the raw
+    *path* first, ahead of any resolving.
+
+    Everything else -- the \\?\ prefix strip, the loopback admin-share
+    mapping, and the trailing space/dot check -- also runs on the raw string
+    before any resolving, for the same reason: Path.resolve() on a UNC path
+    opens an SMB session, which can hang for ~20s against an unroutable host.
+    A loopback admin share (this machine, reached via \\localhost\C$\... or
+    similar) is mapped to its local drive form first so only that local path
+    is ever resolved; a genuine non-loopback UNC path still resolves here
+    exactly as before.
+    """
+    s = _sanitize_input(path)
 
     resolved = _strip_resolved_extended_length_prefix(str(Path(s).resolve()))
     if not (resolved.drive and resolved.root):
@@ -375,18 +463,18 @@ def is_protected_read(path: Path) -> bool:
     return any(is_under(resolved, root) for root in PROTECTED_WRITE_ROOTS)
 
 
-def path_guard(path: Path | str, mode: str = "read") -> Path:
-    """Return the resolved path or raise. See module docstring."""
-    resolved = _canonicalize(path)
-    if mode == "read":
-        return resolved
-    if mode != "write":
-        raise ValueError(f"path_guard mode must be 'read' or 'write', got {mode!r}")
+def _enforce_write_containment(resolved: Path) -> None:
+    """Raise unless *resolved* is writable. See the module docstring's order.
+
+    Split out of path_guard so guard_operand can apply the exact same
+    containment rules to a second spelling of the same path (the link's own,
+    unresolved one).
+    """
     for root in SYSTEM_WRITE_ROOTS:
         if is_under(resolved, root):
             raise ProtectedPathError(f"'{resolved}' is inside the protected Windows system location '{root}'; FilePlus never writes there.")
     if is_under(resolved, FILEPLUS_SANDBOX_PATH):
-        return resolved  # the sandbox is always writable, even inside the app dir
+        return  # the sandbox is always writable, even inside the app dir
     for root in PROTECTED_WRITE_ROOTS:
         if is_under(resolved, root):
             raise ProtectedPathError(f"'{resolved}' is inside the protected location '{root}'; FilePlus never writes there.")
@@ -394,4 +482,40 @@ def path_guard(path: Path | str, mode: str = "read") -> Path:
         raise OutOfSandboxError(
             f"Writes are locked to the sandbox '{FILEPLUS_SANDBOX_PATH}' (WRITE_UNLOCKED=false); refused '{resolved}'."
         )
+
+
+def path_guard(path: Path | str, mode: str = "read") -> Path:
+    """Return the resolved path or raise. See module docstring."""
+    resolved = _canonicalize(path)
+    if mode == "read":
+        return resolved
+    if mode != "write":
+        raise ValueError(f"path_guard mode must be 'read' or 'write', got {mode!r}")
+    _enforce_write_containment(resolved)
     return resolved
+
+
+def guard_operand(path: Path | str, mode: str = "write") -> Path:
+    r"""Guard *path* and return the path a filesystem call should act *on*.
+
+    Containment and protection decisions are always made on the fully
+    resolved path (path_guard), so a junction pointing at C:\Windows is
+    refused exactly as C:\Windows itself would be. The operand handed back,
+    however, is the input's own lexical spelling whenever that input is a
+    reparse point -- because the user asked to delete/move/rename the link
+    they can see, not the directory it happens to point at. The link's own
+    location must pass the same write containment check, so a junction
+    outside the sandbox can't be renamed just because its target is inside.
+
+    For every ordinary path (no reparse point anywhere in it, so the lexical
+    and resolved spellings agree) this returns exactly what path_guard does.
+    """
+    resolved = path_guard(path, mode)
+    lexical = lexical_path(path)
+    if os.path.normcase(str(lexical)) == os.path.normcase(str(resolved)):
+        return resolved
+    if not is_reparse_point(lexical):
+        return resolved  # an 8.3 name, a resolved parent symlink, a UNC remap: keep the resolved form
+    if mode == "write":
+        _enforce_write_containment(lexical)
+    return lexical

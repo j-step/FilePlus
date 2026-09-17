@@ -34,9 +34,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   showItemInFolder:  (p) => ipcRenderer.send('shell-show-item', p),
   pickFolder:        (defaultPath) => ipcRenderer.invoke('dialog-pick-folder', defaultPath),
   clipboardWriteText: (text) => ipcRenderer.send('clipboard-write-text', text),
-  // Icons / thumbnails / native dialogs (Stage 2C Task 4; Tasks 6 and 13 wire renderer callers)
-  fileIcon:          (path, ext, size) => ipcRenderer.invoke('get-file-icon', path, ext, size),
-  thumbnail:         (path, size, mtime) => ipcRenderer.invoke('get-thumbnail', path, size, mtime),
+  // Icons / thumbnails / native dialogs (Stage 2C Task 4; Tasks 6 and 13 wire
+  // renderer callers; pass 2 — icon-design.md §4.3 — switches sizing from a
+  // coarse enum to physical pixels). px = device pixels (the CSS box size x
+  // devicePixelRatio), computed by icons.js. fileIcon(s) -> {url, px, exact}
+  // | null; fileIcons takes [{path, ext, px}] (<= 64) and answers in the same
+  // order. thumbnail -> {url, w, h} | null (w or h == px, the longer edge).
+  fileIcon:          (path, ext, px) => ipcRenderer.invoke('get-file-icon', path, ext, px),
+  fileIcons:         (reqs) => ipcRenderer.invoke('get-file-icons', reqs),
+  thumbnail:         (path, px, mtime) => ipcRenderer.invoke('get-thumbnail', path, px, mtime),
   showProperties:    (path) => ipcRenderer.invoke('show-properties', path),
   openWithDialog:    (path) => ipcRenderer.invoke('open-with-dialog', path),
 });

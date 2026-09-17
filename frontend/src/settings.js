@@ -12,7 +12,10 @@
 // `config['key'] || fallback` so a missing/empty cache degrades gracefully.
 async function loadConfig() {
   try {
-    window.__fpConfig = await API.get('/config');
+    // Bounded: uvicorn binds the port before the FastAPI lifespan finishes,
+    // so an unbounded GET /config can sit connected-but-unanswered for the
+    // whole of a slow startup and stall everything init awaits after it.
+    window.__fpConfig = await API.get('/config', null, apiTimeout());
   } catch (err) {
     window.__fpConfig = {};
   }
@@ -94,6 +97,15 @@ function applySettingsFromConfig() {
   // read back never fires a redundant POST /config on startup.
   const inspectorOpen = cfg['ui.inspector_open'] !== false;
   if (typeof setInspectorOpen === 'function') setInspectorOpen(inspectorOpen, { persist: false });
+
+  // Panel width: whatever the resizer or the Personalization slider last
+  // saved (both go through applyInspectorWidth, which clamps to the one
+  // shared bound and keeps the slider + its px label in step — pass 2 #83).
+  // Unset means the stylesheet's own default, which the slider's static
+  // value/label already state.
+  if (typeof applyInspectorWidth === 'function' && cfg['ui.inspector_width'] != null) {
+    applyInspectorWidth(cfg['ui.inspector_width']);
+  }
 
   // Default true (matches the Personalization checkbox's static markup).
   const showExtensions = cfg['ui.show_extensions'] !== false;
@@ -195,6 +207,9 @@ function refreshIconSurfaces() {
   // 404 and blank the panel that is showing something perfectly valid.
   const selected = [...browserState.selection];
   if (selected.length === 1 && entryForPath(selected[0])) showInspectorFor(selected[0]);
+  // An open Properties panel paints its header icon once, on open — repaint
+  // it the same way a row would (pass 2 #42).
+  if (typeof propertiesRefreshIcon === 'function') propertiesRefreshIcon();
 }
 
 /** Updates the Data pane's read-only "Writes" line from the last /health
@@ -229,29 +244,63 @@ function formatIndexRunTime(value) {
   return d.toLocaleDateString([], { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
+// POST /index returns the moment the background scan STARTS, so a single
+// read after it renders "Indexing…" with every button disabled and no way
+// back: nothing re-read the status for the rest of the session (pass 2 #76).
+// While a scan is running and the pane is actually on screen, the repaint
+// below schedules the next one; leaving the pane (or an idle status) stops it.
+let _indexPollTimer = null;
+const INDEX_POLL_MS = 1000;
+
+function stopIndexPolling() {
+  if (_indexPollTimer) { clearTimeout(_indexPollTimer); _indexPollTimer = null; }
+}
+
+/** True only while Settings › Scan & Index is the visible pane — offsetParent
+ * is null for anything inside a display:none ancestor (the pane itself, the
+ * Settings screen, or a background tab's screen). */
+function scanIndexPaneVisible() {
+  const pane = document.querySelector('.settings-pane[data-pane="scan-index"]');
+  return !!(pane && pane.offsetParent !== null);
+}
+
 /** Fetches GET /index/status and repaints #settings-index-status. Called when
- * the pane is opened and after every mutation it offers. */
+ * the pane is opened, after every mutation it offers, and by its own poll
+ * while a scan is running. */
 async function loadIndexStatus() {
   const host = document.getElementById('settings-index-status');
   const runningEl = document.getElementById('settings-index-running');
+  const addBtn = document.querySelector('[data-action="settings-index-add"]');
   if (!host) return;
+  stopIndexPolling();
   let status;
   try {
     status = await API.get('/index/status');
   } catch (err) {
     host.innerHTML = `<p class="settings-row__desc">Couldn’t read the index: ${escapeHtml(formatApiError(err))}</p>`;
+    // A status we cannot read is not a status that says "running": leaving
+    // the badge up and the one recovering control disabled wedged the pane
+    // shut while it reported that it could not read the index (pass 2 #84).
+    if (runningEl) runningEl.hidden = true;
+    if (addBtn) addBtn.disabled = false;
     return;
   }
   const running = !!status.running;
   if (runningEl) runningEl.hidden = !running;
   const roots = status.roots || [];
+  // A background scan that raised leaves no index_roots row, so without this
+  // line the pane simply repaints with the root absent and says nothing —
+  // "it failed" and "it found nothing" looked identical.
+  const failure = (!running && status.error)
+    ? `<p class="settings-row__desc">Last index failed: ${escapeHtml(String(status.error))}</p>`
+    : '';
   if (!roots.length) {
-    host.innerHTML = `<p class="settings-row__desc">Nothing is indexed yet. Index a folder to search it from “This PC”.</p>`;
+    host.innerHTML = `${failure}<p class="settings-row__desc">Nothing is indexed yet. Index a folder to search it from “This PC”.</p>`;
   } else {
     // Two lines per root rather than four columns: the Settings pane shares
     // its width with the Inspector, and a 4-column table squeezes the path
     // (the one thing that must stay readable) down to nothing there.
-    host.innerHTML = `<div class="settings-index__table" role="list" aria-label="Indexed roots">
+    host.innerHTML = `${failure}<div class="settings-index__table" role="list" aria-label="Indexed roots">
       ${roots.map(r => `<div class="settings-index__row" role="listitem">
         <span class="settings-index__main">
           <span class="settings-index__root fp-mono" title="${escapeHtml(r.root)}">${escapeHtml(r.root)}</span>
@@ -266,8 +315,10 @@ async function loadIndexStatus() {
       </div>`).join('')}
     </div>`;
   }
-  const addBtn = document.querySelector('[data-action="settings-index-add"]');
   if (addBtn) addBtn.disabled = running;
+  if (running && scanIndexPaneVisible()) {
+    _indexPollTimer = setTimeout(loadIndexStatus, INDEX_POLL_MS);
+  }
 }
 
 /** POST /index for `path`, then repaint the table. Shared by Re-index and
@@ -302,7 +353,15 @@ function removeIndexRoot(root) {
     confirmLabel: 'Remove',
     onConfirm: () => {
       API.del('/index', { root })
-        .then(() => { showToast(`Removed ${pathBaseName(root) || root} from the index`, 'default'); loadIndexStatus(); })
+        .then((res) => {
+          // `removed` is now the real number of rows dropped (it used to be
+          // the stale-sweep's count, which was 0 whenever the files were
+          // still on disk — i.e. always).
+          const n = res && Number(res.removed);
+          const suffix = n ? ` (${n.toLocaleString()} files)` : '';
+          showToast(`Removed ${pathBaseName(root) || root} from the index${suffix}`, 'default');
+          loadIndexStatus();
+        })
         .catch(err => showToast(`Failed to remove: ${formatApiError(err)}`, 'error'));
     },
   });
@@ -312,13 +371,28 @@ function removeIndexRoot(root) {
 
 function switchSettingsPane(pane) {
   if (!pane) return;
+  // Leaving Scan & Index ends its status poll now rather than after one more
+  // request (loadIndexStatus only reschedules while the pane is visible).
+  if (pane !== 'scan-index') stopIndexPolling();
   document.querySelectorAll('.settings-nav__item').forEach(btn => {
     btn.classList.toggle('settings-nav__item--active', btn.dataset.pane === pane);
   });
   document.querySelectorAll('.settings-pane').forEach(p => {
     p.style.display = p.dataset.pane === pane ? '' : 'none';
   });
-  sessionStorage.setItem('fp-settings-pane', pane);
+  try { sessionStorage.setItem('fp-settings-pane', pane); } catch (_) { /* storage disabled */ }
+}
+
+/** Reopens the Settings screen on the pane last used in this window --
+ * the read side of switchSettingsPane()'s sessionStorage write, which had no
+ * reader at all (Settings always reverted to the statically-active
+ * Personalization pane). Ignores a stored pane the current markup no longer
+ * has, which would otherwise hide every pane. */
+function restoreSettingsPane() {
+  let pane = null;
+  try { pane = sessionStorage.getItem('fp-settings-pane'); } catch (_) { /* storage disabled */ }
+  if (!pane || !document.querySelector(`.settings-nav__item[data-pane="${pane}"]`)) return;
+  switchSettingsPane(pane);
 }
 
 function applyDensity(density) {

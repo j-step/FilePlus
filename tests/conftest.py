@@ -34,6 +34,15 @@ def sandbox(tmp_path, monkeypatch):
     # over from a verify.ps1 run) gate unrelated tests; test_api_auth.py sets
     # its own value per test via monkeypatch.
     monkeypatch.setattr(_config, "FILEPLUS_API_TOKEN", "")
+    # The API's lifespan calls ensure_api_token(), which in a real backend
+    # mints and persists a token when none is configured. Under test that
+    # would both gate every other suite's requests and write a token file
+    # into the repo, so it is stubbed to hand back whatever the test has set
+    # FILEPLUS_API_TOKEN to (""), and the token file is pointed at tmp_path.
+    # tests/test_api_auth.py restores the real function where it is the
+    # subject of the test.
+    monkeypatch.setattr(_config, "FILEPLUS_TOKEN_FILE", tmp_path / ".fileplus-token")
+    monkeypatch.setattr(_config, "ensure_api_token", lambda: _config.FILEPLUS_API_TOKEN)
     return sandbox_dir
 
 

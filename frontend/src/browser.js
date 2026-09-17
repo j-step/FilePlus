@@ -74,6 +74,12 @@ const browserState = {
   // root) — whatever the load's outcome. Used by the error banner's "Retry"
   // action so it can re-attempt the exact same load that just failed.
   lastAttemptedPath: null,
+  // Set by refreshDirectory() when it is called from off the Browser screen
+  // (the Settings show-hidden checkbox) and it therefore declines to reload:
+  // whatever is sitting in #list-scroll no longer matches the settings it was
+  // fetched with, so switchScreen()'s reveal branch re-fetches instead of
+  // revealing it. Cleared by every completed loadDirectory().
+  listingStale: false,
   // Monotonic counter, bumped by every loadDirectory() call before its
   // fetch — lets a call whose fetch resolves late detect it's been
   // superseded (by a tab switch OR a newer navigation in the same tab) and
@@ -138,7 +144,14 @@ function setListScale(v, { persist = true } = {}) {
   const scale = LIST_SCALE_STEPS.includes(v) ? v : 1;
   browserState.listScale = scale;
   const listScroll = document.getElementById('list-scroll');
-  if (listScroll) listScroll.style.setProperty('--list-scale', String(scale));
+  if (listScroll) {
+    listScroll.style.setProperty('--list-scale', String(scale));
+    // Row/tile icons and thumbnails are sized in physical px from the CSS
+    // box (icon-design.md §2), so a --list-scale change makes the old
+    // bitmap the wrong size until it re-resolves. A timer, not rAF: an
+    // occluded window stops painting (icons.js:_fpQueueScan does the same).
+    if (typeof fpInvalidateLazyIcons === 'function') setTimeout(() => fpInvalidateLazyIcons(listScroll), 0);
+  }
   if (persist) saveSetting('ui.list_scale', scale);
 }
 
@@ -245,6 +258,23 @@ function initMarqueeSelection() {
   const marqueeRect = document.getElementById('marquee-rect');
   if (!listScroll || !marqueeRect) return;
   let dragging = false, startX = 0, startY = 0, ctrlDrag = false;
+  // #marquee-rect is position:absolute, so its left/top are measured from its
+  // containing block (#screen-browser — .content/.list-pane are static), NOT
+  // from the viewport. Pointer coordinates are viewport-space, so they have to
+  // be translated into that box before they are written as styles: writing
+  // clientX/clientY straight in painted the band a sidebar-width right and a
+  // chrome-height down from the pointer, where .content's overflow:hidden
+  // usually clipped it away entirely (pass 2 #48). Hit-testing below stays in
+  // viewport space, which is where getBoundingClientRect() already answers.
+  let originX = 0, originY = 0;
+  const captureMarqueeOrigin = () => {
+    // offsetParent is null while the element is display:none, so this is only
+    // ever called once the band has been shown.
+    const host = marqueeRect.offsetParent || document.getElementById('screen-browser');
+    const r = host && host.getBoundingClientRect ? host.getBoundingClientRect() : null;
+    originX = r ? r.left : 0;
+    originY = r ? r.top : 0;
+  };
 
   listScroll.addEventListener('mousedown', e => {
     if (e.target.closest('.fp-row, .fp-row__icon, .fp-row__name')) return;
@@ -253,8 +283,9 @@ function initMarqueeSelection() {
     ctrlDrag = e.ctrlKey;
     startX = e.clientX; startY = e.clientY;
     marqueeRect.style.display = 'block';
-    marqueeRect.style.left = startX + 'px';
-    marqueeRect.style.top  = startY + 'px';
+    captureMarqueeOrigin();
+    marqueeRect.style.left = (startX - originX) + 'px';
+    marqueeRect.style.top  = (startY - originY) + 'px';
     marqueeRect.style.width = '0px';
     marqueeRect.style.height = '0px';
     e.preventDefault();
@@ -266,8 +297,8 @@ function initMarqueeSelection() {
     const y = Math.min(e.clientY, startY);
     const w = Math.abs(e.clientX - startX);
     const h = Math.abs(e.clientY - startY);
-    marqueeRect.style.left   = x + 'px';
-    marqueeRect.style.top    = y + 'px';
+    marqueeRect.style.left   = (x - originX) + 'px';
+    marqueeRect.style.top    = (y - originY) + 'px';
     marqueeRect.style.width  = w + 'px';
     marqueeRect.style.height = h + 'px';
     // Highlight intersecting rows — Ctrl+drag also keeps the pre-existing
@@ -331,17 +362,32 @@ function formatSize(bytes) {
   return (bytes / 1073741824).toFixed(2) + ' GB';
 }
 
+// Module-level formatters and a once-per-second "now": renderDirectory calls
+// formatModified once per entry with no virtualisation (up to LISTING_CAP =
+// 10,000 rows), and building an Intl.DateTimeFormat plus two Date objects and
+// two toDateString() calls per row cost ~34 µs each — a third of a second per
+// render of a large folder, paid again on every sort/view/extension toggle
+// (pass 2 #37). Locale is the user's default ([]), as before.
+const _FMT_TIME = new Intl.DateTimeFormat([], { hour: '2-digit', minute: '2-digit' });
+const _FMT_WEEKDAY = new Intl.DateTimeFormat([], { weekday: 'short' });
+const _FMT_DATE = new Intl.DateTimeFormat([], { month: 'short', day: 'numeric', year: 'numeric' });
+let _nowCache = { at: 0, now: null };
+function _nowForFormat() {
+  const t = Date.now();
+  if (!_nowCache.now || t - _nowCache.at > 1000) _nowCache = { at: t, now: new Date(t) };
+  return _nowCache.now;
+}
 function formatModified(isoStr) {
   if (!isoStr) return '—';
   const d = new Date(isoStr);
   if (isNaN(d)) return isoStr;
-  const now = new Date();
+  const now = _nowForFormat();
   const diff = now - d;
-  const sameDay = d.toDateString() === now.toDateString();
-  if (sameDay) return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const sameDay = d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
+  if (sameDay) return _FMT_TIME.format(d);
   if (diff < 86400000 * 2) return 'Yesterday';
-  if (diff < 86400000 * 7) return d.toLocaleDateString([], { weekday: 'short' });
-  return d.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
+  if (diff < 86400000 * 7) return _FMT_WEEKDAY.format(d);
+  return _FMT_DATE.format(d);
 }
 
 function escapeHtml(str) {
@@ -377,7 +423,14 @@ function entryPath(entry) {
 function parentOfPath(p) {
   const norm = String(p || '').replace(/[\\\/]+$/, '');
   const idx = Math.max(norm.lastIndexOf('\\'), norm.lastIndexOf('/'));
-  return idx > 0 ? norm.slice(0, idx) : norm;
+  if (idx <= 0) return norm;
+  const parent = norm.slice(0, idx);
+  // A file sitting directly in a drive root has "C:" as its parent — which is
+  // not a folder (Windows reads a bare drive spec as "the current directory on
+  // C:"), and renders as ":C" in the RTL-trimmed location subline. Keep the
+  // separator: "C:\" is both the real root and an unambiguously LTR string
+  // (pass 2 #166).
+  return /^[A-Za-z]:$/.test(parent) ? `${parent}\\` : parent;
 }
 
 /**
@@ -442,7 +495,16 @@ async function loadDirectory(absPath, opts = {}) {
   // never loaded a folder" (path still null, createTab()'s default) apart
   // from "this tab is sitting at the sandbox root" (a real resolved path).
   const tab = activeTab();
-  if (tab) { tab.path = data.path; tab.screen = 'browser'; }
+  if (tab) {
+    tab.path = data.path;
+    tab.screen = 'browser';
+    // Remember that this tab was opened AT the root entry point rather than at
+    // a folder of that name: the resolved path is a real directory, so without
+    // this the "This PC" label would be recomputed as its basename the first
+    // time the tab is re-activated or duplicated (pass 2 #16).
+    tab.isRootTarget = !absPath;
+  }
+  browserState.listingStale = false;
   // onNavigated(null) (the sandbox-root request) couldn't build breadcrumb
   // crumbs from nothing — finalize them now that the real path is known.
   if (!absPath) updateBreadcrumb(data.path);
@@ -467,6 +529,10 @@ async function loadDirectory(absPath, opts = {}) {
 
   renderDirectory(data);
   if (restore && restore.view) {
+    // --list-scale is a single global custom property, so a restore has to
+    // re-assert THIS tab's scale too — otherwise the tab inherits whatever
+    // scale the outgoing tab (or a Ctrl+wheel zoom in it) last set (pass 2 #19).
+    if (restore.listScale) setListScale(restore.listScale, { persist: false });
     setViewMode(restore.view);
   } else if (decidedView) {
     setListScale(decidedView.scale, { persist: false });
@@ -495,22 +561,51 @@ async function loadDirectory(absPath, opts = {}) {
  * performed on a result row needs so the vanished/renamed row disappears from
  * the results the same way it would from a folder listing. */
 function refreshDirectory() {
+  // Not every caller is on the Browser screen: Settings › Personalization's
+  // "View hidden files" checkbox and the View menu both call this from a
+  // screen of their own. Reloading from there would repaint a hidden
+  // #list-scroll AND let onNavigated() turn the Settings tab into a folder tab
+  // (label, icon, sidebar highlight and all), losing the Settings tab for
+  // good. Mark the listing stale instead — switchScreen()'s reveal branch and
+  // activateTab() both re-fetch before it is next seen (pass 2 #155).
+  if (!browserScreenActive()) {
+    browserState.listingStale = true;
+    return Promise.resolve();
+  }
   if (browserState.mode === 'search') {
     const searchBtn = document.getElementById('btn-refresh');
+    const searchList = document.getElementById('list-scroll');
+    // renderSearchResults() scrolls a fresh result set to the top; a re-run of
+    // the SAME search (F5, or the refresh every fileops.run() ends with) is not
+    // a fresh set, and dropping the viewport left the row the user just acted
+    // on hundreds of rows off-screen while staying selected (pass 2 #94).
+    // Same reqTabId guard the browse branch below carries.
+    const searchScrollTop = searchList ? searchList.scrollTop : 0;
+    const searchTabId = tabs.activeId;
     searchBtn?.classList.add('is-spinning');
     const rerun = typeof runSearch === 'function'
       ? Promise.resolve(runSearch({ pushHistory: false, preserveSelection: true }))
       : Promise.resolve();
-    return rerun.finally(() => searchBtn?.classList.remove('is-spinning'));
+    return rerun.finally(() => {
+      if (searchList && tabs.activeId === searchTabId && browserState.mode === 'search') {
+        searchList.scrollTop = searchScrollTop;
+      }
+      searchBtn?.classList.remove('is-spinning');
+    });
   }
   if (!browserState.path) return;
   const btn = document.getElementById('btn-refresh');
   const listScroll = document.getElementById('list-scroll');
   const scrollTop = listScroll ? listScroll.scrollTop : 0;
+  // #list-scroll is DOM shared by every tab: if the user switches tabs while
+  // this refresh is in flight, loadDirectory() bails on its own reqTabId guard
+  // but this finally() would still stamp THIS tab's offset onto the tab that
+  // is now showing (pass 2 #20).
+  const reqTabId = tabs.activeId;
   btn?.classList.add('is-spinning');
   const p = loadDirectory(browserState.path, { addToHistory: false, preserveSelection: true });
   return p.finally(() => {
-    if (listScroll) listScroll.scrollTop = scrollTop;
+    if (listScroll && tabs.activeId === reqTabId) listScroll.scrollTop = scrollTop;
     btn?.classList.remove('is-spinning');
   });
 }
@@ -552,6 +647,11 @@ function retryLoad() {
 }
 
 function pushHistory(path) {
+  // A navigation that lands on the folder already showing changes nothing —
+  // decide that BEFORE the truncation below, or re-opening the current folder
+  // (its Quick Access row, its own breadcrumb crumb) after a Back throws the
+  // forward stack away for a navigation that went nowhere (pass 2 #17).
+  if (nav.history[nav.index] === path) { refreshNavButtons(); return; }
   // If we navigated forward from a non-tail position, drop the forward
   // stack — truncate nav.history IN PLACE (never reassign it to a new
   // array) so it stays the same object activateTab() pointed the active
@@ -559,20 +659,24 @@ function pushHistory(path) {
   if (nav.index < nav.history.length - 1) {
     nav.history.length = nav.index + 1;
   }
-  if (nav.history[nav.index] !== path) {
-    nav.history.push(path);
-    nav.index = nav.history.length - 1;
-  }
+  nav.history.push(path);
+  nav.index = nav.history.length - 1;
   refreshNavButtons();
 }
 
 function navBack() {
+  // Same Explorer rule navUp() follows: the first Back out of a results
+  // listing leaves the search and returns to the folder that was searched —
+  // searching never pushed a history entry of its own, so without this Back
+  // silently skips PAST the searched folder to the previous one (pass 2 #154).
+  if (browserState.mode === 'search') { exitSearchResults(); return; }
   if (nav.index <= 0) return;
   nav.index -= 1;
   loadDirectory(nav.history[nav.index], { addToHistory: false });
 }
 
 function navForward() {
+  if (browserState.mode === 'search') { exitSearchResults(); return; }
   if (nav.index >= nav.history.length - 1) return;
   nav.index += 1;
   loadDirectory(nav.history[nav.index], { addToHistory: false });
@@ -588,16 +692,35 @@ function navUp() {
   loadDirectory(browserState.parent);
 }
 
+/**
+ * Is the Browser screen the one actually on display?
+ *
+ * The toolbar (nav group, breadcrumb, search bar) lives OUTSIDE `.screen`
+ * (index.html) and Settings' own controls live on another screen entirely, so
+ * both can reach browser.js while the user is looking at Home/Settings/any
+ * stub screen. Acting on the listing from there paints into a hidden
+ * #list-scroll and lets onNavigated() silently rewrite the active tab into a
+ * folder tab (pass 2 #11 / #155) — every such entry point is gated on this.
+ */
+function browserScreenActive() {
+  const el = document.getElementById('screen-browser');
+  return !!(el && el.classList.contains('active'));
+}
+
 function refreshNavButtons() {
   const back = document.querySelector('[data-action="nav-back"]');
   const fwd  = document.querySelector('[data-action="nav-forward"]');
   const up   = document.querySelector('[data-action="nav-up"]');
-  if (back) back.disabled = nav.index <= 0;
-  if (fwd)  fwd.disabled  = nav.index >= nav.history.length - 1;
+  // The toolbar is painted on every screen, so off the Browser screen the
+  // whole nav group is dead rather than acting on a listing the user cannot
+  // see (pass 2 #11/#12).
+  const onBrowser = browserScreenActive();
+  if (back) back.disabled = !onBrowser || nav.index <= 0;
+  if (fwd)  fwd.disabled  = !onBrowser || nav.index >= nav.history.length - 1;
   // In search mode Up always has somewhere to go (back to the searched
   // folder), regardless of whether that folder has a parent of its own.
-  if (up)   up.disabled   = browserState.mode !== 'search'
-    && (!browserState.path || browserState.isRoot || !browserState.parent);
+  if (up)   up.disabled   = !onBrowser || (browserState.mode !== 'search'
+    && (!browserState.path || browserState.isRoot || !browserState.parent));
 }
 
 function renderDirectory(data) {
@@ -709,7 +832,7 @@ function renderFsRow(entry, parentPath) {
     ${isSearch
       ? `<span class="fp-row__namecell">
           <span class="fp-row__name"${nameTitleAttr}>${nameHtml}</span>
-          <span class="fp-row__location" title="${escapeHtml(location)}">${escapeHtml(location)}</span>
+          <span class="fp-row__location" title="${escapeHtml(location)}"><bdi>${escapeHtml(location)}</bdi></span>
         </span>`
       : `<span class="fp-row__name"${nameTitleAttr}>${nameHtml}</span>`}
     ${starHtml}
@@ -774,9 +897,13 @@ function setSearchHeader(text) {
 function appendSearchHeaderHint(text, actionLabel, actionName) {
   const el = document.getElementById('list-search-header');
   if (!el || el.hidden) return;
-  el.insertAdjacentHTML('beforeend', `<span class="list-search-header__hint">
-      ${escapeHtml(text)} —
-      <button class="fp-btn fp-btn--ghost fp-btn--sm" data-action="${escapeHtml(actionName)}">${escapeHtml(actionLabel)}</button>
+  // The text and the button both carry ids: search.js's indexMissingDrives()
+  // rewrites them in place to report progress, because the toasts it used to
+  // rely on are gated off by default (pass 2 #87).
+  el.insertAdjacentHTML('beforeend', `<span class="list-search-header__hint" id="list-search-header-hint">
+      <span id="list-search-header-hint-text">${escapeHtml(text)}</span> —
+      <button class="fp-btn fp-btn--ghost fp-btn--sm" id="list-search-header-hint-btn"
+              data-action="${escapeHtml(actionName)}">${escapeHtml(actionLabel)}</button>
     </span>`);
 }
 
@@ -1295,7 +1422,12 @@ function initRowInteractions() {
     if (!row) return;
     const path = row.dataset.path;
     const clickMode = window.__fpConfig && window.__fpConfig['ui.click_mode'];
-    if (clickMode === 'single' && row.dataset.type === 'folder') {
+    // A MODIFIED click is always a selection gesture, in either click mode:
+    // checking click_mode first sent Ctrl+click / Shift+click on a folder row
+    // to openEntry(), which navigated away and threw the selection the user
+    // was building away with it (pass 2 #198).
+    const modified = e.ctrlKey || e.shiftKey || e.metaKey;
+    if (clickMode === 'single' && row.dataset.type === 'folder' && !modified) {
       openEntry(path);
       return;
     }
@@ -1314,17 +1446,37 @@ function initRowInteractions() {
  * handler only when the Browser screen is active and no input/textarea/
  * contenteditable has focus. F2/Delete/Ctrl+C/X/V/Z/Y belong to Task 4.
  */
+function anyScrimOpen() {
+  return [...document.querySelectorAll('.fp-scrim')].some(el => {
+    if (el.hidden) return false;
+    // Every scrim in index.html ships with style="display:none" and is shown
+    // by setting it to 'flex'; getComputedStyle is the fallback for one that
+    // is driven by a class instead.
+    return el.style.display
+      ? el.style.display !== 'none'
+      : getComputedStyle(el).display !== 'none';
+  });
+}
+
+/** True when a real (non-collapsed) text selection exists on the page — a
+ *  path dragged out in the Inspector, a breadcrumb, a status-bar figure. The
+ *  Browser's Ctrl+C/Ctrl+X must leave that to the browser's native copy
+ *  instead of swallowing it (pass 2 #50). */
+function hasTextSelection() {
+  const sel = typeof window.getSelection === 'function' ? window.getSelection() : null;
+  return !!(sel && !sel.isCollapsed && String(sel).trim().length);
+}
+
 function browserKeydown(e) {
   // Never act on Browser shortcuts while a modal or the command palette has
   // focus/visibility — e.g. Ctrl+Z while a paste-conflict modal is open must
   // not also undo the last file op behind it, and typing in the palette
   // search box must not trigger F2/Delete/etc.
-  const modalScrim = document.getElementById('modal-scrim');
-  const propertiesScrim = document.getElementById('properties-modal-scrim');
-  const paletteOpen = paletteScrim && paletteScrim.style.display !== 'none';
-  if ((modalScrim && modalScrim.style.display !== 'none')
-      || (propertiesScrim && propertiesScrim.style.display !== 'none')
-      || paletteOpen) return;
+  // Hand-listing the scrims meant every dialog added later was missed: the
+  // search More-filters dialog let Delete through to the selection behind it
+  // (pass 2 #86). Ask the DOM instead — every overlay in the app is a
+  // .fp-scrim toggled through its own inline display.
+  if (anyScrimOpen()) return;
 
   const key = e.key;
   const ctrl = e.ctrlKey || e.metaKey;
@@ -1359,11 +1511,29 @@ function browserKeydown(e) {
   if (ctrl && !e.repeat && ((key.toLowerCase() === 'y' && !e.shiftKey) || (key.toLowerCase() === 'z' && e.shiftKey))) {
     e.preventDefault(); fileops.redoLast(); return;
   }
-  if (ctrl && key.toLowerCase() === 'x') { e.preventDefault(); fileops.cutSelection(); return; }
-  if (ctrl && key.toLowerCase() === 'c') { e.preventDefault(); fileops.copySelection(); return; }
-  if (ctrl && key.toLowerCase() === 'v') { e.preventDefault(); if (browserState.path) fileops.pasteInto(browserState.path); return; }
+  // Ctrl+X / Ctrl+C only belong to the file clipboard when there IS a row
+  // selection and the user is not copying text. With nothing selected they
+  // used to preventDefault() the native copy and then overwrite a perfectly
+  // good file clipboard with an empty one (Paste silently greyed out) — so
+  // fall through to the browser instead (pass 2 #50).
+  if (ctrl && (key.toLowerCase() === 'x' || key.toLowerCase() === 'c')) {
+    if (!browserState.selection.size || hasTextSelection()) return;
+    e.preventDefault();
+    if (key.toLowerCase() === 'x') fileops.cutSelection(); else fileops.copySelection();
+    return;
+  }
+  // Ctrl+V pastes into the folder ON SCREEN. In search mode that folder is not
+  // on screen — browserState.path is still the pre-search directory — so a
+  // paste there would move/copy the clipboard into a directory the user cannot
+  // see and the re-run search would not show (pass 2 #51).
+  if (ctrl && key.toLowerCase() === 'v') {
+    e.preventDefault();
+    if (browserState.mode === 'search') { showToast('Leave search results to paste here', 'error'); return; }
+    if (browserState.path) fileops.pasteInto(browserState.path).catch(fileopsReported);
+    return;
+  }
   if (key === 'F2') { e.preventDefault(); if (canRenameSelection() && browserState.focus) startInlineRename(browserState.focus); return; }
-  if (key === 'Delete') { e.preventDefault(); fileops.trashSelection(); return; }
+  if (key === 'Delete') { e.preventDefault(); fileops.trashSelection().catch(fileopsReported); return; }
 
   switch (key) {
     case 'ArrowDown': e.preventDefault(); moveFocus(1, { shift: e.shiftKey }); break;
@@ -1378,7 +1548,7 @@ function browserKeydown(e) {
       // no-ops on an empty selection, so "nothing selected" falls out for
       // free rather than needing its own check here.
       const backspaceDeletes = !!(window.__fpConfig && window.__fpConfig['ui.backspace_deletes']);
-      if (backspaceDeletes) fileops.trashSelection();
+      if (backspaceDeletes) fileops.trashSelection().catch(fileopsReported);
       else navUp();
       break;
     }

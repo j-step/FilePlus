@@ -124,6 +124,13 @@ function searchTagChoices() {
   const tags = Array.isArray(window.__fpTags) ? window.__fpTags : [];
   return tags
     .filter(t => (t.count || 0) > 0)
+    // GET /tags answers in NAME order, so a plain slice(0, 20) offered the
+    // alphabetically-first tags while the sidebar chips the user actually
+    // clicks are the top 8 BY COUNT — a chip whose tag fell outside those 20
+    // was silently dropped by More filters' Apply (pass 2 #90). Sort the copy
+    // .filter() already made, the same way loadSidebarTags does.
+    .sort((a, b) => (b.count || 0) - (a.count || 0)
+      || String(a.name || '').localeCompare(String(b.name || '')))
     .slice(0, 20)
     .map(t => ({ value: t.name, label: `${t.name} (${t.count})` }));
 }
@@ -137,7 +144,11 @@ function searchPresetAfter(preset) {
   if (preset === 'week') {
     // ISO weeks: Monday is day 0 of the week, JS's getDay() calls Sunday 0.
     const backToMonday = (midnight.getDay() + 6) % 7;
-    return Math.floor((midnight.getTime() - backToMonday * 86400000) / 1000);
+    // Built with the Date constructor, like the month/year branches below:
+    // subtracting a fixed 86400000 ms per day lands an hour off true local
+    // midnight in any week containing a DST change (pass 2 #95).
+    const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - backToMonday);
+    return Math.floor(monday.getTime() / 1000);
   }
   if (preset === 'month') return Math.floor(new Date(now.getFullYear(), now.getMonth(), 1).getTime() / 1000);
   if (preset === 'year') return Math.floor(new Date(now.getFullYear(), 0, 1).getTime() / 1000);
@@ -253,7 +264,12 @@ function buildParams() {
   const params = { q: searchState.text.trim(), limit: SEARCH_LIMIT };
 
   if (searchState.scope !== 'pc') {
-    params.root = searchState.scope === 'current' ? (browserState.path || '') : searchState.scope;
+    // "in: current location" means THIS tab's folder. browserState is global
+    // and still holds whichever tab last listed something, so reading it
+    // directly silently scopes the search to another tab's folder (pass 2 #15).
+    const tab = typeof activeTab === 'function' ? activeTab() : null;
+    const currentRoot = (tab && tab.path) || browserState.path || '';
+    params.root = searchState.scope === 'current' ? currentRoot : searchState.scope;
   }
 
   const type = searchChipValue('type');
@@ -286,7 +302,11 @@ function buildParams() {
   const tag = searchChipValue('tag');
   if (tag) params.tag = tag;
 
-  if (searchChipValue('hidden')) params.hidden = true;
+  // The `hidden:` chip is a per-search override *on top of* the global
+  // ui.show_hidden setting GET /fs/list is always called with — without the
+  // browserState half, a hidden file the user can see in the listing was
+  // unfindable one keystroke later.
+  if (browserState.showHidden || searchChipValue('hidden')) params.hidden = true;
   if (searchChipValue('whole_word')) params.whole_word = true;
 
   return params;
@@ -322,7 +342,13 @@ function normalizeIndexResults(payload, query) {
   });
   return {
     results,
-    truncated: results.length >= SEARCH_LIMIT,
+    // GET /search reports truncation for real (it asks for one row past the
+    // limit, and knows when the whole_word pass ran against a capped scan
+    // window). The `results.length >= SEARCH_LIMIT` guess below is only the
+    // fallback for a backend that predates the field.
+    truncated: typeof payload.truncated === 'boolean'
+      ? payload.truncated
+      : results.length >= SEARCH_LIMIT,
     indexed_roots: payload.indexed_roots || [],
   };
 }
@@ -334,11 +360,17 @@ function normalizeIndexResults(payload, query) {
  * scope). */
 async function searchEnsureBrowser() {
   const browserActive = document.getElementById('screen-browser')?.classList.contains('active');
-  if (browserActive && browserState.path) return;
   const tab = typeof activeTab === 'function' ? activeTab() : null;
+  // browserState is global: on a tab that has never listed anything (or one
+  // that was on Home while another tab browsed), browserState.path is the
+  // OTHER tab's folder. Testing it instead of this tab's own record is what
+  // let a search run silently against a folder this tab never opened (pass 2
+  // #15) — compare the two and load when they disagree.
+  const stale = !browserState.path || (tab && browserState.path !== tab.path);
+  if (browserActive && !stale) return;
   if (tab) tab.screen = 'browser';
   showScreenDom('browser');
-  if (!browserState.path) await loadDirectory(tab ? tab.path : null);
+  if (stale) await loadDirectory(tab ? tab.path : null);
 }
 
 /**
@@ -394,8 +426,21 @@ async function runSearch({ pushHistory = true, preserveSelection = false } = {})
     if (err && err.name === 'AbortError') return;   // superseded by a newer query, or a tab switch
     if (searchState.inflight === ctrl) searchState.inflight = null;
     if (superseded()) return;
-    showToast(`Search failed: ${formatApiError(err)}`, 'error');
+    const reason = formatApiError(err);
+    showToast(`Search failed: ${reason}`, 'error');
     setSearchHeader('Search failed');
+    // showSearchPending() blanked #list-scroll on the way into search mode, so
+    // without a body of its own the failure left a completely empty pane —
+    // indistinguishable from "this folder is gone" and with nothing to click
+    // (pass 2 #96). Same banner a browse-mode load failure renders.
+    if (typeof showErrorBanner === 'function') {
+      showErrorBanner(`Search failed: ${reason}`, {
+        actions: [
+          { label: 'Retry', name: 'search-retry' },
+          { label: 'Clear search', name: 'search-clear' },
+        ],
+      });
+    }
     return;
   }
   if (searchState.inflight === ctrl) searchState.inflight = null;
@@ -411,7 +456,10 @@ async function runSearch({ pushHistory = true, preserveSelection = false } = {})
   if (pushHistory) pushSearchHistory();
   syncSearchToTab();
   if (usePc) {
-    await renderUnindexedDrivesHint(normalized.indexed_roots || []);
+    // superseded() travels with the hint: GET /drives can take seconds, and
+    // the header it decorates may belong to a different search (or a different
+    // tab) by the time it answers (pass 2 #93 / #162).
+    await renderUnindexedDrivesHint(normalized.indexed_roots || [], superseded);
   }
 }
 
@@ -420,13 +468,26 @@ async function runSearch({ pushHistory = true, preserveSelection = false } = {})
  * stops fetching. Its chips and text survive on the tab record and re-run on
  * re-activation (resumeSearchForTab) if no results had landed yet. */
 function abortSearch() {
+  // The queued keystroke is as much "this search still running" as the fetch
+  // is: it carries no tab binding, so a timer left armed across a tab switch
+  // re-issued the OTHER tab's query 300 ms later (pass 2 #98).
+  cancelSearchDebounce();
   if (!searchState.inflight) return;
   searchState.inflight.abort();
   searchState.inflight = null;
 }
 
+/** Drops the pending debounced runSearch(), if any. Called by every path that
+ * ends or hands off the current search: abortSearch() (tab switch, leaving
+ * search mode), clearSearch() and searchResetBar(). */
+function cancelSearchDebounce() {
+  clearTimeout(_searchDebounceTimer);
+  _searchDebounceTimer = null;
+}
+
 /** Wipes the bar and returns the Browser to the folder the tab was showing. */
 function clearSearch() {
+  cancelSearchDebounce();
   if (searchState.inflight) {
     searchState.inflight.abort();
     searchState.inflight = null;
@@ -440,6 +501,7 @@ function clearSearch() {
  * by clearSearch() (which then restores the folder listing itself) and by
  * browser.js's leaveSearchMode() (where loadDirectory is already repainting). */
 function searchResetBar() {
+  cancelSearchDebounce();
   searchState.chips = [];
   searchState.text = '';
   searchState.scope = 'current';
@@ -450,6 +512,11 @@ function searchResetBar() {
   const input = document.getElementById('search-input');
   if (input) input.value = '';
   renderSearchChips();
+  // In narrow-toolbar mode the bar is only expanded while it has something in
+  // it. Nothing else folds it back after a clear that didn't come from a blur
+  // or Escape (the breadcrumb ×, leaving search mode), which left it wedged
+  // open over the breadcrumb for the rest of the session (pass 2 #165).
+  if (input !== document.activeElement) maybeCollapseSearchBar();
 }
 
 /** Sets the bar's text without running anything — the palette's "Search files
@@ -464,9 +531,13 @@ function setSearchText(text) {
 // ── Results header extras ─────────────────────────────────────────────────────
 /** This PC scope only: name the fixed drives GET /search's `indexed_roots`
  * doesn't cover yet, with an "Index now" button that indexes them in turn. */
-async function renderUnindexedDrivesHint(indexedRoots) {
+async function renderUnindexedDrivesHint(indexedRoots, superseded = null) {
   let drives = [];
   try { drives = await API.get('/drives'); } catch (_) { return; }
+  // /drives enumerates volumes (seconds on a machine with a slow one): the
+  // header this decorates may belong to a newer search, or to another tab,
+  // by now — appendSearchHeaderHint only checks that SOME header is showing.
+  if (typeof superseded === 'function' && superseded()) return;
   const normalise = (p) => String(p || '').replace(/[\\/]+$/, '').toLowerCase();
   const indexed = (indexedRoots || []).map(normalise);
   const missing = (drives || [])
@@ -479,37 +550,103 @@ async function renderUnindexedDrivesHint(indexedRoots) {
     'Index now', 'search-index-drives');
 }
 
-/** POST /index for every drive the hint named, one at a time — the backend
- * refuses a second concurrent index with 409, so these cannot be fired off
- * in parallel. */
-async function indexMissingDrives() {
-  const drives = window.__fpUnindexedDrives || [];
-  if (!drives.length) return;
-  for (let i = 0; i < drives.length; i++) {
-    showToast(`Indexing ${drives[i]} (${i + 1} of ${drives.length})…`, 'default');
-    try {
-      await API.post('/index', { path: drives[i] });
-      await waitForIndexIdle();
-    } catch (err) {
-      showToast(`Failed to index ${drives[i]}: ${formatApiError(err)}`, 'error');
-      return;
-    }
+/** Writes the drive hint's own text (and parks its button) — the ONLY place
+ * indexing progress can be seen from the search screen. showToast is gated
+ * off by default (CLAUDE.md's notifications rule), so a multi-minute scan
+ * driven from here used to produce no observable change at all (pass 2 #87);
+ * the header hint the button lives in is not transient, so it can say so. */
+function setDriveHintState(text, { busy = false } = {}) {
+  const label = document.getElementById('list-search-header-hint-text');
+  if (label) label.textContent = text;
+  const btn = document.getElementById('list-search-header-hint-btn');
+  if (btn) {
+    btn.disabled = busy;
+    btn.setAttribute('aria-busy', busy ? 'true' : 'false');
   }
-  showToast('Indexing finished', 'default');
-  window.__fpUnindexedDrives = [];
-  if (typeof loadIndexStatus === 'function') loadIndexStatus();
 }
 
-/** Polls GET /index/status until the running scan finishes (or the cap is
- * reached) — POST /index answers 409 while one is in flight, so a sequence of
- * them has to wait between calls. */
-async function waitForIndexIdle({ tries = 600, intervalMs = 500 } = {}) {
+// True while indexMissingDrives() is walking its list — a second click would
+// POST /index into a live scan and collect the backend's 409 as if the first
+// click had failed.
+let _indexingDrives = false;
+
+/** POST /index for every drive the hint named, one at a time — the backend
+ * refuses a second concurrent index with 409, so these cannot be fired off
+ * in parallel. Progress and failure both land in the header hint. */
+async function indexMissingDrives() {
+  const drives = window.__fpUnindexedDrives || [];
+  if (!drives.length || _indexingDrives) return;
+  _indexingDrives = true;
+  const fail = (msg) => {
+    showToast(msg, 'error');
+    setDriveHintState(msg, { busy: false });
+  };
+  try {
+    for (let i = 0; i < drives.length; i++) {
+      const progress = `Indexing ${drives[i]} (${i + 1} of ${drives.length})…`;
+      setDriveHintState(progress, { busy: true });
+      showToast(progress, 'default');
+      try {
+        await API.post('/index', { path: drives[i] });
+        // The scan runs in the background, so its failure arrives as
+        // /index/status's `error`, not as a rejection here.
+        const outcome = await waitForIndexIdle();
+        if (!outcome.idle) {
+          // Never POST the next drive on a guess: the backend answers 409
+          // while a scan is live, which used to abandon every remaining drive
+          // (pass 2 #88).
+          fail(`Still indexing ${drives[i]} — ${outcome.reason === 'status-unavailable'
+            ? 'the index status is unavailable'
+            : 'stopped waiting'}. Try the rest later.`);
+          return;
+        }
+        if (outcome.status && outcome.status.error) {
+          fail(`Failed to index ${drives[i]}: ${outcome.status.error}`);
+          return;
+        }
+      } catch (err) {
+        fail(`Failed to index ${drives[i]}: ${formatApiError(err)}`);
+        return;
+      }
+    }
+    setDriveHintState('Indexing finished', { busy: true });
+    showToast('Indexing finished', 'default');
+    window.__fpUnindexedDrives = [];
+    if (typeof loadIndexStatus === 'function') loadIndexStatus();
+  } finally {
+    _indexingDrives = false;
+  }
+}
+
+/**
+ * Polls GET /index/status until the running scan finishes — POST /index
+ * answers 409 while one is in flight, so a sequence of them has to wait
+ * between calls.
+ *
+ * Returns {idle, status, reason}: `idle` is true ONLY when a non-running
+ * status was actually observed. The old version returned the same `null` for
+ * "finished", "gave up after 5 minutes" and "GET /index/status threw once",
+ * so the caller fired the next POST into a live scan and collected a 409 —
+ * the exact thing the wait exists to prevent (pass 2 #88). A real C:\ scan
+ * routinely runs longer than any fixed cap, so there is no cap by default;
+ * a run of failed status reads (a stopped backend) ends the wait instead.
+ */
+async function waitForIndexIdle({ tries = Infinity, intervalMs = 500, maxStatusErrors = 5 } = {}) {
+  let statusErrors = 0;
   for (let i = 0; i < tries; i++) {
     let status;
-    try { status = await API.get('/index/status'); } catch (_) { return; }
-    if (!status || !status.running) return;
+    try {
+      status = await API.get('/index/status');
+      statusErrors = 0;
+    } catch (_) {
+      if (++statusErrors >= maxStatusErrors) return { idle: false, status: null, reason: 'status-unavailable' };
+      await new Promise(resolve => setTimeout(resolve, intervalMs));
+      continue;
+    }
+    if (!status || !status.running) return { idle: true, status: status || null, reason: null };
     await new Promise(resolve => setTimeout(resolve, intervalMs));
   }
+  return { idle: false, status: null, reason: 'timeout' };
 }
 
 // ── History ───────────────────────────────────────────────────────────────────
@@ -548,8 +685,13 @@ function clearSearchHistory() {
   renderSearchDropdown();
 }
 
-function restoreSearchHistoryEntry(index) {
-  const entry = loadSearchHistory()[index];
+/** Runs the stored search with this identity key (searchHistoryKeyOf). The
+ * dropdown is only rebuilt while hidden, so the positional data-index it used
+ * to carry went stale the moment anything pushed a new entry underneath it and
+ * the click ran a neighbouring search instead (pass 2 #159). */
+function restoreSearchHistoryEntry(key) {
+  const history = loadSearchHistory();
+  const entry = history.find(e => searchHistoryKeyOf(e) === key);
   if (!entry) return;
   searchState.chips = (entry.chips || []).map(c => ({ ...c }));
   searchState.scope = entry.scope || 'current';
@@ -615,11 +757,12 @@ function renderSearchDropdown() {
 
   const history = loadSearchHistory();
   const historyHtml = history.length
-    ? history.map((entry, i) => {
+    ? history.map((entry) => {
         const chips = (entry.chips || []).map(c => `${c.key}: ${c.label}`).join('  ');
         const text = (entry.text || '').trim();
         return `<button type="button" class="fp-search-dd__history"
-                  data-action="search-history-run" data-index="${i}">
+                  data-action="search-history-run"
+                  data-history-key="${escapeHtml(searchHistoryKeyOf(entry))}">
           ${icon('history', 'fp-icon--14 fp-search-dd__icon')}
           <span class="fp-search-dd__title">${escapeHtml(text || chips || '(filters only)')}</span>
           ${text && chips ? `<span class="fp-search-dd__hint">${escapeHtml(chips)}</span>` : ''}
@@ -692,9 +835,17 @@ function openMoreFilters() {
   }
   const tagSelect = document.getElementById('search-filter-tag');
   if (tagSelect) {
+    const choices = searchTagChoices();
+    const current = searchChipValue('tag') || '';
+    // The offered list is capped at 20: a chip whose tag isn't among them
+    // would leave the select at '' and Apply would silently drop the filter
+    // (pass 2 #90). Carry the current value into the list so it can't be lost.
+    if (current && !choices.some(c => String(c.value) === current)) {
+      choices.unshift({ value: current, label: current });
+    }
     tagSelect.innerHTML = '<option value="">Any</option>' +
-      searchTagChoices().map(c => `<option value="${escapeHtml(c.value)}">${escapeHtml(c.label)}</option>`).join('');
-    tagSelect.value = searchChipValue('tag') || '';
+      choices.map(c => `<option value="${escapeHtml(c.value)}">${escapeHtml(c.label)}</option>`).join('');
+    tagSelect.value = current;
   }
 
   set('search-filter-ext', searchChipValue('ext') || '');
@@ -709,6 +860,11 @@ function openMoreFilters() {
 
   scrim.style.display = 'flex';
   scrim.removeAttribute('aria-hidden');
+  // closeSearchDropdown() above hid the button that had focus, so without this
+  // document.activeElement falls back to <body> — which app.js's global
+  // keydown does not treat as "typing", sending Delete/F2/Ctrl+Z straight
+  // through to the selection behind the open dialog (pass 2 #86).
+  document.getElementById('search-filter-type')?.focus();
 }
 
 function closeMoreFilters() {
@@ -727,7 +883,18 @@ function applyMoreFilters() {
   const dayStart = (s) => (s ? Math.floor(new Date(`${s}T00:00:00`).getTime() / 1000) : '');
   const dayEnd = (s) => (s ? Math.floor(new Date(`${s}T23:59:59`).getTime() / 1000) : '');
 
-  searchState.chips = searchState.chips.filter(c => c.key === 'in');
+  // Keys the modal actually owns — and only while their control is really in
+  // the DOM. Every OTHER chip (the `in:` scope, anything a later filter row
+  // adds without a control here) is carried forward rather than wiped by an
+  // Apply that never saw it (pass 2 #90).
+  const MODAL_CONTROLS = {
+    type: 'search-filter-type', ext: 'search-filter-ext',
+    modified: 'search-filter-modified-from', created: 'search-filter-created-from',
+    size: 'search-filter-min-mb', tag: 'search-filter-tag',
+    hidden: 'search-filter-hidden', whole_word: 'search-filter-whole-word',
+  };
+  const owned = new Set(Object.keys(MODAL_CONTROLS).filter(k => document.getElementById(MODAL_CONTROLS[k])));
+  searchState.chips = searchState.chips.filter(c => !owned.has(c.key));
 
   const push = (key, value, label) => searchState.chips.push({ key, value: String(value), label: String(label) });
 
@@ -832,8 +999,14 @@ function syncSearchToTab() {
   if (tab) tab.search = captureSearchState();
 }
 
-/** Repaints a tab's stored search (bar + results) with no network call. */
-function restoreSearchResultsForTab(snapshot) {
+/** Repaints a tab's stored search (bar + results) with no network call.
+ *
+ * `restore` ({selection, scrollTop}) carries the same per-tab view state a
+ * folder tab gets back through loadDirectory()'s `restore` option — without it
+ * a results tab came back scrolled to the top with nothing selected and a
+ * blank Inspector, while the identical round-trip on a folder tab restored
+ * both (pass 2 #153). */
+function restoreSearchResultsForTab(snapshot, restore = null) {
   if (!snapshot) { searchResetBar(); return; }
   searchState.chips = (snapshot.chips || []).map(c => ({ ...c }));
   searchState.text = snapshot.text || '';
@@ -845,10 +1018,23 @@ function restoreSearchResultsForTab(snapshot) {
   const input = document.getElementById('search-input');
   if (input) input.value = searchState.text;
   renderSearchChips();
+  // Seed the selection BEFORE the render and ask it to preserve what it finds:
+  // renderSearchResults() filters it down to the paths actually present in the
+  // snapshot, exactly as loadDirectory()'s restore branch does for a folder.
+  const wanted = restore && Array.isArray(restore.selection) ? restore.selection : null;
+  if (wanted) {
+    browserState.selection = new Set(wanted);
+    browserState.anchor = wanted.length ? wanted[0] : null;
+    browserState.focus = wanted.length ? wanted[wanted.length - 1] : null;
+  }
   renderSearchResults(
     { results: searchState.results, truncated: searchState.truncated },
-    { query: searchState.query, root: searchState.root },
+    { query: searchState.query, root: searchState.root, preserveSelection: !!wanted },
   );
+  if (restore && restore.scrollTop) {
+    const listScroll = document.getElementById('list-scroll');
+    if (listScroll) listScroll.scrollTop = restore.scrollTop;
+  }
 }
 
 /** Re-runs a tab's unfinished search after its folder listing has landed.
@@ -909,7 +1095,12 @@ function initSearch() {
     searchState.text = input.value;
     resizeSearchInput();
     clearTimeout(_searchDebounceTimer);
-    _searchDebounceTimer = setTimeout(() => runSearch(), SEARCH_DEBOUNCE_MS);
+    // pushHistory:false — a 300 ms pause mid-word is not a search the user
+    // asked to remember. Pushing one per pause stored "q", "qu", "qua", … and
+    // flushed all ten real history slots with prefixes of one word (pass 2
+    // #161). History is written by the deliberate commits instead: Enter, a
+    // chip pick, the palette, re-running a history row.
+    _searchDebounceTimer = setTimeout(() => runSearch({ pushHistory: false }), SEARCH_DEBOUNCE_MS);
   });
 
   input.addEventListener('keydown', e => {

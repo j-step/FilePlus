@@ -175,6 +175,15 @@ ALL_INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_ops_batch ON operations_log(batch_id);",
     "CREATE INDEX IF NOT EXISTS idx_file_tags_tag ON file_tags(tag_id);",
     "CREATE INDEX IF NOT EXISTS idx_files_filename ON files(filename);",
+    # Both filename-ordered queries (GET /files, GET /search) sort with
+    # ORDER BY filename COLLATE NOCASE; SQLite can only use an index for a
+    # sort when the collations match, so the BINARY index above can never
+    # serve them and every call built a temp b-tree over the whole match set.
+    "CREATE INDEX IF NOT EXISTS idx_files_filename_nocase ON files(filename COLLATE NOCASE);",
+    # Partial index for /health's pending-operations count: operations_log is
+    # append-only and never pruned, so an unindexed `executed = 0` predicate
+    # full-scans a table that only grows.
+    "CREATE INDEX IF NOT EXISTS idx_ops_pending ON operations_log(executed) WHERE executed = 0;",
     "CREATE INDEX IF NOT EXISTS idx_recent_ts ON recent_actions(ts);",
 ]
 
@@ -248,6 +257,15 @@ async def init_db(db_path: Path | None = None) -> None:
 
         for stmt in ALL_INDEXES:
             await db.execute(stmt)
+
+        # One-off repair, cheap enough to run every start: until the
+        # foreign-keys pragma was added to remove_stale_entries, deleting a
+        # `files` row left its file_tags rows behind (SQLite enforces foreign
+        # keys per connection, so the ON DELETE CASCADE never fired). Those
+        # orphans inflate GET /tags' count while tagger.paths_for_tag -- an
+        # INNER JOIN on `files` -- cannot see them, so a sidebar tag chip
+        # searches to zero results. No schema change, hence no version bump.
+        await db.execute("DELETE FROM file_tags WHERE file_id NOT IN (SELECT id FROM files)")
 
         version = await _get_schema_version(db)
         if version < CURRENT_SCHEMA_VERSION:

@@ -238,7 +238,10 @@ async def test_trash_and_restore(conn, sandbox):
     assert r["status"] == "done" and not p.exists()
     trashed = Path(r["dest"])
     assert trashed.exists() and _config.TRASH_DIRNAME in trashed.parts
-    assert (trashed.parent / "manifest.json").exists()
+    # The manifest lives beside the batch folder, never inside it (a trashed
+    # file could itself be called manifest.json).
+    assert mover.manifest_path_for(trashed.parent.parent, r["batch_id"]).exists()
+    assert not (trashed.parent / "manifest.json").exists()
     r2 = await mover.restore(conn, trashed, p)
     assert r2["status"] == "done" and p.read_text() == "T" and not trashed.exists()
 
@@ -260,7 +263,9 @@ async def test_batch_trash_and_empty(conn, sandbox, monkeypatch):
     sent = []
     monkeypatch.setattr(mover, "_send2trash", lambda p: sent.append(Path(p)))
     out = await mover.empty_trash(conn)
-    assert out["batches"] == 1 and len(sent) == 1 and sent[0].name == res["batch_id"]
+    # The batch folder and that batch's manifest both go to the Recycle Bin.
+    assert out["batches"] == 1
+    assert sorted(p.name for p in sent) == sorted([res["batch_id"], f"{res['batch_id']}.manifest.json"])
     rows = await ol.list_operations(conn)
     assert rows[0]["op_type"] == "trash-empty:final"
 
@@ -302,7 +307,11 @@ async def test_empty_trash_skips_out_of_sandbox_roots(conn, sandbox, tmp_path, m
     out = await mover.empty_trash(conn)
     assert str(outside_root) in out["skipped_roots"]
     assert str(outside_root) not in out["roots"]
-    assert len(sent) == 1  # only the sandbox batch was emptied
+    # Only the sandbox root was emptied (its one batch folder + its manifest);
+    # nothing under the refused root was touched.
+    assert out["batches"] == 1
+    assert all(_config.is_under(p, sandbox_root) for p in sent)
+    assert not any(_config.is_under(p, outside_root) for p in sent)
 
 
 def test_hide_preserves_existing_attributes(sandbox):

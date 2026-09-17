@@ -19,6 +19,11 @@ Frontend Electron 41, plain HTML/CSS/JS, no framework, no build step. Tests: pyt
 - `path_guard(path, mode)` gates every filesystem touch: reads anywhere; writes inside
   `FILEPLUS_SANDBOX_PATH` until `WRITE_UNLOCKED=true` in `.env`; Windows system roots are never
   writable; the app directory is never writable except the sandbox inside it (`ProtectedPathError`).
+  Mutations take their operand from `guard_operand(path, mode)`: same containment decisions on the
+  resolved path, but a junction/symlink is acted on as the link, never as its target.
+- Every route except `/health` requires `X-FilePlus-Token`: the backend mints one at startup into
+  `<app dir>/.fileplus-token` (git-ignored) when `FILEPLUS_API_TOKEN` is unset, and CORS allows only
+  the Electron renderer's `file://` origin (`"null"`).
 - Delete is a same-volume move into `.FilePlusTrash`; `POST /fs/trash/empty` sends it to the Recycle
   Bin. The app never hard-deletes. Every mutation: guard → log (`executed=0`) → act → mark; undo is a
   logged inverse (`undo_of`).
@@ -53,7 +58,10 @@ April "one fix at a time" rule is retired (D10).
 ## Frontend traps (load-bearing, learned the hard way)
 
 - Frontend modules (globals, no build step, no modules) load in this order —
-  `frontend/src/{api,filetypes,icons-sprite,icons,fileops,browser,dragdrop,search,inspector,home,
+  `frontend/src/{api,filetypes,icons-sprite}.js`, then `frontend/iconCache.js` (dual-mode: also a
+  CommonJS module required by `frontend/main.js` and by node-run tests, so the renderer's request
+  key and the main process's cache key are one piece of code, not two hand-kept twins), then
+  `frontend/src/{icons,fileops,browser,dragdrop,search,inspector,home,
   settings,properties,app}.js` — each can call anything defined earlier at its own top level;
   anything from a later file is only safe to reference from inside a function that runs after
   `DOMContentLoaded`. `actions.js` is gone (Stage 2B deleted it): click dispatch is the `switch` in
@@ -72,6 +80,15 @@ April "one fix at a time" rule is retired (D10).
   `fileIcon`, `thumbnail`, `showProperties`, `openWithDialog`, `apiPort` — `icons.js` calls the
   first two, `properties.js` the native-dialog pair, `api.js` reads the port so the renderer and
   `verify.ps1`'s `FILEPLUS_PORT=9877` agree.
+- Windows-mode icons have two sources and one sizing contract (`docs/superpowers/specs/
+  2026-09-14-stage-2c-pass-2-icon-design.md`): `POST /shell/icons` (backend `winshell.shell_image`,
+  Explorer-exact at any px) first, `electronAPI.fileIcons` (Chromium `app.getFileIcon`) as the
+  fallback — the fallback is never asked for directories, extension-less files, `.lnk` or `.url`.
+  Every request carries physical px (`fpDevicePx`); the `<img>` is pinned to `px / dpr`; keys end in
+  px, so zoom / DPI / `--list-scale` changes re-resolve (`fpInvalidateLazyIcons`), never resample.
+  `fpShellIconRoute('live'|'absent'|'unknown')` is fed from `/health`'s `shell_icons` flag — do not
+  probe the route with a request that can 404 (Chromium logs it as a console error even when caught,
+  and the smoke's zero-console-errors gate fails).
 - `showSnackbar`/`showToast` are defined once, in `app.js`. Signature: `showSnackbar(msg, 'Undo', fn)`.
 - Snackbars/toasts are gated by `localStorage['fp-notifications-enabled']` (default off). Only
   `showToast(msg, 'error')` bypasses. No other exceptions.

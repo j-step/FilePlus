@@ -33,6 +33,32 @@ def test_operations_by_path_and_pending(client, sandbox):
     assert client.get("/operations/pending").json() == []
 
 
+def test_operations_pending_ack_clears_the_startup_report(client):
+    """Pass 2, finding #193: the crash-recovery report is one-shot.
+
+    app.state.reconciled is computed once, in the lifespan, and GET
+    /operations/pending returned it verbatim forever -- so the renderer's
+    "Recovered operations" modal re-opened on every renderer start (and every
+    Ctrl+R reload) for as long as the backend process lived. POST
+    /operations/pending/ack, which the renderer calls once it has shown the
+    report, clears it.
+    """
+    from backend.api import app
+
+    app.state.reconciled = [
+        {"id": 1, "op_type": "move", "source_path": "a.txt", "dest_path": "b.txt", "resolution": "rolled-back"},
+    ]
+    assert len(client.get("/operations/pending").json()) == 1
+
+    r = client.post("/operations/pending/ack")
+    assert r.status_code == 200 and r.json() == {"acknowledged": 1}
+
+    # Gone for every later reader -- a reloaded renderer sees nothing to show.
+    assert client.get("/operations/pending").json() == []
+    # Acking again is harmless.
+    assert client.post("/operations/pending/ack").json() == {"acknowledged": 0}
+
+
 def test_trash_empty_endpoint(client, sandbox, monkeypatch):
     from backend import mover
     sent = []
@@ -40,7 +66,8 @@ def test_trash_empty_endpoint(client, sandbox, monkeypatch):
     (sandbox / "e.txt").write_text("e")
     client.post("/fs/trash", json={"paths": [str(sandbox / "e.txt")]})
     r = client.post("/fs/trash/empty")
-    assert r.status_code == 200 and r.json()["batches"] == 1 and len(sent) == 1
+    # One batch folder plus that batch's manifest file (which lives beside it).
+    assert r.status_code == 200 and r.json()["batches"] == 1 and len(sent) == 2
 
 
 def test_tag_add_undo_via_operations_route(client, sandbox):

@@ -27,7 +27,7 @@ import zlib
 from pathlib import Path
 
 SEED = 20260910
-EXPECTED_FILES = 42
+EXPECTED_FILES = 43
 EXPECTED_FILES_LARGE = EXPECTED_FILES + 1
 LARGE_BYTES = 101 * 1024 * 1024
 FILE_ATTRIBUTE_HIDDEN = 0x2
@@ -108,11 +108,15 @@ def build(out: Path, large: bool = False) -> dict:
         rgb = (rng.randrange(256), rng.randrange(256), rng.randrange(256))
         _write(out / "Pictures" / f"IMG_{i + 1:04d}.png", _png(16 + i * 8, 16 + i * 4, rgb)); files += 1
 
-    # Projects: 3 code files + deep nesting  (4)
+    # Projects: 3 code files + deep nesting + one extension-less file  (5)
+    # Makefile is the one listing fixture with no extension: with the three
+    # folders beside it, _gen\Projects exercises folder rows, no-ext, and
+    # both shell-icon tiers (Tier A renders it; Tier B refuses it) at once.
     _write(out / "Projects" / "app" / "main.py", "def main():\n    print('fileplus')\n\nif __name__ == '__main__':\n    main()\n"); files += 1
     _write(out / "Projects" / "app" / "utils.py", "def add(a, b):\n    return a + b\n"); files += 1
     _write(out / "Projects" / "web" / "app.js", "console.log('fileplus');\n"); files += 1
     _write(out / "Projects" / "a" / "b" / "c" / "d" / "e" / "f" / "deep.txt", _text(rng, 10)); files += 1
+    _write(out / "Projects" / "Makefile", "all:\n\t@echo fileplus\n"); files += 1
 
     # Music: 4 fake wav headers  (4)
     for i in range(4):

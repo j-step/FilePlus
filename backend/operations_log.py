@@ -7,12 +7,16 @@ startup classifies rows left at executed=0 by a crash.
 """
 from __future__ import annotations
 
+import base64
+import json
 import logging
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
 import aiosqlite
+
+from backend.errors import RefusedError
 
 logger = logging.getLogger(__name__)
 
@@ -99,6 +103,68 @@ async def pending_operations(conn) -> list[dict]:
     return [_row(r) for r in await cur.fetchall()]
 
 
+async def count_pending(conn) -> int:
+    """How many operations are logged but not yet executed.
+
+    Same predicate as pending_operations, but counted in SQL. /health polls
+    for this number every few seconds and operations_log is append-only and
+    never pruned, so materialising every pending row just to call len() on
+    the list meant a growing full scan on every poll. Served by the partial
+    index idx_ops_pending (backend/database.py).
+    """
+    cur = await conn.execute("SELECT COUNT(*) FROM operations_log WHERE executed = 0 AND error IS NULL")
+    row = await cur.fetchone()
+    return row[0] if row else 0
+
+
+def _state_resolution(row: dict) -> str | None:
+    """Classify a crashed attr-set / folder-type-set row by re-reading disk.
+
+    These op types carry a source path but no dest path, so the generic
+    src/dst existence heuristic below would always call them "not-started" --
+    which is a lie for a write that actually landed, and (because
+    reconciliation records that as an error) permanently blocks undo of a
+    change the user can see. The forward op logs both the before and the
+    after state in `reason`, so the current state answers the question
+    directly. Returns None when the row can't be classified this way and the
+    generic heuristic should run instead.
+    """
+    src = row["source_path"]
+    if not src or not Path(src).exists():
+        return None
+    try:
+        data = json.loads(row["reason"] or "{}")
+    except ValueError:
+        return None
+    from backend import winshell  # local import: winshell is Windows-only and heavier
+
+    t = row["op_type"]
+    try:
+        if t == "attr-set":
+            if data.get("before") is None or data.get("after") is None:
+                return None  # malformed row: fall back to the generic heuristic
+            current = winshell.get_attributes(Path(src))["bits"]
+            before, after = data["before"], data["after"]
+        elif t == "folder-type-set":
+            if "after" not in data:
+                return None
+            # before_ini None is legitimate here: "the folder had no
+            # desktop.ini", which reads back as folder type None.
+            current = winshell.read_folder_type(Path(src))
+            before = winshell.folder_type_from_ini_bytes(
+                base64.b64decode(data["before_ini"]) if data.get("before_ini") is not None else None)
+            after = data["after"]
+        else:
+            return None
+    except (OSError, ValueError, RefusedError):
+        return "ambiguous"
+    if current == after:
+        return "completed"
+    if current == before:
+        return "not-started"
+    return "ambiguous"
+
+
 async def reconcile_pending(conn) -> list[dict]:
     """Classify crash leftovers. Only op types with a source and dest path are inspected."""
     out = []
@@ -107,7 +173,14 @@ async def reconcile_pending(conn) -> list[dict]:
         src_exists = bool(src) and Path(src).exists()
         dst_exists = bool(dst) and Path(dst).exists()
         t = row["op_type"]
-        if t.endswith(":final") or t.split("-")[0] in ("config", "tag", "favorite", "pin"):
+        state = _state_resolution(row) if t in ("attr-set", "folder-type-set") else None
+        if state is not None:
+            resolution = state
+            if resolution == "completed":
+                await mark_executed(conn, row["id"])
+            else:
+                await mark_error(conn, row["id"], resolution)
+        elif t.endswith(":final") or t.split("-")[0] in ("config", "tag", "favorite", "pin"):
             await mark_error(conn, row["id"], "not-started"); resolution = "not-started"
         elif src_exists and not dst_exists:
             await mark_error(conn, row["id"], "not-started"); resolution = "not-started"

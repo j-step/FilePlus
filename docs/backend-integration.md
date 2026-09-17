@@ -356,6 +356,16 @@ scope chip, `/search` extended with the same filters over the SQLite index plus 
 `frontend/src/filetypes.js` by `scripts/build_filetypes.py`, gated in `verify.ps1`). Discord-style
 filter chips and results-in-the-list live in `search.js` (Task 1, Task 2, Task 14; spec §8).
 
+**Pass 2 (2026-09-15, api-contracts).** The two routes now read one typed `q` the same way: `GET
+/search` splits it on whitespace and requires every word in the **filename** (LIKE wildcards in the
+text escaped), exactly as `searcher.match_spans` does — it used to match the whole string as one
+substring of filename *or* path, so the same text meant two different queries either side of the
+`in:` chip. `GET /search` also returns a real `truncated` flag (it asks for one row past `limit`), and
+excludes rows a mutation marked `status='trashed'`. `GET /index/status` gained `error`/`path`/`count`/
+`started` so a background index that raised stops reporting as "finished". Every `mover` mutation now
+reconciles the `files` table in the same call (`indexer.reindex_move` / `forget_rows_under`), so a
+rename, move or delete done inside FilePlus no longer leaves This-PC search pointing at a dead path.
+
 ### 12. Properties panel and file icons (new in 2C)
 **Done (2026-09-13).** `GET /fs/properties`, `GET /fs/properties/details` (shell property store,
 `pywin32`, 503 when absent), `POST /fs/attributes` and `POST /fs/folder-type` (both logged + undoable)
@@ -364,6 +374,22 @@ routes Properties/Alt+Enter to the native dialog instead (`electronAPI.showPrope
 `ui.icon_source` picks the FilePlus family set (`frontend/assets/icons/filetypes`, `icons.js`) or
 Windows shell icons (`electronAPI.fileIcon`); thumbnails always come from
 `electronAPI.thumbnail` (Task 4, Task 6).
+
+**Pass 2 (2026-09-16, icons — `docs/superpowers/specs/2026-09-14-stage-2c-pass-2-icon-design.md`).**
+Windows-mode icons come from **`POST /shell/icons`** (batch, ≤ 200 items, answers in order as
+`{png: base64 | null, pending}`) and **`GET /shell/icon?path=&px=`** (one PNG, `Cache-Control:
+private, max-age=3600`) — `backend/winshell.shell_image`, `IShellItemImageFactory::GetImage` at the
+requested physical px on a 2-thread STA pool (`winshell.icon_executor()`), so a folder, a known
+folder, a desktop.ini icon, a shortcut's target and an extension-less file all get exactly what
+Explorer draws. Both are read-only (`path_guard "read"`), token-gated, and `/health` advertises them
+as `shell_icons: true`; `checkBackend` (app.js) hands that flag to `fpShellIconRoute()` so an older
+backend is never asked. `electronAPI.fileIcons` (Chromium's `app.getFileIcon`, read at its raw
+physical rep) is the offline fallback — exact only at 16·S / 32·S (16/32/48 for exe/dll/ico), never
+for directories, extension-less files, `.lnk` or `.url` (those fall to the sprite). Thumbnails stay on
+`electronAPI.thumbnail` at physical px. Sizing contract everywhere: `px = clampPx(round(cssBox ×
+devicePixelRatio))`, the bitmap is exactly `px × px`, the `<img>` is pinned to `px / dpr` CSS px;
+zoom, monitor-DPI and `--list-scale` changes re-resolve every icon (`fpInvalidateLazyIcons`).
+`GET /fs/peek` items carry `modified`; `/recent` and `/favorites` entries carry a real `is_dir`.
 
 ---
 
@@ -791,6 +817,11 @@ density got its missing CSS rule (Task 8, spec §3.14); "Backspace deletes" live
 file counts, last-run time), Re-index and Remove-from-index buttons per root. The folder context-menu
 item is relabelled "Index for This PC search" (Task 1, Task 14; spec §8.7).
 
+**Pass 2 (2026-09-15).** `DELETE /index` drops every `files` row under the root (whether or not the
+file still exists) instead of running the stale sweep, which only ever deleted rows whose path had
+vanished — so "Remove" now really does what the confirm modal promises, and `removed` is the real
+count. The pane also shows `GET /index/status`'s `error` when the last background index failed.
+
 - Indexed drives: `config['scan.indexed_drives']` JSON array. Add/remove via POST.
 - Ignore patterns: `config['scan.ignore_patterns']` JSON array.
 - Content analysis toggle: `config['scan.content_analysis']`.
@@ -985,9 +1016,9 @@ For a 200K-file index, these turn `GET /review-bin/count` from a full scan to a 
 - Memoise on `(path, mtime, size)` — if mtime hasn't changed, no need to re-hash on subsequent scans (the existing upsert already skips by path, but `index_file` always re-hashes; gate on `WHERE files.path=? AND files.modified=? AND files.size=?` first, return the cached hash).
 
 ### 9. Pagination on `/files`
-**What.** `GET /files` returns ALL rows. With 200K files, multi-MB JSON response.
-
-**How.** Add `?limit=200&offset=0&order_by=name|size|mtime&dir=asc|desc`; default limit 200. Renderer paginates with infinite scroll.
+**Partly done (pass 2, 2026-09-15).** `GET /files` no longer returns ALL rows: `limit` defaults to 200 and is
+capped at 1000 (`?limit=&offset=`), so a bare call can never serialise the whole table. Still open:
+`order_by=name|size|mtime&dir=asc|desc`, and infinite scroll in the renderer (no renderer calls this route yet).
 
 ### 10. SSE event bus
 **What.** Watcher events, mover progress, scan progress, approvals updates — all currently demand polling.

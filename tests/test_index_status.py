@@ -46,7 +46,7 @@ def test_fs_peek_returns_media_items_and_400_for_relative_path(client, sandbox):
     body = r.json()
     assert len(body["items"]) <= 2
     for item in body["items"]:
-        assert set(item) == {"name", "path", "ext"}
+        assert set(item) == {"name", "path", "ext", "modified"}
         assert item["ext"] in ("png", "jpg", "mp4")
 
     r2 = client.get("/fs/peek", params={"path": "relative\\path", "n": 2})
@@ -171,3 +171,14 @@ def test_delete_index_protected_root_forbidden(client, tmp_path, monkeypatch):
     monkeypatch.setattr(_config, "PROTECTED_WRITE_ROOTS", [protected])
     r = client.delete("/index", params={"root": str(protected)})
     assert r.status_code == 403
+
+
+def test_fs_peek_items_carry_modified(client, sandbox):
+    """Pass 2 #143: a peeked picture's mtime keys the renderer's thumbnail
+    cache for the folder preview's mini, so it must come back with the item."""
+    (sandbox / "p.png").write_bytes(b"\x89PNG\r\n\x1a\n" + bytes(16))
+    r = client.get("/fs/peek", params={"path": str(sandbox), "n": 2})
+    assert r.status_code == 200
+    items = r.json()["items"]
+    assert [i["name"] for i in items] == ["p.png"]
+    assert abs(items[0]["modified"] - (sandbox / "p.png").stat().st_mtime) < 1e-6
