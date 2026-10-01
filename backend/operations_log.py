@@ -43,6 +43,11 @@ async def log_operation(conn: aiosqlite.Connection, op_type: str, source: str | 
         (op_type, source, dest, _now(), batch_id, reason, undo_of),
     )
     await conn.commit()
+    # Every operation passes through here BEFORE it runs (CLAUDE.md safety
+    # rules), so this one line puts every move/rename/copy/trash/restore/tag/
+    # config change in backend.log with its source and destination.
+    logger.info("op #%s %s: %s -> %s%s%s", cur.lastrowid, op_type, source, dest,
+                f" batch={batch_id}" if batch_id else "", f" undo_of={undo_of}" if undo_of else "")
     return cur.lastrowid
 
 
@@ -52,6 +57,7 @@ async def mark_executed(conn, op_id: int) -> None:
 
 
 async def mark_error(conn, op_id: int, message: str) -> None:
+    logger.warning("op #%s failed: %s", op_id, message)
     await conn.execute("UPDATE operations_log SET error = ? WHERE id = ?", (message[:500], op_id))
     await conn.commit()
 

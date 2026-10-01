@@ -14,6 +14,7 @@ import os
 import secrets
 import sqlite3
 import threading
+import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -108,12 +109,42 @@ app.add_middleware(
 
 
 # ---------------------------------------------------------------------------
+# Request log -- one line per request in backend.log (backend/logging_setup.py):
+# method, path + query, status, duration. Registered last, so it is the
+# outermost middleware and also records 401s and CORS preflights. The token
+# header is never logged. /health is polled every few seconds by the renderer,
+# so it logs at DEBUG; 4xx/5xx at WARNING. An exception no handler mapped is
+# logged here with its full traceback, then re-raised to Starlette's own 500.
+# ---------------------------------------------------------------------------
+
+_request_log = logging.getLogger("backend.requests")
+
+
+@app.middleware("http")
+async def _log_requests(request, call_next):
+    started = time.perf_counter()
+    target = request.url.path + (f"?{request.url.query}" if request.url.query else "")
+    try:
+        response = await call_next(request)
+    except Exception:
+        _request_log.exception("%s %s -> unhandled error after %.0f ms", request.method, target,
+                               (time.perf_counter() - started) * 1000)
+        raise
+    ms = (time.perf_counter() - started) * 1000
+    level = (logging.DEBUG if request.url.path == "/health" and response.status_code < 400
+             else logging.WARNING if response.status_code >= 400 else logging.INFO)
+    _request_log.log(level, "%s %s -> %s (%.0f ms)", request.method, target, response.status_code, ms)
+    return response
+
+
+# ---------------------------------------------------------------------------
 # Error mapping — mover/config exceptions become HTTP responses everywhere
 # ---------------------------------------------------------------------------
 
 @app.exception_handler(OutOfSandboxError)
 @app.exception_handler(ProtectedPathError)
 async def _forbidden(_r, exc):
+    logger.warning("refused (403): %s", exc)
     return JSONResponse(status_code=403, content={"detail": str(exc)})
 
 
@@ -121,6 +152,7 @@ async def _forbidden(_r, exc):
 @app.exception_handler(mover.ConflictError)
 @app.exception_handler(mover.RefusedError)
 async def _conflict(_r, exc):
+    logger.warning("conflict (409): %s", exc)
     return JSONResponse(status_code=409, content={"detail": str(exc)})
 
 
@@ -159,6 +191,7 @@ _EINVAL_ERRNOS = {errno.EINVAL}
 # Retry-After) instead of an unhandled 500 traceback.
 @app.exception_handler(sqlite3.OperationalError)
 async def _db_busy(_r, exc):
+    logger.error("database error: %s", exc, exc_info=exc)
     text = str(exc).lower()
     if "locked" in text or "busy" in text:
         return JSONResponse(status_code=503, content={"detail": f"database busy: {exc}"},
@@ -169,6 +202,8 @@ async def _db_busy(_r, exc):
 @app.exception_handler(OSError)
 async def _os_error(request, exc):
     status = 400 if exc.errno in _EINVAL_ERRNOS else 502
+    logger.error("filesystem error (%s) on %s: %s", status, getattr(exc, "filename", None)
+                 or request.query_params.get("path"), exc, exc_info=exc if status >= 500 else None)
     path = getattr(exc, "filename", None) or request.query_params.get("path")
     return JSONResponse(status_code=status, content={"detail": exc.strerror or str(exc), "path": path})
 
@@ -1652,4 +1687,14 @@ async def post_pins_reorder(body: ReorderIds):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("backend.api:app", host="127.0.0.1", port=_config.FILEPLUS_PORT, reload=False)
+    from backend.logging_setup import setup_logging
+
+    _log_file = setup_logging(_config.FILEPLUS_LOG_DIR)
+    logging.getLogger("backend.api").info(
+        "backend starting: port=%s env=%s root=%s db=%s log=%s",
+        _config.FILEPLUS_PORT, getattr(_config, "FILEPLUS_ENV", "-"),
+        _config.FILEPLUS_SANDBOX_PATH, _config.FILEPLUS_DB_PATH, _log_file,
+    )
+    # log_config=None: uvicorn leaves logging alone, so its own records flow
+    # through the root handlers setup_logging just installed (backend.log).
+    uvicorn.run("backend.api:app", host="127.0.0.1", port=_config.FILEPLUS_PORT, reload=False, log_config=None)

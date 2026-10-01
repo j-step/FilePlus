@@ -48,6 +48,11 @@ test('inspector, properties and settings: pass-2 regressions', async () => {
     await page.evaluate(() => setInspectorOpen(true, { persist: false }));
     await page.evaluate((p) => openBrowserAt(p), picsDir);
     await expect(crumbCurrent).toHaveText('Pictures');
+    // The breadcrumb updates before the listing renders; selecting a row that
+    // is not in the DOM yet is a silent no-op (no /file or /preview request
+    // was ever made in the flaky runs — logs/backend.log), so wait for it.
+    await page.waitForFunction((p) => [...document.querySelectorAll('#list-scroll .fp-row')]
+      .some((r) => r.dataset.path === p), imgA);
 
     // ── #148  A multi-selection really hides the preview box ────────────────
     // #inspector-preview carries an inline display:flex, so `hidden` alone was

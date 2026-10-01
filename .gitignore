@@ -49,3 +49,6 @@ frontend/test-results/
 
 # Git worktrees for stage runs (spec section 6)
 .worktrees/
+
+# Runtime logs (backend.log, main.log, renderer.log -- see backend/logging_setup.py, frontend/logger.js)
+logs/

@@ -50,6 +50,11 @@ FILEPLUS_APP_DIR = Path(__file__).resolve().parents[1]
 FILEPLUS_SANDBOX_PATH = Path(os.getenv("FILEPLUS_SANDBOX_PATH", str(FILEPLUS_APP_DIR / "FilePlusTestSandbox")))
 FILEPLUS_DB_PATH = Path(os.getenv("FILEPLUS_DB_PATH", str(FILEPLUS_APP_DIR / "fileplus.db")))
 FILEPLUS_EVERYTHING_PATH = Path(os.getenv("FILEPLUS_EVERYTHING_PATH", r"C:\Everything"))
+# Where backend.log lives (backend/logging_setup.py). frontend/main.js reads the
+# same variable for main.log and renderer.log, so one setting moves all three;
+# the test harness points it at artifacts/logs so a test run never wipes the
+# log of a dev session someone is reporting a bug from.
+FILEPLUS_LOG_DIR = Path(os.getenv("FILEPLUS_LOG_DIR", str(FILEPLUS_APP_DIR / "logs")))
 
 # Backend HTTP port. Overriding this lets a second backend (e.g. scripts/verify.ps1's,
 # which sets FILEPLUS_PORT=9877) run alongside a developer's already-running instance
