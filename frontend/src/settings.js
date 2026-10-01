@@ -220,7 +220,7 @@ function updateWritesStatusLine() {
   if (!el || !window.__fpHealth) return;
   el.textContent = window.__fpHealth.write_unlocked
     ? 'Unlocked — real-drive writes enabled'
-    : 'Sandbox only — set WRITE_UNLOCKED=true in .env to enable real-drive writes';
+    : 'Sandbox only — set FILEPLUS_ENV=prod and WRITE_UNLOCKED=true in .env to enable real-drive writes';
 }
 
 // ── Settings › Scan & Index (Task 14, design §8.7) ──────────────────────

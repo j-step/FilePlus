@@ -2,15 +2,18 @@
 
 path_guard(path, mode) is the single gate for filesystem access:
   read  — any path (browsing real drives is the product).
-  write — inside FILEPLUS_SANDBOX_PATH until WRITE_UNLOCKED=true; Windows system
-          roots are never writable, and the FilePlus app directory is never
-          writable except the sandbox inside it.
+  write — inside FILEPLUS_SANDBOX_PATH (alias FILEPLUS_ROOT) only, unless
+          FILEPLUS_ENV=prod AND WRITE_UNLOCKED=true; Windows system roots are
+          never writable, and the FilePlus app directory is never writable
+          except the sandbox inside it.
 
 Write-mode containment order (see _enforce_write_containment): (1) any
 SYSTEM_WRITE_ROOTS entry wins unconditionally -> ProtectedPathError; (2) the
 sandbox is allowed; (3) any other PROTECTED_WRITE_ROOTS entry (the app dir, or
-a test-injected root) -> ProtectedPathError; (4) WRITE_UNLOCKED -> allowed,
-else OutOfSandboxError.
+a test-injected root) -> ProtectedPathError; (4) writes_unlocked() -- prod
+env and WRITE_UNLOCKED -- -> allowed, else OutOfSandboxError. In the dev and
+test environments step (4) can never pass: tests and dev runs cannot touch
+anything outside the root, whatever .env says.
 
 path_guard always returns the *resolved* path, which follows junctions and
 symlinks. Callers that are about to mutate the path itself (rename/move/trash)
@@ -33,7 +36,7 @@ load_dotenv()
 
 
 class OutOfSandboxError(Exception):
-    """Raised for a write outside the sandbox while WRITE_UNLOCKED is false."""
+    """Raised for a write outside the sandbox root unless writes_unlocked()."""
 
 
 class ProtectedPathError(Exception):
@@ -47,7 +50,28 @@ class BadPathError(ValueError):
 
 FILEPLUS_APP_DIR = Path(__file__).resolve().parents[1]
 
-FILEPLUS_SANDBOX_PATH = Path(os.getenv("FILEPLUS_SANDBOX_PATH", str(FILEPLUS_APP_DIR / "FilePlusTestSandbox")))
+
+# FILEPLUS_ENV: dev (default) | test | prod. Only prod can ever write outside
+# the root (and only with WRITE_UNLOCKED=true as well) -- see writes_unlocked().
+FILEPLUS_ENVS = ("dev", "test", "prod")
+FILEPLUS_ENV = os.getenv("FILEPLUS_ENV", "dev").strip().lower() or "dev"
+if FILEPLUS_ENV not in FILEPLUS_ENVS:
+    raise ValueError(f"FILEPLUS_ENV must be one of {', '.join(FILEPLUS_ENVS)}; got {FILEPLUS_ENV!r}")
+
+
+def _root_from_env() -> Path:
+    """The one filesystem root the app may write into. FILEPLUS_ROOT and
+    FILEPLUS_SANDBOX_PATH are two names for the same setting (FILEPLUS_ROOT is
+    the dev-harness name); setting both to different places is refused rather
+    than silently picking one."""
+    root = os.getenv("FILEPLUS_ROOT", "").strip()
+    sandbox = os.getenv("FILEPLUS_SANDBOX_PATH", "").strip()
+    if root and sandbox and os.path.normcase(os.path.abspath(root)) != os.path.normcase(os.path.abspath(sandbox)):
+        raise ValueError(f"FILEPLUS_ROOT ({root}) and FILEPLUS_SANDBOX_PATH ({sandbox}) disagree; set only one")
+    return Path(root or sandbox or str(FILEPLUS_APP_DIR / "FilePlusTestSandbox"))
+
+
+FILEPLUS_SANDBOX_PATH = _root_from_env()
 FILEPLUS_DB_PATH = Path(os.getenv("FILEPLUS_DB_PATH", str(FILEPLUS_APP_DIR / "fileplus.db")))
 FILEPLUS_EVERYTHING_PATH = Path(os.getenv("FILEPLUS_EVERYTHING_PATH", r"C:\Everything"))
 # Where backend.log lives (backend/logging_setup.py). frontend/main.js reads the
@@ -72,8 +96,16 @@ FILEPLUS_TOKEN_FILE = Path(os.getenv("FILEPLUS_TOKEN_FILE", str(FILEPLUS_APP_DIR
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.1:8b")
 
-# Decision D2: writes stay in the sandbox until the author flips this.
+# Decision D2: writes stay in the sandbox until the author flips this -- and
+# only a prod environment honours it (writes_unlocked()).
 WRITE_UNLOCKED = os.getenv("WRITE_UNLOCKED", "false").lower() == "true"
+
+
+def writes_unlocked() -> bool:
+    """True only when writes outside the root are allowed: FILEPLUS_ENV=prod
+    AND WRITE_UNLOCKED=true. Read at call time so tests can monkeypatch
+    either value."""
+    return FILEPLUS_ENV == "prod" and WRITE_UNLOCKED
 AUTO_SORT_ENABLED = os.getenv("AUTO_SORT_ENABLED", "false").lower() == "true"
 AUTO_SORT_CONFIDENCE_THRESHOLD = float(os.getenv("AUTO_SORT_CONFIDENCE_THRESHOLD", "0.85"))
 MAX_BATCH_SIZE = int(os.getenv("MAX_BATCH_SIZE", "100"))
@@ -483,9 +515,11 @@ def _enforce_write_containment(resolved: Path) -> None:
     for root in PROTECTED_WRITE_ROOTS:
         if is_under(resolved, root):
             raise ProtectedPathError(f"'{resolved}' is inside the protected location '{root}'; FilePlus never writes there.")
-    if not WRITE_UNLOCKED:
+    if not writes_unlocked():
+        why = (f"FILEPLUS_ENV={FILEPLUS_ENV}; only prod can write outside the root" if FILEPLUS_ENV != "prod"
+               else "WRITE_UNLOCKED=false")
         raise OutOfSandboxError(
-            f"Writes are locked to the sandbox '{FILEPLUS_SANDBOX_PATH}' (WRITE_UNLOCKED=false); refused '{resolved}'."
+            f"Writes are locked to the sandbox '{FILEPLUS_SANDBOX_PATH}' ({why}; WRITE_UNLOCKED applies in prod only); refused '{resolved}'."
         )
 
 

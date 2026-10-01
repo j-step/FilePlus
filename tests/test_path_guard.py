@@ -31,12 +31,14 @@ def test_write_outside_sandbox_refused_when_locked(sandbox, tmp_path):
 
 def test_write_outside_sandbox_allowed_when_unlocked(sandbox, tmp_path, monkeypatch):
     monkeypatch.setattr(_config, "WRITE_UNLOCKED", True)
+    monkeypatch.setattr(_config, "FILEPLUS_ENV", "prod")
     outside = tmp_path / "elsewhere" / "x.txt"
     assert path_guard(outside, "write") == outside.resolve()
 
 
 def test_protected_roots_refused_even_when_unlocked(sandbox, tmp_path, monkeypatch):
     monkeypatch.setattr(_config, "WRITE_UNLOCKED", True)
+    monkeypatch.setattr(_config, "FILEPLUS_ENV", "prod")
     fake_windows = tmp_path / "Windows"
     fake_windows.mkdir()
     monkeypatch.setattr(_config, "PROTECTED_WRITE_ROOTS", [fake_windows])
@@ -75,6 +77,7 @@ def test_evasive_spellings_never_return_write(tmp_path, monkeypatch, spelling):
     win = tmp_path / "Win"
     win.mkdir()
     monkeypatch.setattr(_config, "WRITE_UNLOCKED", True)
+    monkeypatch.setattr(_config, "FILEPLUS_ENV", "prod")
     monkeypatch.setattr(_config, "PROTECTED_WRITE_ROOTS", [win])
     candidate = spelling.format(win=str(win))
     with pytest.raises((ProtectedPathError, ValueError)):
@@ -141,6 +144,7 @@ def test_loopback_admin_share_maps_to_protected_local_drive(host, monkeypatch):
     monkeypatch.setattr(_config, "SYSTEM_WRITE_ROOTS", [system_root])
     monkeypatch.setattr(_config, "PROTECTED_WRITE_ROOTS", [system_root])
     monkeypatch.setattr(_config, "WRITE_UNLOCKED", True)
+    monkeypatch.setattr(_config, "FILEPLUS_ENV", "prod")
     with pytest.raises(ProtectedPathError):
         path_guard(f"\\\\{host}\\C$\\Windows\\x", "write")
 
@@ -153,6 +157,7 @@ def test_loopback_admin_share_by_computername(monkeypatch):
     monkeypatch.setattr(_config, "SYSTEM_WRITE_ROOTS", [system_root])
     monkeypatch.setattr(_config, "PROTECTED_WRITE_ROOTS", [system_root])
     monkeypatch.setattr(_config, "WRITE_UNLOCKED", True)
+    monkeypatch.setattr(_config, "FILEPLUS_ENV", "prod")
     with pytest.raises(ProtectedPathError):
         path_guard(f"\\\\{computername}\\C$\\Windows\\x", "write")
 
@@ -162,6 +167,7 @@ def test_admin_dollar_share_maps_to_systemroot(monkeypatch):
     monkeypatch.setattr(_config, "SYSTEM_WRITE_ROOTS", [system_root])
     monkeypatch.setattr(_config, "PROTECTED_WRITE_ROOTS", [system_root])
     monkeypatch.setattr(_config, "WRITE_UNLOCKED", True)
+    monkeypatch.setattr(_config, "FILEPLUS_ENV", "prod")
     with pytest.raises(ProtectedPathError):
         path_guard(r"\\localhost\ADMIN$\System32\x", "write")
 
@@ -174,6 +180,7 @@ def test_ipv6_literal_loopback_admin_share(monkeypatch):
     monkeypatch.setattr(_config, "SYSTEM_WRITE_ROOTS", [system_root])
     monkeypatch.setattr(_config, "PROTECTED_WRITE_ROOTS", [system_root])
     monkeypatch.setattr(_config, "WRITE_UNLOCKED", True)
+    monkeypatch.setattr(_config, "FILEPLUS_ENV", "prod")
     with pytest.raises(ProtectedPathError):
         path_guard(r"\\0--1.ipv6-literal.net\C$\Windows\x", "write")
 
@@ -195,6 +202,7 @@ def test_own_lan_ip_admin_share(monkeypatch):
     monkeypatch.setattr(_config, "SYSTEM_WRITE_ROOTS", [system_root])
     monkeypatch.setattr(_config, "PROTECTED_WRITE_ROOTS", [system_root])
     monkeypatch.setattr(_config, "WRITE_UNLOCKED", True)
+    monkeypatch.setattr(_config, "FILEPLUS_ENV", "prod")
     with pytest.raises(ProtectedPathError):
         path_guard(f"\\\\{fake_lan_ip}\\C$\\Windows\\x", "write")
 
@@ -254,6 +262,7 @@ def test_duplicated_separator_admin_share_spellings_still_blocked(spelling, monk
     monkeypatch.setattr(_config, "SYSTEM_WRITE_ROOTS", [system_root])
     monkeypatch.setattr(_config, "PROTECTED_WRITE_ROOTS", [system_root])
     monkeypatch.setattr(_config, "WRITE_UNLOCKED", True)
+    monkeypatch.setattr(_config, "FILEPLUS_ENV", "prod")
     with pytest.raises(ProtectedPathError):
         path_guard(spelling, "write")
 
@@ -280,6 +289,7 @@ def test_map_loopback_admin_share_defence_in_depth_after_resolve(monkeypatch):
     monkeypatch.setattr(_config, "SYSTEM_WRITE_ROOTS", [system_root])
     monkeypatch.setattr(_config, "PROTECTED_WRITE_ROOTS", [system_root])
     monkeypatch.setattr(_config, "WRITE_UNLOCKED", True)
+    monkeypatch.setattr(_config, "FILEPLUS_ENV", "prod")
     with pytest.raises(ProtectedPathError):
         path_guard(r"\\localhost\C$\Windows\evil.txt", "write")
     assert len(calls) == 2, "the post-resolve defence-in-depth re-check must have run"
@@ -324,6 +334,7 @@ def test_extended_length_unc_prefix_is_case_insensitive(monkeypatch):
     monkeypatch.setattr(_config, "SYSTEM_WRITE_ROOTS", [system_root])
     monkeypatch.setattr(_config, "PROTECTED_WRITE_ROOTS", [system_root])
     monkeypatch.setattr(_config, "WRITE_UNLOCKED", True)
+    monkeypatch.setattr(_config, "FILEPLUS_ENV", "prod")
     with pytest.raises(ProtectedPathError):
         path_guard("\\\\?\\unc\\localhost\\C$\\Windows\\evil.txt", "write")
 

@@ -113,8 +113,10 @@ New-Item -ItemType Directory -Force (Join-Path $root 'artifacts') | Out-Null
 Remove-Item (Join-Path $root 'artifacts\verify.db*') -ErrorAction SilentlyContinue
 # keep verify off the developer's real fileplus.db; load_dotenv does not override an existing env var
 $env:FILEPLUS_DB_PATH = Join-Path $root 'artifacts\verify.db'
-# belt and braces: the smoke run never unlocks writes outside the sandbox
+# belt and braces: the smoke run never unlocks writes outside the sandbox --
+# and in the test environment the guard would refuse them anyway.
 $env:WRITE_UNLOCKED = 'false'
+$env:FILEPLUS_ENV = 'test'
 # fixed dev token: inherited by the backend (Start-Process below) and by
 # npm test (Electron reads it via main.js, the smoke test via process.env)
 $env:FILEPLUS_API_TOKEN = 'fileplus-dev-token'
