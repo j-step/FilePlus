@@ -56,3 +56,15 @@ async def db(sandbox, tmp_path):
     db_path = tmp_path / "test.db"
     await init_db(db_path)
     return db_path
+
+
+@pytest.fixture
+def fixture_tree(sandbox):
+    """A fresh copy of the deterministic messy tree (scripts/gen_sandbox.py)
+    at <sandbox>/_gen, rebuilt for every test that asks for it -- never a
+    shared folder. Lives inside the sandbox, so the write guard allows the
+    test to move/rename/trash inside it."""
+    from scripts.gen_sandbox import build
+    root = sandbox / "_gen"
+    build(root)
+    return root
