@@ -112,8 +112,9 @@ app.add_middleware(
 # Request log -- one line per request in backend.log (backend/logging_setup.py):
 # method, path + query, status, duration. Registered last, so it is the
 # outermost middleware and also records 401s and CORS preflights. The token
-# header is never logged. /health is polled every few seconds by the renderer,
-# so it logs at DEBUG; 4xx/5xx at WARNING. An exception no handler mapped is
+# header is never logged. 4xx/5xx log at WARNING. /health is included (the
+# renderer polls it every 30 s): a slow or missing health answer is exactly
+# what explains a false "Backend offline" pill. An exception no handler mapped is
 # logged here with its full traceback, then re-raised to Starlette's own 500.
 # ---------------------------------------------------------------------------
 
@@ -131,8 +132,7 @@ async def _log_requests(request, call_next):
                                (time.perf_counter() - started) * 1000)
         raise
     ms = (time.perf_counter() - started) * 1000
-    level = (logging.DEBUG if request.url.path == "/health" and response.status_code < 400
-             else logging.WARNING if response.status_code >= 400 else logging.INFO)
+    level = logging.WARNING if response.status_code >= 400 else logging.INFO
     _request_log.log(level, "%s %s -> %s (%.0f ms)", request.method, target, response.status_code, ms)
     return response
 

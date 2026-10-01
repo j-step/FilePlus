@@ -45,9 +45,10 @@ function _fmt(args) {
 /**
  * Returns { file, write(level, ...args), info, warn, error, debug }.
  * Never throws: a logger that cannot write (read-only disk, locked file)
- * must not take the app down with it — it falls back to stderr.
+ * must not take the app down with it — it falls back to stderr, or to
+ * `onWriteError(err, line)` when given one.
  */
-function createFileLogger(dir, name, { maxBytes = MAX_BYTES } = {}) {
+function createFileLogger(dir, name, { maxBytes = MAX_BYTES, onWriteError = null } = {}) {
   const file = path.join(dir, name);
   try {
     fs.mkdirSync(dir, { recursive: true });
@@ -59,6 +60,7 @@ function createFileLogger(dir, name, { maxBytes = MAX_BYTES } = {}) {
     try {
       fs.appendFileSync(file, line, 'utf8');
     } catch (err) {
+      if (onWriteError) { onWriteError(err, line); return; }
       try { process.stderr.write(`[log write failed: ${err.message}] ${line}`); } catch (_) { /* nothing left */ }
     }
   }

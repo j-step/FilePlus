@@ -14,6 +14,16 @@ const { resolveLogDir, createFileLogger, consoleLevelName } = require('./logger'
 
 let mainWindow;
 
+// ── Profile override (dev harness) ───────────────────────────────────────
+// FILEPLUS_USER_DATA_DIR moves Electron's profile (localStorage,
+// sessionStorage, caches) out of %APPDATA%\fileplus. The test harness sets it
+// to a throwaway folder per run: sharing the real profile let every test run
+// clear the user's own localStorage settings, and while the user's FilePlus
+// window was open each test instance waited ~6 s on its storage lock, long
+// enough for the startup /health check to time out and paint "Backend
+// offline". Must run before 'ready'.
+if (process.env.FILEPLUS_USER_DATA_DIR) app.setPath('userData', process.env.FILEPLUS_USER_DATA_DIR);
+
 // ── File logs (dev harness) ──────────────────────────────────────────────
 // main.log for this process, renderer.log for the page's console — see
 // logger.js. Installed before anything else can throw.
@@ -165,7 +175,12 @@ function createWindow() {
   });
   mainWindow.webContents.on('preload-error', (_e, preloadPath, err) => mainLog.error(`preload error in ${preloadPath}:`, err));
   mainWindow.webContents.on('did-fail-load', (_e, code, desc, url) => mainLog.error(`did-fail-load ${code} ${desc} ${url}`));
-  mainWindow.webContents.on('did-finish-load', () => mainLog.info('window loaded'));
+  mainWindow.webContents.on('did-finish-load', () => {
+    mainLog.info('window loaded');
+    // One marker line per page load, so renderer.log always shows where each
+    // session's console output starts (and exists even when the page is quiet).
+    rendererLog.info(`--- page loaded: ${mainWindow.webContents.getURL().replace(/^file:\/\/\/?/, '')}`);
+  });
   mainWindow.on('unresponsive', () => mainLog.warn('window unresponsive'));
   mainWindow.on('closed', () => mainLog.info('window closed'));
 

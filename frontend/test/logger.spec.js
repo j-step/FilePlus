@@ -43,8 +43,11 @@ test.describe('logger.js', () => {
     const dir = tmpDir();
     const blocker = path.join(dir, 'file-not-dir');
     fs.writeFileSync(blocker, '');
-    const log = createFileLogger(path.join(blocker, 'sub'), 'main.log');
+    const failures = [];
+    const log = createFileLogger(path.join(blocker, 'sub'), 'main.log', { onWriteError: (err, line) => failures.push([err.code, line]) });
     expect(() => log.error('still alive')).not.toThrow();
+    expect(failures).toHaveLength(1);
+    expect(failures[0][1]).toContain('still alive');
   });
 
   test('consoleLevelName accepts Electron 41 strings and legacy numbers', () => {
