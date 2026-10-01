@@ -50,7 +50,7 @@ static demo markup the author flagged as "tags not implemented" was this list, n
 - Server-side, this is `SELECT t.id, t.name, t.color, COUNT(ft.tag_id) FROM tags t LEFT JOIN file_tags ft ON ft.tag_id = t.id GROUP BY t.id ORDER BY count DESC LIMIT ?`. Add an index on `file_tags(tag_id)` first (see Cross-cutting / Performance).
 
 ### 3. Backend status dot
-**Superseded (Stage 2A, 2026-09-11).** `GET /health` actually returns `{db_ok, write_unlocked, pending_ops, index_running}`, not the `scan_running`/`ai_status`/`watcher_running` shape proposed below; the dot maps against the real contract.
+**Superseded (Stage 2A, 2026-09-11).** `GET /health` actually returns `{db_ok, write_unlocked, pending_ops, index_running}` (since the dev harness, 2026-10-01, also `auth`, `shell_icons` and `env`; `write_unlocked` is the effective state, true only when `FILEPLUS_ENV=prod` AND `WRITE_UNLOCKED=true`), not the `scan_running`/`ai_status`/`watcher_running` shape proposed below; the dot maps against the real contract.
 
 **What.** The header dot reflects `checkBackend()` result (already wired); confirm endpoint contract.
 
@@ -242,7 +242,7 @@ v2 only. Tab is permanently `disabled`. No backend integration in v1.
   - **other**: `{ kind:'binary', size, hash }` only — renderer falls back to the metadata grid.
 - Cache responses for 5 min keyed by `(path, mtime)` so flipping back to a file doesn't re-extract.
 - Hard cap on payload: refuse files > 50 MB for text preview (return `{ kind:'too-large', size }`).
-- Path safety: `path_guard()` always. `SAFETY_MODE` was replaced by `WRITE_UNLOCKED` + `path_guard(path, mode)` in Stage 2A (2026-09-11).
+- Path safety: `path_guard()` always. `SAFETY_MODE` was replaced by `WRITE_UNLOCKED` + `path_guard(path, mode)` in Stage 2A (2026-09-11). Since the dev harness (2026-10-01) `FILEPLUS_ENV` (`dev` default, `test`, `prod`) gates it too: only `prod` honours `WRITE_UNLOCKED`, so dev and test runs can never write outside `FILEPLUS_ROOT` (alias `FILEPLUS_SANDBOX_PATH`).
 
 ### 4. Inspector — Tags tab (read/write)
 **Done (Stage 2A/2B, 2026-09-11).** `GET/POST /files/{id}/tags`, `DELETE /files/{id}/tags/{tag_id}`, chip UI + autocomplete in `inspector.js`; add/remove undo inverses landed in Task 8a.

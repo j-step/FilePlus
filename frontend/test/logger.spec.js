@@ -6,9 +6,15 @@ const os = require('os');
 const path = require('path');
 const { resolveLogDir, createFileLogger, consoleLevelName } = require('../logger');
 
+const made = [];
 function tmpDir() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'fp-logger-'));
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'fp-logger-'));
+  made.push(d);
+  return d;
 }
+test.afterAll(() => {
+  for (const d of made) fs.rmSync(d, { recursive: true, force: true });
+});
 
 test.describe('logger.js', () => {
   test('resolveLogDir prefers FILEPLUS_LOG_DIR, else <repo>/logs', () => {

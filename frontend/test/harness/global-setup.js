@@ -22,18 +22,10 @@ const { spawn, spawnSync } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { healthy, killTree } = require('./net');
 
 const REPO = path.resolve(__dirname, '..', '..', '..');
 const PY = process.platform === 'win32' ? { cmd: 'py', pre: ['-3'] } : { cmd: 'python3', pre: [] };
-
-async function healthy(port) {
-  try {
-    const r = await fetch(`http://127.0.0.1:${port}/health`, { signal: AbortSignal.timeout(1000) });
-    return r.ok;
-  } catch (_) {
-    return false;
-  }
-}
 
 function runPy(args, env) {
   const r = spawnSync(PY.cmd, [...PY.pre, ...args], { cwd: REPO, env, encoding: 'utf8' });
@@ -61,13 +53,17 @@ module.exports = async function globalSetup() {
     ...process.env,
     FILEPLUS_ENV: 'test',
     FILEPLUS_ROOT: sandbox,
+    // Both names, same value: backend/config.py's load_dotenv() only fills
+    // variables that are MISSING, so deleting FILEPLUS_SANDBOX_PATH would let
+    // a developer's .env put a different value back -- and two roots that
+    // disagree stop the backend from starting.
+    FILEPLUS_SANDBOX_PATH: sandbox,
     FILEPLUS_DB_PATH: path.join(tmpRoot, 'e2e.db'),
     FILEPLUS_LOG_DIR: logDir,
     FILEPLUS_PORT: String(port),
     FILEPLUS_API_TOKEN: token,
     WRITE_UNLOCKED: 'false',
   };
-  delete env.FILEPLUS_SANDBOX_PATH; // FILEPLUS_ROOT is the one name in this process tree
   delete env.ELECTRON_RUN_AS_NODE;
 
   runPy(['scripts/clear_logs.py', '--dir', logDir], env);
@@ -85,7 +81,7 @@ module.exports = async function globalSetup() {
       throw new Error(`backend exited during startup (code ${exited}); see ${path.join(logDir, 'backend.log')}`);
     }
     if (Date.now() > deadline) {
-      try { process.kill(backend.pid); } catch (_) { /* already gone */ }
+      killTree(backend.pid); // teardown never runs when setup throws
       throw new Error(`backend did not answer /health on ${port} within 60 s; see ${path.join(logDir, 'backend.log')}`);
     }
     await new Promise((r) => setTimeout(r, 250));
@@ -97,6 +93,7 @@ module.exports = async function globalSetup() {
   Object.assign(process.env, {
     FILEPLUS_ENV: 'test',
     FILEPLUS_ROOT: sandbox,
+    FILEPLUS_SANDBOX_PATH: sandbox,
     FILEPLUS_PORT: String(port),
     FILEPLUS_API_TOKEN: token,
     FILEPLUS_LOG_DIR: logDir,
@@ -107,7 +104,6 @@ module.exports = async function globalSetup() {
     FILEPLUS_USER_DATA_DIR: path.join(tmpRoot, 'electron-profile'),
     FILEPLUS_E2E_BACKEND_PID: String(backend.pid),
   });
-  delete process.env.FILEPLUS_SANDBOX_PATH;
   delete process.env.ELECTRON_RUN_AS_NODE;
   process.stdout.write(`e2e harness: backend pid ${backend.pid} on ${port}, root ${sandbox}, logs ${logDir}\n`);
 };

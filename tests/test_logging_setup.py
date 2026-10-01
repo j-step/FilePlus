@@ -60,7 +60,9 @@ def test_requests_errors_and_file_operations_are_logged(backend_log, sandbox, db
     assert "POST /fs/move -> 200" in text
     assert "POST /fs/rename -> 403" in text
     assert "refused (403)" in text
-    assert f"move: {src} -> {sandbox / 'dest'}" in text  # source and destination of the file operation
+    # source and destination of the file operation, logged before (pending) and after (done)
+    assert f"move pending: {src} -> {sandbox / 'dest'}" in text
+    assert f"move done: {src} -> {sandbox / 'dest'}" in text
 
 
 def test_unhandled_error_is_logged_with_traceback(backend_log, sandbox, monkeypatch):

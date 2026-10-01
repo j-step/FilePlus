@@ -44,8 +44,12 @@ async function launchApp({ args = [] } = {}) {
   });
   await page.waitForSelector('#shell');
   await page.waitForFunction(() => typeof tabs !== 'undefined' && tabs.list && tabs.list.length > 0);
-  // First /health poll and fonts — the same settle the smoke test uses.
-  await page.waitForTimeout(1200);
+  // Settled = the first /health poll came back green and the UI font is
+  // loaded (screenshots and text measurements depend on both).
+  await page.waitForFunction(async () => {
+    await document.fonts.ready;
+    return document.getElementById('status-backend')?.dataset.state === 'ok';
+  }, null, { timeout: 15_000 });
   return { app, page, errors };
 }
 

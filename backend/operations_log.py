@@ -46,7 +46,7 @@ async def log_operation(conn: aiosqlite.Connection, op_type: str, source: str | 
     # Every operation passes through here BEFORE it runs (CLAUDE.md safety
     # rules), so this one line puts every move/rename/copy/trash/restore/tag/
     # config change in backend.log with its source and destination.
-    logger.info("op #%s %s: %s -> %s%s%s", cur.lastrowid, op_type, source, dest,
+    logger.info("op #%s %s pending: %s -> %s%s%s", cur.lastrowid, op_type, source, dest,
                 f" batch={batch_id}" if batch_id else "", f" undo_of={undo_of}" if undo_of else "")
     return cur.lastrowid
 

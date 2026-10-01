@@ -34,6 +34,10 @@ JJ is not a programmer. Talk to him in plain English, no code in messages to him
 - Run them and confirm they FAIL for the right reason (the missing feature, not
   a typo). Paste nothing to JJ yet.
 
+Note on the Stop hook: ending a turn while tests written first are deliberately red makes
+`scripts/verify.py` block the stop once with that failure. That is expected — reply in one line that the
+red test is the intended reproduction, and the next stop goes through (`stop_hook_active`).
+
 ## 3. Implement in thin slices
 
 - One small, testable behaviour at a time; run its tests; commit when green.

@@ -28,6 +28,10 @@ JJ is not a programmer. If he attached a screenshot, look at it first.
   fail, you have not found the bug yet — keep reading logs and code, or ask
   JJ one specific question.
 
+Note on the Stop hook: ending a turn while the new test is deliberately red (waiting on JJ) makes
+`scripts/verify.py` block the stop once with that failure. That is expected — reply in one line that the
+red test is the intended reproduction, and the next stop goes through (`stop_hook_active`).
+
 ## 3. Fix
 
 - Change the real cause, not the symptom. Never weaken a test, add a skip, or

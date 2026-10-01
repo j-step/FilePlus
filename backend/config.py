@@ -100,12 +100,6 @@ OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.1:8b")
 # only a prod environment honours it (writes_unlocked()).
 WRITE_UNLOCKED = os.getenv("WRITE_UNLOCKED", "false").lower() == "true"
 
-
-def writes_unlocked() -> bool:
-    """True only when writes outside the root are allowed: FILEPLUS_ENV=prod
-    AND WRITE_UNLOCKED=true. Read at call time so tests can monkeypatch
-    either value."""
-    return FILEPLUS_ENV == "prod" and WRITE_UNLOCKED
 AUTO_SORT_ENABLED = os.getenv("AUTO_SORT_ENABLED", "false").lower() == "true"
 AUTO_SORT_CONFIDENCE_THRESHOLD = float(os.getenv("AUTO_SORT_CONFIDENCE_THRESHOLD", "0.85"))
 MAX_BATCH_SIZE = int(os.getenv("MAX_BATCH_SIZE", "100"))
@@ -498,6 +492,13 @@ def is_protected_read(path: Path) -> bool:
     if is_under(resolved, FILEPLUS_SANDBOX_PATH):
         return False
     return any(is_under(resolved, root) for root in PROTECTED_WRITE_ROOTS)
+
+
+def writes_unlocked() -> bool:
+    """True only when writes outside the root are allowed: FILEPLUS_ENV=prod
+    AND WRITE_UNLOCKED=true. Read at call time so tests can monkeypatch
+    either value."""
+    return FILEPLUS_ENV == "prod" and WRITE_UNLOCKED
 
 
 def _enforce_write_containment(resolved: Path) -> None:

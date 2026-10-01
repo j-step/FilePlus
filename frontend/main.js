@@ -174,7 +174,11 @@ function createWindow() {
     rendererLog.error('renderer process gone:', details);
   });
   mainWindow.webContents.on('preload-error', (_e, preloadPath, err) => mainLog.error(`preload error in ${preloadPath}:`, err));
-  mainWindow.webContents.on('did-fail-load', (_e, code, desc, url) => mainLog.error(`did-fail-load ${code} ${desc} ${url}`));
+  // -3 (ERR_ABORTED) is a load superseded by another (a reload) -- normal,
+  // not an error; anything else is a real failure to show the UI.
+  mainWindow.webContents.on('did-fail-load', (_e, code, desc, url) => {
+    (code === -3 ? mainLog.info : mainLog.error)(`did-fail-load ${code} ${desc} ${url}`);
+  });
   mainWindow.webContents.on('did-finish-load', () => {
     mainLog.info('window loaded');
     // One marker line per page load, so renderer.log always shows where each

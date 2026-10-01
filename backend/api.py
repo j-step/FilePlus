@@ -202,9 +202,8 @@ async def _db_busy(_r, exc):
 @app.exception_handler(OSError)
 async def _os_error(request, exc):
     status = 400 if exc.errno in _EINVAL_ERRNOS else 502
-    logger.error("filesystem error (%s) on %s: %s", status, getattr(exc, "filename", None)
-                 or request.query_params.get("path"), exc, exc_info=exc if status >= 500 else None)
     path = getattr(exc, "filename", None) or request.query_params.get("path")
+    logger.error("filesystem error (%s) on %s: %s", status, path, exc, exc_info=exc if status >= 500 else None)
     return JSONResponse(status_code=status, content={"detail": exc.strerror or str(exc), "path": path})
 
 
@@ -1693,7 +1692,7 @@ if __name__ == "__main__":
     _log_file = setup_logging(_config.FILEPLUS_LOG_DIR)
     logging.getLogger("backend.api").info(
         "backend starting: port=%s env=%s root=%s db=%s log=%s",
-        _config.FILEPLUS_PORT, getattr(_config, "FILEPLUS_ENV", "-"),
+        _config.FILEPLUS_PORT, _config.FILEPLUS_ENV,
         _config.FILEPLUS_SANDBOX_PATH, _config.FILEPLUS_DB_PATH, _log_file,
     )
     # log_config=None: uvicorn leaves logging alone, so its own records flow

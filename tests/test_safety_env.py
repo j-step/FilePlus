@@ -89,7 +89,12 @@ def test_api_refuses_a_move_outside_root_and_leaves_the_file(sandbox, db, outsid
 
 
 def _import_config(env: dict) -> subprocess.CompletedProcess:
+    """Import backend.config in a fresh interpreter. The three settings under
+    test are always passed explicitly ("" = unset): load_dotenv() never
+    overrides a variable that already exists, so a developer's .env cannot
+    leak into these assertions."""
     full = {k: v for k, v in os.environ.items() if not k.startswith(("FILEPLUS_", "WRITE_UNLOCKED"))}
+    full.update({"FILEPLUS_ENV": "", "FILEPLUS_ROOT": "", "FILEPLUS_SANDBOX_PATH": ""})
     full.update(env)
     return subprocess.run(
         [sys.executable, "-c", "import backend.config as c; print(c.FILEPLUS_ENV); print(c.FILEPLUS_SANDBOX_PATH)"],

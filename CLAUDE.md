@@ -119,7 +119,8 @@ ledger), `docs/fileplus-feature-list.md` (backlog). Everything else is under `do
 
 The sandbox default is `FILEPLUS_APP_DIR/FilePlusTestSandbox` (`backend/config.py`), so each git
 worktree gets its own empty sandbox with no cross-worktree collisions; `.env` can override it via
-`FILEPLUS_SANDBOX_PATH`.
+`FILEPLUS_ROOT` (or its older name `FILEPLUS_SANDBOX_PATH` -- one setting, two names; setting both to
+different folders stops the backend from starting).
 
 ## Development workflow
 
