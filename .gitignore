@@ -52,3 +52,6 @@ frontend/test-results/
 
 # Runtime logs (backend.log, main.log, renderer.log -- see backend/logging_setup.py, frontend/logger.js)
 logs/
+
+# Claude Code personal settings (permissions) -- per machine, never shared
+.claude/settings.local.json
