@@ -40,7 +40,11 @@ errors, screenshots to `artifacts/screenshots/`). Red means stop and fix; never 
 The Electron tests are self-contained (`frontend/test/harness/`): global setup builds a fresh fixture
 copy in a temp folder, starts the backend on 9877 with `FILEPLUS_ENV=test` and `FILEPLUS_ROOT` pointing
 at it, gives Electron a throwaway profile (`FILEPLUS_USER_DATA_DIR`) and writes logs to
-`artifacts/logs/`; teardown stops the backend and deletes the folder. Single commands:
+`artifacts/logs/`; teardown stops the backend and deletes the folder. Global setup also empties
+`artifacts/screenshots/`, so after a single-file run only that file's screenshots are there. `shot()`
+flattens Mica for the capture (Mica's transparent regions used to save as a white sidebar). A few
+tests read the real `C:\` / Desktop (read-only; This PC, drive crumbs, Quick Access): their
+screenshots differ from machine to machine. Single commands:
 `py -3 -m pytest -q`, `cd frontend && npm run test:smoke` (fast) / `npm run test:e2e` (everything).
 `py -3 scripts/gen_sandbox.py` rebuilds the dev app's own `FilePlusTestSandbox/_gen` (tests never read it).
 A Stop hook (`.claude/settings.json` → `scripts/verify.py`) runs pytest + the smoke whenever code
@@ -83,9 +87,12 @@ April "one fix at a time" rule is retired (D10).
   properties,app}.js` — each can call anything defined earlier at its own top level; anything from a
   later file is only safe to reference from inside a function that runs after `DOMContentLoaded`.
   `actions.js` is gone (Stage 2B deleted it; verify fails if it reappears): click dispatch is the
-  `switch` in `app.js` (`document.addEventListener('click', …)`) plus the `IN_SCOPE_ACTIONS` set (an
-  action a listener of its own handles, so the switch leaves it alone). The switch's default branch
-  is the "not yet implemented" stub; it counts `window.__fpStubHits`, which tests assert stays 0.
+  `switch` in `app.js` (`document.addEventListener('click', …)`) plus the `IN_SCOPE_ACTIONS` set: an
+  action a listener of its own handles (so the switch leaves it alone), or one that is deliberately
+  inert on a click — some have no case at all (`settings-set-accent-hex` applies on input/Enter), some
+  a case that is a silent no-op.
+  The switch's default branch is the "not yet implemented" stub; it counts `window.__fpStubHits`,
+  which tests assert stays 0.
 - `filetypes.js` and `icons-sprite.js` are generated, not hand-edited: `filetypes.js` from
   `backend/filetypes.py` via `scripts/build_filetypes.py`; `icons-sprite.js` (the Fluent chrome
   sprite; Stage 2D added `fp-this-pc` and `fp-window-restore`) via `scripts/build_icons.js`.
