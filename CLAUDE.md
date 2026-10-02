@@ -130,7 +130,7 @@ responsibility. Never ask JJ to run a git command or click anything in Source Co
 is blocked (e.g. a push the permission check refuses), say plainly what is needed in one step.
 
 - `C:\Dev\FilePlus` also holds JJ's personal files that are not part of FilePlus: `Servers/`
-  (~140,000 files of game-server worlds), `Rust.url`, `SETUP_PROMPT.md`, the
+  (~140,000 files of game-server worlds), `SETUP_PROMPT.md`, the
   `FilePlus Playtest Feedback*.md` notes. They are ignored through `.git/info/exclude` (local only,
   never committed). Never delete, move, stage or commit them.
 - Stage files by name (`git add -- <path>`), never `git add -A`, `git add .` or `git commit -a`, and
