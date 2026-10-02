@@ -65,20 +65,40 @@ async def config_merge(conn: aiosqlite.Connection, key: str, patch: dict,
     write is logged like any other config change. With *max_keys*, the
     entries with the oldest numeric ``t`` go first until that many remain.
 
-    The renderer's window-close flush of ui.folder_views sends only the
-    entries still pending (Stage 2D §12 sweep): a keepalive request carries
-    at most 64 KB, and the whole 500-folder map can be bigger than that."""
-    current = await config_get(conn, key)
-    merged = dict(current) if isinstance(current, dict) else {}
-    merged.update(patch)
-    if max_keys is not None and len(merged) > max_keys:
-        def age(k: str) -> float:
-            v = merged[k]
-            t = v.get("t") if isinstance(v, dict) else None
-            return float(t) if isinstance(t, (int, float)) else 0.0
-        for k in sorted(merged, key=age)[: len(merged) - max_keys]:
-            del merged[k]
-    await config_set(conn, key, merged)
+    The renderer saves ui.folder_views only through here, as deltas (Stage 2D
+    §12 sweep): a keepalive request at window close carries at most 64 KB,
+    and the whole 500-folder map can be bigger than that. Two deltas can
+    reach the backend in either order, so an entry already stored with a
+    newer numeric ``t`` is kept over an older one, and the read-modify-write
+    runs in one BEGIN IMMEDIATE transaction so two merges never interleave.
+    The patch is logged before the write, like every config change."""
+    def age(v) -> float:
+        t = v.get("t") if isinstance(v, dict) else None
+        return float(t) if isinstance(t, (int, float)) else 0.0
+
+    op_id = await ol.log_operation(conn, "config-change", key, json.dumps(patch)[:200], reason="merge")
+    await conn.execute("BEGIN IMMEDIATE")
+    try:
+        cur = await conn.execute("SELECT value FROM config WHERE key = ?", (key,))
+        row = await cur.fetchone()
+        current = json.loads(row[0]) if row is not None else None
+        merged = dict(current) if isinstance(current, dict) else {}
+        for k, v in patch.items():
+            if k not in merged or age(v) >= age(merged[k]):
+                merged[k] = v
+        if max_keys is not None and len(merged) > max_keys:
+            for k in sorted(merged, key=lambda k: age(merged[k]))[: len(merged) - max_keys]:
+                del merged[k]
+        await conn.execute(
+            "INSERT INTO config (key, value, updated) VALUES (?, ?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated = excluded.updated",
+            (key, json.dumps(merged), _now()),
+        )
+        await conn.commit()
+    except BaseException:
+        await conn.rollback()
+        raise
+    await ol.mark_executed(conn, op_id)
     return merged
 
 

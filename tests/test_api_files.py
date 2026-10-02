@@ -223,3 +223,19 @@ def test_file_and_files_id_dates_are_epoch_seconds(client, sandbox):
     d = sandbox / "dated-dir"; d.mkdir()
     folder = client.get("/file", params={"path": str(d)}).json()
     assert isinstance(folder["created"], float) and isinstance(folder["modified"], float)
+
+
+def test_file_reindexes_a_file_changed_since_it_was_indexed(client, sandbox):
+    """Fix round 1 (§12 sweep): GET /file answered from the index row as it
+    was first seen; a file edited since showed its old size, Modified date and
+    hash in the inspector."""
+    import os
+    p = sandbox / "edited.txt"; p.write_text("one")
+    first = client.get("/file", params={"path": str(p)}).json()
+    p.write_text("two, and longer")
+    os.utime(p, (first["modified"] + 3600, first["modified"] + 3600))
+    second = client.get("/file", params={"path": str(p)}).json()
+    assert second["id"] == first["id"]
+    assert second["size"] == len("two, and longer")
+    assert abs(second["modified"] - (first["modified"] + 3600)) < 2
+    assert second["hash"] and second["hash"] != first["hash"]

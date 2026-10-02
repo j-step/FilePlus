@@ -27,7 +27,7 @@ async function openDir(page, dir, minRows = 1) {
 
 const inspectorSettled = (page) => page.waitForFunction(() => window.__fpInspectorPending === 0 && !window.__fpLoadPending);
 
-test('inspector: never names an item that is not selected (navigation, click, trash, rename)', async () => {
+test('inspector: never names an item that is not selected — a discrete change shows at once, a burst within 120 ms waits to settle (navigation, click, trash, rename)', async () => {
   const { app, page, errors } = await launchApp();
   const root = (await apiGet('/fs/list/root')).path;
   const dir = sweepDir(root);
@@ -717,6 +717,134 @@ test('§12 audit: a middle-click in the file list does not start Chromium autosc
     expect(await page.evaluate(() => document.getElementById('list-scroll').scrollTop)).toBe(0);
     await send({ type: 'mouseDown', x, y, button: 'left', clickCount: 1 });
     await send({ type: 'mouseUp', x, y, button: 'left', clickCount: 1 });
+  } finally {
+    await app.close();
+  }
+  expect(errors, errors.join('\n')).toEqual([]);
+});
+
+// ── Task 12b review, fix round 1 ─────────────────────────────────────────────
+
+test('delete: when the refresh after it fails, the deleted item is never re-selected (no GET /file for it)', async () => {
+  const { app, page, errors } = await launchApp();
+  const root = (await apiGet('/fs/list/root')).path;
+  const dir = sweepDir(root);
+  try {
+    await openDir(page, dir, 3);
+    await rowByName(page, 'sweep-a.txt').click();
+    await inspectorSettled(page);
+    const after = await page.evaluate(async () => {
+      const orig = refreshDirectory;
+      // eslint-disable-next-line no-global-assign
+      refreshDirectory = async () => {};   // the refresh failed / was superseded
+      try { await fileops.trashSelection(); } finally {
+        // eslint-disable-next-line no-global-assign
+        refreshDirectory = orig;
+      }
+      return [...browserState.selection].map((p) => p.split('\\').pop());
+    });
+    expect(after).not.toContain('sweep-a.txt');
+    await inspectorSettled(page);
+    await expect(page.locator('#inspector-filename')).not.toHaveText('sweep-a.txt');
+    // Once the listing does refresh, the item that took its place is selected.
+    await page.evaluate(() => refreshDirectory());
+    await expect(rowByName(page, 'sweep-a.txt')).toHaveCount(0);
+  } finally {
+    await app.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+  expect(errors, errors.join('\n')).toEqual([]);
+});
+
+test('folder views: the window-close flush resends a save still in flight, and an older delta never wins', async () => {
+  const { app, page, errors } = await launchApp();
+  const root = (await apiGet('/fs/list/root')).path;
+  const docs = `${root}\\_gen\\Documents`;
+  const key = docs.toLowerCase();
+  const stored = async () => (await apiGet('/config'))['ui.folder_views']?.[key];
+  try {
+    await openDir(page, docs, 5);
+    await page.evaluate(() => {
+      window.__sweepMergeGate = new Promise((r) => { window.__sweepMergeRelease = r; });
+      window.__sweepOrigPost = API.post.bind(API);
+      API.post = async (route, body, opts) => {
+        if (route === '/config/merge') await window.__sweepMergeGate;
+        return window.__sweepOrigPost(route, body, opts);
+      };
+      setView('icons', 128, { manual: false });
+      rememberViewChoice();               // saved at once — held in flight
+    });
+    await page.waitForFunction((k) => !!_folderViewsInFlight[k], key);
+    // The window closes now: the keepalive carries the in-flight entry too.
+    await page.evaluate(() => flushFolderViewsOnExit());
+    await expect.poll(async () => (await stored())?.size).toBe(128);
+    const t = (await stored()).t;
+    // The held request lands afterwards; an OLDER delta for the same folder
+    // arriving late does not undo the newer choice.
+    await page.evaluate(() => { window.__sweepMergeRelease(); API.post = window.__sweepOrigPost; });
+    await page.waitForFunction(() => !Object.keys(_folderViewsInFlight).length);
+    await apiSend('POST', '/config/merge', { key: 'ui.folder_views', value: { [key]: { view: 'list', size: null, t: t - 1 } } });
+    expect((await stored()).size).toBe(128);
+  } finally {
+    await fetch(`${API}/config/ui.folder_views`, { method: 'DELETE', headers: apiHeaders() }).catch(() => {});
+    await app.close();
+  }
+  expect(errors, errors.join('\n')).toEqual([]);
+});
+
+test('inspector dates: Modified and Created are the file\'s own times (epoch seconds from /file)', async () => {
+  const { app, page, errors } = await launchApp();
+  const root = (await apiGet('/fs/list/root')).path;
+  const dir = sweepDir(root);
+  const file = path.join(dir, `dated-${Date.now()}.txt`);
+  fs.writeFileSync(file, 'dated\n');
+  const mtime = new Date(2020, 2, 4, 10, 30);
+  fs.utimesSync(file, mtime, mtime);
+  try {
+    await openDir(page, dir, 4);
+    await rowByName(page, path.basename(file)).click();
+    await inspectorSettled(page);
+    const want = await page.evaluate(([m, b]) => ({ modified: formatDate(m), created: formatDate(b) }),
+      [mtime.getTime(), fs.statSync(file).birthtimeMs]);
+    expect(want.modified).toContain('2020');
+    await expect(page.locator('#inspector-modified')).toHaveText(want.modified);
+    await expect(page.locator('#inspector-created')).toHaveText(want.created);
+  } finally {
+    await app.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+  expect(errors, errors.join('\n')).toEqual([]);
+});
+
+test('section headers share one type: sidebar, Settings nav, search dropdown, palette, Properties › Details', async () => {
+  const { app, page, errors } = await launchApp();
+  const root = (await apiGet('/fs/list/root')).path;
+  try {
+    const type = (sel) => page.locator(sel).first().evaluate((el) => {
+      const cs = getComputedStyle(el);
+      return { size: cs.fontSize, weight: cs.fontWeight, line: cs.lineHeight, tracking: cs.letterSpacing, caps: cs.textTransform };
+    });
+    const ref = await type('.fp-sidebar__section-label');
+    await page.evaluate(() => switchScreen('settings'));
+    expect(await type('.settings-nav__section-label')).toEqual(ref);
+    await page.evaluate(() => switchScreen('home'));
+    await page.evaluate(() => { focusSearchInput(); openSearchDropdown(); });
+    await expect(page.locator('#search-dropdown')).toBeVisible();
+    expect(await type('.fp-search-dd__section')).toEqual(ref);
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Control+k');
+    await expect(page.locator('.fp-palette__section').first()).toBeVisible();
+    expect(await type('.fp-palette__section')).toEqual(ref);
+    await page.keyboard.press('Escape');
+    // Properties › Details groups (the group element is styled whatever
+    // details the platform reports, so one is injected into the open panel).
+    await openDir(page, `${root}\\_gen\\Documents`, 5);
+    await page.evaluate((p) => openProperties(p), `${root}\\_gen\\Documents\\doc-00.txt`);
+    await expect(page.locator('#properties-modal-scrim')).toBeVisible();
+    await page.evaluate(() => renderDetails([{ group: 'Origin', name: 'Probe', value: 'x' }]));
+    expect(await type('#properties-details-content .properties__details-group')).toEqual(ref);
+    await page.evaluate(() => closeProperties());
   } finally {
     await app.close();
   }

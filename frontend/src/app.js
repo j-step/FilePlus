@@ -4474,10 +4474,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   // loaders run together. Each step degrades to a harmless no-op on backend
   // failure, and every request is bounded by apiTimeout() so a backend that
   // has bound its port but not finished starting can't stall init forever.
+  // Static markup only — no data needed, so a failed load cannot skip it.
+  initSettingsNavSelect();
   try {
     await loadConfig();
     applySettingsFromConfig();
-    initSettingsNavSelect();
     restoreSettingsPane();
     // Before the first listing renders: iconFor() decides the special folder
     // icons (Desktop, Downloads, …) by matching a path against this map, and

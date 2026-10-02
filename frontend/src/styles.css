@@ -3354,15 +3354,6 @@ body.is-dragging { cursor: default; }
 }
 .fp-tray__active-icon { width: 18px; height: 18px; color: var(--accent); flex-shrink: 0; }
 
-.fp-tray__section-label {
-  padding: var(--s-12) var(--s-14) var(--s-6);
-  display: flex; justify-content: space-between; align-items: center;
-  font: 500 var(--t-micro) var(--font-ui);
-  letter-spacing: var(--track-caps);
-  text-transform: uppercase;
-  color: var(--text-tertiary);
-}
-
 .fp-tray__file-card {
   margin: 0 var(--s-14);
   background: var(--bg-raised);
@@ -5542,6 +5533,9 @@ button.fp-pill:hover {
   margin-bottom: var(--s-8);
 }
 .home-section__title {
+  /* Not a section header in the --t-section sense: this is Recent's date
+     group heading ("Today", "Last month"), Explorer's group header — a title
+     the rows hang under, so it keeps the title size (Stage 2D §12 sweep). */
   font: 600 var(--t-title-sm) var(--font-ui);
   letter-spacing: var(--track-button);
   color: var(--text-primary);

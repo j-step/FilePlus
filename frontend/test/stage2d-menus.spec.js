@@ -263,8 +263,27 @@ test('Tab closes the whole menu; a stationary pointer cannot yank a keyboard-ope
     // Keyboard-opened flyout: a pointerenter on a sibling at the SAME pointer
     // position (layout shift under a stationary pointer) does not close it;
     // one at a different position (the pointer really moved) does, after the
-    // 300 ms grace. The pointer's position starts unknown (as in a window no
-    // pointer event has reached yet).
+    // 300 ms grace. First with the pointer's position KNOWN (it has moved in
+    // this window: the enter at that same spot is a layout shift)…
+    await page.evaluate(() => { cmLastPointer = { x: 380, y: 240 }; });
+    await open();
+    await page.keyboard.press('ArrowDown'); await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('ArrowRight');
+    await expect(fly).toBeVisible();
+    const knownSurvived = await page.evaluate(() => {
+      const beta = document.querySelector('#context-menu [data-menu-label="Beta"]');
+      beta.dispatchEvent(new PointerEvent('pointerenter', { clientX: cmLastPointer.x, clientY: cmLastPointer.y }));
+      return new Promise((r) => setTimeout(() => r(cmFlyouts.length > 0), CM_FLYOUT_CLOSE_GRACE));
+    });
+    expect(knownSurvived).toBe(true);
+    await page.evaluate(() => {
+      const beta = document.querySelector('#context-menu [data-menu-label="Beta"]');
+      beta.dispatchEvent(new PointerEvent('pointerenter', { clientX: cmLastPointer.x + 7, clientY: cmLastPointer.y + 7 }));
+    });
+    await expect(fly).toHaveCount(0);
+    await page.keyboard.press('Escape');
+    await expect(visibleMenus).toHaveCount(0);
+    // …then with it UNKNOWN (as in a window no pointer event has reached yet).
     await page.evaluate(() => { cmLastPointer = null; });
     await open();
     await page.keyboard.press('ArrowDown'); await page.keyboard.press('ArrowDown');

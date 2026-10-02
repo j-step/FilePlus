@@ -126,6 +126,10 @@ const browserState = {
   // When browserState.entries was fetched (ms epoch) — carried into the tab
   // record's cached listing (Stage 2D §4.2).
   fetchedAt: 0,
+  // Bumped whenever browserState.entries is replaced by fresh data (a commit,
+  // a refresh patch, a search render) — selectAfterDelete's "has the listing
+  // been refreshed since?" test.
+  listingGen: 0,
   // A Back/Forward whose fetch is still in flight: {seq, index}. nav.index
   // only moves once the fetch succeeds (pass-2 #55), so a second Back pressed
   // before the first lands steps on from here instead of repeating it.
@@ -458,9 +462,14 @@ function initViewLayout() {
 // reload (loadConfig) landing inside the window cannot lose them — and which
 // the timer merges into the CURRENT config when it fires. A window closing
 // inside the window flushes them with a keepalive request (pagehide).
+// Every save is a delta to POST /config/merge (never the whole map): the
+// backend keeps the entry with the newer `t`, so two saves landing in either
+// order — one in flight, the keepalive at close — cannot undo each other. A
+// delta stays in _folderViewsInFlight until its request has answered.
 const FOLDER_VIEWS_DEBOUNCE_MS = 250;
 let _folderViewsSaveTimer = 0;
 let _folderViewsPending = {};
+let _folderViewsInFlight = {};
 
 function _folderViewsMap() {
   const map = (window.__fpConfig || {})[FOLDER_VIEWS_KEY];
@@ -471,14 +480,14 @@ function _folderViewsMap() {
 function folderViewFor(path) {
   if (!path) return null;
   const key = fpNormalizePath(path);
-  const rec = _folderViewsPending[key] || _folderViewsMap()[key];
+  const rec = _folderViewsPending[key] || _folderViewsInFlight[key] || _folderViewsMap()[key];
   return rec && VIEW_NAMES.includes(rec.view) ? normalizeView(rec.view, rec.size) : null;
 }
 
 /** The saved map with every pending entry merged in, pruned to the 500 most
  * recently set paths. */
 function _mergedFolderViews() {
-  const next = { ..._folderViewsMap(), ..._folderViewsPending };
+  const next = { ..._folderViewsMap(), ..._folderViewsInFlight, ..._folderViewsPending };
   const keys = Object.keys(next);
   if (keys.length > FOLDER_VIEWS_MAX) {
     keys.sort((a, b) => (next[a].t || 0) - (next[b].t || 0))
@@ -488,14 +497,25 @@ function _mergedFolderViews() {
   return next;
 }
 
-/** Writes every pending entry into the current config and saves it. */
+/** Writes every pending entry into the current config and sends them, as a
+ * delta, to POST /config/merge. */
 function flushFolderViews() {
   clearTimeout(_folderViewsSaveTimer);
   _folderViewsSaveTimer = 0;
-  if (!Object.keys(_folderViewsPending).length) return;
-  const next = _mergedFolderViews();
+  const delta = _folderViewsPending;
+  if (!Object.keys(delta).length) return Promise.resolve();
+  if (!window.__fpConfig) window.__fpConfig = {};
+  window.__fpConfig[FOLDER_VIEWS_KEY] = _mergedFolderViews();
   _folderViewsPending = {};
-  saveSetting(FOLDER_VIEWS_KEY, next);
+  Object.assign(_folderViewsInFlight, delta);
+  const settle = () => {
+    for (const [k, v] of Object.entries(delta)) if (_folderViewsInFlight[k] === v) delete _folderViewsInFlight[k];
+  };
+  return API.post('/config/merge', { key: FOLDER_VIEWS_KEY, value: delta, max_keys: FOLDER_VIEWS_MAX })
+    .then(settle, err => {
+      settle();
+      showToast(`Failed to save setting: ${formatApiError(err)}`, 'error');
+    });
 }
 
 /** The window is going away with a Ctrl+wheel run still unsaved: send it with
@@ -507,8 +527,10 @@ function flushFolderViews() {
 function flushFolderViewsOnExit() {
   clearTimeout(_folderViewsSaveTimer);
   _folderViewsSaveTimer = 0;
-  if (!Object.keys(_folderViewsPending).length) return;
-  const pending = _folderViewsPending;
+  // Entries whose own save is still in flight go again: that request may be
+  // cancelled by the unload, and the backend keeps the newer `t` either way.
+  const pending = { ..._folderViewsInFlight, ..._folderViewsPending };
+  if (!Object.keys(pending).length) return;
   if (window.__fpConfig) window.__fpConfig[FOLDER_VIEWS_KEY] = _mergedFolderViews();
   _folderViewsPending = {};
   try {
@@ -1033,6 +1055,7 @@ function commitListing(data, { absPath, addToHistory = true, restore: restoreIn 
   browserState.isRoot = data.is_root;
   browserState.truncated = !!data.truncated;
   browserState.fetchedAt = fetchedAt;
+  browserState.listingGen++;
   browserState.listingTabId = tabs.activeId;
   browserState.listingStale = false;
   browserState._pendingHistory = null;
@@ -1301,6 +1324,7 @@ function patchDirectory(newEntries, data = null) {
   if (data) browserState.truncated = !!data.truncated;
   browserState.entries = newEntries;
   browserState.fetchedAt = Date.now();
+  browserState.listingGen++;
 
   const valid = new Set(newEntries.map(entryPath));
   browserState.selection = new Set([...browserState.selection].filter(p => valid.has(p)));
@@ -1916,6 +1940,7 @@ function renderSearchResults(payload, { query = '', root = '', preserveSelection
   browserState.searchTabId = tabs.activeId;
   browserState.truncated = false;
   browserState.entries = (payload.results || []).map(r => ({ ...r, location: parentOfPath(r.path) }));
+  browserState.listingGen++;
   if (preserveSelection && prevSelection) {
     const validPaths = new Set(browserState.entries.map(e => e.path));
     browserState.selection = new Set([...prevSelection].filter(p => validPaths.has(p)));
@@ -2263,7 +2288,11 @@ function deletePlace(paths) {
   const order = sortedEntries().map(entryPath);
   const idx = paths.map(p => order.indexOf(p)).filter(i => i >= 0);
   if (!idx.length) return null;
-  return { path: browserState.path, mode: browserState.mode, index: Math.min(...idx) };
+  return {
+    path: browserState.path, mode: browserState.mode, index: Math.min(...idx),
+    deleted: new Set(paths.map(p => fpNormalizePath(p))),
+    gen: browserState.listingGen,
+  };
 }
 
 /** After a delete, the item now at the deleted one's place (or the last
@@ -2274,7 +2303,11 @@ function deletePlace(paths) {
 function selectAfterDelete(place) {
   if (!place || browserState.path !== place.path || browserState.mode !== place.mode) return;
   if (browserState.selection.size) return;
-  const order = sortedEntries().map(entryPath);
+  // Only once the listing has been refreshed since the delete: a refresh that
+  // failed or was superseded leaves the deleted rows in `entries`, and
+  // selecting one would send the inspector to GET /file for a gone path.
+  if (browserState.listingGen === place.gen) return;
+  const order = sortedEntries().map(entryPath).filter(p => !place.deleted.has(fpNormalizePath(p)));
   if (!order.length) return;
   moveFocusTo(order[Math.min(place.index, order.length - 1)], {}, order);
 }

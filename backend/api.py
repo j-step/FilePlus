@@ -440,11 +440,23 @@ async def file_meta(path: str = Query(..., description="Absolute path of the fil
         conn.row_factory = aiosqlite.Row
         cur = await conn.execute("SELECT * FROM files WHERE path = ?", (str(resolved),))
         row = await cur.fetchone()
-        if row is None:
+        # A row indexed before the file last changed is re-indexed: the
+        # inspector showed the size, Modified date and hash of the file as it
+        # was when first seen (Stage 2D §12 sweep, "missing date fields").
+        stale = row is not None and (
+            row["size"] != st.st_size
+            or (_iso_to_epoch(row["modified"]) is None)
+            or abs(_iso_to_epoch(row["modified"]) - st.st_mtime) > 1)
+        if row is None or stale:
             # On-demand indexing must stay cheap: selecting a folder of large
             # media files fires one of these per item, so only small files are
             # hashed here (see _ONDEMAND_HASH_MAX_BYTES).
-            await index_file(resolved, conn, hash=st.st_size <= _ONDEMAND_HASH_MAX_BYTES)
+            small = st.st_size <= _ONDEMAND_HASH_MAX_BYTES
+            await index_file(resolved, conn, hash=small)
+            if stale and not small:
+                # index_file keeps a stored hash when it does not hash; for a
+                # changed file that hash describes the old content.
+                await conn.execute("UPDATE files SET hash = NULL WHERE path = ?", (str(resolved),))
             await conn.commit()
             cur = await conn.execute("SELECT * FROM files WHERE path = ?", (str(resolved),))
             row = await cur.fetchone()

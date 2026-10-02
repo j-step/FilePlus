@@ -216,3 +216,32 @@ def test_connection_reset_on_close_is_not_logged_as_an_error():
     other = {"exception": RuntimeError("real"), "message": "boom"}
     _quiet_connection_reset(loop, other)
     assert loop.passed == [other]
+
+
+def test_config_merge_keeps_the_newer_entry_whatever_the_arrival_order(client):
+    """Fix round 1: two folder-view deltas can arrive in either order (a save
+    in flight, then the window-close keepalive); the entry with the newer `t`
+    wins, so an older delta landing late cannot overwrite a newer choice."""
+    newer = {"c:/x": {"view": "icons", "size": 128, "t": 20}}
+    older = {"c:/x": {"view": "list", "size": None, "t": 10}, "c:/y": {"view": "details", "t": 11}}
+    client.post("/config/merge", json={"key": "ui.folder_views", "value": newer})
+    client.post("/config/merge", json={"key": "ui.folder_views", "value": older})
+    saved = client.get("/config").json()["ui.folder_views"]
+    assert saved["c:/x"] == newer["c:/x"] and saved["c:/y"] == older["c:/y"]
+
+
+async def test_config_merge_runs_in_one_immediate_transaction(db):
+    """The read-modify-write cannot interleave with another writer: the merge
+    holds a RESERVED lock (BEGIN IMMEDIATE) from its read to its commit."""
+    import aiosqlite
+    from backend import stores
+    from backend import config as _config
+    statements = []
+    async with aiosqlite.connect(_config.FILEPLUS_DB_PATH) as conn:
+        await conn.set_trace_callback(statements.append)
+        await stores.config_merge(conn, "ui.folder_views", {"c:/z": {"view": "list", "t": 1}})
+    begin = next(i for i, s in enumerate(statements) if s.strip().upper().startswith("BEGIN IMMEDIATE"))
+    select = next(i for i, s in enumerate(statements) if "SELECT value FROM config" in s)
+    write = next(i for i, s in enumerate(statements) if s.strip().upper().startswith("INSERT INTO CONFIG"))
+    assert begin < select < write
+    assert not any(s.strip().upper().startswith("BEGIN") for s in statements[begin + 1:write])
