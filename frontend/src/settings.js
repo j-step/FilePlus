@@ -159,7 +159,7 @@ function applySettingsFromConfig() {
   // reads the config key directly on every navigation.
   const savedSort = cfg['ui.sort'];
   if (savedSort && typeof savedSort === 'object'
-      && ['name', 'size', 'modified', 'type'].includes(savedSort.key)
+      && ['name', 'size', 'modified', 'created', 'accessed', 'type'].includes(savedSort.key)
       && (savedSort.dir === 'asc' || savedSort.dir === 'desc')) {
     browserState.sort = { key: savedSort.key, dir: savedSort.dir };
     if (typeof updateSortHeaderUI === 'function') updateSortHeaderUI();

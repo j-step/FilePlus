@@ -2655,7 +2655,7 @@ body.is-dragging { cursor: default; }
   text-align: right;
 }
 .fp-row__size { width: 96px; min-width: 96px; }
-.fp-row__modified, .fp-row__mod { width: 120px; min-width: 120px; }
+.fp-row__modified, .fp-row__mod { width: 136px; min-width: 136px; }
 
 /* Inline rename input (Task 4) — replaces .fp-row__name in place; sized to
    fit inside the 26px row without changing row height. */
@@ -4133,7 +4133,7 @@ body.is-dragging { cursor: default; }
 .list-col--name { flex: 1; min-width: 0; display: flex; align-items: center; gap: 4px; cursor: pointer; flex-shrink: 1; }
 .list-col--name:hover { color: var(--text-secondary); }
 .list-col--size { width: 96px; min-width: 96px; text-align: right; cursor: pointer; }
-.list-col--modified { width: 120px; min-width: 120px; text-align: right; cursor: pointer; }
+.list-col--modified { width: 136px; min-width: 136px; text-align: right; cursor: pointer; }
 .list-col--size:hover, .list-col--modified:hover { color: var(--text-secondary); }
 .list-col--tags { min-width: 120px; flex-shrink: 0; }
 .list-col__caret { opacity: 0; transition: opacity var(--dur-fast); }
@@ -5166,9 +5166,15 @@ button.fp-pill:hover {
   color: var(--text-tertiary);
   flex-shrink: 0;
 }
-.fp-context-menu__item:hover { background: var(--bg-pressed); color: var(--text-primary); }
+.fp-context-menu__item:hover,
+.fp-context-menu__item:focus-visible,
+.fp-context-menu__item--open { background: var(--bg-pressed); color: var(--text-primary); }
+.fp-context-menu__item:focus-visible { outline: none; }  /* the row highlight is the keyboard focus cue */
 .fp-context-menu__item:hover .fp-context-menu__item__icon,
 .fp-context-menu__item:hover svg { color: var(--text-primary); }
+/* Flyout parent row: trailing chevron (Stage 2D §6.3) */
+.fp-context-menu__item .fp-context-menu__chevron { margin-left: auto; width: 12px; height: 12px; color: var(--text-tertiary); }
+.fp-context-menu--flyout { z-index: 601; }
 .fp-context-menu__item--danger { color: var(--bad); }
 .fp-context-menu__item--danger .fp-context-menu__item__icon,
 .fp-context-menu__item--danger svg { color: var(--bad); }

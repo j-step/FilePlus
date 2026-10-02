@@ -1469,7 +1469,11 @@ const VIEW_MENU_ITEMS = [
 
 const SORT_MENU_ITEMS = [
   { label: 'Name',          action: 'sort-name',     checked: ctx => ctx.sortKey === 'name' },
-  { label: 'Date modified', action: 'sort-modified', checked: ctx => ctx.sortKey === 'modified' },
+  { label: 'Date…', checked: ctx => ['created', 'modified', 'accessed'].includes(ctx.sortKey), items: [
+    { label: 'Date created',  action: 'sort-created',  checked: ctx => ctx.sortKey === 'created' },
+    { label: 'Date modified', action: 'sort-modified', checked: ctx => ctx.sortKey === 'modified' },
+    { label: 'Date accessed', action: 'sort-accessed', checked: ctx => ctx.sortKey === 'accessed' },
+  ] },
   { label: 'Type',          action: 'sort-type',     checked: ctx => ctx.sortKey === 'type' },
   { label: 'Size',          action: 'sort-size',     checked: ctx => ctx.sortKey === 'size' },
   'sep',
@@ -1600,8 +1604,91 @@ const contextMenu = document.getElementById('context-menu');
  */
 function showContextMenu(x, y, items, opts = {}) {
   if (!contextMenu) return;
+  closeContextFlyouts(0);
+  clearTimeout(cmTimer);
+  cmPrevFocus = document.activeElement;
   contextMenu.innerHTML = '';
-  const ctx = opts.ctx;
+  buildContextMenuItems(contextMenu, items, opts.ctx, 0);
+  contextMenu.style.display = 'block';
+  // Position within the viewport using the MEASURED size (pass 2 #61: the old
+  // hardcoded 200px/220px let a wide menu spill off the right edge), and never
+  // past the top or left edge either.
+  const vw = window.innerWidth, vh = window.innerHeight;
+  const w = contextMenu.offsetWidth, h = contextMenu.offsetHeight;
+  let left, top;
+  if (opts.anchor) {
+    const r = opts.anchor.getBoundingClientRect();
+    left = r.left;
+    top = r.bottom + 4;
+  } else {
+    left = x;
+    top = y;
+  }
+  contextMenu.style.left = `${Math.max(0, Math.min(left, vw - w - 8))}px`;
+  contextMenu.style.top  = `${Math.max(0, Math.min(top, vh - h - 8))}px`;
+}
+
+// ── Flyout submenus (Stage 2D §6.3) ────────────────────────────────────────
+// An item with `items: [...]` renders a trailing chevron and opens a child
+// menu (.fp-context-menu--flyout) built by the same builder. One flyout per
+// level: cmFlyouts[d] is the flyout opened from a row of menu level d (0 is
+// #context-menu itself), so the deepest open menu is the last one.
+const CM_FLYOUT_OPEN_DELAY = 250;    // hover this long on a parent row to open
+const CM_FLYOUT_CLOSE_GRACE = 300;   // sibling hover shorter than this keeps it open
+let cmFlyouts = [];                  // [{ menu, owner }]
+let cmTimer = null;                  // the one pending hover open/close
+let cmPrevFocus = null;              // focus to give back when Escape closes the menu
+
+function cmOpenMenus() { return [contextMenu, ...cmFlyouts.map(f => f.menu)]; }
+
+function cmFocusableItems(menu) {
+  return [...menu.children].filter(el =>
+    el.classList.contains('fp-context-menu__item') && !el.classList.contains('fp-context-menu__item--disabled'));
+}
+
+/** Closes every flyout opened from level `depth` or deeper. */
+function closeContextFlyouts(depth) {
+  for (let i = cmFlyouts.length - 1; i >= depth; i--) {
+    const { menu, owner } = cmFlyouts[i];
+    menu.remove();
+    owner.classList.remove('fp-context-menu__item--open');
+    owner.setAttribute('aria-expanded', 'false');
+  }
+  cmFlyouts.length = Math.min(cmFlyouts.length, depth);
+}
+
+/** Opens the flyout for parent row `btn` (a row of menu level `depth`). */
+function openContextFlyout(item, btn, depth, ctx, focusFirst) {
+  if (cmFlyouts[depth] && cmFlyouts[depth].owner === btn) {
+    if (focusFirst) cmFocusableItems(cmFlyouts[depth].menu)[0]?.focus();
+    return;
+  }
+  closeContextFlyouts(depth);
+  const parentMenu = cmOpenMenus()[depth];
+  const menu = document.createElement('div');
+  menu.className = 'fp-context-menu fp-context-menu--flyout';
+  menu.setAttribute('role', 'menu');
+  menu.addEventListener('mouseenter', () => clearTimeout(cmTimer));
+  buildContextMenuItems(menu, item.items, ctx, depth + 1);
+  document.body.appendChild(menu);
+  cmFlyouts[depth] = { menu, owner: btn };
+  btn.classList.add('fp-context-menu__item--open');
+  btn.setAttribute('aria-expanded', 'true');
+  // Right edge of the parent menu (flip to its left edge when that would
+  // overflow the viewport); top aligned with the parent row, clamped.
+  const vw = window.innerWidth, vh = window.innerHeight;
+  const pr = parentMenu.getBoundingClientRect();
+  const rr = btn.getBoundingClientRect();
+  const w = menu.offsetWidth, h = menu.offsetHeight;
+  let left = pr.right - 2;
+  if (left + w > vw - 4) left = pr.left - w + 2;
+  const top = Math.max(0, Math.min(rr.top - 5, vh - h - 8));
+  menu.style.left = `${Math.max(0, left)}px`;
+  menu.style.top = `${top}px`;
+  if (focusFirst) cmFocusableItems(menu)[0]?.focus();
+}
+
+function buildContextMenuItems(menuEl, items, ctx, depth) {
   const shown = [];
   for (const item of items) {
     if (item === 'sep') {
@@ -1618,17 +1705,24 @@ function showContextMenu(x, y, items, opts = {}) {
     if (item === 'sep') {
       const sep = document.createElement('div');
       sep.className = 'fp-context-menu__sep';
-      contextMenu.appendChild(sep);
+      menuEl.appendChild(sep);
       return;
     }
     const isEnabled = typeof item.enabled !== 'function' || !!item.enabled(ctx);
     const label = typeof item.label === 'function' ? item.label(ctx) : item.label;
+    const hasChildren = Array.isArray(item.items) && item.items.length > 0;
     const btn = document.createElement('button');
     btn.className = 'fp-context-menu__item'
       + (item.danger ? ' fp-context-menu__item--danger' : '')
       + (!isEnabled ? ' fp-context-menu__item--disabled' : '');
-    btn.setAttribute('data-action', item.action || '');
+    // A parent row carries no data-action: clicking it only opens its flyout.
+    if (!hasChildren) btn.setAttribute('data-action', item.action || '');
+    btn.setAttribute('data-menu-label', String(label).replace(/<[^>]*>/g, ''));
     btn.setAttribute('role', 'menuitem');
+    if (hasChildren) {
+      btn.setAttribute('aria-haspopup', 'true');
+      btn.setAttribute('aria-expanded', 'false');
+    }
     if (!isEnabled) {
       btn.setAttribute('aria-disabled', 'true');
       btn.setAttribute('tabindex', '-1'); // keyboard Tab order skips it too
@@ -1645,36 +1739,89 @@ function showContextMenu(x, y, items, opts = {}) {
       kbd.textContent = item.kbd;
       btn.appendChild(kbd);
     }
+    if (hasChildren) btn.insertAdjacentHTML('beforeend', icon('chevron-right', 'fp-icon--14 fp-context-menu__chevron'));
     // A disabled item gets no click listener at all — CSS's pointer-events:
     // none on .fp-context-menu__item--disabled already keeps the click from
     // ever reaching this button (see styles.css), so this is belt-and-braces
     // against that CSS being bypassed some other way, not the only guard.
     if (isEnabled) {
-      if (item.onClick) btn.addEventListener('click', () => { item.onClick(); hideContextMenu(); });
+      if (hasChildren) btn.addEventListener('click', () => { clearTimeout(cmTimer); openContextFlyout(item, btn, depth, ctx, false); });
+      else if (item.onClick) btn.addEventListener('click', () => { item.onClick(); hideContextMenu(); });
       else btn.addEventListener('click', hideContextMenu);
+      btn._cmItem = hasChildren ? item : null;
+      btn._cmCtx = ctx;
+      btn._cmDepth = depth;
     }
-    contextMenu.appendChild(btn);
+    // Hover: a parent row opens its flyout after 250 ms; entering any other
+    // row while a flyout is open closes it only after a 300 ms grace, so the
+    // pointer can cross a sibling on its way to the flyout (safe triangle) —
+    // entering the flyout (or coming back to the parent row) cancels that.
+    btn.addEventListener('mouseenter', () => {
+      clearTimeout(cmTimer);
+      const open = cmFlyouts[depth];
+      if (hasChildren && isEnabled) {
+        if (open && open.owner === btn) return;
+        cmTimer = setTimeout(() => openContextFlyout(item, btn, depth, ctx, false), CM_FLYOUT_OPEN_DELAY);
+      } else if (open) {
+        cmTimer = setTimeout(() => closeContextFlyouts(depth), CM_FLYOUT_CLOSE_GRACE);
+      }
+    });
+    menuEl.appendChild(btn);
   });
-  contextMenu.style.display = 'block';
-  // Position within viewport
-  const vw = window.innerWidth, vh = window.innerHeight;
-  if (opts.anchor) {
-    const r = opts.anchor.getBoundingClientRect();
-    contextMenu.style.left = `${Math.min(r.left, vw - 220)}px`;
-    contextMenu.style.top  = `${Math.min(r.bottom + 4, vh - contextMenu.offsetHeight - 8)}px`;
-  } else {
-    contextMenu.style.left = `${Math.min(x, vw - 200)}px`;
-    contextMenu.style.top  = `${Math.min(y, vh - contextMenu.offsetHeight - 8)}px`;
-  }
 }
 
 function hideContextMenu() {
+  clearTimeout(cmTimer);
+  closeContextFlyouts(0);
   if (contextMenu) contextMenu.style.display = 'none';
 }
 
+function contextMenuIsOpen() {
+  return !!contextMenu && contextMenu.style.display === 'block';
+}
+
 document.addEventListener('click', e => {
-  if (!contextMenu?.contains(e.target)) hideContextMenu();
+  if (!e.target.closest?.('.fp-context-menu')) hideContextMenu();
 });
+
+// Keyboard for the open menu (it had none before): Up/Down/Home/End move
+// through the innermost open menu, Right/Enter on a parent row opens its
+// flyout, Left or Escape closes only the innermost flyout, and Escape on the
+// root menu closes everything. Capture phase + stopPropagation so the keys
+// never also reach the file list (arrow selection, Enter to open) or the
+// global Escape handler behind the menu.
+document.addEventListener('keydown', e => {
+  if (!contextMenuIsOpen()) return;
+  const key = e.key;
+  if (!['ArrowDown', 'ArrowUp', 'ArrowLeft', 'ArrowRight', 'Enter', 'Escape', 'Home', 'End'].includes(key)) return;
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  e.preventDefault();
+  e.stopPropagation();
+  const menus = cmOpenMenus();
+  const active = menus[menus.length - 1];
+  const items = cmFocusableItems(active);
+  const cur = items.indexOf(document.activeElement);
+  const focused = cur >= 0 ? items[cur] : null;
+  if (key === 'ArrowDown') items[(cur + 1) % items.length]?.focus();
+  else if (key === 'ArrowUp') items[cur <= 0 ? items.length - 1 : cur - 1]?.focus();
+  else if (key === 'Home') items[0]?.focus();
+  else if (key === 'End') items[items.length - 1]?.focus();
+  else if (key === 'ArrowRight') {
+    if (focused?._cmItem) openContextFlyout(focused._cmItem, focused, focused._cmDepth, focused._cmCtx, true);
+  } else if (key === 'Enter') {
+    if (!focused) return;
+    if (focused._cmItem) openContextFlyout(focused._cmItem, focused, focused._cmDepth, focused._cmCtx, true);
+    else focused.click();
+  } else if (cmFlyouts.length) {
+    // ArrowLeft / Escape: the innermost flyout first.
+    const { owner } = cmFlyouts[cmFlyouts.length - 1];
+    closeContextFlyouts(cmFlyouts.length - 1);
+    owner.focus();
+  } else if (key === 'Escape') {
+    hideContextMenu();
+    if (cmPrevFocus && cmPrevFocus.isConnected) cmPrevFocus.focus();
+  }
+}, true);
 
 // ── Deselect anywhere (design spec §3.5) ────────────────────────────────────
 // A capture-phase mousedown on #app clears the active selection (Browser
@@ -2198,7 +2345,7 @@ const IN_SCOPE_ACTIONS = new Set([
   'open-view-menu', 'open-sort-menu',
   'view-xl', 'view-large', 'view-medium', 'view-small', 'view-list', 'view-details',
   'toggle-show-hidden', 'toggle-show-extensions', 'toggle-dynamic-media',
-  'sort-name', 'sort-modified', 'sort-type', 'sort-size', 'sort-asc', 'sort-desc',
+  'sort-name', 'sort-created', 'sort-modified', 'sort-accessed', 'sort-type', 'sort-size', 'sort-asc', 'sort-desc',
   // Properties panel (Task 13)
   'inspector-more', 'inspector-properties', 'switch-properties-tab',
   'props-apply', 'props-close', 'props-open-with', 'props-advanced',
@@ -3039,8 +3186,14 @@ document.addEventListener('click', e => {
     case 'sort-name':
       applySort('name', browserState.sort.dir);
       break;
+    case 'sort-created':
+      applySort('created', browserState.sort.dir);
+      break;
     case 'sort-modified':
       applySort('modified', browserState.sort.dir);
+      break;
+    case 'sort-accessed':
+      applySort('accessed', browserState.sort.dir);
       break;
     case 'sort-type':
       applySort('type', browserState.sort.dir);

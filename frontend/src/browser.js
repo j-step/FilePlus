@@ -212,8 +212,24 @@ function initColumnSort() {
   });
 }
 
-/** Syncs the `.fp-sortable` header classes to browserState.sort. */
+/** Which timestamp the Details date column shows: the one the sort is on when
+ * it is a date sort ('created' | 'accessed'), otherwise 'modified'. The
+ * Content view (Task 5) uses the same field for its date line. */
+function dateFieldForSort() {
+  const key = browserState.sort.key;
+  return (key === 'created' || key === 'accessed') ? key : 'modified';
+}
+
+/** Syncs the `.fp-sortable` header classes to browserState.sort, and points
+ * the date column at the field the sort is on (header label + its sort key). */
 function updateSortHeaderUI() {
+  const field = dateFieldForSort();
+  const dateCol = document.querySelector('#list-head [data-col="date"]');
+  if (dateCol) {
+    dateCol.dataset.sort = field;
+    const label = dateCol.querySelector('.list-col__label');
+    if (label) label.textContent = `Date ${field}`;
+  }
   document.querySelectorAll('.fp-sortable[data-sort]').forEach(col => {
     const isActive = col.dataset.sort === browserState.sort.key;
     col.classList.toggle('active', isActive);
@@ -223,29 +239,43 @@ function updateSortHeaderUI() {
 }
 
 /** Sets the active sort, persists it (ui.sort — replaces the old
- * sessionStorage['fp-sort']), and re-renders the current directory. */
+ * sessionStorage['fp-sort']), and re-renders the current directory. The
+ * re-render keeps the selection (applySelectionState) and scrolls the focused
+ * row back into view, since a new order moves it. */
 function applySort(key, dir) {
   browserState.sort = { key, dir };
   saveSetting('ui.sort', browserState.sort);
   updateSortHeaderUI();
   renderDirectory();
+  if (browserState.focus) findRowByPath(browserState.focus)?.scrollIntoView({ block: 'nearest' });
 }
 
 /**
  * Returns browserState.entries sorted for display: folders always precede
  * files (regardless of direction), then each group is ordered by the active
- * sort key — name (natural, case-insensitive), size, modified (numeric), or
- * type (file-type family, filetypes.js's fpFamilyFor, then name).
+ * sort key — name (natural, case-insensitive), size, a date field (modified /
+ * created / accessed — numeric, entries without the field last in BOTH
+ * directions), or type (file-type family, filetypes.js's fpFamilyFor, then
+ * name).
  */
 function sortedEntries() {
   const { key, dir } = browserState.sort;
   const sign = dir === 'desc' ? -1 : 1;
+  const isDate = key === 'modified' || key === 'created' || key === 'accessed';
   const byName = (a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
   return [...browserState.entries].sort((a, b) => {
     if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
     let cmp;
-    if (key === 'size') cmp = (a.size ?? 0) - (b.size ?? 0);
-    else if (key === 'modified') cmp = (a.modified ?? 0) - (b.modified ?? 0);
+    if (isDate) {
+      const av = a[key], bv = b[key];
+      const aMissing = av == null, bMissing = bv == null;
+      if (aMissing || bMissing) {
+        if (aMissing && bMissing) return byName(a, b);
+        return aMissing ? 1 : -1;   // unaffected by direction
+      }
+      cmp = av - bv;
+    }
+    else if (key === 'size') cmp = (a.size ?? 0) - (b.size ?? 0);
     else if (key === 'type') cmp = fpFamilyFor(a.ext).localeCompare(fpFamilyFor(b.ext)) || byName(a, b);
     else cmp = byName(a, b);
     return cmp * sign;
@@ -377,10 +407,10 @@ function _nowForFormat() {
   if (!_nowCache.now || t - _nowCache.at > 1000) _nowCache = { at: t, now: new Date(t) };
   return _nowCache.now;
 }
-function formatModified(isoStr) {
-  if (!isoStr) return '—';
-  const d = new Date(isoStr);
-  if (isNaN(d)) return isoStr;
+function formatDate(ts) {
+  if (!ts) return '—';
+  const d = new Date(ts);
+  if (isNaN(d)) return ts;
   const now = _nowForFormat();
   const diff = now - d;
   const sameDay = d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
@@ -389,6 +419,8 @@ function formatModified(isoStr) {
   if (diff < 86400000 * 7) return _FMT_WEEKDAY.format(d);
   return _FMT_DATE.format(d);
 }
+/** Older name for formatDate(); kept so home/inspector callers read the same. */
+function formatModified(ts) { return formatDate(ts); }
 
 function escapeHtml(str) {
   return String(str)
@@ -798,7 +830,10 @@ function renderFsRow(entry, parentPath) {
   // making every icon call site re-derive it.
   const iconHtml = renderFsIcon({ ...entry, path: childPath });
   const sizeText = (entry.is_dir || entry.error) ? '—' : formatSize(entry.size);
-  const modifiedText = entry.error ? '—' : formatModified(entry.modified * 1000);
+  // The column follows the sort: created / modified / accessed (a result
+  // that lacks the field, e.g. an index-backed search hit's accessed, shows —).
+  const dateValue = entry[dateFieldForSort()];
+  const modifiedText = (entry.error || dateValue == null) ? '—' : formatDate(dateValue * 1000);
   const rowClass = `fp-row${entry.is_dir ? ' fp-row--folder' : ''}${entry.error ? ' fp-row--disabled' : ''}`;
   const titleAttr = entry.error ? ' title="Access denied"' : '';
   // ui.show_extensions === false hides the extension on FILE rows only —
