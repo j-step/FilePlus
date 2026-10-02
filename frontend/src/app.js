@@ -338,6 +338,7 @@ function activateTab(id) {
     restoreSearchResultsForTab(pendingSearch, {
       selection: incoming.selection,
       scrollTop: incoming.scrollTop,
+      scrollLeft: incoming.scrollLeft,
     });
     updateSidebarActive(incoming.path);
     refreshNavButtons();
@@ -470,6 +471,7 @@ function switchScreen(id, labelOverride) {
       restoreSearchResultsForTab(tab.search, {
         selection: [...browserState.selection],
         scrollTop: listEl ? listEl.scrollTop : 0,
+        scrollLeft: listEl ? listEl.scrollLeft : 0,
       });
       updateSidebarActive(tab.path);
       if (typeof refreshNavButtons === 'function') refreshNavButtons();
@@ -3628,7 +3630,8 @@ document.addEventListener('auxclick', e => {
 });
 
 // Ctrl + scroll wheel over the file list — walks the view ladder (Stage 2D
-// §3.1): anywhere over #list-scroll, empty space included, one step per 100
+// §3.1): anywhere over #list-scroll (empty space included), the Details
+// column header or the listing notice, one step per 100
 // units of deltaY (wheel up = larger, down = smaller). Deltas accumulate, so
 // a trackpad's or a high-resolution wheel's small deltas add up to steps
 // instead of each firing one, and a fast flick is as many steps as notches —
@@ -3651,7 +3654,9 @@ document.addEventListener('auxclick', e => {
   document.addEventListener('wheel', e => {
     const listScroll = e.target.closest && e.target.closest('#list-scroll');
     if (e.ctrlKey || e.metaKey) {
-      if (!listScroll) return; // outside the list: ignore
+      // The file area is the listing plus the strips above it that belong to
+      // it: the Details column header and the listing notice.
+      if (!listScroll && !(e.target.closest && e.target.closest('#list-head, #list-notice'))) return;
       e.preventDefault();
       wheelAcc += screenDelta(e);
       while (wheelAcc <= -100) { wheelAcc += 100; stepView(1, { anchorEl: e.target }); }
@@ -3843,8 +3848,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   initFavoritesDragDrop();
 
   // The view is decided per folder on every navigation (browser.js
-  // decideView — ui.folder_views, the media share, ui.view_default); the old
-  // global ui.view_mode/ui.list_scale migrate once in applySettingsFromConfig.
+  // decideView — ui.folder_views, the media share, else Details); the old
+  // global ui.view_mode/ui.list_scale are deleted once in
+  // applySettingsFromConfig.
 
   // Init underline tabs in any pre-existing tab containers
   document.querySelectorAll('.fp-tabs').forEach(initUnderlineTabs);

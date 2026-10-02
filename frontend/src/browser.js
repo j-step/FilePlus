@@ -177,8 +177,8 @@ function fpListIconSize() {
 }
 
 /** Puts browserState's view on every DOM surface that reflects it: the
- * listing's data-view and size variables, the column header (Details only),
- * Home's Recent/Favorites panes (icons → their grid). */
+ * listing's data-view and size variables, and the column header (Details
+ * only). Home's Recent/Favorites panes keep their own layout. */
 function applyViewDom() {
   const v = browserState.view;
   const px = fpListIconSize();
@@ -192,9 +192,6 @@ function applyViewDom() {
   }
   const listHead = document.getElementById('list-head');
   if (listHead) listHead.classList.toggle('list-head--grid-hidden', v !== 'details');
-  document.querySelectorAll('.home-pane').forEach(pane => {
-    pane.dataset.view = v === 'icons' ? 'grid' : 'details';
-  });
 }
 
 /**
@@ -213,12 +210,13 @@ function applyViewDom() {
  * of the list (from its left in List) across the change.
  *
  * `manual` (the View menu, the empty-area flyout, Ctrl+wheel) remembers the
- * choice for this folder (ui.folder_views) and for this tab; an automatic
+ * choice for this folder (ui.folder_views — at once, or with `debounceSave`
+ * once a Ctrl+wheel run stops) and for this tab; an automatic
  * choice (a navigation deciding its view) does neither. `render: false` is
  * for callers that render the listing themselves right afterwards (one
  * render per navigation, §4.2).
  */
-function setView(view, size = null, { manual = false, anchorEl = null, render = true } = {}) {
+function setView(view, size = null, { manual = false, anchorEl = null, render = true, debounceSave = false } = {}) {
   const want = normalizeView(view, view === 'icons' ? (size ?? browserState.iconSize) : null);
   const prevView = browserState.view;
   const changed = prevView !== want.view || (want.view === 'icons' && browserState.iconSize !== want.size);
@@ -229,7 +227,7 @@ function setView(view, size = null, { manual = false, anchorEl = null, render = 
   browserState.view = want.view;
   if (want.view === 'icons') browserState.iconSize = want.size;
   applyViewDom();
-  if (manual) rememberViewChoice();
+  if (manual) rememberViewChoice({ debounce: debounceSave });
   if (!render || !changed) return;
 
   if (prevView === want.view && hasRows) {
@@ -255,7 +253,8 @@ function stepView(delta, { anchorEl = null } = {}) {
   const next = Math.max(0, Math.min(VIEW_LADDER.length - 1, cur + Math.sign(delta || 0)));
   if (next === cur) return false;
   const s = VIEW_LADDER[next];
-  setView(s.view, s.size, { manual: true, anchorEl });
+  // A Ctrl+wheel run saves once, when it stops.
+  setView(s.view, s.size, { manual: true, anchorEl, debounceSave: true });
   return true;
 }
 
@@ -349,78 +348,165 @@ function listColumnWidth() {
 
 /** List view: how many 22px rows fit the pane's height — set on every render
  * and on every resize of #list-scroll (initViewLayout). */
-function syncListRows(listScroll) {
+function syncListRows(listScroll, { reserveScrollbar = false } = {}) {
   const cs = getComputedStyle(listScroll);
-  const inner = listScroll.clientHeight - parseFloat(cs.paddingTop || 0) - parseFloat(cs.paddingBottom || 0);
-  const rows = String(Math.max(1, Math.floor(inner / VIEW_LIST_ROW_PX)));
-  if (listScroll.style.getPropertyValue('--list-rows') !== rows) listScroll.style.setProperty('--list-rows', rows);
+  let inner = listScroll.clientHeight - parseFloat(cs.paddingTop || 0) - parseFloat(cs.paddingBottom || 0);
+  // Measured while the list is empty (renderDirectory), there is no
+  // horizontal scrollbar yet: leave room for the one the rows will bring, so
+  // the column count is right the first time (no second layout pass).
+  if (reserveScrollbar) inner -= scrollbarThickness();
+  const rows = Math.max(1, Math.floor(inner / VIEW_LIST_ROW_PX));
+  const v = String(rows);
+  if (listScroll.style.getPropertyValue('--list-rows') !== v) listScroll.style.setProperty('--list-rows', v);
+}
+
+/** The height of a horizontal scrollbar in the listing (the app's own
+ * ::-webkit-scrollbar styling applies), measured once on a probe. */
+let _scrollbarPx = null;
+function scrollbarThickness() {
+  if (_scrollbarPx !== null) return _scrollbarPx;
+  const probe = document.createElement('div');
+  probe.className = 'list-scroll';
+  probe.style.cssText = 'position:absolute;left:-9999px;top:0;width:100px;height:60px;overflow:scroll;flex:none';
+  document.body.appendChild(probe);
+  _scrollbarPx = Math.max(0, probe.offsetHeight - probe.clientHeight);
+  probe.remove();
+  return _scrollbarPx;
 }
 
 /** Brings the layout variables that depend on the listing (List / Small
  * column width, List rows per column) up to date. */
-function syncViewMetrics() {
+function syncViewMetrics({ rows = true } = {}) {
   const listScroll = document.getElementById('list-scroll');
   if (!listScroll) return;
   const v = browserState.view;
   if (v === 'list' || v === 'small') listScroll.style.setProperty('--list-col-w', `${listColumnWidth()}px`);
-  if (v === 'list') syncListRows(listScroll);
+  if (v === 'list' && rows) syncListRows(listScroll);
+}
+
+/** Row text that is cut short (an ellipsis, or the 4-line clamp of an icon
+ * cell) carries its full text as a tooltip; text that fits carries none
+ * (Explorer's behaviour). Decided on hover, when the layout is current. A
+ * name whose extension is hidden (ui.show_extensions off) always shows the
+ * full name. */
+function syncTruncationTitle(el) {
+  const cut = el.scrollWidth > el.clientWidth + 1 || el.scrollHeight > el.clientHeight + 1;
+  let full = el.textContent.trim();
+  let always = false;
+  if (el.classList.contains('fp-row__name')) {
+    const row = el.closest('.fp-row[data-path]');
+    const entry = row ? entryForPath(row.dataset.path) : null;
+    if (entry) { always = displayNameFor(entry) !== entry.name; full = entry.name; }
+  }
+  if (cut || always) el.title = full;
+  else el.removeAttribute('title');
 }
 
 /** Keeps List's rows-per-column in step with the pane's height (a window
  * resize, app zoom, the inspector opening, the horizontal scrollbar
- * appearing). */
+ * appearing), and gives cut-short row text its tooltip on hover. */
 function initViewLayout() {
   const listScroll = document.getElementById('list-scroll');
-  if (!listScroll || typeof ResizeObserver !== 'function') return;
-  new ResizeObserver(() => { if (browserState.view === 'list') syncListRows(listScroll); }).observe(listScroll);
+  if (!listScroll) return;
+  listScroll.addEventListener('pointerover', e => {
+    const el = e.target.closest && e.target.closest('.fp-row__name, .fp-row__line, .fp-row__meta');
+    if (el && listScroll.contains(el)) syncTruncationTitle(el);
+  });
+  if (typeof ResizeObserver === 'function') {
+    new ResizeObserver(() => { if (browserState.view === 'list') syncListRows(listScroll); }).observe(listScroll);
+  }
   applyViewDom();
 }
 
 // ── Per-folder view memory ────────────────────────────────────────────────
+// A menu choice is saved at once. A Ctrl+wheel run saves 250 ms after its
+// last step (one POST per run, not per notch); until then its entries wait
+// in _folderViewsPending, which every read consults first — so a config
+// reload (loadConfig) landing inside the window cannot lose them — and which
+// the timer merges into the CURRENT config when it fires. A window closing
+// inside the window flushes them with a keepalive request (pagehide).
+const FOLDER_VIEWS_DEBOUNCE_MS = 250;
 let _folderViewsSaveTimer = 0;
+let _folderViewsPending = {};
+
+function _folderViewsMap() {
+  const map = (window.__fpConfig || {})[FOLDER_VIEWS_KEY];
+  return (map && typeof map === 'object') ? map : {};
+}
 
 /** The remembered {view, size} for `path`, or null. */
 function folderViewFor(path) {
-  const map = (window.__fpConfig || {})[FOLDER_VIEWS_KEY];
-  if (!path || !map || typeof map !== 'object') return null;
-  const rec = map[fpNormalizePath(path)];
+  if (!path) return null;
+  const key = fpNormalizePath(path);
+  const rec = _folderViewsPending[key] || _folderViewsMap()[key];
   return rec && VIEW_NAMES.includes(rec.view) ? normalizeView(rec.view, rec.size) : null;
 }
 
-/** A manual view choice belongs to this tab and to this folder. The folder
- * map keeps the 500 most recently set paths and is saved once a Ctrl+wheel
- * run has stopped (the in-memory config changes at once). */
-function rememberViewChoice() {
-  const tab = typeof activeTab === 'function' ? activeTab() : null;
-  if (tab) { tab.view = browserState.view; tab.iconSize = browserState.iconSize; }
-  if (browserState.mode === 'search' || !browserState.path) return;
-  const cfg = window.__fpConfig || (window.__fpConfig = {});
-  const prev = (cfg[FOLDER_VIEWS_KEY] && typeof cfg[FOLDER_VIEWS_KEY] === 'object') ? cfg[FOLDER_VIEWS_KEY] : {};
-  const next = { ...prev };
-  next[fpNormalizePath(browserState.path)] = {
-    view: browserState.view,
-    size: browserState.view === 'icons' ? browserState.iconSize : null,
-    t: Date.now(),
-  };
+/** The saved map with every pending entry merged in, pruned to the 500 most
+ * recently set paths. */
+function _mergedFolderViews() {
+  const next = { ..._folderViewsMap(), ..._folderViewsPending };
   const keys = Object.keys(next);
   if (keys.length > FOLDER_VIEWS_MAX) {
     keys.sort((a, b) => (next[a].t || 0) - (next[b].t || 0))
       .slice(0, keys.length - FOLDER_VIEWS_MAX)
       .forEach(k => { delete next[k]; });
   }
-  cfg[FOLDER_VIEWS_KEY] = next;
+  return next;
+}
+
+/** Writes every pending entry into the current config and saves it. */
+function flushFolderViews() {
   clearTimeout(_folderViewsSaveTimer);
-  _folderViewsSaveTimer = setTimeout(() => {
-    const latest = (window.__fpConfig || {})[FOLDER_VIEWS_KEY];
-    if (latest) saveSetting(FOLDER_VIEWS_KEY, latest);
-  }, 250);
+  _folderViewsSaveTimer = 0;
+  if (!Object.keys(_folderViewsPending).length) return;
+  const next = _mergedFolderViews();
+  _folderViewsPending = {};
+  saveSetting(FOLDER_VIEWS_KEY, next);
+}
+
+/** The window is going away with a Ctrl+wheel run still unsaved: send it with
+ * a keepalive request, which outlives the page (an ordinary fetch is
+ * cancelled on unload). */
+function flushFolderViewsOnExit() {
+  clearTimeout(_folderViewsSaveTimer);
+  _folderViewsSaveTimer = 0;
+  if (!Object.keys(_folderViewsPending).length) return;
+  const next = _mergedFolderViews();
+  _folderViewsPending = {};
+  if (window.__fpConfig) window.__fpConfig[FOLDER_VIEWS_KEY] = next;
+  try {
+    fetch(`${API.base}/config`, {
+      method: 'POST',
+      keepalive: true,
+      headers: apiHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ key: FOLDER_VIEWS_KEY, value: next }),
+    }).catch(() => { /* the window is closing; nothing left to tell */ });
+  } catch (_) { /* ditto */ }
+}
+window.addEventListener('pagehide', flushFolderViewsOnExit);
+window.addEventListener('beforeunload', flushFolderViewsOnExit);
+
+/** A manual view choice belongs to this tab and to this folder. `debounce`
+ * (Ctrl+wheel) waits for the run to stop; anything else saves at once. */
+function rememberViewChoice({ debounce = false } = {}) {
+  const tab = typeof activeTab === 'function' ? activeTab() : null;
+  if (tab) { tab.view = browserState.view; tab.iconSize = browserState.iconSize; }
+  if (browserState.mode === 'search' || !browserState.path) return;
+  _folderViewsPending[fpNormalizePath(browserState.path)] = {
+    view: browserState.view,
+    size: browserState.view === 'icons' ? browserState.iconSize : null,
+    t: Date.now(),
+  };
+  if (!debounce) { flushFolderViews(); return; }
+  clearTimeout(_folderViewsSaveTimer);
+  _folderViewsSaveTimer = setTimeout(flushFolderViews, FOLDER_VIEWS_DEBOUNCE_MS);
 }
 
 /**
  * The view a freshly-loaded folder opens in (spec §3.1): what the user last
  * picked for it; else, unless ui.dynamic_media_view is off, Large icons for a
- * folder whose entries are more than half pictures/videos; else the default
- * (Details, or what an older version's global view setting migrated to).
+ * folder whose entries are more than half pictures/videos; else Details.
  */
 function decideView(path, entries) {
   const remembered = folderViewFor(path);
@@ -431,29 +517,18 @@ function decideView(path, entries) {
     const media = shown.filter(e => !e.is_dir && typeof fpIsMedia === 'function' && fpIsMedia(e.ext)).length;
     if (shown.length && media / shown.length > 0.5) return { view: 'icons', size: VIEW_NAMED_ICON_SIZES.large };
   }
-  const def = cfg['ui.view_default'];
-  if (def && typeof def === 'object' && VIEW_NAMES.includes(def.view)) return normalizeView(def.view, def.size);
   return { view: 'details', size: null };
 }
 
 /**
- * One-time move from the old global view settings (ui.view_mode +
- * ui.list_scale, Stage 2C) to the ladder (spec §3.1): grid at scale s → icons
- * at the ladder size nearest 96·s, list → list, details → details. The
- * result is the default for folders with no memory of their own
- * (ui.view_default); Details needs no entry. Guarded by ui.view_migrated_2d.
+ * One-time clean-up of the old global view settings (ui.view_mode +
+ * ui.list_scale, Stage 2C). Views are per folder now and an unremembered
+ * folder always opens in Details (or Large icons when it is mostly media,
+ * spec §3.1), so the old values have nowhere to go: they are deleted, and
+ * ui.view_migrated_2d marks it done.
  */
 function migrateViewSettings(cfg) {
   if (!cfg || cfg['ui.view_migrated_2d']) return;
-  const old = cfg['ui.view_mode'];
-  let def = null;
-  if (old === 'grid') {
-    const scale = Number(cfg['ui.list_scale']) || 1;
-    def = { view: 'icons', size: snapIconSize(Math.min(256, Math.max(48, 96 * scale))) };
-  } else if (old === 'list') {
-    def = { view: 'list', size: null };
-  }
-  if (def) saveSetting('ui.view_default', def);
   saveSetting('ui.view_migrated_2d', true);
   if ('ui.view_mode' in cfg) deleteSetting('ui.view_mode');
   if ('ui.list_scale' in cfg) deleteSetting('ui.list_scale');
@@ -1065,6 +1140,7 @@ function refreshDirectory() {
     // on hundreds of rows off-screen while staying selected (pass 2 #94).
     // Same reqTabId guard the browse branch below carries.
     const searchScrollTop = searchList ? searchList.scrollTop : 0;
+    const searchScrollLeft = searchList ? searchList.scrollLeft : 0;
     const searchTabId = tabs.activeId;
     const rerun = typeof runSearch === 'function'
       ? Promise.resolve(runSearch({ pushHistory: false, preserveSelection: true }))
@@ -1072,6 +1148,7 @@ function refreshDirectory() {
     return rerun.finally(() => {
       if (searchList && tabs.activeId === searchTabId && browserState.mode === 'search') {
         searchList.scrollTop = searchScrollTop;
+        searchList.scrollLeft = searchScrollLeft;
       }
     });
   }
@@ -1422,8 +1499,17 @@ function renderDirectory(data) {
   }
 
   // Column width / rows per column first, so the rows land in their final
-  // cells with the one innerHTML below.
-  syncViewMetrics();
+  // cells with the one innerHTML below. List measures the pane's height with
+  // the old rows already gone — measuring under them would lay all of them
+  // out once more, in the new view, for nothing (5,000 rows: ~0.4 s).
+  if (browserState.view === 'list') {
+    listScroll.replaceChildren();
+    const cs = getComputedStyle(listScroll);
+    const inner = listScroll.clientHeight - parseFloat(cs.paddingTop || 0) - parseFloat(cs.paddingBottom || 0);
+    const cols = Math.max(1, Math.floor(listScroll.clientWidth / listColumnWidth()));
+    syncListRows(listScroll, { reserveScrollbar: Math.floor(inner / VIEW_LIST_ROW_PX) * cols < browserState.entries.length });
+  }
+  syncViewMetrics({ rows: false });
   listScroll.innerHTML = sortedEntries().map(entry => renderFsRow(entry, browserState.path)).join('');
   applySelectionState();
   updateStatusBar();
@@ -1517,11 +1603,12 @@ function renderFsRow(entry, parentPath) {
   const rowClass = `fp-row${entry.is_dir ? ' fp-row--folder' : ''}${entry.error ? ' fp-row--disabled' : ''}`;
   const titleAttr = entry.error ? ' title="Access denied"' : '';
   // ui.show_extensions === false hides the extension on FILE rows only —
-  // folders never have one to hide. The full name is always the name's
-  // tooltip: any view may ellipsize or clamp it (spec §3.2, §3.4).
+  // folders never have one to hide; the full name is then the tooltip. Any
+  // other name gets its tooltip only while it is actually cut short
+  // (syncTruncationTitle, on hover — Explorer's behaviour).
   const displayName = displayNameFor(entry);
   const hideExt = displayName !== entry.name;
-  const nameTitleAttr = ` title="${escapeHtml(entry.name)}"`;
+  const nameTitleAttr = hideExt ? ` title="${escapeHtml(entry.name)}"` : '';
   // Search mode: wrap the matched substrings in <mark>. entry.match's offsets
   // index the RAW name, so highlighting is skipped when show-extensions has
   // trimmed it — the spans would no longer line up with what is rendered.
@@ -1556,23 +1643,23 @@ function renderFsRow(entry, parentPath) {
     // Two lines: name | "Date <field>: …" over type (or, for a search
     // result, its folder) | "Size: …".
     const second = isSearch
-      ? `<span class="fp-row__meta fp-row__meta--start" title="${escapeHtml(location)}"><bdi>${escapeHtml(location)}</bdi></span>`
-      : `<span class="fp-row__meta fp-row__meta--start" title="${escapeHtml(typeLabelFor(entry))}">${escapeHtml(typeLabelFor(entry))}</span>`;
+      ? `<span class="fp-row__meta fp-row__meta--start"><bdi>${escapeHtml(location)}</bdi></span>`
+      : `<span class="fp-row__meta fp-row__meta--start">${escapeHtml(typeLabelFor(entry))}</span>`;
     const dateLabel = `Date ${dateField}:`;
     body = `<span class="fp-row__content">
       ${nameSpan}
-      <span class="fp-row__meta" title="${escapeHtml(`${dateLabel} ${dateText}`)}"><span class="fp-row__meta-label">${dateLabel}</span> ${escapeHtml(dateText)}</span>
+      <span class="fp-row__meta"><span class="fp-row__meta-label">${dateLabel}</span> ${escapeHtml(dateText)}</span>
       ${second}
       ${(entry.is_dir || entry.error) ? '<span class="fp-row__meta"></span>'
-        : `<span class="fp-row__meta" title="${escapeHtml(`Size: ${sizeText}`)}"><span class="fp-row__meta-label">Size:</span> ${escapeHtml(sizeText)}</span>`}
+        : `<span class="fp-row__meta"><span class="fp-row__meta-label">Size:</span> ${escapeHtml(sizeText)}</span>`}
     </span>
     ${starHtml}`;
   } else if (view === 'tiles') {
     const type = typeLabelFor(entry);
     body = `<span class="fp-row__lines">
       ${nameSpan}
-      <span class="fp-row__line" title="${escapeHtml(type)}">${escapeHtml(type)}</span>
-      ${(entry.is_dir || entry.error) ? '' : `<span class="fp-row__line" title="${escapeHtml(sizeText)}">${escapeHtml(sizeText)}</span>`}
+      <span class="fp-row__line">${escapeHtml(type)}</span>
+      ${(entry.is_dir || entry.error) ? '' : `<span class="fp-row__line">${escapeHtml(sizeText)}</span>`}
     </span>
     ${starHtml}`;
   } else {
@@ -1726,7 +1813,9 @@ function renderSearchResults(payload, { query = '', root = '', preserveSelection
 
   updateSearchBreadcrumb(root);
   renderDirectory();
+  // A new result set starts at the start, on both axes (List scrolls sideways).
   listScroll.scrollTop = 0;
+  listScroll.scrollLeft = 0;
 
   const n = browserState.entries.length;
   setSearchHeader(payload.truncated ? `First ${n} results — refine the search` : `${n} results`);

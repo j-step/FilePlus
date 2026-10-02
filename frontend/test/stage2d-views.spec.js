@@ -37,12 +37,25 @@ async function ctrlWheel(page, dy) {
 }
 
 /** A screenshot of the whole window as the user sees it. Playwright's own
- * page.screenshot() crops to the CSS viewport under Electron zoom. */
-async function windowShot(app, name) {
-  const b64 = await app.evaluate(async ({ BrowserWindow }) =>
-    (await BrowserWindow.getAllWindows()[0].webContents.capturePage()).toPNG().toString('base64'));
-  fs.mkdirSync(SHOTS, { recursive: true });
-  fs.writeFileSync(path.join(SHOTS, `${name}.png`), Buffer.from(b64, 'base64'));
+ * page.screenshot() crops to the CSS viewport under Electron zoom. Mica is
+ * switched off for the capture: its regions are transparent in the page and
+ * capturePage() would save them as see-through pixels (white in a viewer),
+ * which is not what the window looks like. */
+async function windowShot(app, page, name) {
+  const mica = await page.evaluate(async () => {
+    const was = document.documentElement.dataset.mica || null;
+    delete document.documentElement.dataset.mica;
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    return was;
+  });
+  try {
+    const b64 = await app.evaluate(async ({ BrowserWindow }) =>
+      (await BrowserWindow.getAllWindows()[0].webContents.capturePage()).toPNG().toString('base64'));
+    fs.mkdirSync(SHOTS, { recursive: true });
+    fs.writeFileSync(path.join(SHOTS, `${name}.png`), Buffer.from(b64, 'base64'));
+  } finally {
+    await page.evaluate((m) => { if (m) document.documentElement.dataset.mica = m; }, mica);
+  }
 }
 
 async function setZoom(app, page, z) {
@@ -202,12 +215,20 @@ test('icon cells: s+28 wide, s×s icon, names wrap inside and clamp at 4 lines; 
       const after = row.getBoundingClientRect();
       const nm = row.querySelector('.fp-row__name');
       return { grewDown: after.height > before.height && Math.abs(after.top - before.top) < 0.5,
-        full: nm.scrollHeight <= nm.clientHeight + 1, title: nm.getAttribute('title') };
+        full: nm.scrollHeight <= nm.clientHeight + 1 };
     });
     expect(grown.grewDown).toBe(true);
     expect(grown.full).toBe(true);
-    expect(grown.title).toMatch(/^A long multi-word/);
     await page.evaluate(() => clearSelection());
+
+    // Tooltips only on names that are actually cut short (Explorer).
+    const tips = await page.evaluate(() => {
+      const byName = (t) => [...document.querySelectorAll('#list-scroll > .fp-row .fp-row__name')].find((n) => n.textContent.startsWith(t));
+      const hover = (el) => { el.dispatchEvent(new PointerEvent('pointerover', { bubbles: true })); return el.getAttribute('title'); };
+      return { long: hover(byName('A long multi-word')), short: hover(byName('short.txt')) };
+    });
+    expect(tips.long).toMatch(/^A long multi-word.*\.docx$/);
+    expect(tips.short).toBeNull();
 
     // The no-clip sweep: every named view at every app zoom step. The
     // inspector is closed so the file area keeps a usable width at 2x (panel
@@ -225,7 +246,9 @@ test('icon cells: s+28 wide, s×s icon, names wrap inside and clamp at 4 lines; 
             if (row.scrollHeight > row.clientHeight + 1) out.push(`row ${row.dataset.path} ${row.scrollHeight}>${row.clientHeight}`);
             for (const nm of row.querySelectorAll('.fp-row__name, .fp-row__line, .fp-row__meta')) {
               const cs = getComputedStyle(nm);
-              const titled = !!nm.getAttribute('title') || !!nm.closest('[title]');
+              // Tooltips are decided on hover (only cut-short text gets one).
+              nm.dispatchEvent(new PointerEvent('pointerover', { bubbles: true }));
+              const titled = !!nm.getAttribute('title');
               if (nm.scrollWidth > nm.clientWidth + 1 && !(cs.textOverflow === 'ellipsis' && titled)) {
                 out.push(`h-clip ${nm.className} "${nm.textContent}"`);
               }
@@ -251,7 +274,7 @@ test('icon cells: s+28 wide, s×s icon, names wrap inside and clamp at 4 lines; 
           return out;
         });
         offenders.push(...bad.map((b) => `${label}@${z}: ${b}`));
-        if (z === 1 || z === 1.5) await windowShot(app, `views-${label}-z${Math.round(z * 100)}`);
+        if (z === 1 || z === 1.5) await windowShot(app, page, `views-${label}-z${Math.round(z * 100)}`);
       }
     }
     expect(offenders).toEqual([]);
@@ -313,6 +336,29 @@ test('a size step never moves an icon after it lands; a large folder steps fast'
       };
     });
     for (const [k, v] of Object.entries(times)) expect(v, k).toBeLessThan(250);
+
+    // ~5,000 entries (generated in memory, rendered through the real path):
+    // Small -> icons@48 and icons@256 -> Tiles each re-render the listing once.
+    const big = await page.evaluate(() => {
+      const now = Date.now() / 1000;
+      browserState.entries = Array.from({ length: 5000 }, (_, i) => ({
+        name: `generated-entry-${String(i).padStart(4, '0')}.txt`, ext: '.txt', is_dir: false,
+        is_hidden: false, size: 1000 + i, modified: now - i * 60, created: now - i * 60, accessed: now,
+      }));
+      setView('small', null, { manual: false });
+      const t = (fn) => { const a = performance.now(); fn(); document.body.offsetHeight; return performance.now() - a; };
+      const smallToIcons48 = t(() => stepView(1));
+      setView('icons', 256, { manual: false });
+      const icons256ToTiles = t(() => setView('tiles', null, { manual: false }));
+      setView('small', null, { manual: false });
+      const smallToList = t(() => stepView(-1));
+      return { smallToList, rows: document.querySelectorAll('#list-scroll > .fp-row').length, smallToIcons48, icons256ToTiles };
+    });
+    console.log(`5,000-entry view changes (ms, incl. layout): ${JSON.stringify(big)}`);
+    expect(big.rows).toBe(5000);
+    expect(big.smallToIcons48).toBeLessThan(1000);
+    expect(big.icons256ToTiles).toBeLessThan(1000);
+    expect(big.smallToList).toBeLessThan(1000);
   } finally {
     await fetch(`${API}/config/ui.folder_views`, { method: 'DELETE', headers: apiHeaders() }).catch(() => {});
     await app.close();
@@ -359,6 +405,8 @@ test('per-folder view memory survives a restart; image folders default to Large,
     await page.locator('#btn-view-menu').click();
     await page.locator('#context-menu [data-menu-label="Medium icons"]').click();
     expect(await viewNow(page)).toBe('icons@48');
+    // A menu choice is saved at once: nothing is left pending.
+    expect(await page.evaluate(() => [Object.keys(_folderViewsPending).length, _folderViewsSaveTimer])).toEqual([0, 0]);
     await open(page, docs, 10);
     expect(await viewNow(page)).toBe('details');
     await page.locator('#btn-view-menu').click();
@@ -368,6 +416,35 @@ test('per-folder view memory survives a restart; image folders default to Large,
       const fv = (await apiGet('/config'))['ui.folder_views'] || {};
       return [fv[pics.toLowerCase()]?.view, fv[pics.toLowerCase()]?.size, fv[docs.toLowerCase()]?.view, fv[docs.toLowerCase()]?.size];
     }).toEqual(['icons', 48, 'icons', 96]);
+
+    // Ctrl+wheel saves once the run stops; a config reload landing inside
+    // that window loses nothing — the entry is merged into the CURRENT config.
+    const lb = await page.locator('#list-scroll').boundingBox();
+    await page.mouse.move(lb.x + lb.width / 2, lb.y + lb.height / 2);
+    await ctrlWheel(page, -100);
+    await expect.poll(() => viewNow(page)).toBe('icons@112');
+    const mid = await page.evaluate(async () => {
+      const pending = Object.keys(_folderViewsPending).length;
+      await loadConfig();   // the server does not have the step yet
+      return { pending, seen: folderViewFor(browserState.path) };
+    });
+    expect(mid.pending).toBe(1);
+    expect(mid.seen).toEqual({ view: 'icons', size: 112 });
+    await expect.poll(async () => (await apiGet('/config'))['ui.folder_views']?.[docs.toLowerCase()]?.size).toBe(112);
+    expect(await page.evaluate((k) => [window.__fpConfig['ui.folder_views'][k].size,
+      window.__fpConfig['ui.folder_views'][Object.keys(window.__fpConfig['ui.folder_views']).find((x) => x.endsWith('pictures'))].size],
+    docs.toLowerCase())).toEqual([112, 48]);
+
+    // A step whose debounce has not fired is flushed when the page goes away.
+    await ctrlWheel(page, -100);
+    await expect.poll(() => viewNow(page)).toBe('icons@128');
+    await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pagehide')));
+    expect(await page.evaluate(() => Object.keys(_folderViewsPending).length)).toBe(0);
+    await expect.poll(async () => (await apiGet('/config'))['ui.folder_views']?.[docs.toLowerCase()]?.size).toBe(128);
+
+    // ...and by a real close straight after a step.
+    await ctrlWheel(page, -100);
+    await expect.poll(() => viewNow(page)).toBe('icons@160');
     expect(errors).toEqual([]);
     await app.close();
 
@@ -377,7 +454,7 @@ test('per-folder view memory survives a restart; image folders default to Large,
     await open(page, pics, 6);
     expect(await viewNow(page)).toBe('icons@48');
     await open(page, docs, 10);
-    expect(await viewNow(page)).toBe('icons@96');
+    expect(await viewNow(page)).toBe('icons@160');
     await open(page, `${root}\\_gen\\Projects`, 1);
     expect(await viewNow(page)).toBe('details');
     expect(errors).toEqual([]);
@@ -387,24 +464,67 @@ test('per-folder view memory survives a restart; image folders default to Large,
   }
 });
 
-test('old ui.view_mode / ui.list_scale migrate once to the new default', async () => {
+test('old ui.view_mode / ui.list_scale are dropped once; an unremembered folder still opens in Details', async () => {
   const post = (key, value) => fetch(`${API}/config`, { method: 'POST', headers: apiHeaders({ 'Content-Type': 'application/json' }), body: JSON.stringify({ key, value }) });
   const del = (key) => fetch(`${API}/config/${key}`, { method: 'DELETE', headers: apiHeaders() });
   await del('ui.view_migrated_2d');
-  await post('ui.view_mode', 'grid');
-  await post('ui.list_scale', 1.5);
+  await post('ui.view_mode', 'list');
+  await post('ui.list_scale', 1.125);
   const { app, page, errors } = await launchApp();
   try {
     await expect.poll(async () => {
       const cfg = await apiGet('/config');
-      return [cfg['ui.view_migrated_2d'], cfg['ui.view_default'], 'ui.view_mode' in cfg, 'ui.list_scale' in cfg];
-    }).toEqual([true, { view: 'icons', size: 128 }, false, false]);
+      return [cfg['ui.view_migrated_2d'], 'ui.view_mode' in cfg, 'ui.list_scale' in cfg, 'ui.view_default' in cfg];
+    }).toEqual([true, false, false, false]);
     const root = (await apiGet('/fs/list/root')).path;
     await open(page, `${root}\\_gen\\Projects`, 1);
-    expect(await viewNow(page)).toBe('icons@128');
+    expect(await viewNow(page)).toBe('details');
     expect(errors).toEqual([]);
   } finally {
-    await del('ui.view_default');
+    await app.close();
+  }
+});
+
+test('Home keeps its own layout; Ctrl+wheel over the column header steps too; search results in List start at the left', async () => {
+  const { app, page, errors } = await launchApp();
+  try {
+    const root = (await apiGet('/fs/list/root')).path;
+    const homeViews = () => page.evaluate(() => [...document.querySelectorAll('.home-pane')].map((p) => p.dataset.view || null));
+    const before = await homeViews();
+    await open(page, `${root}\\Views\\Gallery`, 10);
+    expect(await viewNow(page)).toBe('icons@96');
+    await page.evaluate(() => switchScreen('home'));
+    expect(await homeViews()).toEqual(before);
+    await shot(page, 'views-home-after-large-icons');
+
+    // The Details column header is part of the file area for Ctrl+wheel.
+    await open(page, `${root}\\Bulk`, 100);
+    expect(await viewNow(page)).toBe('details');
+    const hb = await page.locator('#list-head').boundingBox();
+    await page.mouse.move(hb.x + hb.width / 2, hb.y + hb.height / 2);
+    await ctrlWheel(page, 100);
+    await expect.poll(() => viewNow(page)).toBe('tiles');
+
+    // A new search result set in List starts scrolled to the left; a tab's
+    // stored results come back at its own sideways scroll.
+    await page.evaluate(() => setView('list', null, { manual: false }));
+    const ls = page.locator('#list-scroll');
+    await page.evaluate(() => { document.getElementById('list-scroll').scrollLeft = 400; });
+    expect(await ls.evaluate((el) => el.scrollLeft)).toBeGreaterThan(0);
+    const left = await page.evaluate((r) => {
+      const results = browserState.entries.map((e) => ({ ...e, path: joinPath(browserState.path, e.name) }));
+      renderSearchResults({ results, truncated: false }, { query: 'bulk', root: r });
+      const fresh = document.getElementById('list-scroll').scrollLeft;
+      const snapshot = { chips: [], text: 'bulk', scope: 'current', results, truncated: false, root: r, query: 'bulk' };
+      restoreSearchResultsForTab(snapshot, { selection: [], scrollTop: 0, scrollLeft: 300 });
+      return { fresh, restored: document.getElementById('list-scroll').scrollLeft };
+    }, `${root}\\Bulk`);
+    expect(left.fresh).toBe(0);
+    expect(left.restored).toBe(300);
+    await page.evaluate(() => clearSearch());
+    expect(errors).toEqual([]);
+  } finally {
+    await fetch(`${API}/config/ui.folder_views`, { method: 'DELETE', headers: apiHeaders() }).catch(() => {});
     await app.close();
   }
 });

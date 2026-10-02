@@ -153,8 +153,9 @@ function applySettingsFromConfig() {
   // Sort / views / dynamic media view (Task 10, Stage 2D §3). ui.sort
   // replaces the old sessionStorage['fp-sort'] entirely. Views are decided
   // per folder on every navigation (browser.js decideView reads
-  // ui.folder_views / ui.view_default / ui.dynamic_media_view directly); the
-  // old global ui.view_mode + ui.list_scale migrate once, here.
+  // ui.folder_views / ui.dynamic_media_view directly); the old global
+  // ui.view_mode + ui.list_scale are deleted once, here (they have no
+  // per-folder meaning: an unremembered folder always opens in Details).
   // ui.dynamic_media_view only syncs its Settings checkbox here.
   const savedSort = cfg['ui.sort'];
   if (savedSort && typeof savedSort === 'object'

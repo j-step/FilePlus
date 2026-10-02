@@ -1001,7 +1001,7 @@ function syncSearchToTab() {
 
 /** Repaints a tab's stored search (bar + results) with no network call.
  *
- * `restore` ({selection, scrollTop}) carries the same per-tab view state a
+ * `restore` ({selection, scrollTop, scrollLeft}) carries the same per-tab view state a
  * folder tab gets back through loadDirectory()'s `restore` option — without it
  * a results tab came back scrolled to the top with nothing selected and a
  * blank Inspector, while the identical round-trip on a folder tab restored
@@ -1031,9 +1031,12 @@ function restoreSearchResultsForTab(snapshot, restore = null) {
     { results: searchState.results, truncated: searchState.truncated },
     { query: searchState.query, root: searchState.root, preserveSelection: !!wanted },
   );
-  if (restore && restore.scrollTop) {
+  if (restore && (restore.scrollTop || restore.scrollLeft)) {
     const listScroll = document.getElementById('list-scroll');
-    if (listScroll) listScroll.scrollTop = restore.scrollTop;
+    if (listScroll) {
+      listScroll.scrollTop = restore.scrollTop || 0;
+      listScroll.scrollLeft = restore.scrollLeft || 0;
+    }
   }
 }
 
