@@ -98,14 +98,16 @@ function applySettingsFromConfig() {
   const inspectorOpen = cfg['ui.inspector_open'] !== false;
   if (typeof setInspectorOpen === 'function') setInspectorOpen(inspectorOpen, { persist: false });
 
-  // Panel width: whatever the resizer or the Personalization slider last
-  // saved (both go through applyInspectorWidth, which clamps to the one
-  // shared bound and keeps the slider + its px label in step — pass 2 #83).
+  // Panel widths (screen px — Stage 2D §5): whatever the resizer or the
+  // Personalization slider last saved (both go through applyInspectorWidth,
+  // which clamps to the one shared bound and keeps the slider + its px label
+  // in step — pass 2 #83). ui.inspector_width is the pre-2D key, read only
+  // when the new one is unset (it was CSS px, the same as screen px at 100%).
   // Unset means the stylesheet's own default, which the slider's static
-  // value/label already state.
-  if (typeof applyInspectorWidth === 'function' && cfg['ui.inspector_width'] != null) {
-    applyInspectorWidth(cfg['ui.inspector_width']);
-  }
+  // value/label already state. The sidebar's expanded width rides along.
+  const inspectorW = cfg['ui.inspector_w'] != null ? cfg['ui.inspector_w'] : cfg['ui.inspector_width'];
+  if (typeof applyInspectorWidth === 'function' && inspectorW != null) applyInspectorWidth(inspectorW);
+  if (typeof applySidebarWidthFromConfig === 'function') applySidebarWidthFromConfig();
 
   // Default true (matches the Personalization checkbox's static markup).
   const showExtensions = cfg['ui.show_extensions'] !== false;

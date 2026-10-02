@@ -2917,9 +2917,9 @@
       <span class="mono" id="status-count">0 items</span>
       <span class="fp-statusbar__sep">·</span>
       <span id="status-selected">Nothing selected</span>
-      <!-- Zoom percentage pill — shows current Electron webContents zoom factor.
-           Hidden at 100% to avoid noise; appears as soon as the user zooms.
-           Click to reset to 100% (Ctrl+0). -->
+      <!-- Zoom percentage pill — the app zoom factor (Stage 2D §5). Shown on
+           every zoom change, faded 1.2 s after the last one (app.js
+           updateZoomPill); hidden at 100%. Click to reset to 100% (Ctrl+0). -->
       <span class="fp-statusbar__sep" id="status-zoom-sep" style="display:none">·</span>
       <button class="fp-statusbar__zoom-pill" id="status-zoom-pill"
               data-action="zoom-reset" title="Click to reset zoom (Ctrl+0)"

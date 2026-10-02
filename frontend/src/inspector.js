@@ -655,23 +655,27 @@ function toggleInspector() {
 // ONE bound, in one place: the drag clamp, the Settings slider's min/max and
 // .inspector's CSS max-width all used to disagree (the drag ran 40px past a
 // 480px CSS cap, and the slider was wired to nothing at all — pass 2 #82/#83).
+// The CSS side is --w-inspector-min / --w-inspector-max in styles.css.
+// Widths are SCREEN px (Stage 2D §5): the panel's CSS width is
+// --inspector-w-screen / --app-zoom, so it keeps its size on screen at any
+// app zoom while its contents grow; ui.inspector_w stores the screen px.
 const INSPECTOR_WIDTH_MIN = 280;
 const INSPECTOR_WIDTH_MAX = 520;
 
-/** Sets the panel's width and keeps the Settings slider + its px label with
- * it, whichever of the two moved. `persist` writes ui.inspector_width, which
- * applySettingsFromConfig (settings.js) re-applies on the next start. */
+/** Sets the panel's width (screen px) and keeps the Settings slider + its px
+ * label with it, whichever of the two moved. `persist` writes
+ * ui.inspector_w, which applySettingsFromConfig (settings.js) re-applies on
+ * the next start. */
 function applyInspectorWidth(px, { persist = false } = {}) {
   const n = Number(px);
   if (!Number.isFinite(n)) return null;
   const width = Math.round(Math.max(INSPECTOR_WIDTH_MIN, Math.min(INSPECTOR_WIDTH_MAX, n)));
-  const inspector = document.getElementById('inspector');
-  if (inspector) inspector.style.width = `${width}px`;
+  document.documentElement.style.setProperty('--inspector-w-screen', `${width}px`);
   const slider = document.getElementById('slider-inspector-width');
   if (slider) slider.value = String(width);
   const label = document.getElementById('val-inspector-width');
   if (label) label.textContent = `${width}px`;
-  if (persist && typeof saveSetting === 'function') saveSetting('ui.inspector_width', width);
+  if (persist && typeof saveSetting === 'function') saveSetting('ui.inspector_w', width);
   return width;
 }
 
@@ -683,13 +687,16 @@ function initResizer() {
 
   let startX, startW;
   resizer.addEventListener('mousedown', e => {
+    // Pointer travel is CSS px; × the app zoom it is screen px, the unit the
+    // width is kept in (appZoom lives in app.js — read at drag time only).
+    const zoom = (typeof appZoom !== 'undefined' && appZoom.current) || 1;
     startX = e.clientX;
-    startW = inspector.getBoundingClientRect().width;
+    startW = inspector.getBoundingClientRect().width * zoom;
     document.body.style.cursor = 'col-resize';
     document.body.style.userSelect = 'none';
     let lastW = startW;
     const onMove = ev => {
-      lastW = applyInspectorWidth(startW + (startX - ev.clientX)) ?? lastW;
+      lastW = applyInspectorWidth(startW + (startX - ev.clientX) * zoom) ?? lastW;
     };
     const onUp = () => {
       document.body.style.cursor = '';

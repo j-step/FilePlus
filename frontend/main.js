@@ -242,21 +242,19 @@ app.whenReady().then(() => {
   });
   ipcMain.on('win-close', () => mainWindow?.close());
 
-  // Zoom via Electron native webContents — avoids the layout-cut-off problem of CSS zoom
-  ipcMain.on('win-zoom-in', () => {
-    if (!mainWindow) return;
-    const cur = mainWindow.webContents.getZoomFactor();
-    const next = ZOOM_STEPS.find(s => s > cur + 0.001) ?? ZOOM_STEPS[ZOOM_STEPS.length - 1];
-    mainWindow.webContents.setZoomFactor(next);
-  });
-  ipcMain.on('win-zoom-out', () => {
-    if (!mainWindow) return;
-    const cur = mainWindow.webContents.getZoomFactor();
-    const prev = [...ZOOM_STEPS].reverse().find(s => s < cur - 0.001) ?? ZOOM_STEPS[0];
-    mainWindow.webContents.setZoomFactor(prev);
-  });
-  ipcMain.on('win-zoom-reset', () => {
-    mainWindow?.webContents.setZoomFactor(1.0);
+  // App zoom (Stage 2D §5). ZOOM_STEPS is the one step list: the renderer
+  // reads it (win-zoom-steps), picks the next step and eases there through
+  // the preload's zoomTo, which ends with win-zoom-to. webContents zoom (not
+  // CSS zoom) scales the whole viewport, and Electron persists it per page,
+  // so the factor survives a restart.
+  ipcMain.on('win-zoom-steps', (event) => { event.returnValue = ZOOM_STEPS; });
+  ipcMain.handle('win-zoom-to', (_event, factor) => {
+    if (!mainWindow) return 1.0;
+    const f = Number(factor);
+    if (Number.isFinite(f)) {
+      mainWindow.webContents.setZoomFactor(Math.min(ZOOM_STEPS[ZOOM_STEPS.length - 1], Math.max(ZOOM_STEPS[0], f)));
+    }
+    return mainWindow.webContents.getZoomFactor();
   });
   ipcMain.on('win-zoom-get', (event) => {
     event.returnValue = mainWindow ? mainWindow.webContents.getZoomFactor() : 1.0;

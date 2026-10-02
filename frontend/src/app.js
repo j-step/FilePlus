@@ -755,24 +755,40 @@ function updateSidebarActive(pathOrScreen) {
 //   - Cursor X above MIN → panel width = cursor X, capped at MAX
 // Snap direction switches at the same TRIGGER, so the act of snapping (which
 // moves the panel) creates the natural hysteresis preventing flicker.
+// Every width and threshold here is SCREEN px (Stage 2D §5): the panel's CSS
+// width is --sidebar-w-screen / --app-zoom, so it keeps its size on screen at
+// any app zoom, and the pointer's CSS x is multiplied by the zoom before it
+// is compared. ui.sidebar_w (config) holds the expanded width; the
+// fp-sidebar-width localStorage copy only lets the first paint use it before
+// config has loaded.
 const SIDEBAR_WIDTH_MAX        = 480; // px; absolute maximum draggable width
 const SIDEBAR_WIDTH_MIN        = 180; // px; minimum expanded width (lock position)
 const SIDEBAR_COLLAPSE_TRIGGER = 100; // px; cursor X — going IN past this collapses, going OUT past this expands
 const SIDEBAR_EXPANDED_DEFAULT = 240;
 const SIDEBAR_COLLAPSED_WIDTH  = 52;
 
+function setSidebarWidthVar(px) {
+  document.documentElement.style.setProperty('--sidebar-w-screen', px + 'px');
+}
+
+/** The saved expanded width (screen px), or the default when none is valid. */
+function savedSidebarWidth() {
+  const cfg = window.__fpConfig || {};
+  const fromCfg = Number(cfg['ui.sidebar_w']);
+  const saved = Number.isFinite(fromCfg) && fromCfg > 0 ? fromCfg : parseInt(localStorage.getItem('fp-sidebar-width'), 10);
+  return (saved && saved >= SIDEBAR_WIDTH_MIN && saved <= SIDEBAR_WIDTH_MAX) ? saved : SIDEBAR_EXPANDED_DEFAULT;
+}
+
 function setSidebarCollapsed(collapsed) {
   if (!shell || !sidebar) return;
   if (collapsed) {
     shell.classList.add('sidebar-collapsed');
     sidebar.classList.add('fp-sidebar--collapsed');
-    document.documentElement.style.setProperty('--sidebar-width', SIDEBAR_COLLAPSED_WIDTH + 'px');
+    setSidebarWidthVar(SIDEBAR_COLLAPSED_WIDTH);
   } else {
     shell.classList.remove('sidebar-collapsed');
     sidebar.classList.remove('fp-sidebar--collapsed');
-    const saved = parseInt(localStorage.getItem('fp-sidebar-width'), 10);
-    const w = (saved && saved >= SIDEBAR_WIDTH_MIN && saved <= SIDEBAR_WIDTH_MAX) ? saved : SIDEBAR_EXPANDED_DEFAULT;
-    document.documentElement.style.setProperty('--sidebar-width', w + 'px');
+    setSidebarWidthVar(savedSidebarWidth());
   }
   localStorage.setItem('fp-sidebar-collapsed', collapsed ? 'on' : 'off');
 }
@@ -802,14 +818,14 @@ function initSidebarResize() {
     // VSCode-like model: cursor X drives the panel width directly. The dead
     // zone between TRIGGER and MIN keeps the panel locked at MIN until the
     // cursor pulls past MIN, then 1:1 follows. Below TRIGGER → collapsed.
-    const cursorX = e.clientX;
+    const cursorX = e.clientX * appZoom.current;          // screen px
     const isCollapsed = sidebar.classList.contains('fp-sidebar--collapsed');
 
     if (isCollapsed) {
       if (cursorX >= SIDEBAR_COLLAPSE_TRIGGER) {
         // Cursor crossed back over the trigger — snap to expanded at MIN
         setSidebarCollapsed(false);
-        document.documentElement.style.setProperty('--sidebar-width', SIDEBAR_WIDTH_MIN + 'px');
+        setSidebarWidthVar(SIDEBAR_WIDTH_MIN);
       }
       // else: stay collapsed, no visual change
     } else {
@@ -818,11 +834,10 @@ function initSidebarResize() {
         setSidebarCollapsed(true);
       } else if (cursorX <= SIDEBAR_WIDTH_MIN) {
         // Dead zone — lock at MIN regardless of cursor position
-        document.documentElement.style.setProperty('--sidebar-width', SIDEBAR_WIDTH_MIN + 'px');
+        setSidebarWidthVar(SIDEBAR_WIDTH_MIN);
       } else {
         // Cursor past MIN — width follows cursor 1:1, capped at MAX
-        const w = Math.min(SIDEBAR_WIDTH_MAX, cursorX);
-        document.documentElement.style.setProperty('--sidebar-width', w + 'px');
+        setSidebarWidthVar(Math.min(SIDEBAR_WIDTH_MAX, cursorX));
       }
     }
   });
@@ -833,27 +848,30 @@ function initSidebarResize() {
     handle.classList.remove('fp-sidebar__resize-handle--active');
     sidebar.classList.remove('fp-sidebar--dragging');
     shell.classList.remove('sidebar-dragging');
-    // Persist final width if expanded
+    // Persist final width if expanded (screen px; one write per drag)
     if (!sidebar.classList.contains('fp-sidebar--collapsed')) {
-      const finalWidth = sidebar.getBoundingClientRect().width;
-      const w = Math.max(SIDEBAR_WIDTH_MIN, Math.round(finalWidth));
+      const finalWidth = sidebar.getBoundingClientRect().width * appZoom.current;
+      const w = Math.min(SIDEBAR_WIDTH_MAX, Math.max(SIDEBAR_WIDTH_MIN, Math.round(finalWidth)));
       localStorage.setItem('fp-sidebar-width', String(w));
-      document.documentElement.style.setProperty('--sidebar-width', w + 'px');
+      setSidebarWidthVar(w);
+      if (typeof saveSetting === 'function') saveSetting('ui.sidebar_w', w);
     }
     handle.releasePointerCapture(e.pointerId);
   });
 }
 
+/** First paint: collapsed state + the localStorage copy of the width.
+ * applySidebarWidthFromConfig re-applies ui.sidebar_w once config loads. */
 function restoreSidebarState() {
-  const collapsed = localStorage.getItem('fp-sidebar-collapsed') === 'on';
-  const saved = parseInt(localStorage.getItem('fp-sidebar-width'), 10);
-  if (collapsed) {
-    setSidebarCollapsed(true);
-  } else if (saved && saved >= 180 && saved <= 480) {
-    document.documentElement.style.setProperty('--sidebar-width', saved + 'px');
-  } else {
-    document.documentElement.style.setProperty('--sidebar-width', SIDEBAR_EXPANDED_DEFAULT + 'px');
-  }
+  if (localStorage.getItem('fp-sidebar-collapsed') === 'on') setSidebarCollapsed(true);
+  else setSidebarWidthVar(savedSidebarWidth());
+}
+
+function applySidebarWidthFromConfig() {
+  const w = Number((window.__fpConfig || {})['ui.sidebar_w']);
+  if (!Number.isFinite(w) || w < SIDEBAR_WIDTH_MIN || w > SIDEBAR_WIDTH_MAX) return;
+  localStorage.setItem('fp-sidebar-width', String(w));
+  if (sidebar && !sidebar.classList.contains('fp-sidebar--collapsed')) setSidebarWidthVar(w);
 }
 
 // ── Sidebar device name ───────────────────────────────────────────────────────
@@ -1261,67 +1279,169 @@ function applyTheme(mode) {
   if (themeIconUse) themeIconUse.setAttribute('href', `#fp-theme-${resolved}`);
 }
 
-// ── Zoom — uses Electron webContents.setZoomFactor when in Electron (no layout cut-off),
-//           falls back to CSS zoom for non-Electron contexts (tests/browser).
-const ZOOM_STEPS   = [0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.33, 1.5, 1.75, 2.0];
+// ── App zoom (Stage 2D §5, decision D2D-1) ─────────────────────────────────
+// The zoom is Electron's page zoom (webContents.setZoomFactor: it scales the
+// whole viewport and Electron persists it across restarts). The renderer
+// publishes the factor in effect as --app-zoom on :root; the sidebar, the
+// collapsed rail and the inspector size themselves as screen px divided by
+// it, so they keep their width on screen while the text and icons inside
+// them grow (styles.css, --sidebar-w-screen / --inspector-w-screen).
+//
+// The step list is main.js's ZOOM_STEPS (read once over IPC). A step eases
+// in through electronAPI.zoomTo (preload.js) — unless reduced motion is on,
+// or one of the first two eased steps of the session had a frame over
+// ZOOM_EASE_FRAME_LIMIT_MS (spec §5 fallback ruling), after which every step
+// is instant. window.__fpZoomEase says which mode is in effect and
+// window.__fpZoomFrames keeps the measured frame times.
+//
+// --app-zoom follows the zoom the page has actually APPLIED: it is set in a
+// capture-phase `resize` listener, which runs in the frame the new zoom first
+// lays out in, before any layout of it — so no frame shows a panel at the
+// old width. Mid-ease the factor comes from devicePixelRatio over the
+// display scale (renderer-local truth); asking the main process then could
+// answer with a step it has received but the page has not drawn yet.
 const ZOOM_DEFAULT = 1.0;
-function getCurrentZoom() {
-  if (window.electronAPI?.getZoom) return window.electronAPI.getZoom();
-  const z = parseFloat(document.documentElement.style.zoom);
-  return isNaN(z) ? ZOOM_DEFAULT : z;
+const ZOOM_EASE_FRAME_LIMIT_MS = 32;
+const ZOOM_PILL_FADE_MS = 1200;
+const appZoom = {
+  current: 1, target: null, busy: 0, scale: null, steps: null,
+  measured: [], dropped: false, pillTimer: 0, pillHideTimer: 0, settleRaf: 0,
+};
+window.__fpZoomFrames = [];
+window.__fpZoomBusy = false;
+
+function zoomSteps() {
+  if (!appZoom.steps) {
+    const steps = window.electronAPI?.zoomSteps?.();
+    appZoom.steps = Array.isArray(steps) && steps.length ? steps : [ZOOM_DEFAULT];
+  }
+  return appZoom.steps;
 }
 
-// Status-bar zoom pill — visible only when zoom != 100%, click resets.
-function updateZoomPill() {
+/** The zoom factor the main process holds (the target of a running ease). */
+function getCurrentZoom() {
+  return Number(window.electronAPI?.getZoom?.()) || ZOOM_DEFAULT;
+}
+
+function zoomEaseMode() {
+  const reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  return (appZoom.dropped || reduced) ? 'instant' : 'eased';
+}
+
+/** Publishes the applied zoom as --app-zoom. Panel width transitions are
+ * held off for the frame so the panels never animate toward their new CSS
+ * width (that is exactly the "closing in" the owner disliked). */
+function syncAppZoom() {
+  const dpr = window.devicePixelRatio || 1;
+  let z;
+  if (appZoom.busy && appZoom.scale) {
+    z = Math.round((dpr / appZoom.scale) * 1e6) / 1e6;
+  } else {
+    z = getCurrentZoom();
+    appZoom.scale = dpr / z;
+  }
+  const root = document.documentElement;
+  const first = !root.style.getPropertyValue('--app-zoom');
+  const moved = first || Math.abs(z - appZoom.current) >= 0.00005;
+  // Always keep the exact factor, even when only float noise moved (the
+  // mid-ease devicePixelRatio estimate vs the settled IPC value): the wheel
+  // code multiplies by it, and 0.99999994 × 100 is one notch short of a step.
+  appZoom.current = z;
+  if (root.style.getPropertyValue('--app-zoom') === String(z)) return;
+  root.classList.add('fp-zoom-changing');
+  root.style.setProperty('--app-zoom', String(z));
+  cancelAnimationFrame(appZoom.settleRaf);
+  appZoom.settleRaf = requestAnimationFrame(() => {
+    appZoom.settleRaf = requestAnimationFrame(() => root.classList.remove('fp-zoom-changing'));
+  });
+  // Startup at 100% is not a change: no pill. Startup zoomed shows it once.
+  if (moved && !appZoom.busy && !(first && Math.abs(z - ZOOM_DEFAULT) < 0.005)) updateZoomPill(z);
+}
+window.addEventListener('resize', syncAppZoom, true);
+syncAppZoom();
+window.__fpZoomEase = zoomEaseMode();
+
+// Status-bar zoom pill (spec §5): shows the percentage on every change and
+// fades 1.2 s after the last one. Away from 100% the faded pill keeps its
+// place and comes back on hover / focus, so it stays the click-to-reset
+// target; at 100% it leaves the status bar once faded.
+function updateZoomPill(z = appZoom.target ?? appZoom.current) {
   const pill = document.getElementById('status-zoom-pill');
   const sep  = document.getElementById('status-zoom-sep');
   if (!pill) return;
-  const z = getCurrentZoom();
-  const pct = Math.round(z * 100);
-  pill.textContent = pct + '%';
-  // Treat 99–101% as "100%" to absorb floating-point drift around the default.
+  pill.textContent = Math.round(z * 100) + '%';
+  // Treat 99.5–100.5% as "100%" to absorb floating-point drift.
   const atDefault = Math.abs(z - ZOOM_DEFAULT) < 0.005;
-  pill.style.display = atDefault ? 'none' : '';
-  if (sep) sep.style.display = atDefault ? 'none' : '';
+  for (const el of [pill, sep]) {
+    if (!el) continue;
+    el.style.display = '';
+    el.classList.remove('is-faded');
+  }
+  clearTimeout(appZoom.pillTimer);
+  clearTimeout(appZoom.pillHideTimer);
+  appZoom.pillTimer = setTimeout(() => {
+    pill.classList.add('is-faded');
+    sep?.classList.add('is-faded');
+    if (atDefault) {
+      const fadeMs = parseFloat(getComputedStyle(pill).transitionDuration) * 1000 || 0;
+      appZoom.pillHideTimer = setTimeout(() => {
+        pill.style.display = 'none';
+        if (sep) sep.style.display = 'none';
+      }, fadeMs + 50);
+    }
+  }, ZOOM_PILL_FADE_MS);
 }
 
-function zoomIn() {
-  if (window.electronAPI?.zoomIn) {
-    window.electronAPI.zoomIn();
-    updateZoomPill();
-    return;
+/** Zooms the app to `target` (clamped to the step list): eased or instant
+ * per zoomEaseMode(). Key repeats step on from the running step's target,
+ * so a burst of presses lands exactly that many steps on. */
+async function setAppZoom(target) {
+  const api = window.electronAPI;
+  if (!api?.zoomTo) return;
+  const steps = zoomSteps();
+  const t = Math.min(steps[steps.length - 1], Math.max(steps[0], Number(target) || ZOOM_DEFAULT));
+  appZoom.target = t;
+  updateZoomPill(t);
+  const ease = zoomEaseMode() === 'eased';
+  if (!appZoom.scale) appZoom.scale = (window.devicePixelRatio || 1) / getCurrentZoom();
+  appZoom.busy += 1;
+  window.__fpZoomBusy = true;
+  let r = null;
+  try {
+    r = await api.zoomTo(t, ease);
+  } catch (_e) {
+    r = null;
+  } finally {
+    appZoom.busy -= 1;
   }
-  // Fallback for non-Electron
-  const cur = getCurrentZoom();
-  const next = ZOOM_STEPS.find(s => s > cur + 0.001) ?? ZOOM_STEPS[ZOOM_STEPS.length - 1];
-  document.documentElement.style.zoom = String(next);
-  localStorage.setItem('fp-zoom', String(next));
-  updateZoomPill();
-}
-function zoomOut() {
-  if (window.electronAPI?.zoomOut) {
-    window.electronAPI.zoomOut();
-    updateZoomPill();
-    return;
+  if (ease && r && !r.superseded && r.frames && r.frames.length && appZoom.measured.length < 2) {
+    appZoom.measured.push(r.frames);
+    window.__fpZoomFrames = appZoom.measured.map((f) => f.slice());
+    if (r.frames.some((ms) => ms > ZOOM_EASE_FRAME_LIMIT_MS)) appZoom.dropped = true;
   }
-  // Fallback for non-Electron
-  const cur = getCurrentZoom();
-  const prev = [...ZOOM_STEPS].reverse().find(s => s < cur - 0.001) ?? ZOOM_STEPS[0];
-  document.documentElement.style.zoom = String(prev);
-  localStorage.setItem('fp-zoom', String(prev));
-  updateZoomPill();
+  window.__fpZoomEase = zoomEaseMode();
+  if (!appZoom.busy) {
+    appZoom.target = null;
+    syncAppZoom();           // exact final factor (and the pill) from the main process
+    window.__fpZoomBusy = false;
+  }
 }
+
+function zoomStep(dir) {
+  const steps = zoomSteps();
+  const cur = appZoom.target ?? getCurrentZoom();
+  const next = dir > 0
+    ? (steps.find((s) => s > cur + 0.001) ?? steps[steps.length - 1])
+    : ([...steps].reverse().find((s) => s < cur - 0.001) ?? steps[0]);
+  setAppZoom(next);
+}
+function zoomIn()  { zoomStep(1); }
+function zoomOut() { zoomStep(-1); }
 function zoomReset() {
-  if (window.electronAPI?.zoomReset) {
-    window.electronAPI.zoomReset();
-    document.documentElement.style.zoom = '';
-    localStorage.removeItem('fp-zoom');
-    updateZoomPill();
-    return;
-  }
+  // Clears the old CSS-zoom font scale too, in case a previous build left one.
   document.documentElement.style.zoom = '';
   localStorage.removeItem('fp-zoom');
-  updateZoomPill();
+  setAppZoom(ZOOM_DEFAULT);
 }
 
 // ── Context-menu applicability (Task 11, playtest pass 1 §4.2) ─────────────
@@ -3637,19 +3757,17 @@ document.addEventListener('auxclick', e => {
 // instead of each firing one, and a fast flick is as many steps as notches —
 // no cooldown. It never zooms the app (that is Ctrl+=/-/0 only). Chromium
 // reports deltas in CSS px, which app zoom shrinks: they are scaled back to
-// screen units so one notch is one step at every zoom. The row under the
+// screen units (× appZoom.current, the factor behind --app-zoom) so one
+// notch is one step at every zoom. The row under the
 // pointer is the scroll anchor.
 //
 // List view (column-major, horizontal scroll): a plain vertical wheel
 // scrolls sideways — Chromium would otherwise do nothing.
 {
   let wheelAcc = 0;
-  let wheelZoom = null;
-  window.addEventListener('resize', () => { wheelZoom = null; });
   const screenDelta = (e) => {
     const unit = e.deltaMode === 1 ? 100 / 3 : (e.deltaMode === 2 ? 300 : 1);
-    if (wheelZoom === null) wheelZoom = Number(getCurrentZoom()) || 1;
-    return e.deltaY * unit * (e.deltaMode === 0 ? wheelZoom : 1);
+    return e.deltaY * unit * (e.deltaMode === 0 ? appZoom.current : 1);
   };
   document.addEventListener('wheel', e => {
     const listScroll = e.target.closest && e.target.closest('#list-scroll');
@@ -3828,8 +3946,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openBrowserAt(null); }
   });
 
-  // Sync the status-bar zoom pill with Electron's persisted zoom factor
-  updateZoomPill();
+  // (The zoom pill and --app-zoom were synced from Electron's persisted zoom
+  // factor when app.js loaded — syncAppZoom, above.)
 
   // Init column sort cycling, marquee selection, and row click/dblclick (A.3.1, Task 3)
   initColumnSort();

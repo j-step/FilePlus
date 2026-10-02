@@ -171,8 +171,21 @@
   --h-badge:        18px;
   --h-approvals:    30px;
 
+  /* Panel widths are SCREEN px (Stage 2D §5, D2D-1): each panel's CSS width
+     is its screen width divided by --app-zoom (the Electron page zoom, which
+     app.js publishes), so the sidebar, the collapsed rail and the inspector
+     keep their size on screen at any app zoom while their contents grow.
+     JS sets the dragged / saved widths as --sidebar-w-screen and
+     --inspector-w-screen; these are the defaults and the inspector's bounds
+     (inspector.js's INSPECTOR_WIDTH_MIN/MAX are the same numbers). */
+  --app-zoom:            1;
   --w-sidebar:           240px;
   --w-sidebar-collapsed: 52px;
+  --w-inspector:         340px;
+  --w-inspector-min:     280px;
+  --w-inspector-max:     520px;
+  --sidebar-w-css:   calc(var(--sidebar-w-screen, var(--w-sidebar)) / var(--app-zoom));
+  --rail-w-css:      calc(var(--w-sidebar-collapsed) / var(--app-zoom));
 
   /* ---------- File-type family colours (Stage 2C Task 6) ----------
      One token per family in backend/filetypes.py (mirrored into
@@ -478,7 +491,7 @@ svg { flex-shrink: 0; }
    6. SIDEBAR (Section 10)
    ----------------------------------------------------------------------------- */
 .fp-sidebar {
-  width: var(--sidebar-width, var(--w-sidebar));
+  width: var(--sidebar-w-css);
   background: var(--bg-chrome);
   border-right: 1px solid var(--border-hairline);
   padding: var(--s-4) var(--s-8);
@@ -492,7 +505,7 @@ svg { flex-shrink: 0; }
 }
 .fp-sidebar--dragging { transition: none; }
 .fp-sidebar--collapsed {
-  /* DO NOT set --sidebar-width here — setSidebarCollapsed() JS manages it via
+  /* DO NOT set --sidebar-w-screen here — setSidebarCollapsed() JS manages it via
      inline style on documentElement so dragging from collapsed state can override it. */
 }
 .fp-sidebar__resize-handle {
@@ -3404,16 +3417,21 @@ body.is-dragging { cursor: default; }
 /* Shell: sidebar | main */
 .shell {
   display: grid;
-  grid-template-columns: var(--sidebar-width, var(--w-sidebar)) 1fr;
+  grid-template-columns: var(--sidebar-w-css) 1fr;
   min-height: 0;
   overflow: hidden;
   transition: grid-template-columns var(--dur-slide) var(--ease-snap);
 }
 .shell.sidebar-collapsed {
-  grid-template-columns: var(--w-sidebar-collapsed) 1fr;
+  grid-template-columns: var(--rail-w-css) 1fr;
 }
-/* When dragging, suppress shell column transition */
-.shell.sidebar-dragging {
+/* When dragging, suppress shell column transition. While the app zoom
+   changes (app.js adds .fp-zoom-changing to <html> for the frame), the panels'
+   CSS widths change with it — that must not animate either, or the panels
+   would visibly close in and spring back on every zoom step. */
+.shell.sidebar-dragging,
+.fp-zoom-changing .shell,
+.fp-zoom-changing .fp-sidebar {
   transition: none;
 }
 
@@ -4459,13 +4477,8 @@ body.is-dragging { cursor: default; }
    43. INSPECTOR PANEL
    ============================================================================= */
 .inspector {
-  width: 280px;
-  min-width: 220px;
-  /* One bound for the panel's width, shared with initResizer's drag clamp and
-     the Settings "Inspector default width" slider (inspector.js's
-     INSPECTOR_WIDTH_MAX). A 480px cap here made the last 40px of drag travel
-     dead — the handle moved, the panel did not (pass 2 #82). */
-  max-width: 520px;
+  /* Width and its bounds: the docked .inspector rule below (screen px over
+     --app-zoom). */
   background: var(--bg-chrome);
   border-left: 1px solid var(--border-subtle);
   display: flex;
@@ -4527,6 +4540,11 @@ body.is-dragging { cursor: default; }
 .inspector__meta-val { font: 400 var(--t-small) var(--font-ui); color: var(--text-secondary); text-align: right; }
 .inspector__meta-val--hash { font-size: 9px; letter-spacing: var(--track-mono); word-break: break-all; }
 .inspector__actions { display: flex; gap: var(--s-8); }
+/* The inspector keeps its screen width while app zoom grows its buttons
+   (Stage 2D §5): past ~140% the row runs out of room, and a whole button
+   moves to the next line instead of its label breaking in two. */
+.inspector__actions { flex-wrap: wrap; row-gap: var(--s-8); }
+.inspector__actions .fp-btn { white-space: nowrap; }
 .inspector__tags-wrap { display: flex; flex-wrap: wrap; gap: var(--s-6); }
 .inspector__no-content { font: 400 var(--t-body) var(--font-ui); color: var(--text-tertiary); text-align: center; margin: var(--s-24) 0; }
 
@@ -5012,7 +5030,7 @@ body.is-dragging { cursor: default; }
 /* ── Shell: handle fp-sidebar--collapsed ─────────────────────────────────── */
 .shell.fp-sidebar--collapsed,
 .shell.sidebar-collapsed {
-  grid-template-columns: var(--w-sidebar-collapsed) 1fr;
+  grid-template-columns: var(--rail-w-css) 1fr;
 }
 
 /* ── Sidebar subcomponents ───────────────────────────────────────────────── */
@@ -5155,6 +5173,19 @@ body.is-dragging { cursor: default; }
   align-items: center;
   width: 100%;
 }
+/* The rail keeps 52 screen px at every app zoom (Stage 2D §5) while its
+   squares grow, so from ~140% up a 36px square is wider than the rail: every
+   level stretches to the rail's width and the squares cap at it, so nothing
+   sticks out past the edge. */
+.fp-sidebar--collapsed .fp-sidebar__scroll > div,
+.fp-sidebar--collapsed .fp-sidebar__section > * {
+  align-self: stretch;
+  min-width: 0;
+}
+.fp-sidebar--collapsed .fp-sidebar__item,
+.fp-sidebar--collapsed .fp-ask,
+.fp-sidebar--collapsed .fp-sidebar__tags-collapsed { max-width: calc(100% - var(--s-8)); }
+.fp-sidebar--collapsed .fp-sidebar__drive-letter { max-width: 100%; }
 
 /* Tags: in collapsed mode, hide all chips + View all and show single Tags icon */
 .fp-sidebar--collapsed #sb-tags {
@@ -5199,8 +5230,10 @@ body.is-dragging { cursor: default; }
 /* ── Statusbar subcomponents ─────────────────────────────────────────────── */
 .fp-statusbar__left  { display: flex; align-items: center; gap: var(--s-6); }
 
-/* Zoom percentage pill in the status bar (left section) — only visible when
-   zoom is not 100%. Click resets to 100%. */
+/* Zoom percentage pill in the status bar (left section). app.js shows it on
+   every zoom change and adds .is-faded 1.2 s after the last one (Stage 2D
+   §5); away from 100% the faded pill stays a hover / focus target, since a
+   click resets to 100%. */
 .fp-statusbar__zoom-pill {
   display: inline-flex;
   align-items: center;
@@ -5216,8 +5249,12 @@ body.is-dragging { cursor: default; }
   cursor: pointer;
   transition: background var(--dur-flash) var(--ease-snap),
               color      var(--dur-flash) var(--ease-snap),
-              border-color var(--dur-flash) var(--ease-snap);
+              border-color var(--dur-flash) var(--ease-snap),
+              opacity    var(--dur-slide) var(--ease-ui);
 }
+#status-zoom-sep { transition: opacity var(--dur-slide) var(--ease-ui); }
+.fp-statusbar__zoom-pill.is-faded:not(:hover):not(:focus-visible),
+#status-zoom-sep.is-faded { opacity: 0; }
 .fp-statusbar__zoom-pill:hover {
   background: var(--accent-wash);
   border-color: var(--accent-edge);
@@ -5524,9 +5561,15 @@ button.fp-pill:hover {
   animation: fp-chip-fan-in 120ms var(--ease-out) both;
 }
 
-/* Inspector panel (docked) */
+/* Inspector panel (docked). Its width is screen px over --app-zoom (Stage
+   2D §5). One bound for it, shared with initResizer's drag clamp and the
+   Settings "Inspector default width" slider (inspector.js's
+   INSPECTOR_WIDTH_MIN/MAX). A 480px cap here once made the last 40px of drag
+   travel dead — the handle moved, the panel did not (pass 2 #82). */
 .inspector {
-  width: 340px;
+  width: calc(var(--inspector-w-screen, var(--w-inspector)) / var(--app-zoom));
+  min-width: calc(var(--w-inspector-min) / var(--app-zoom));
+  max-width: calc(var(--w-inspector-max) / var(--app-zoom));
   flex-shrink: 0;
   display: none; /* closed by default; js adds --open */
   flex-direction: column;
@@ -5546,6 +5589,8 @@ button.fp-pill:hover {
   transition: background var(--dur-fast) var(--ease-snap);
 }
 .resizer:hover { background: var(--accent); }
+/* No handle to see or grab while the inspector is closed (pass 2 #57). */
+.resizer:has(+ .inspector:not(.inspector--open)) { display: none; }
 
 .inspector__filename {
   font: 600 var(--t-title-sm) var(--font-ui);

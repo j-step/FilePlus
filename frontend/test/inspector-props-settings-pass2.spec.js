@@ -220,7 +220,7 @@ test('inspector, properties and settings: pass-2 regressions', async () => {
       // the value from before this frame's style recalc.
       await new Promise(r => setTimeout(r, 200));
       const clamped = {
-        css: inspector.style.width,
+        css: document.documentElement.style.getPropertyValue('--inspector-w-screen'),
         box: Math.round(inspector.getBoundingClientRect().width),
         label: label.textContent,
         slider: slider.value,

@@ -230,9 +230,10 @@ test('icon cells: s+28 wide, s×s icon, names wrap inside and clamp at 4 lines; 
     expect(tips.long).toMatch(/^A long multi-word.*\.docx$/);
     expect(tips.short).toBeNull();
 
-    // The no-clip sweep: every named view at every app zoom step. The
-    // inspector is closed so the file area keeps a usable width at 2x (panel
-    // widths under zoom are Stage 2D §5's, not this sweep's).
+    // The no-clip sweep: every named view at every app zoom step, with the
+    // inspector closed so the file area is at its widest at 2x.
+    // stage2d-zoom.spec.js runs the same check with the inspector open at
+    // 125% and 150% (it keeps its screen width there — Stage 2D §5).
     await page.evaluate(() => setInspectorOpen(false, { persist: false }));
     const offenders = [];
     for (const z of [0.8, 1, 1.25, 1.5, 2]) {

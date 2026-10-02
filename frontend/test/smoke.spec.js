@@ -1359,7 +1359,7 @@ test('every screen renders with no renderer errors', async () => {
     await page.evaluate(() => switchScreen('browser'));
     await app.evaluate(({ BrowserWindow }) => { BrowserWindow.getAllWindows()[0].setSize(800, 600); });
     // Same property the drag handle writes (app.js's initSidebarResize).
-    await page.evaluate(() => document.documentElement.style.setProperty('--sidebar-width', '480px'));
+    await page.evaluate(() => document.documentElement.style.setProperty('--sidebar-w-screen', '480px'));
     await expect(page.locator('#toolbar')).toHaveAttribute('data-narrow', '', { timeout: 3000 });
     await expect(page.locator('#search-collapsed')).toBeVisible();
     for (const id of ['#btn-view-menu', '#btn-sort-menu', '#btn-inspector-toggle', '#btn-theme', '#btn-up']) {
@@ -1380,7 +1380,7 @@ test('every screen renders with no renderer errors', async () => {
 
     // Restore the window and sidebar for the screenshots below.
     await app.evaluate(({ BrowserWindow }) => { BrowserWindow.getAllWindows()[0].setSize(1200, 800); });
-    await page.evaluate(() => document.documentElement.style.setProperty('--sidebar-width', '240px'));
+    await page.evaluate(() => document.documentElement.style.setProperty('--sidebar-w-screen', '240px'));
     await expect(page.locator('#toolbar')).not.toHaveAttribute('data-narrow', '', { timeout: 3000 });
 
     // 11. Ask File+ (Task 15, design spec §9): sidebar pill opens a popout
