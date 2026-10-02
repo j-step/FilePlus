@@ -238,7 +238,9 @@ test('path grows from the left; search shrinks then collapses BEFORE the path ca
       offenders.push(...invariants(s, `down ${w}`));
       seen.add(`${s.search}/${s.of}`);
     }
-    for (const w of [840, 920, 1000, 1080, 1160, 1200, 1240, 1280, 1320, 1360, 1400]) {
+    // Up past 1400: the This PC root crumb (Stage 2D §8) leaves the fixture's
+    // root path less than the 24px hysteresis short of re-expanding at 1400.
+    for (const w of [840, 920, 1000, 1080, 1160, 1200, 1240, 1280, 1320, 1360, 1400, 1440, 1480]) {
       await setSize(app, page, w);
       s = await state(page);
       offenders.push(...invariants(s, `up ${w}`));

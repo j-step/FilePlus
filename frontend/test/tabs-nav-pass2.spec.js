@@ -169,7 +169,11 @@ test('tabs and navigation: pass-2 regressions', async () => {
     await page.waitForTimeout(800);
     const scoped = await page.evaluate(() => ({ root: searchState.root, tabPath: activeTab().path }));
     expect(scoped.root).not.toContain('Documents');      // NOT the other tab's folder
-    expect(scoped.root).toBe(scoped.tabPath);
+    // A tab with no folder of its own opens at This PC (Stage 2D §8), and
+    // "current location" there is This PC: the index scope ('*'), never a
+    // walk of a folder called "thispc:".
+    expect(scoped.tabPath).toBe('thispc:');
+    expect(scoped.root).toBe('*');
     await page.evaluate(() => clearSearch());
     await page.keyboard.press('Control+w');
     await expect(page.locator('.fp-tab')).toHaveCount(1);

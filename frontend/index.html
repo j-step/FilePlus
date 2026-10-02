@@ -125,8 +125,8 @@
         <!-- Real fixed drives from GET /drives (Stage 3 will add the
              AI-organised dot). Collapsible: thispc-toggle flips
              aria-expanded, hides #sb-drives, rotates the chevron, and
-             persists ui.sidebar_thispc_open; thispc-open opens the drives
-             listing itself (openBrowserAt(null), tab label "This PC"). -->
+             persists ui.sidebar_thispc_open; thispc-open opens the This PC
+             page (drive cards, thispc.js; tab label "This PC"). -->
         <div class="fp-sidebar__section" id="sb-thispc">
           <div class="fp-sidebar__section-head" role="button" tabindex="0" data-action="thispc-open">
             <button class="fp-sidebar__chevron" data-action="thispc-toggle" aria-label="Collapse This PC" aria-expanded="true">
@@ -516,6 +516,22 @@
                 -->
 
               </div><!-- /#list-scroll -->
+
+              <!-- This PC (Stage 2D §8): the drive cards, shown INSTEAD of the
+                   column header and the listing while the tab is at the
+                   sentinel path "thispc:" (thispc.js). Tiles, or a details
+                   list (#thispc-head) — Ctrl+wheel switches. -->
+              <div class="thispc-view" id="thispc-view" hidden>
+                <h2 class="thispc-view__heading"><span class="thispc-view__heading-text">Devices and drives</span></h2>
+                <div class="thispc-view__head" id="thispc-head" aria-hidden="true" hidden>
+                  <span class="thispc-view__col thispc-view__col--name">Name</span>
+                  <span class="thispc-view__col thispc-view__col--type">Type</span>
+                  <span class="thispc-view__col thispc-view__col--bar">Used</span>
+                  <span class="thispc-view__col thispc-view__col--free">Free space</span>
+                </div>
+                <div class="thispc-view__drives" id="thispc-drives" role="listbox"
+                     aria-label="Devices and drives" data-layout="tiles"></div>
+              </div>
             </div><!-- /.list-pane -->
 
             <!-- Marquee selection rectangle — positioned by JS on mousedown drag (A.3.1) -->
@@ -3518,6 +3534,7 @@
 <script src="src/icons.js"></script>
 <script src="src/fileops.js"></script>
 <script src="src/browser.js"></script>
+<script src="src/thispc.js"></script>
 <script src="src/dragdrop.js"></script>
 <script src="src/search.js"></script>
 <script src="src/inspector.js"></script>

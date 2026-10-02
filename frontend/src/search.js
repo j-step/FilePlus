@@ -271,16 +271,28 @@ function syncSearchHasContent() {
 /** The exact query string GET /fs/search (or GET /search) is called with.
  * `root` is omitted for the This PC scope — that route searches the index, not
  * a tree. Every other key maps one chip to one documented backend parameter. */
+/** "in: current location" means THIS tab's folder. browserState is global
+ * and still holds whichever tab last listed something, so reading it directly
+ * silently scopes the search to another tab's folder (pass 2 #15). */
+function searchCurrentRoot() {
+  const tab = typeof activeTab === 'function' ? activeTab() : null;
+  return (tab && tab.path) || browserState.path || '';
+}
+
+/** Does this search go to the index (GET /search) rather than walk a folder?
+ * The This PC scope does — and so does "current location" while the tab is
+ * on the This PC page (Stage 2D §8): its location is every drive, never a
+ * folder called "thispc:". */
+function searchUsesIndex() {
+  if (searchState.scope === 'pc') return true;
+  return searchState.scope === 'current' && typeof THISPC !== 'undefined' && searchCurrentRoot() === THISPC;
+}
+
 function buildParams() {
   const params = { q: searchState.text.trim(), limit: SEARCH_LIMIT };
 
-  if (searchState.scope !== 'pc') {
-    // "in: current location" means THIS tab's folder. browserState is global
-    // and still holds whichever tab last listed something, so reading it
-    // directly silently scopes the search to another tab's folder (pass 2 #15).
-    const tab = typeof activeTab === 'function' ? activeTab() : null;
-    const currentRoot = (tab && tab.path) || browserState.path || '';
-    params.root = searchState.scope === 'current' ? currentRoot : searchState.scope;
+  if (!searchUsesIndex()) {
+    params.root = searchState.scope === 'current' ? searchCurrentRoot() : searchState.scope;
   }
 
   const type = searchChipValue('type');
@@ -417,7 +429,7 @@ async function runSearch({ pushHistory = true, preserveSelection = false } = {})
   await searchEnsureBrowser();
   if (superseded()) return;
 
-  const usePc = searchState.scope === 'pc';
+  const usePc = searchUsesIndex();
   const params = buildParams();
   if (!usePc && !params.root) {
     showToast('Open a folder first, or pick "This PC" to search the index', 'error');

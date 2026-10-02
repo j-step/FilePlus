@@ -158,6 +158,15 @@
 
   --sidebar-item-h:  28px;
 
+  /* ---------- This PC (Stage 2D §8, logical px) ---------- */
+  --drive-card-min:  280px;   /* tiles: auto-fill columns at least this wide */
+  --drive-icon:      48px;    /* the drive icon on a tile */
+  --drive-bar-h:     6px;     /* the usage bar */
+  --drive-col-icon:  16px;    /* details list columns */
+  --drive-col-type:  120px;
+  --drive-col-bar:   120px;
+  --drive-col-free:  200px;
+
   /* ---------- Component dimensions (unchanged) ---------- */
   --h-titlebar:     32px;
   --h-toolbar:      48px;
@@ -4268,6 +4277,210 @@ body.is-dragging { cursor: default; }
 /* The strip above the listing (browser.js setListNotice). */
 .list-notice[hidden] { display: none; }
 
+/* ── This PC (Stage 2D §8) ─────────────────────────────────────────────────
+   #thispc-view takes the listing's place in .list-pane while the tab is at
+   "thispc:" (thispc.js): the column header, the notice and the listing are
+   off, never under it. Drive cards are flat like every other surface —
+   borders do the work; the usage bar is accent on a --bg-raised track and
+   turns --bad above 90% used. */
+.list-pane--thispc > #list-head,
+.list-pane--thispc > #list-notice,
+.list-pane--thispc > #list-scroll { display: none; }
+.thispc-view {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: var(--s-16) var(--s-20) var(--s-24);
+  background: var(--bg-content);
+}
+.thispc-view[hidden] { display: none; }
+.thispc-view.is-refreshing { animation: fp-refresh-dip var(--dur-refresh-dip) var(--ease-ui) 1; }
+@media (prefers-reduced-motion: reduce) {
+  .thispc-view.is-refreshing { animation: none !important; }
+}
+.thispc-view__heading {
+  display: flex;
+  align-items: center;
+  gap: var(--s-8);
+  margin: 0 0 var(--s-12);
+  font: 600 var(--t-body) var(--font-ui);
+  color: var(--text-secondary);
+}
+.thispc-view__heading-text {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.thispc-view__heading::after {
+  content: '';
+  flex: 1;
+  min-width: var(--s-16);
+  height: 1px;
+  background: var(--border-hairline);
+}
+
+/* Tiles: auto-fill columns, never wider than the pane (no sideways scroll at
+   any width or zoom). The icon is a fixed box, so a reflow never resizes it. */
+.thispc-view__drives[data-layout="tiles"] {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(var(--drive-card-min), 100%), 1fr));
+  gap: var(--s-8);
+  align-items: start;
+}
+.fp-drive-card {
+  display: grid;
+  align-items: center;
+  column-gap: var(--s-12);
+  min-width: 0;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-card);
+  background: var(--bg-content);
+  color: var(--text-primary);
+  cursor: pointer;
+  user-select: none;
+  outline: none;
+  transition: background-color var(--dur-flash) var(--ease-snap),
+              border-color var(--dur-flash) var(--ease-snap);
+}
+[data-layout="tiles"] > .fp-drive-card {
+  grid-template-columns: var(--drive-icon) minmax(0, 1fr);
+  grid-template-areas: "icon name" "icon bar" "icon free";
+  row-gap: var(--s-4);
+  padding: var(--s-12) var(--s-14);
+}
+.fp-drive-card:hover { background: var(--bg-raised); border-color: var(--border-mid); }
+.fp-drive-card--selected,
+.fp-drive-card--selected:hover { background: var(--accent-wash); border-color: var(--accent-edge); }
+.fp-drive-card:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+.fp-drive-card__icon {
+  grid-area: icon;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+}
+[data-layout="tiles"] .fp-drive-card__icon { width: var(--drive-icon); height: var(--drive-icon); }
+.fp-drive-card--selected .fp-drive-card__icon { color: var(--accent); }
+.fp-drive-card__name {
+  grid-area: name;
+  min-width: 0;
+  font: 500 var(--t-body) var(--font-ui);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.fp-drive-card__type { grid-area: type; display: none; }
+.fp-drive-card__bar {
+  grid-area: bar;
+  min-width: 0;
+  height: var(--drive-bar-h);
+  margin: var(--s-2) 0;
+  border-radius: var(--r-pill);
+  background: var(--bg-raised);
+  overflow: hidden;
+}
+/* The track would vanish into a hovered card (both --bg-raised). */
+.fp-drive-card:hover .fp-drive-card__bar { background: var(--bg-pressed); }
+.fp-drive-card__bar-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+}
+.fp-drive-card__bar-fill--full { background: var(--bad); }
+.fp-drive-card__free {
+  grid-area: free;
+  min-width: 0;
+  font: 400 var(--t-compact) var(--font-ui);
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Details: one row per drive, Explorer's This PC details columns. */
+.thispc-view__drives[data-layout="details"] {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+.thispc-view__head,
+[data-layout="details"] > .fp-drive-card {
+  display: grid;
+  grid-template-columns: var(--drive-col-icon) minmax(0, 1fr) var(--drive-col-type) var(--drive-col-bar) var(--drive-col-free);
+  grid-template-areas: "icon name type bar free";
+  column-gap: var(--s-12);
+  align-items: center;
+}
+[data-layout="details"] > .fp-drive-card {
+  min-height: var(--row-height);
+  padding: var(--s-2) var(--s-12);
+  border-color: transparent;
+  border-radius: var(--r-button);
+}
+[data-layout="details"] > .fp-drive-card:hover { border-color: transparent; }
+[data-layout="details"] > .fp-drive-card--selected,
+[data-layout="details"] > .fp-drive-card--selected:hover { border-color: var(--accent-edge); }
+[data-layout="details"] .fp-drive-card__icon { width: var(--drive-col-icon); height: var(--drive-col-icon); }
+[data-layout="details"] .fp-drive-card__type {
+  display: block;
+  min-width: 0;
+  font: 400 var(--t-compact) var(--font-ui);
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.thispc-view__head {
+  padding: 0 var(--s-12) var(--s-4);
+  margin-bottom: var(--s-4);
+  border-bottom: 1px solid var(--border-hairline);
+  font: 500 var(--t-small) var(--font-ui);
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: var(--track-caps);
+  user-select: none;
+}
+.thispc-view__head[hidden] { display: none; }
+.thispc-view__col { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.thispc-view__col--name { grid-area: name; }
+.thispc-view__col--type { grid-area: type; }
+.thispc-view__col--bar  { grid-area: bar; }
+.thispc-view__col--free { grid-area: free; }
+.thispc-view__empty { grid-column: 1 / -1; }
+
+/* Narrow panes: the details list drops Type, then the bar; the page pads in. */
+@container list-pane (max-width: 640px) {
+  .thispc-view__head,
+  [data-layout="details"] > .fp-drive-card {
+    grid-template-columns: var(--drive-col-icon) minmax(0, 1fr) var(--drive-col-bar) minmax(0, var(--drive-col-free));
+    grid-template-areas: "icon name bar free";
+  }
+  .thispc-view__col--type,
+  [data-layout="details"] .fp-drive-card__type { display: none; }
+}
+@container list-pane (max-width: 440px) {
+  .thispc-view { padding: var(--s-12); }
+  .thispc-view__head,
+  [data-layout="details"] > .fp-drive-card {
+    grid-template-columns: var(--drive-col-icon) minmax(0, 1fr) minmax(0, auto);
+    grid-template-areas: "icon name free";
+  }
+  .thispc-view__col--bar,
+  [data-layout="details"] .fp-drive-card__bar { display: none; }
+}
+/* A tile too narrow for icon-beside-text stacks: the icon on top, so the name
+   keeps the card's whole width. */
+@container list-pane (max-width: 300px) {
+  [data-layout="tiles"] > .fp-drive-card {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "icon" "name" "bar" "free";
+    padding: var(--s-10) var(--s-12);
+  }
+}
+
 /* ── 40f. VIEWS (Stage 2D §3.2) ────────────────────────────────────────────
    One block per [data-view]. Nothing here is a fixed height around text:
    rows and cells use min-height (or auto), so no name clips at any app zoom
@@ -5122,6 +5335,8 @@ body.is-dragging { cursor: default; }
   background: var(--text-tertiary);
   border-radius: var(--r-pill);
 }
+/* Above 90% used, the same --bad the This PC card's bar turns (Stage 2D §8). */
+.fp-sidebar__drive-bar__fill--full { background: var(--bad); }
 /* ── Drive letter (collapsed mode) ─────────────────────────────────────── */
 .fp-sidebar__drive-letter {
   display: none;

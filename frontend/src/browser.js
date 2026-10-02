@@ -16,6 +16,21 @@
 // app.js's seedInitialTab() at boot.
 const nav = { history: [], index: -1 };
 
+// ── This PC (Stage 2D §8) ────────────────────────────────────────────────────
+// The path of the This PC page — a page of drive cards, not a folder. It is
+// what loadDirectory() is asked for by "This PC" (the sidebar header, the
+// breadcrumb root, Alt+Up at a drive root, a tab with no folder yet), and it
+// is a real location in every other respect: history, tab records, the tab
+// label. It never reaches the backend; thispc.js renders it from GET /drives.
+const THISPC = 'thispc:';
+
+/** True when the active tab is showing the This PC page right now (not search
+ * results started from it). */
+function thisPcActive() {
+  return browserState.path === THISPC && browserState.mode !== 'search'
+    && typeof tabs !== 'undefined' && browserState.listingTabId === tabs.activeId;
+}
+
 // ── The view ladder (Stage 2D §3) ────────────────────────────────────────────
 // Explorer's eight views, smallest to largest, as one ladder Ctrl+wheel walks
 // a notch at a time: Content, Tiles, Details, List, Small icons, then icons
@@ -88,8 +103,8 @@ const browserState = {
   parent: null,
   isRoot: false,
   truncated: false,
-  // Last path passed to loadDirectory() (including null for the sandbox
-  // root) — whatever the load's outcome. Used by the error banner's "Retry"
+  // Last path passed to loadDirectory() (THISPC for the This PC page) —
+  // whatever the load's outcome. Used by the error banner's "Retry"
   // action so it can re-attempt the exact same load that just failed.
   lastAttemptedPath: null,
   // Set by refreshDirectory() when it is called from off the Browser screen
@@ -161,6 +176,7 @@ function currentViewStep() {
  * icons the nearest named size (spec §3.1: < 80 Medium, < 192 Large, else
  * Extra large). */
 function viewMenuKey() {
+  if (thisPcActive()) return thisPcLayout() === 'details' ? 'details' : 'tiles';
   if (browserState.view !== 'icons') return browserState.view;
   const s = browserState.iconSize;
   return s < 80 ? 'medium' : (s < 192 ? 'large' : 'xl');
@@ -248,6 +264,9 @@ function setView(view, size = null, { manual = false, anchorEl = null, render = 
  * Ctrl+wheel (app.js) comes through here. Returns whether the view
  * changed. */
 function stepView(delta, { anchorEl = null } = {}) {
+  // This PC has two layouts of its own, tiles and a details list (§8): the
+  // folder ladder is not touched.
+  if (thisPcActive()) return stepThisPcLayout(delta);
   const at = currentViewStep();
   const cur = at === -1 ? viewStepIndex('details') : at;
   const next = Math.max(0, Math.min(VIEW_LADDER.length - 1, cur + Math.sign(delta || 0)));
@@ -261,6 +280,7 @@ function stepView(delta, { anchorEl = null } = {}) {
 /** A View-menu / empty-area-flyout choice: 'xl' | 'large' | 'medium' (the
  * icons view at 256 / 96 / 48) or a fixed view's own name. */
 function applyViewChoice(key) {
+  if (thisPcActive()) { setThisPcLayout(thisPcLayoutForView(key)); return; }
   const size = VIEW_NAMED_ICON_SIZES[key];
   if (size) setView('icons', size, { manual: true });
   else setView(key, null, { manual: true });
@@ -734,12 +754,17 @@ function initMarqueeSelection() {
 // backend/filetypes.py, mirrored into frontend/src/filetypes.js, and each
 // family has its own fp-ft-<family> sprite symbol.
 
+/** The one byte formatter: B, then KB / MB / GB / TB with one decimal
+ * (Stage 2D §8 — drive sizes read "120.3 GB free of 237.0 GB"). Anything that
+ * is not a number (an unknown size) is an em dash, never "NaN". */
 function formatSize(bytes) {
-  if (bytes == null) return '—';
-  if (bytes < 1024) return bytes + ' B';
-  if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
-  if (bytes < 1073741824) return (bytes / 1048576).toFixed(1) + ' MB';
-  return (bytes / 1073741824).toFixed(2) + ' GB';
+  if (bytes == null || !Number.isFinite(Number(bytes))) return '—';
+  const n = Number(bytes);
+  if (n < 1024) return n + ' B';
+  if (n < 1048576) return (n / 1024).toFixed(1) + ' KB';
+  if (n < 1073741824) return (n / 1048576).toFixed(1) + ' MB';
+  if (n < 1099511627776) return (n / 1073741824).toFixed(1) + ' GB';
+  return (n / 1099511627776).toFixed(1) + ' TB';
 }
 
 // Module-level formatters and a once-per-second "now": renderDirectory calls
@@ -816,7 +841,8 @@ function parentOfPath(p) {
 }
 
 /**
- * Loads `absPath` (null = the sandbox root) into the Browser listing.
+ * Loads `absPath` into the Browser listing. THISPC (or null — a tab that has
+ * no folder yet) is the This PC page instead (thispc.js, Stage 2D §8).
  *
  * opts.restore (Stage 2C Task 7) — {scrollTop, scrollLeft, selection, view, iconSize}
  * from a tab record being reactivated: applied with the render (selection
@@ -847,6 +873,7 @@ function parentOfPath(p) {
  */
 async function loadDirectory(absPath, opts = {}) {
   const { addToHistory = true, preserveSelection = false, restore = null, cached = null, historyIndex = null } = opts;
+  if (absPath == null) absPath = THISPC;
   const reqTabId = tabs.activeId;
   const reqSeq = ++browserState._loadSeq;
   const superseded = () => tabs.activeId !== reqTabId || browserState._loadSeq !== reqSeq;
@@ -865,6 +892,10 @@ async function loadDirectory(absPath, opts = {}) {
     leaveSearchMode();
   }
   browserState.lastAttemptedPath = absPath;
+
+  if (absPath === THISPC) {
+    return loadThisPc({ addToHistory, restore, historyIndex, reqTabId, superseded, ownSearch, searchWasInFlight });
+  }
 
   const cachedListing = (cached && Array.isArray(cached.entries) && cached.path) ? cached : null;
   if (cachedListing) {
@@ -932,7 +963,7 @@ function listingRecordFrom(data, fetchedAt = Date.now()) {
 /** Points the active tab's cached listing at what browserState now holds. */
 function rememberTabListing() {
   const tab = activeTab();
-  if (!tab || browserState.mode === 'search' || !browserState.path) return;
+  if (!tab || browserState.mode === 'search' || !browserState.path || browserState.path === THISPC) return;
   if (browserState.listingTabId !== tab.id) return;
   tab.listing = listingRecordFrom({
     path: browserState.path, entries: browserState.entries, parent: browserState.parent,
@@ -965,6 +996,7 @@ function commitListing(data, { absPath, addToHistory = true, restore = null, pre
   // Browser never shows rows it held from before (Stage 2D fix round 1).
   leaveSearchMode();
   if (!browserScreenActive()) showScreenDom('browser');
+  setThisPcShown(false);
 
   browserState.path = data.path;
   browserState.entries = data.entries;
@@ -990,25 +1022,17 @@ function commitListing(data, { absPath, addToHistory = true, restore = null, pre
   // Keep the active tab's own record continuously pointed at the real
   // (resolved) path — this is what lets switchScreen() tell "this tab has
   // never loaded a folder" (path still null, createTab()'s default) apart
-  // from "this tab is sitting at the sandbox root" (a real resolved path).
+  // from a tab that has.
   const tab = activeTab();
   if (tab) {
     tab.path = data.path;
     tab.screen = 'browser';
-    // Remember that this tab was opened AT the root entry point rather than at
-    // a folder of that name: the resolved path is a real directory, so without
-    // this the "This PC" label would be recomputed as its basename the first
-    // time the tab is re-activated or duplicated (pass 2 #16).
-    tab.isRootTarget = !absPath;
     tab.listing = listingRecordFrom(data, fetchedAt);
     tab.stale = false;
   }
   // Tab label/icon, sidebar highlight and breadcrumb — only now that the
   // folder is known to exist (pass-2 #55).
-  onNavigated(absPath);
-  // onNavigated(null) (the sandbox-root request) can't build breadcrumb
-  // crumbs from nothing — the real path is known now.
-  if (!absPath) updateBreadcrumb(data.path);
+  onNavigated(data.path);
 
   const validPaths = new Set(data.entries.map(e => joinPath(data.path, e.name)));
   if (restore) {
@@ -1080,16 +1104,18 @@ function failNavigation(err, absPath, { reqTabId, ownSearch = false, searchWasIn
     showToast(message, 'error');
     return;
   }
+  // This tab's own folder listing — or its This PC page — is on screen.
   const ownListingShown = browserState.path && browserState.listingTabId === reqTabId
-    && document.querySelector('#list-scroll > .fp-row, #list-scroll > .fp-empty-state');
+    && (browserState.path === THISPC
+      || document.querySelector('#list-scroll > .fp-row, #list-scroll > .fp-empty-state'));
   if (ownListingShown) {
-    onNavigated(tab && tab.isRootTarget ? null : browserState.path);
-    if (tab && tab.isRootTarget) updateBreadcrumb(browserState.path);
+    onNavigated(browserState.path);
     refreshNavButtons();
     showToast(message, 'error');
     return;
   }
   leaveSearchMode();
+  setThisPcShown(false);
   onNavigated(absPath);
   handleLoadError(err, absPath);
 }
@@ -1153,6 +1179,8 @@ function refreshDirectory() {
     });
   }
   if (!browserState.path || !browserHasOwnListing()) return Promise.resolve();
+  // The This PC page re-reads the drives (thispc.js).
+  if (browserState.path === THISPC) return refreshThisPc();
   const path = browserState.path;
   // #list-scroll is DOM shared by every tab: a refresh that lands after a tab
   // switch or a newer navigation must not patch somebody else's listing
@@ -1328,9 +1356,8 @@ function handleLoadError(err, absPath) {
 }
 
 // Re-attempts the load that just failed — used by the error banner's "Retry"
-// action. lastAttemptedPath is set by loadDirectory() before the fetch (even
-// for the sandbox root, where it's null), so this always repeats the exact
-// same request.
+// action. lastAttemptedPath is set by loadDirectory() before the fetch (THISPC
+// for the This PC page), so this always repeats the exact same request.
 function retryLoad() {
   loadDirectory(browserState.lastAttemptedPath, { addToHistory: false });
 }
@@ -1409,8 +1436,16 @@ function navUp() {
   // toolbar Up button, Alt+Up and Backspace (browserKeydown, when
   // ui.backspace_deletes is off), so all three agree by construction.
   if (browserState.mode === 'search' && !searchExitPending()) { exitSearchResults(); return; }
+  if (browserState.path === THISPC) return;
+  // Up from a drive root is This PC (Stage 2D §8), as in Explorer.
+  if (isDriveRootPath(browserState.path)) { loadDirectory(THISPC); return; }
   if (browserState.isRoot || !browserState.parent) return;
   loadDirectory(browserState.parent);
+}
+
+/** "C:\\" or "C:" — a drive's root folder. */
+function isDriveRootPath(p) {
+  return /^[A-Za-z]:[\\/]?$/.test(String(p || ''));
 }
 
 /**
@@ -1446,6 +1481,8 @@ function browserHasOwnListing() {
 function clearBrowserListing() {
   leaveSearchMode();
   document.getElementById('list-scroll')?.replaceChildren();
+  // Another tab's This PC page goes with it.
+  setThisPcShown(false);
   setListNotice('');
   browserState.path = null;
   browserState.entries = [];
@@ -1476,10 +1513,15 @@ function refreshNavButtons() {
   // In search mode Up always has somewhere to go (back to the searched
   // folder), regardless of whether that folder has a parent of its own.
   if (up)   up.disabled   = !onBrowser || (browserState.mode !== 'search'
-    && (!browserState.path || browserState.isRoot || !browserState.parent));
+    && (!browserState.path || browserState.path === THISPC
+      || ((browserState.isRoot || !browserState.parent) && !isDriveRootPath(browserState.path))));
 }
 
 function renderDirectory(data) {
+  // On the This PC page there is no folder listing to render: a re-render
+  // asked for by a sort / extension toggle repaints the cards instead.
+  if (thisPcActive()) { renderThisPC(); return; }
+  setThisPcShown(false);
   window.__fpRenderCount++;
   if (data) browserState.truncated = !!data.truncated;
   const listScroll = document.getElementById('list-scroll');
@@ -1768,6 +1810,8 @@ function showSearchPending(query, root) {
     browserState.focus = null;
     if (listScroll) listScroll.innerHTML = '';
     setListNotice('');
+    // A search started from This PC shows its results in the listing.
+    setThisPcShown(false);
   }
   updateSearchBreadcrumb(root);
   setSearchHeader('Searching…');
@@ -1886,9 +1930,23 @@ function updateAddressBar(path) {
   if (addressEl) addressEl.textContent = path;
 }
 
+/** The "This PC" crumb: the whole breadcrumb on the This PC page (current,
+ * icon and name), and the root crumb in front of every drive path (Stage 2D
+ * §8) — there just its icon, named by its tooltip, so the path itself keeps
+ * the toolbar's width. */
+function thisPcCrumbHtml(current) {
+  const glyph = icon('desktop', 'fp-icon--14 fp-breadcrumb__icon');
+  return current
+    ? `<button class="fp-breadcrumb__crumb fp-breadcrumb__crumb--current" data-action="navigate-crumb" data-path="${THISPC}">`
+      + `${glyph}<span class="fp-breadcrumb__label">This PC</span></button>`
+    : `<button class="fp-breadcrumb__crumb fp-breadcrumb__crumb--root" data-action="navigate-crumb" data-path="${THISPC}"`
+      + ` title="This PC" aria-label="This PC">${glyph}</button>`;
+}
+
 function updateBreadcrumb(path) {
   const crumb = document.getElementById('breadcrumb');
   if (!crumb || !path) return;
+  if (path === THISPC) { crumb.innerHTML = thisPcCrumbHtml(true); return; }
   // Split on \ or /, drop empties. First part is drive letter (e.g. "C:") — keep with backslash for nav.
   const parts = String(path).split(/[\\\/]+/).filter(Boolean);
   let cumulative = '';
@@ -1909,9 +1967,11 @@ function updateBreadcrumb(path) {
     // current crumb (styles.css .is-tight, Stage 2D §6.2).
     return `<button class="${cls}" data-action="navigate-crumb" data-path="${escapeHtml(cumulative)}">${iconHtml}<span class="fp-breadcrumb__label">${escapeHtml(label)}</span></button>`;
   }).join('<span class="fp-breadcrumb__sep">·</span>');
+  // A drive path starts at This PC, as in Explorer: its root crumb.
+  const root = /^[A-Za-z]:$/.test(parts[0] || '') ? `${thisPcCrumbHtml(false)}<span class="fp-breadcrumb__sep">·</span>` : '';
   // app.js's MutationObserver on #breadcrumb re-runs layoutToolbar() for this
   // (before the next paint) — one layout pass per navigation.
-  crumb.innerHTML = html;
+  crumb.innerHTML = root + html;
 }
 
 /**
@@ -1929,6 +1989,7 @@ function showErrorBanner(message, opts = {}) {
       ).join('')}</div>`
     : '';
   setListNotice('');
+  setThisPcShown(false);
   listScroll.innerHTML = `<div class="fp-error-banner" role="alert">
     ${icon('error', 'fp-icon--14')}
     <span class="fp-body" style="color: var(--text-primary)">${escapeHtml(message)}</span>
@@ -2383,6 +2444,7 @@ function selectionTotalSize() {
 
 /** Updates the status bar's item count and selection summary. */
 function updateStatusBar() {
+  if (thisPcActive()) { updateThisPcStatus(); return; }
   const countEl = document.getElementById('status-count');
   const selEl = document.getElementById('status-selected');
   const n = browserState.entries.length;
@@ -2481,6 +2543,10 @@ function browserKeydown(e) {
     // canRenameSelection()'s single-selection rule doubles as "Properties is
     // single-item only in this pass", design spec §5.1). Same target as F2's
     // Rename below: browserState.focus.
+    else if (key === 'Enter' && thisPcActive()) {
+      e.preventDefault();
+      thisPcProperties(thisPcSelectedPath());
+    }
     else if (key === 'Enter' && canRenameSelection() && browserState.focus) {
       e.preventDefault();
       if (typeof openProperties === 'function') openProperties(browserState.focus);
@@ -2493,6 +2559,9 @@ function browserKeydown(e) {
   // error banner — has none of its own: the folder it came from went with
   // its rows (fix round 2). Alt+arrows above still navigate.
   if (!browserHasOwnListing()) return;
+
+  // The This PC page has drive cards, not files: its own keys (thispc.js).
+  if (thisPcActive()) { thisPcKeydown(e); return; }
 
   if (ctrl && key.toLowerCase() === 'a') {
     e.preventDefault();

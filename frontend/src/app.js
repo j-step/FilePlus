@@ -87,16 +87,17 @@ function pathBaseName(p) {
   return parts[parts.length - 1] || String(p);
 }
 
-/** Tab label for a browser-screen path: 'This PC' for the sandbox root
- * (loadDirectory(null)'s target — never a folder name), the bare drive
- * letter for a drive root ('D:'), the folder's basename otherwise. (A Home
- * tab's label comes from createTab's own 'Home' default, not from here —
- * this only ever runs for the browser screen, from onNavigated().) */
+/** Tab label for a browser-screen path: 'This PC' for the This PC page
+ * (THISPC, or a tab with no folder yet), the drive's full name for a drive
+ * root ('Local Disk (C:)' — what its crumb and sidebar row say), the
+ * folder's basename otherwise. (A Home tab's label comes from createTab's
+ * own 'Home' default, not from here — this only ever runs for the browser
+ * screen, from onNavigated().) */
 function tabLabelFor(path) {
-  if (!path) return 'This PC';
+  if (!path || path === THISPC) return 'This PC';
   const norm = String(path).replace(/[\\/]+$/, '');
-  if (/^[A-Za-z]:$/.test(norm)) return norm.toUpperCase();
-  return pathBaseName(norm) || 'This PC';
+  if (/^[A-Za-z]:$/.test(norm)) return driveDisplayLabel(norm);
+  return pathBaseName(norm) || norm;
 }
 
 /** 'Seagate Barracuda 4tb HDD (D:)' from the cached /drives list
@@ -106,10 +107,9 @@ function tabLabelFor(path) {
 function driveDisplayLabel(letter) {
   const norm = String(letter || '').replace(/[\\/]+$/, '').toUpperCase();
   const drives = window.__fpDrives || [];
-  const d = drives.find(x => String(x.letter || '').replace(/[\\/]+$/, '').toUpperCase() === norm);
-  if (!d) return norm;
-  const label = (d.label || '').trim();
-  return label ? `${label} (${norm})` : `Local Disk (${norm})`;
+  const d = drives.find(x => driveLetterOf(x) === norm);
+  // One formatter for every place a drive is named (thispc.js, Stage 2D §8).
+  return d ? driveDisplayName(d) : norm;
 }
 
 /** Tab element icon: home for the Home screen, a drive glyph for a browser
@@ -119,6 +119,11 @@ function driveDisplayLabel(letter) {
  * icon of its folder or drive (Stage 2D §4.6), at 16 px — a shell bucket —
  * where the chrome glyph keeps its 14. */
 function tabIconFor(record) {
+  if (record.screen === 'browser' && (!record.path || record.path === THISPC)) {
+    // The This PC page is not a folder: the chrome glyph, never a shell
+    // lookup of "thispc:".
+    return icon('desktop', 'fp-icon--14 fp-tab__icon');
+  }
   if (record.screen === 'browser') {
     const norm = String(record.path || '').replace(/[\\/]+$/, '');
     const isDrive = /^[A-Za-z]:$/.test(norm);
@@ -185,10 +190,6 @@ function createTab({ screen = 'home', path = null, history = [], historyIndex = 
     scrollTop: 0,
     scrollLeft: 0,
     selection: [],
-    // True when this tab was opened at the root entry point ("This PC") rather
-    // than at a folder that happens to share its resolved path — keeps its
-    // label from collapsing to the folder's basename (pass 2 #16).
-    isRootTarget: false,
     // Task 14: this tab's own search (chips + text + the rendered results),
     // or null when it is showing a plain folder listing. Captured on every
     // deactivation and repainted on reactivation, so switching tabs and back
@@ -268,7 +269,9 @@ function syncActiveTabRecord() {
   tab.path = browserState.path;
   tab.view = browserState.view;
   tab.iconSize = browserState.iconSize;
-  tab.selection = [...browserState.selection];
+  // On the This PC page the selection is a drive card (thispc.js).
+  const onThisPc = thisPcActive();
+  tab.selection = onThisPc ? thisPcSelectionList() : [...browserState.selection];
   tab.historyIndex = nav.index;
   // The live search bar + its results, or null when this tab is showing a
   // plain listing (search.js's captureSearchState).
@@ -277,8 +280,8 @@ function syncActiveTabRecord() {
   // activated again (Stage 2D §4.2). Search results are not a folder listing:
   // the tab keeps the one committed before the search started.
   if (typeof rememberTabListing === 'function') rememberTabListing();
-  const listScroll = document.getElementById('list-scroll');
-  if (listScroll) { tab.scrollTop = listScroll.scrollTop; tab.scrollLeft = listScroll.scrollLeft; }
+  const scroller = document.getElementById(onThisPc ? 'thispc-view' : 'list-scroll');
+  if (scroller) { tab.scrollTop = scroller.scrollTop; tab.scrollLeft = scroller.scrollLeft; }
 }
 
 /** Activates tab `id`: saves the outgoing tab's live state into its own
@@ -357,7 +360,7 @@ function activateTab(id) {
     showScreenDom('browser');
     if (typeof searchResetBar === 'function') searchResetBar();
     incoming.stale = false;
-    const loaded = loadDirectory(incoming.isRootTarget ? null : incoming.path, {
+    const loaded = loadDirectory(incoming.path, {
       // Empty history means this tab was staged in the background (openBrowserAt
       // on an inactive tab) and is only now getting its first real fetch — treat
       // that as a real navigation (push it) rather than a pure restore.
@@ -454,11 +457,10 @@ function switchScreen(id, labelOverride) {
   tab.screen = id;
   if (id === 'browser') {
     if (tab.path === null) {
-      // This tab has never shown Browser before — load the sandbox root,
-      // same fallback the old global navHistory-empty check used to give.
-      // The Browser screen appears when that listing commits (commitListing),
-      // never before with rows left over from another tab.
-      loadDirectory(null);
+      // This tab has never shown Browser before — open This PC (Stage 2D
+      // §8). The Browser screen appears when that page commits, never
+      // before with rows left over from another tab.
+      loadDirectory(THISPC);
     } else if (browserState.mode === 'search' && tab.search && tab.search.results
                && typeof restoreSearchResultsForTab === 'function') {
       // This tab left the Browser screen mid-search. #list-scroll still holds
@@ -482,7 +484,7 @@ function switchScreen(id, labelOverride) {
       // (browserState.listingStale, pass 2 #155). Re-fetch rather than reveal
       // somebody else's listing. commitListing() reveals the Browser screen
       // together with the rows (at once when the tab has a cached listing).
-      loadDirectory(tab.isRootTarget ? null : tab.path, {
+      loadDirectory(tab.path, {
         addToHistory: false,
         restore: {
           scrollTop: tab.scrollTop,
@@ -499,10 +501,10 @@ function switchScreen(id, labelOverride) {
       // Already has a folder loaded, still sitting in #list-scroll from
       // earlier in this tab's life (screens are hidden, not torn down) — just
       // reveal it, no re-fetch.
-      tab.label = labelOverride || (tab.isRootTarget ? tabLabelFor(null) : tabLabelFor(tab.path));
+      tab.label = labelOverride || tabLabelFor(tab.path);
       updateTabElementAppearance(tab);
       showScreenDom('browser');
-      updateSidebarActive(tab.isRootTarget ? null : tab.path);
+      updateSidebarActive(tab.path);
       updateBreadcrumb(tab.path);
       if (typeof refreshNavButtons === 'function') refreshNavButtons();
       // Nothing re-fetches on this path (the listing is already in
@@ -537,7 +539,7 @@ function openBrowserAt(path, { tab } = {}) {
   if (!target) return;
   if (target.id !== tabs.activeId) {
     target.screen = 'browser';
-    target.path = path ?? null;
+    target.path = path ?? THISPC;
     target.label = tabLabelFor(target.path);
     updateTabElementAppearance(target);
     return Promise.resolve();
@@ -611,7 +613,6 @@ function reopenLastTab() {
   restored.scrollTop = record.scrollTop;
   restored.scrollLeft = record.scrollLeft || 0;
   restored.selection = record.selection;
-  restored.isRootTarget = record.isRootTarget;
   // The closed record carried its search (closeTabById pushes the whole thing,
   // syncActiveTabRecord having just refreshed it) — createTab() starts every
   // tab at search:null, so it has to be carried across explicitly or Ctrl+W /
@@ -637,7 +638,6 @@ function duplicateTab(id) {
   copy.selection = source.selection.slice();
   copy.scrollTop = source.scrollTop;
   copy.scrollLeft = source.scrollLeft || 0;
-  copy.isRootTarget = source.isRootTarget;
   // Duplicating a results tab duplicates the results, not the folder under
   // them — deep-cloned so the two tabs' snapshots never alias (pass 2 #18).
   copy.search = source.search ? JSON.parse(JSON.stringify(source.search)) : null;
@@ -661,7 +661,7 @@ function closeOtherTabs(id) {
 function seedInitialTab() {
   const el = document.querySelector('.fp-tab[data-tab-id]');
   const id = el ? el.dataset.tabId : 'tab-1';
-  const record = { id, screen: 'home', label: 'Home', path: null, history: [], historyIndex: -1, view: null, iconSize: null, scrollTop: 0, scrollLeft: 0, selection: [], isRootTarget: false, search: null, listing: null, stale: false };
+  const record = { id, screen: 'home', label: 'Home', path: null, history: [], historyIndex: -1, view: null, iconSize: null, scrollTop: 0, scrollLeft: 0, selection: [], search: null, listing: null, stale: false };
   tabs.list.push(record);
   tabs.activeId = id;
   nav.history = record.history;
@@ -690,7 +690,7 @@ function onNavigated(path) {
 // ── Sidebar active-state machinery ────────────────────────────────────────────
 // Exactly ONE sidebar item carries --active at any time — this is the single
 // place that decides which one, called synchronously from onNavigated() (a
-// browser-screen path, including null for the sandbox root) and from
+// browser-screen path, including THISPC for the This PC page) and from
 // activateTab()/switchScreen() (a non-browser screen id). No other code
 // touches .fp-sidebar__item--active.
 //
@@ -718,8 +718,8 @@ function updateSidebarActive(pathOrScreen) {
     return;
   }
 
-  // A real filesystem path (or null/'' for the sandbox root, which has no
-  // sidebar entry to highlight) — match the longest data-path prefix.
+  // A real filesystem path (THISPC — the This PC page — matches no
+  // data-path, so nothing is highlighted) — match the longest data-path prefix.
   const currentPath = String(pathOrScreen || '').toLowerCase();
   if (!currentPath) return;
 
@@ -1698,6 +1698,25 @@ const CONTEXT_MENUS = {
     { label: 'Properties',        action: 'cm-properties' },
   ],
 
+  // Stage 2D §8 — a drive (This PC card or sidebar drive row).
+  drive: [
+    { label: 'Open',            action: 'cm-drive-open', icon: icon('open', 'fp-icon--14') },
+    { label: 'Open in new tab', action: 'cm-drive-open-tab' },
+    'sep',
+    { label: 'Properties',      action: 'cm-drive-properties' },
+  ],
+
+  // Stage 2D §8 — the open space of the This PC page: nothing to create or
+  // paste into (it is not a folder), its two layouts, and Refresh.
+  thispc: [
+    { label: 'Refresh', action: 'cm-refresh', kbd: 'F5' },
+    'sep',
+    { label: 'View', items: [
+      { label: 'Tiles',   action: 'cm-thispc-view-tiles',   checked: () => thisPcLayout() === 'tiles' },
+      { label: 'Details', action: 'cm-thispc-view-details', checked: () => thisPcLayout() === 'details' },
+    ] },
+  ],
+
   // A.10.4 — Tab context menu
   tab: [
     { label: 'New tab',            action: 'cm-new-tab' },
@@ -1803,6 +1822,10 @@ function menuContext() {
 
 function getMenuTypeForTarget(target) {
   if (target.closest('.fp-tab')) return 'tab';
+  // A drive — a This PC card or a sidebar drive row — has its own menu
+  // (Stage 2D §8); the open space of the This PC page has another.
+  if (target.closest('.fp-drive-card[data-path], #sb-drives .fp-sidebar__item[data-path]')) return 'drive';
+  if (target.closest('#thispc-view')) return 'thispc';
   // User pins (data-pin-id) and Quick Access known folders (data-known-id)
   // both get the sidebar-item menu — Home and drives are neither and fall
   // through to the empty-area menu instead.
@@ -2191,13 +2214,16 @@ document.addEventListener('keydown', e => {
 // toolbar, tab bar, inspector blank space, Home background) still clears.
 const DESELECT_INTERACTIVE_SELECTOR = 'button, a, input, select, textarea, ' +
   '[contenteditable], [role=button], .fp-row, .home-row, .fp-tab, ' +
-  '.fp-sidebar__item, .fp-context-menu, .modal, .palette, .fp-inspector__tab, .fp-chip';
+  '.fp-sidebar__item, .fp-context-menu, .modal, .palette, .fp-inspector__tab, .fp-chip, .fp-drive-card';
 
 function deselectOnOpenSpace(target) {
   if (target?.closest?.(DESELECT_INTERACTIVE_SELECTOR)) return;
   if (target?.closest?.('#list-scroll')) return;
   const screen = activeTab()?.screen;
-  if (screen === 'browser') clearSelection();
+  if (screen === 'browser') {
+    clearSelection();
+    if (thisPcActive()) clearThisPcSelection();
+  }
   else if (screen === 'home') homeClearSelection();
 }
 
@@ -2306,8 +2332,12 @@ async function refreshAll() {
   const onBrowser = browserScreenActive();
   restartClassAnimation(document.getElementById('btn-refresh'), 'is-spinning', refreshFxMs().spin, 'spin');
   if (onBrowser) {
-    // This PC (Task 8) hooks in here; until then there is nothing to re-read.
-    if (typeof tab.path === 'string' && tab.path.startsWith('thispc:')) return;
+    // This PC re-reads the drives and patches the cards in place (§7.1 #4).
+    if (thisPcActive()) {
+      restartClassAnimation(document.getElementById('thispc-view'), 'is-refreshing', refreshFxMs().dip, 'dip');
+      await refreshThisPc();
+      return;
+    }
     restartClassAnimation(document.getElementById('list-scroll'), 'is-refreshing', refreshFxMs().dip, 'dip');
     await refreshDirectory();
   } else if (tab.screen === 'home') {
@@ -2443,16 +2473,51 @@ async function loadDrives() {
     console.warn('[fp-drives] failed to load drives:', formatApiError(err));
     return;
   }
-  window.__fpDrives = driveList; // driveDisplayLabel() reads this synchronously
-  container.innerHTML = driveList.map(renderDriveItem).join('');
+  setDriveList(driveList);
 }
 
+/**
+ * The one drive model (Stage 2D §8): the sidebar's This PC list, the This PC
+ * page, the drive crumb and drive-root tab labels all read window.__fpDrives.
+ * When the same drives come back (only their free space moved), every row and
+ * card is patched in place — no icon repaints, no lost highlight.
+ */
+function setDriveList(list) {
+  const prev = Array.isArray(window.__fpDrives) ? window.__fpDrives : null;
+  window.__fpDrives = list; // driveDisplayLabel() reads this synchronously
+  const container = document.getElementById('sb-drives');
+  if (container) {
+    const rows = [...container.querySelectorAll(':scope > .fp-sidebar__drive-item')];
+    const same = rows.length === list.length && rows.every((r, i) => {
+      const item = r.querySelector('.fp-sidebar__item');
+      return item && item.dataset.path === list[i].mount
+        && item.querySelector('.fp-sidebar__item__label')?.textContent === driveDisplayName(list[i]);
+    });
+    if (same) rows.forEach((r, i) => patchDriveItem(r, list[i]));
+    else {
+      container.innerHTML = list.map(renderDriveItem).join('');
+      const tab = activeTab();
+      if (tab) updateSidebarActive(tab.screen === 'browser' ? tab.path : tab.screen);
+    }
+  }
+  if (thisPcActive()) renderThisPC(list);
+  // A drive-root tab named before the drives were known says just "C:".
+  const renamed = !prev || prev.length !== list.length || prev.some((d, i) => driveDisplayName(d) !== driveDisplayName(list[i]));
+  if (renamed) {
+    tabs.list.forEach(t => {
+      if (t.screen !== 'browser' || !isDriveRootPath(t.path)) return;
+      const label = tabLabelFor(t.path);
+      if (t.label !== label) { t.label = label; updateTabElementAppearance(t); }
+    });
+  }
+}
+
+/** A sidebar drive row: the shared name, a 3px usage bar (--bad above 90%)
+ * and "X free of Y" as its tooltip — the page's own numbers. */
 function renderDriveItem(d) {
-  const letter = d.letter || '';
-  const label = (d.label || '').trim();
-  const labelText = label ? `${letter} ${label}` : `${letter} Drive`;
-  const pct = d.total_bytes > 0 ? Math.round((d.used_bytes / d.total_bytes) * 100) : 0;
-  const usageTitle = `${formatSize(d.used_bytes)} / ${formatSize(d.total_bytes)} used`;
+  const letter = driveLetterOf(d);
+  const labelText = driveDisplayName(d);
+  const full = driveIsNearlyFull(d) ? ' fp-sidebar__drive-bar__fill--full' : '';
   return `<div class="fp-sidebar__drive-item">
     <button class="fp-sidebar__item" data-screen="browser" data-path="${escapeHtml(d.mount)}"
             data-action="navigate-path" title="${escapeHtml(labelText)}">
@@ -2460,10 +2525,20 @@ function renderDriveItem(d) {
       <span class="fp-sidebar__drive-letter" aria-hidden="true">${escapeHtml(letter)}</span>
       <span class="fp-sidebar__item__label">${escapeHtml(labelText)}</span>
     </button>
-    <div class="fp-sidebar__drive-bar" title="${escapeHtml(usageTitle)}">
-      <div class="fp-sidebar__drive-bar__fill" style="width:${pct}%"></div>
+    <div class="fp-sidebar__drive-bar" title="${escapeHtml(driveFreeText(d))}">
+      <div class="fp-sidebar__drive-bar__fill${full}" style="width:${drivePercentUsed(d)}%"></div>
     </div>
   </div>`;
+}
+
+function patchDriveItem(row, d) {
+  const bar = row.querySelector('.fp-sidebar__drive-bar');
+  const fill = row.querySelector('.fp-sidebar__drive-bar__fill');
+  if (bar) bar.title = driveFreeText(d);
+  if (!fill) return;
+  const width = `${drivePercentUsed(d)}%`;
+  if (fill.style.width !== width) fill.style.width = width;
+  fill.classList.toggle('fp-sidebar__drive-bar__fill--full', driveIsNearlyFull(d));
 }
 
 async function loadPins() {
@@ -2821,12 +2896,12 @@ document.addEventListener('click', e => {
       break;
     }
     // This PC (Task 9): thispc-open sits on the section-head row itself and
-    // opens the drives listing (openBrowserAt(null), tab label "This PC");
+    // opens the This PC page (Stage 2D §8, tab label "This PC");
     // thispc-toggle sits on the nested chevron button, so a click there is
     // caught by this case first (closest() returns the innermost match) and
     // never falls through to thispc-open.
     case 'thispc-open':
-      openBrowserAt(null);
+      openBrowserAt(THISPC);
       break;
     case 'thispc-toggle': {
       const expanded = btn.getAttribute('aria-expanded') !== 'false';
@@ -2855,7 +2930,8 @@ document.addEventListener('click', e => {
       // seeds "home" before the first real updateBreadcrumb) — loadDirectory()
       // would relabel the tab and flip it to the Browser screen synchronously,
       // before the backend's 400 for a driveless path is even known (#13).
-      if (browserScreenActive() && isAbsolutePath(btn.dataset.path)) loadDirectory(btn.dataset.path);
+      // The This PC crumb carries the THISPC sentinel (Stage 2D §8).
+      if (browserScreenActive() && (isAbsolutePath(btn.dataset.path) || btn.dataset.path === THISPC)) loadDirectory(btn.dataset.path);
       break;
     case 'nav-retry':
       if (browserScreenActive()) retryLoad();
@@ -3488,6 +3564,24 @@ document.addEventListener('click', e => {
       if (path) openProperties(path);
       break;
     }
+    // A drive's menu (Stage 2D §8): the card or sidebar row right-clicked.
+    case 'cm-drive-open':
+      if (contextMenuTarget?.dataset?.path) openBrowserAt(contextMenuTarget.dataset.path);
+      break;
+    case 'cm-drive-open-tab': {
+      const drivePath = contextMenuTarget?.dataset?.path;
+      if (drivePath) { openNewTab(); openBrowserAt(drivePath); }
+      break;
+    }
+    case 'cm-drive-properties':
+      thisPcProperties(contextMenuTarget?.dataset?.path);
+      break;
+    case 'cm-thispc-view-tiles':
+      setThisPcLayout('tiles');
+      break;
+    case 'cm-thispc-view-details':
+      setThisPcLayout('details');
+      break;
     case 'inspector-more':
       showContextMenu(0, 0, INSPECTOR_MORE_MENU_ITEMS, { anchor: btn });
       break;
@@ -3971,7 +4065,8 @@ document.addEventListener('auxclick', e => {
     if (e.ctrlKey || e.metaKey) {
       // The file area is the listing plus the strips above it that belong to
       // it: the Details column header and the listing notice.
-      if (!listScroll && !(e.target.closest && e.target.closest('#list-head, #list-notice'))) return;
+      // The This PC page too: there it switches tiles <-> details (§8).
+      if (!listScroll && !(e.target.closest && e.target.closest('#list-head, #list-notice, #thispc-view'))) return;
       e.preventDefault();
       wheelAcc += screenDelta(e);
       while (wheelAcc <= -100) { wheelAcc += 100; stepView(1, { anchorEl: e.target }); }
@@ -3999,7 +4094,13 @@ document.addEventListener('contextmenu', e => {
   contextMenuType = getMenuTypeForTarget(e.target);
   contextMenuTarget = contextMenuType === 'sidebar-item'
     ? e.target.closest('.fp-sidebar__item[data-pin-id], .fp-sidebar__item[data-known-id]')
-    : e.target;
+    : contextMenuType === 'drive'
+      ? e.target.closest('.fp-drive-card[data-path], .fp-sidebar__item[data-path]')
+      : e.target;
+  // Right-click on a This PC card selects it, like a click.
+  if (contextMenuType === 'drive' && contextMenuTarget?.classList.contains('fp-drive-card')) {
+    selectThisPcCard(contextMenuTarget.dataset.path);
+  }
   // Right-click on a row that isn't already selected selects it alone before
   // the menu opens; right-click within an existing multi-selection leaves it
   // untouched so batch actions (Task 4) apply to the whole selection.
@@ -4141,7 +4242,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     // listener's own element (the section-head row itself), not a
     // descendant, was the real key target (Task 9 review, fix round 1).
     if (e.target !== e.currentTarget) return;
-    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openBrowserAt(null); }
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openBrowserAt(THISPC); }
   });
 
   // (The zoom pill and --app-zoom were synced from Electron's persisted zoom
@@ -4151,6 +4252,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   initColumnSort();
   initMarqueeSelection();
   initRowInteractions();
+  initThisPcView();
   // View ladder layout: List's rows-per-column follows the pane's height.
   initViewLayout();
 

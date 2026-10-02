@@ -505,8 +505,8 @@ test('every screen renders with no renderer errors', async () => {
     await expect(page.locator('.fp-tab')).toHaveCount(2);
     await expect(page.locator('.fp-tab.fp-tab--active .fp-tab__label')).toHaveText('Pictures');
 
-    // Navigating the (now active, reopened) tab to the sandbox root gives it
-    // the "This PC" label rather than a folder name.
+    // loadDirectory(null) (a tab with no folder) opens the This PC page and
+    // labels the tab "This PC" (Stage 2D §8).
     await page.evaluate(() => loadDirectory(null));
     await expect(page.locator('.fp-tab.fp-tab--active .fp-tab__label')).toHaveText('This PC');
 
@@ -1179,7 +1179,8 @@ test('every screen renders with no renderer errors', async () => {
     // Search itself is exercised with the bar at full width: a wide window
     // and the inspector closed leave it room beside the long %TEMP% fixture
     // path (the collapsed bar has its own spec, stage2d-toolbar.spec.js).
-    await app.evaluate(({ BrowserWindow }) => { BrowserWindow.getAllWindows()[0].setSize(1600, 900); });
+    // 1700: the path now starts with the This PC root crumb (Stage 2D §8).
+    await app.evaluate(({ BrowserWindow }) => { BrowserWindow.getAllWindows()[0].setSize(1700, 900); });
     await page.evaluate(() => setInspectorOpen(false, { persist: false }));
     await expect(page.locator('#toolbar')).toHaveAttribute('data-search', 'full', { timeout: 3000 });
 
