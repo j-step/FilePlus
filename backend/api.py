@@ -6,6 +6,7 @@ All business logic lives here; the renderer never touches the filesystem directl
 """
 import asyncio
 import base64
+import concurrent.futures
 import ctypes
 import errno
 import logging
@@ -427,7 +428,9 @@ async def file_meta(path: str = Query(..., description="Absolute path of the fil
             "extension": "",
             "size": None,
             "hash": None,
-            "created": st.st_ctime,
+            # Birth time, as every listing and search reports it (st_ctime is
+            # deprecated as creation time on Windows since Python 3.12).
+            "created": _created_time(st),
             "modified": st.st_mtime,
             "category": None,
             "confidence": 0.0,
@@ -979,7 +982,8 @@ def _properties_blocking(resolved: Path, is_dir: bool) -> dict:
     """
     attrs = winshell.get_attributes(resolved)
     if is_dir:
-        assoc_info = {"type_description": "File folder", "opens_with": None, "opens_with_exe": None}
+        assoc_info = {"type_description": "File folder", "opens_with": None, "opens_with_exe": None,
+                      "opens_with_icon": None}
         counts = winshell.contains_counts(resolved)
         size = size_on_disk = counts["bytes"]
         contains = {"files": counts["files"], "folders": counts["folders"], "truncated": counts["truncated"]}
@@ -1025,6 +1029,7 @@ async def fs_properties(path: str = Query(..., description="Absolute path of the
         "type_description": assoc_info["type_description"],
         "opens_with": assoc_info["opens_with"],
         "opens_with_exe": assoc_info["opens_with_exe"],
+        "opens_with_icon": assoc_info.get("opens_with_icon"),
         "location": str(resolved.parent),
         "size": data["size"],
         "size_on_disk": data["size_on_disk"],
@@ -1232,19 +1237,50 @@ def _drive_kind(opts: str) -> str:
 # concurrently, so /drives answers within about this long regardless.
 _DRIVE_PROBE_TIMEOUT_S = 1.5
 
+# Drive probes run on their own small pool, one probe per mount at a time
+# (Task 14 M4). A probe that times out keeps its thread until the OS call
+# returns; with the default executor, every /drives call (a This PC visit, a
+# refresh, a sidebar reload) used to start another one for the same hung
+# drive, until the threads every other to_thread route needs were all stuck.
+# Now a call that finds the mount's previous probe still running waits on
+# that same probe instead of starting a new one.
+_DRIVE_PROBE_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=8, thread_name_prefix="fp-drive-probe")
+_drive_probes: dict[str, concurrent.futures.Future] = {}
+_drive_probes_lock = threading.Lock()
+
+
+def _drive_probe(p):
+    """Blocking work for one partition: (usage, label). OSError = no media / denied."""
+    return psutil.disk_usage(p.mountpoint), _volume_label(p.mountpoint)
+
+
+def _drive_probe_future(p) -> concurrent.futures.Future:
+    """The running probe of ``p``'s mount, or a new one when none is."""
+    key = str(p.mountpoint).lower()
+    with _drive_probes_lock:
+        fut = _drive_probes.get(key)
+        if fut is None or fut.done():
+            fut = _DRIVE_PROBE_POOL.submit(_drive_probe, p)
+            _drive_probes[key] = fut
+
+            def forget(done, k=key):
+                if _drive_probes.get(k) is done:
+                    _drive_probes.pop(k, None)
+            fut.add_done_callback(forget)
+    return fut
+
 
 @app.get("/drives")
 async def drives():
-    def probe(p):
-        """Blocking work for one partition: (usage, label). OSError = no media / denied."""
-        return psutil.disk_usage(p.mountpoint), _volume_label(p.mountpoint)
-
     async def one(p):
         item = {"letter": p.device.rstrip("\\"), "mount": p.mountpoint, "label": "",
                 "kind": _drive_kind(p.opts), "fs": p.fstype or "",
                 "total_bytes": None, "free_bytes": None, "used_bytes": None}
         try:
-            u, label = await asyncio.wait_for(asyncio.to_thread(probe, p), _DRIVE_PROBE_TIMEOUT_S)
+            # shield: a timeout here must not cancel the shared probe that a
+            # later call may still be waiting on.
+            u, label = await asyncio.wait_for(asyncio.shield(asyncio.wrap_future(_drive_probe_future(p))),
+                                              _DRIVE_PROBE_TIMEOUT_S)
         except asyncio.TimeoutError:
             # Unresponsive (typically a disconnected mapped network drive). Keep
             # the drive the user can see in Explorer, with null sizes, rather than

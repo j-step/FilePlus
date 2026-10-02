@@ -239,3 +239,13 @@ def test_file_reindexes_a_file_changed_since_it_was_indexed(client, sandbox):
     assert second["size"] == len("two, and longer")
     assert abs(second["modified"] - (first["modified"] + 3600)) < 2
     assert second["hash"] and second["hash"] != first["hash"]
+
+
+def test_file_meta_on_directory_reports_birth_time(client, sandbox, monkeypatch):
+    """Task 14 M3: a folder's "created" is the birth time listings and search
+    report (_created_time), not st_ctime."""
+    from backend import api as api_module
+    sub = sandbox / "born"
+    sub.mkdir()
+    monkeypatch.setattr(api_module, "_created_time", lambda st: 1234.5)
+    assert client.get("/file", params={"path": str(sub)}).json()["created"] == 1234.5

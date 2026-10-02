@@ -87,3 +87,35 @@ async def test_slow_drive_does_not_stall_the_route(monkeypatch):
     assert items["C:"]["total_bytes"] == 100
     assert items["Z:"]["kind"] == "network" and items["Z:"]["fs"] == "NTFS"
     assert items["Z:"]["total_bytes"] is None and items["Z:"]["free_bytes"] is None
+
+
+async def test_hung_drive_is_probed_once_across_calls(monkeypatch):
+    """Task 14 M4: a probe that timed out and is still stuck is reused by the
+    next /drives call instead of starting another thread for the same drive."""
+    import threading
+    from backend import api as api_module
+    monkeypatch.setattr(api_module, "_DRIVE_PROBE_TIMEOUT_S", 0.1)
+    monkeypatch.setattr(api_module, "_volume_label", lambda m: "")
+    hung = NS(device="Y:\\", mountpoint="Y:\\", fstype="NTFS", opts="rw,remote")
+    monkeypatch.setattr(api_module.psutil, "disk_partitions", lambda all=False: [hung])
+    release = threading.Event()
+    calls = []
+
+    def usage(p):
+        calls.append(p)
+        release.wait(5)
+        return NS(total=100, used=40, free=60, percent=40.0)
+
+    monkeypatch.setattr(api_module.psutil, "disk_usage", usage)
+    try:
+        for _ in range(3):
+            items = await api_module.drives()
+            assert items[0]["total_bytes"] is None
+        assert calls == ["Y:\\"]
+    finally:
+        release.set()
+    # Once the stuck probe returns, the next call probes afresh and answers.
+    api_module._drive_probes.get("y:\\") and api_module._drive_probes["y:\\"].result(5)
+    monkeypatch.setattr(api_module, "_DRIVE_PROBE_TIMEOUT_S", 2)
+    items = await api_module.drives()
+    assert items[0]["total_bytes"] == 100

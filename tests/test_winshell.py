@@ -101,7 +101,19 @@ def test_size_on_disk_composes_high_low_as_unsigned(tmp_path, monkeypatch):
 def test_assoc_type_description_nonempty():
     info = winshell.assoc("txt")
     assert info["type_description"]
-    assert set(info) == {"type_description", "opens_with", "opens_with_exe"}
+    assert set(info) == {"type_description", "opens_with", "opens_with_exe", "opens_with_icon"}
+
+
+def test_assoc_packaged_app_icon_is_a_file_when_there_is_no_exe():
+    """Task 14 Q10: an app with no executable (a Store app such as Photos)
+    names its icon's image file instead, so Properties never shows a gap."""
+    import os
+    for ext in ("png", "jpg", "mp4", "txt", "pdf"):
+        info = winshell.assoc(ext)
+        if info["opens_with_exe"]:
+            assert info["opens_with_icon"] is None
+        elif info["opens_with_icon"]:
+            assert os.path.isfile(info["opens_with_icon"])
 
 
 def test_assoc_unknown_extension_falls_back():

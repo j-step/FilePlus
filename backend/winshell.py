@@ -81,6 +81,10 @@ if os.name == "nt":
         ctypes.c_wchar_p, ctypes.POINTER(ctypes.c_uint32),
     ]
     _shlwapi.AssocQueryStringW.restype = ctypes.c_long
+    _shlwapi.SHLoadIndirectString.argtypes = [
+        ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint32, ctypes.c_void_p,
+    ]
+    _shlwapi.SHLoadIndirectString.restype = ctypes.c_long
 else:
     _kernel32 = None
     _shlwapi = None
@@ -286,6 +290,12 @@ def size_on_disk(path: Path, budget_s: float = 3.0, clock=time.monotonic) -> int
 _ASSOCSTR_EXECUTABLE = 2
 _ASSOCSTR_FRIENDLYDOCNAME = 3
 _ASSOCSTR_FRIENDLYAPPNAME = 4
+# Windows 8+: the associated app's icon as an indirect string. For a
+# packaged (Store) app -- Photos, Media Player -- it is
+# "@{<package>?ms-resource://.../Assets/...AppList.png}", which
+# SHLoadIndirectString resolves to that PNG on disk; such an app has no
+# EXECUTABLE to take an icon from (Task 14 Q10).
+_ASSOCSTR_APPICONREFERENCE = 23
 
 
 def _assoc_query_string(assocstr: int, dotted_ext: str) -> str | None:
@@ -305,8 +315,25 @@ def _assoc_query_string(assocstr: int, dotted_ext: str) -> str | None:
     return buf.value or None
 
 
+def _app_icon_file(dotted_ext: str) -> str | None:
+    """The image file of a packaged app's icon for *dotted_ext*, or None (a
+    classic app's reference is "<exe>,<index>": its exe is the icon source)."""
+    ref = _assoc_query_string(_ASSOCSTR_APPICONREFERENCE, dotted_ext)
+    if not ref or not ref.startswith("@"):
+        return None
+    buf = ctypes.create_unicode_buffer(1024)
+    if _shlwapi.SHLoadIndirectString(ref, buf, 1024, None) != 0:  # S_OK
+        return None
+    p = buf.value
+    return p if p and os.path.isfile(p) else None
+
+
 def assoc(ext: str) -> dict:
-    """Return {"type_description", "opens_with", "opens_with_exe"} for *ext*.
+    """Return {"type_description", "opens_with", "opens_with_exe",
+    "opens_with_icon"} for *ext*.
+
+    ``opens_with_icon`` is the image file of the app's icon when the app is a
+    packaged one with no executable path (None otherwise).
 
     Windows: AssocQueryStringW for the friendly doc name (e.g. "Text
     Document"), the friendly app name (e.g. "Notepad") and the resolved
@@ -319,14 +346,17 @@ def assoc(ext: str) -> dict:
         try:
             type_description = _assoc_query_string(_ASSOCSTR_FRIENDLYDOCNAME, dotted)
             if type_description:
+                exe = _assoc_query_string(_ASSOCSTR_EXECUTABLE, dotted)
                 return {
                     "type_description": type_description,
                     "opens_with": _assoc_query_string(_ASSOCSTR_FRIENDLYAPPNAME, dotted),
-                    "opens_with_exe": _assoc_query_string(_ASSOCSTR_EXECUTABLE, dotted),
+                    "opens_with_exe": exe,
+                    "opens_with_icon": None if exe else _app_icon_file(dotted),
                 }
         except OSError:
             pass
-    return {"type_description": f"{ext.upper()} File", "opens_with": None, "opens_with_exe": None}
+    return {"type_description": f"{ext.upper()} File", "opens_with": None, "opens_with_exe": None,
+            "opens_with_icon": None}
 
 
 # ---------------------------------------------------------------------------
