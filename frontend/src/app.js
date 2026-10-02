@@ -2878,10 +2878,10 @@ function initOverlayScrollbars() {
   ]) {
     if (el) fpOverlayScroll(el);
   }
-  // The inspector as a whole scrolls only when even a shrunk preview leaves
-  // its body no room (a short window at high zoom); its own hover root.
-  const inspector = document.getElementById('inspector');
-  if (inspector) fpOverlayScroll(inspector, { hoverRoot: inspector });
+  // Everything above the inspector's action row scrolls as one only when even
+  // a shrunk preview leaves the body no room (a short window at high zoom).
+  const inspectorScroll = document.getElementById('inspector-scroll');
+  if (inspectorScroll) fpOverlayScroll(inspectorScroll, { hoverRoot: document.getElementById('inspector') });
 }
 
 // ── Window controls (Electron IPC) ───────────────────────────────────────────

@@ -2257,6 +2257,28 @@ function selectLandedOps(ops) {
   return true;
 }
 
+/** The folder, mode and sorted index of the first of `paths` — taken before a
+ * delete so selectAfterDelete() can select what took its place. */
+function deletePlace(paths) {
+  const order = sortedEntries().map(entryPath);
+  const idx = paths.map(p => order.indexOf(p)).filter(i => i >= 0);
+  if (!idx.length) return null;
+  return { path: browserState.path, mode: browserState.mode, index: Math.min(...idx) };
+}
+
+/** After a delete, the item now at the deleted one's place (or the last
+ * item) is selected and focused, as in Explorer — the selection used to empty
+ * and the next arrow key started again from the top (Stage 2D §12 sweep,
+ * "refresh loses place"). Nothing happens if the user has moved on or
+ * selected something meanwhile. */
+function selectAfterDelete(place) {
+  if (!place || browserState.path !== place.path || browserState.mode !== place.mode) return;
+  if (browserState.selection.size) return;
+  const order = sortedEntries().map(entryPath);
+  if (!order.length) return;
+  moveFocusTo(order[Math.min(place.index, order.length - 1)], {}, order);
+}
+
 /** Clears the selection (anchor/focus included). */
 function clearSelection() {
   browserState.selection = new Set();

@@ -840,6 +840,10 @@
       <!-- Opens on first file click; push-style (list pane shrinks) -->
       <!-- Docked: bg-content bg + 1px border-hairline left edge     -->
       <aside class="inspector" id="inspector">
+        <!-- Everything above the action row scrolls as one when a short window
+             (500px at 150%) leaves too little room even after the preview has
+             shrunk; the action row below stays pinned (Stage 2D §12 sweep). -->
+        <div class="inspector__scroll" id="inspector-scroll">
         <!-- Preview area: 16:10, bg-raised bg, 8px radius, 1px border-subtle -->
         <div class="inspector__preview" id="inspector-preview"
              style="
@@ -951,6 +955,7 @@
 
          </div><!-- /.inspector__panes -->
         </div><!-- /.inspector__body -->
+        </div><!-- /.inspector__scroll -->
 
         <!-- Bottom action row: 1px border-hairline top -->
         <div class="inspector__actions" style="

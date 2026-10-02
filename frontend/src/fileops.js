@@ -226,7 +226,11 @@ const fileops = {
   async trashSelection() {
     const paths = getSelectedPaths();
     if (!paths.length) return;
+    // Where the first deleted item sat: the item that takes its place is
+    // selected afterwards (Explorer), so the keyboard carries on from there.
+    const place = typeof deletePlace === 'function' ? deletePlace(paths) : null;
     await this.run('Deleted', (overridePaths) => API.post('/fs/trash', { paths: overridePaths || paths }));
+    if (place && typeof selectAfterDelete === 'function') selectAfterDelete(place);
   },
 
   async newFolder(dir) {

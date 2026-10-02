@@ -5477,8 +5477,20 @@ button.fp-pill:hover {
   overflow: hidden;
 }
 .inspector--open { display: flex; }
-/* The last resort below 500px-at-150%: the panel scrolls as a whole. */
-.inspector { overflow-x: hidden; overflow-y: auto; }
+/* The last resort for a short window at high zoom: the part above the
+   action row scrolls as one (overlay scrollbar); the actions stay pinned. */
+.inspector__scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-x: hidden;
+  overflow-y: auto;
+  /* Reaches the panel's right edge like .inspector__body (its scrollbar hugs
+     the edge, and the body's own edge-reaching margin is not clipped). */
+  margin-right: calc(-1 * var(--s-16));
+  padding-right: var(--s-16);
+}
 
 /* Inspector drag handle (left edge, 4px hit area) */
 .resizer {
@@ -6315,7 +6327,12 @@ button.fp-pill:hover {
 }
 .props__icon {
   display: flex;
+  align-items: center;
+  justify-content: center;
   flex-shrink: 0;
+  /* A fixed 32px box: the header never shifts when its icon resolves. */
+  width: 32px;
+  height: 32px;
   color: var(--text-secondary);
 }
 .properties__name-input {
@@ -6431,6 +6448,8 @@ button.fp-pill:hover {
    sweep). Only when even that does not fit does the panel itself scroll
    (overlay scrollbar, app.js initOverlayScrollbars). */
 .inspector__preview { width: 100%; aspect-ratio: 16 / 10; flex: 0 1 auto; min-height: 56px; container: fp-preview / size; }
+/* The action row keeps its room whatever the scroller above it needs. */
+.inspector__actions { flex-shrink: 0; }
 /* A preview box shrunk that far keeps the type icon and drops its caption,
    rather than clipping it in half. */
 @container fp-preview (max-height: 100px) {
@@ -6457,6 +6476,11 @@ button.fp-pill:hover {
 /* 5 rows: Kind, Size, Modified, Created, Hash — the only fields
    renderInspectorMeta() (inspector.js) ever writes. */
 .inspector__meta { display: grid; grid-template-rows: repeat(5, 24px); }
+/* A row is 24px whatever the value: a long one (an unknown extension's
+   "VERYLONGEXT file" at 150%) ellipsizes on one line — renderInspectorMeta
+   puts the full text in its tooltip — instead of wrapping into the row
+   below (Stage 2D §12 sweep, "names cut off"). */
+.inspector__meta-val { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .inspector__filename {
   white-space: nowrap;
   overflow: hidden;

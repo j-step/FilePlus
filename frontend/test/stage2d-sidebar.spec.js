@@ -502,12 +502,13 @@ test('the inspector body and the Properties body use the overlay scrollbar (§9.
     expect(await body.evaluate((e) => e.offsetWidth - e.clientWidth)).toBe(0);
     const edge = await page.evaluate(() => ({
       insp: document.getElementById('inspector').getBoundingClientRect().right,
-      track: document.querySelector('#inspector .fp-oscroll').getBoundingClientRect().right,
+      // The body's own track (the scroller around it has one of its own).
+      track: document.querySelector('#inspector-body + .fp-oscroll').getBoundingClientRect().right,
     }));
     expect(Math.abs(edge.insp - 3 - edge.track)).toBeLessThanOrEqual(1);
     const ib = await page.locator('#inspector').boundingBox();
     await page.mouse.move(ib.x + ib.width / 2, ib.y + ib.height - 80);
-    await expect(page.locator('#inspector .fp-oscroll')).toHaveClass(/is-visible/);
+    await expect(page.locator('#inspector-body + .fp-oscroll')).toHaveClass(/is-visible/);
     await windowShot(app, page, 'inspector-overlay-scroll');
     await setSize(app, page, 1200, 800);
 

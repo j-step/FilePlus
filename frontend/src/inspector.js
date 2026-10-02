@@ -219,7 +219,10 @@ function renderInspectorMeta(data) {
   const hashEl     = document.getElementById('inspector-hash');
   const isFolder   = data && data.kind === 'Folder';
 
-  if (kindEl)     kindEl.textContent     = (data && data.kind) || '—';
+  if (kindEl) {
+    kindEl.textContent = (data && data.kind) || '—';
+    if (data && data.kind) kindEl.title = data.kind; else kindEl.removeAttribute('title');
+  }
   if (sizeEl)     sizeEl.textContent     = (!data || isFolder || data.size == null) ? '—' : formatSize(data.size);
   // GET /file's dates are epoch seconds, like every listing's.
   if (modifiedEl) modifiedEl.textContent = (data && data.modified) ? formatModified(data.modified * 1000) : '—';
@@ -324,6 +327,8 @@ async function loadInspectorPreview(path, seq) {
       'white-space:pre-wrap;word-break:break-word;text-align:left;font-size:11px;color:var(--text-secondary)';
     pre.textContent = data.content;
     el.appendChild(pre);
+    // The panel's overlay scrollbar, not a permanent native bar (§9.3 / §12).
+    if (typeof fpOverlayScroll === 'function') fpOverlayScroll(pre, { hoverRoot: el });
     if (data.truncated) {
       const footer = document.createElement('div');
       footer.className = 'mono';

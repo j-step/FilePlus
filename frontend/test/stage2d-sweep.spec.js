@@ -81,13 +81,19 @@ test('inspector: never names an item that is not selected (navigation, click, tr
     await expect(name).toHaveText('sweep-c.txt');
     await expect(page.locator('#inspector-kind')).not.toHaveText('—');
 
-    // 3. Deleting the inspected item empties the panel as soon as the delete
-    //    lands — not after the refresh, not after a debounce.
+    // 3. Deleting the inspected item takes it out of the panel as soon as the
+    //    delete lands — not after the refresh, not after a debounce — and the
+    //    item that took its place is selected (Explorer).
     const afterTrash = await page.evaluate(async () => {
+      let seenDeleted = false;
+      const el = document.getElementById('inspector-filename');
+      const watch = new MutationObserver(() => { if (el.textContent === 'sweep-c.txt' && !browserState.selection.size) seenDeleted = true; });
+      watch.observe(el, { childList: true, characterData: true, subtree: true });
       await fileops.trashSelection();
-      return document.getElementById('inspector-filename').textContent;
+      watch.disconnect();
+      return { name: el.textContent, sel: [...browserState.selection].map((p) => p.split('\\').pop()), seenDeleted };
     });
-    expect(afterTrash).toBe('No file selected');
+    expect(afterTrash).toEqual({ name: 'sweep-b.txt', sel: ['sweep-b.txt'], seenDeleted: false });
     await inspectorSettled(page);
 
     // 4. A rename while the refresh is slow: the selection follows the item to
@@ -269,7 +275,7 @@ test('inspector stays usable at the 500px minimum height, at 100% and 150%', asy
       const m = await page.evaluate(() => {
         const r = (id) => document.getElementById(id).getBoundingClientRect();
         const insp = document.getElementById('inspector');
-        insp.scrollTop = insp.scrollHeight;
+        // The action row is pinned: on screen without scrolling anything.
         const actions = insp.querySelector('.inspector__actions').getBoundingClientRect();
         const box = insp.getBoundingClientRect();
         return {
@@ -284,7 +290,6 @@ test('inspector stays usable at the 500px minimum height, at 100% and 150%', asy
       expect(m.preview, JSON.stringify(m)).toBeGreaterThanOrEqual(55);
       expect(m.actionsInside, JSON.stringify(m)).toBe(true);
       await windowShot(app, page, `sweep-inspector-500px-z${z * 100}`);
-      await page.evaluate(() => { document.getElementById('inspector').scrollTop = 0; });
     }
     await setZoom(app, page, 1);
   } finally {
@@ -595,6 +600,125 @@ test('places: Back/Forward return to the scroll and selection; Up selects the fo
   } finally {
     await app.close();
     fs.rmSync(dir, { recursive: true, force: true });
+  }
+  expect(errors, errors.join('\n')).toEqual([]);
+});
+
+// ── §12 audit: "names cut off" (fixed height + overflow hidden around text) ──
+// Every text box on the surfaces the row names, at 100% / 150% and 800 / 1400
+// px: none may cut its text vertically (an ellipsis on the end of a line is
+// the intended truncation and is allowed; a line-clamped name likewise).
+async function clippedText(page, rootSel) {
+  return page.evaluate((sel) => {
+    const out = [];
+    for (const root of document.querySelectorAll(sel)) {
+      for (const el of root.querySelectorAll('*')) {
+        if (!el.getClientRects().length) continue;
+        const own = [...el.childNodes].some((n) => n.nodeType === 3 && n.textContent.trim());
+        if (!own) continue;
+        const cs = getComputedStyle(el);
+        if (cs.visibility === 'hidden' || cs.display === 'contents') continue;
+        const clips = cs.overflowY !== 'visible' || cs.overflow === 'hidden';
+        if (!clips) continue;
+        if (cs.webkitLineClamp && cs.webkitLineClamp !== 'none') continue;
+        // Scrollers are not cuts: their text can be scrolled to.
+        if (cs.overflowY === 'auto' || cs.overflowY === 'scroll') continue;
+        if (el.scrollHeight > el.clientHeight + 1) {
+          const id = el.id ? `#${el.id}` : `${el.tagName.toLowerCase()}.${[...el.classList].join('.')}`;
+          out.push(`${id} "${el.textContent.trim().slice(0, 30)}" ${el.scrollHeight}>${el.clientHeight}`);
+        }
+      }
+    }
+    return out;
+  }, rootSel);
+}
+
+test('§12 audit: no text is cut in half — tabs, inspector, Properties, notices, Settings, status bar, at 100%/150% and 800/1400 px', async () => {
+  const { app, page, errors } = await launchApp();
+  const root = (await apiGet('/fs/list/root')).path;
+  try {
+    await page.evaluate(() => { localStorage.setItem('fp-notifications-enabled', 'true'); setInspectorOpen(true, { persist: false }); });
+    const docs = `${root}\\_gen\\Documents`;
+    await openDir(page, docs, 5);
+    // A few tabs, one with a long name.
+    await page.evaluate((p) => { openNewTab(); return openBrowserAt(p); }, `${root}\\Views\\Gallery`);
+    await page.waitForFunction(() => !window.__fpLoadPending);
+    await page.evaluate((p) => { openNewTab(); return openBrowserAt(p); }, docs);
+    await page.waitForFunction(() => !window.__fpLoadPending);
+    await rowByName(page, 'doc-00.txt').click();
+    await inspectorSettled(page);
+    const offenders = [];
+    for (const [w, z] of [[1400, 1], [1400, 1.5], [800, 1], [800, 1.5]]) {
+      await setSize(app, page, w, 760);
+      await setZoom(app, page, z);
+      const tag = (s) => `${s} @${w}px ${z * 100}%`;
+      await page.evaluate(() => { switchScreen('browser'); });
+      await inspectorSettled(page);
+      for (const o of await clippedText(page, '#tabbar, #inspector, #statusbar, #toolbar')) offenders.push(tag(o));
+      // A notice (snackbar) on screen.
+      await page.evaluate(() => showSnackbar('Moved 3 items to a folder with a fairly long name', 'Undo', () => {}));
+      await frames(page);
+      for (const o of await clippedText(page, '.fp-snackbar, .fp-toast, #snackbar-stack, .fp-notice-stack')) offenders.push(tag(o));
+      await windowShot(app, page, `sweep-audit-browser-${w}-z${z * 100}`);
+      // A row's context menu.
+      await rowByName(page, 'doc-00.txt').click({ button: 'right' });
+      await expect(page.locator('#context-menu')).toBeVisible();
+      for (const o of await clippedText(page, '#context-menu')) offenders.push(tag(`menu: ${o}`));
+      await page.keyboard.press('Escape');
+      await expect(page.locator('#context-menu')).toBeHidden();
+      // Properties for the selected file.
+      await page.evaluate((p) => openProperties(p), `${docs}\\doc-00.txt`);
+      await expect(page.locator('#properties-modal-scrim')).toBeVisible();
+      await page.waitForFunction(() => window.__fpIconsIdle());
+      for (const o of await clippedText(page, '#properties-modal')) offenders.push(tag(o));
+      await windowShot(app, page, `sweep-audit-properties-${w}-z${z * 100}`);
+      await page.evaluate(() => closeProperties());
+      // Settings, every pane.
+      await page.evaluate(() => switchScreen('settings'));
+      const panes = await page.$$eval('.settings-nav__item', (els) => els.map((e) => e.dataset.pane));
+      for (const pane of panes) {
+        await page.evaluate((p) => switchSettingsPane(p), pane);
+        await frames(page);
+        for (const o of await clippedText(page, '#screen-settings')) offenders.push(tag(`${pane}: ${o}`));
+      }
+      await windowShot(app, page, `sweep-audit-settings-${w}-z${z * 100}`);
+      // Home.
+      await page.evaluate(() => switchScreen('home'));
+      await frames(page);
+      for (const o of await clippedText(page, '#screen-home')) offenders.push(tag(`home: ${o}`));
+    }
+    await setZoom(app, page, 1);
+    expect(offenders).toEqual([]);
+  } finally {
+    await page.evaluate(() => localStorage.removeItem('fp-notifications-enabled')).catch(() => {});
+    await app.close();
+  }
+  expect(errors, errors.join('\n')).toEqual([]);
+});
+
+// Electron defaults (spec §12 row "Ctrl+R full reload"): navigation away,
+// window.open, the menu bar and DevTools keys are covered by
+// stage2d-refresh.spec.js; this is the middle-click part. Chromium's
+// middle-click autoscroll (press, release, then the pointer's travel scrolls)
+// must not run in the file list.
+test('§12 audit: a middle-click in the file list does not start Chromium autoscroll', async () => {
+  const { app, page, errors } = await launchApp();
+  const root = (await apiGet('/fs/list/root')).path;
+  try {
+    await openDir(page, `${root}\\Bulk`, 100);
+    const box = await page.locator('#list-scroll').boundingBox();
+    const x = Math.round(box.x + box.width / 2);
+    const y = Math.round(box.y + box.height / 2);
+    const send = (ev) => app.evaluate(({ BrowserWindow }, e) => BrowserWindow.getAllWindows()[0].webContents.sendInputEvent(e), ev);
+    await send({ type: 'mouseDown', x, y, button: 'middle', clickCount: 1 });
+    await send({ type: 'mouseUp', x, y, button: 'middle', clickCount: 1 });
+    for (let i = 1; i <= 6; i++) await send({ type: 'mouseMove', x, y: y + i * 30 });
+    await frames(page, 20);
+    expect(await page.evaluate(() => document.getElementById('list-scroll').scrollTop)).toBe(0);
+    await send({ type: 'mouseDown', x, y, button: 'left', clickCount: 1 });
+    await send({ type: 'mouseUp', x, y, button: 'left', clickCount: 1 });
+  } finally {
+    await app.close();
   }
   expect(errors, errors.join('\n')).toEqual([]);
 });
