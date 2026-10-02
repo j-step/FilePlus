@@ -570,8 +570,10 @@ async function loadDirectory(absPath, opts = {}) {
       : await API.get('/fs/list/root', { show_hidden: browserState.showHidden });
   } catch (err) {
     if (superseded()) return;
-    // The Back/Forward this was (if any) went nowhere.
+    // The Back/Forward (or exit from search) this was went nowhere: the next
+    // press starts again from what is on screen.
     browserState._pendingHistory = null;
+    browserState._pendingExit = null;
     if (cachedListing) {
       // The tab's own listing is on screen already: keep it and say why it
       // could not be brought up to date.
@@ -658,6 +660,8 @@ function commitListing(data, { absPath, addToHistory = true, restore = null, pre
   browserState.listingTabId = tabs.activeId;
   browserState.listingStale = false;
   browserState._pendingHistory = null;
+  browserState._pendingExit = null;
+  browserState._orderDirty = false;
 
   // View + scale first, so the one render below paints rows at their final
   // size. A tab-switch restore reapplies whatever that tab last showed;
@@ -1039,8 +1043,17 @@ function pushHistory(path) {
  * search mode only ends when that listing commits. A second Back/Forward/Up
  * then steps on from where the first is going instead of repeating it. */
 function searchExitPending() {
-  const ex = browserState._pendingExit;
-  return !!(ex && ex.seq === browserState._loadSeq && browserState.mode === 'search');
+  if (browserState.mode !== 'search') return false;
+  // Either the exit itself, or a Back/Forward already stepping on from it
+  // (a third press while the second is in flight steps on again). Both are
+  // per tab: another tab's pending navigation says nothing about this one.
+  return pendingNavFor(browserState._pendingExit) || pendingNavFor(browserState._pendingHistory);
+}
+
+/** A recorded in-flight navigation ({seq, tabId}) that is still the latest
+ * load, and belongs to the active tab. */
+function pendingNavFor(rec) {
+  return !!(rec && rec.seq === browserState._loadSeq && rec.tabId === tabs.activeId);
 }
 
 function navBack() {
@@ -1065,13 +1078,13 @@ function navForward() {
  * nav.index (which moves only once a fetch succeeds — pass-2 #55). */
 function pendingHistoryIndex() {
   const ph = browserState._pendingHistory;
-  return (ph && ph.seq === browserState._loadSeq) ? ph.index : nav.index;
+  return pendingNavFor(ph) ? ph.index : nav.index;
 }
 
 function visitHistory(index) {
   const p = loadDirectory(nav.history[index], { addToHistory: false, historyIndex: index });
   // loadDirectory() bumped _loadSeq synchronously, before its first await.
-  browserState._pendingHistory = { seq: browserState._loadSeq, index };
+  browserState._pendingHistory = { seq: browserState._loadSeq, index, tabId: tabs.activeId };
   return p;
 }
 
@@ -1128,6 +1141,8 @@ function clearBrowserListing() {
   browserState.focus = null;
   browserState.listingTabId = null;
   browserState._pendingHistory = null;
+  browserState._pendingExit = null;
+  browserState._orderDirty = false;
   updateStatusBar();
   onSelectionChanged();
 }
@@ -1467,7 +1482,7 @@ function exitSearchResults() {
   // keeps the results if it cannot be).
   const p = loadDirectory(target, { addToHistory: false });
   // loadDirectory() bumped _loadSeq synchronously, before its first await.
-  browserState._pendingExit = { seq: browserState._loadSeq };
+  browserState._pendingExit = { seq: browserState._loadSeq, tabId: tabs.activeId };
   return p;
 }
 
@@ -1748,7 +1763,15 @@ function startInlineRename(path) {
     input.replaceWith(nameEl);
     // A refresh during the rename left this row where it was; now that the
     // rename is over, put it where the current sort says (no re-fetch).
-    if (browserState._orderDirty && nameEl.isConnected) patchDirectory(browserState.entries);
+    resortAfterRename();
+  };
+  // A refresh during the rename left this row where it was. Once the rename
+  // is over (cancelled, or failed) put it where the current sort says — only
+  // for a folder listing; search results are never patched.
+  const resortAfterRename = () => {
+    if (!browserState._orderDirty) return;
+    if (browserState.mode !== 'search' && nameEl.isConnected) patchDirectory(browserState.entries);
+    else browserState._orderDirty = false;
   };
   const doRename = (newName) => {
     settled = true;
@@ -1756,7 +1779,10 @@ function startInlineRename(path) {
     // every row (including this one) on success — and reselects it there
     // too; on failure the row stays as-is under the (now orphaned) input —
     // restore the static name span.
-    fileops.rename(path, newName).catch(() => { if (input.isConnected) input.replaceWith(nameEl); });
+    fileops.rename(path, newName).catch(() => {
+      if (input.isConnected) input.replaceWith(nameEl);
+      resortAfterRename();
+    });
   };
   // Enter and blur both "commit", but a validation failure means something
   // different on each: on Enter the user is still in the field, so keep

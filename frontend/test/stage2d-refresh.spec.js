@@ -78,7 +78,18 @@ async function releaseListings(page) {
     API.get = window.__fpOrigGet;
     (window.__fpHeld || []).splice(0).forEach((res) => res());
   });
-  await page.waitForFunction(() => !window.__fpLoadPending);
+  await page.waitForFunction(() => !window.__fpLoadPending, null, { timeout: 10_000 });
+}
+// Types a query into the toolbar search and waits until this tab's results
+// have landed.
+async function searchFor(page, text) {
+  await page.evaluate((t) => {
+    const input = document.getElementById('search-input');
+    input.value = t;
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  }, text);
+  await page.waitForFunction(() => browserState.mode === 'search' && browserState.searchTabId === tabs.activeId
+    && searchState.results && searchState.results.length > 0 && !searchState.inflight, null, { timeout: 10_000 });
 }
 const latestOperation = async () => JSON.stringify((await apiGet('/operations?limit=1'))[0] || null);
 
@@ -88,7 +99,7 @@ const latestOperation = async () => JSON.stringify((await apiGet('/operations?li
 // else is a real error.
 function unexpectedErrors(errors) {
   return errors.filter((e) => !(/status of 404/.test(e)
-    && /\/fs\/list\?path=.*(Doomed|Nowhere-2d|GoneBack-2d|zz-search-gone-2d)/.test(e)));
+    && /\/fs\/list\?path=.*(Doomed|Nowhere-2d|GoneBack-2d|zz-search-gone-2d|ExitGone-2d)/.test(e)));
 }
 
 test('refresh in place, one render per navigation, cached tab repaint, no default menu', async () => {
@@ -463,23 +474,70 @@ test('refresh in place, one render per navigation, cached tab repaint, no defaul
     await expect(crumbCurrent).toHaveText('Documents');
     expect(await page.evaluate(() => browserState.mode)).toBe('browse');
 
-    // Back pressed twice while the first Back is still leaving the search:
-    // the second steps on from where the first is going (fix round 2).
+    // Back pressed three times while the first Back is still leaving the
+    // search: each later press steps on from where the one before it is going
+    // (fix rounds 2 and 3).
+    await page.evaluate((p) => openBrowserAt(p), picsDir);
     await page.evaluate((p) => openBrowserAt(p), bigDir);
     await page.evaluate((p) => openBrowserAt(p), docsDir);
     await expect(crumbCurrent).toHaveText('Documents');
-    await page.evaluate(() => {
-      const input = document.getElementById('search-input');
-      input.value = 'doc-0';
-      input.dispatchEvent(new Event('input', { bubbles: true }));
-    });
-    await page.waitForFunction(() => browserState.mode === 'search' && searchState.results && searchState.results.length > 0 && !searchState.inflight);
+    await searchFor(page, 'doc-0');
     await holdListings(page, docsDir);
-    await page.evaluate(() => { navBack(); navBack(); });
+    await page.evaluate(() => { navBack(); navBack(); navBack(); });
     await releaseListings(page);
-    await expect(crumbCurrent).toHaveText('Bulk');
+    await expect(crumbCurrent).toHaveText('Pictures');
     expect(await page.evaluate(() => browserState.mode)).toBe('browse');
-    expect(await page.evaluate(() => nav.history[nav.index])).toBe(bigDir);
+    expect(await page.evaluate(() => nav.history[nav.index])).toBe(picsDir);
+
+    // A pending exit belongs to its own tab: Back in tab A is still leaving
+    // A's search when the user switches to tab C, which shows search results
+    // of its own — Back there leaves C's search, it does not step C's history.
+    const tabA = await page.evaluate(() => tabs.activeId);
+    await page.evaluate((p) => openBrowserAt(p), docsDir);
+    await searchFor(page, 'doc-0');
+    await page.keyboard.press('Control+t');
+    const tabC = await page.evaluate(() => tabs.activeId);
+    await page.evaluate((p) => openBrowserAt(p), musicDir);
+    await page.evaluate((p) => openBrowserAt(p), picsDir);
+    await searchFor(page, 'IMG_');
+    await page.evaluate((id) => activateTab(id), tabA);
+    await page.waitForFunction((id) => browserState.mode === 'search' && browserState.searchTabId === id, tabA, { timeout: 10_000 });
+    await holdListings(page, docsDir);
+    await page.evaluate(() => { navBack(); });              // A: exit in flight, held (not awaited)
+    await page.evaluate((id) => activateTab(id), tabC);
+    await page.waitForFunction((id) => browserState.mode === 'search' && browserState.searchTabId === id, tabC, { timeout: 10_000 });
+    const cHistBefore = await page.evaluate(() => [nav.history.length, nav.index]);
+    await page.evaluate(() => navBack());
+    await expect(crumbCurrent).toHaveText('Pictures');
+    expect(await page.evaluate(() => browserState.mode)).toBe('browse');
+    expect(await page.evaluate(() => [nav.history.length, nav.index])).toEqual(cHistBefore);
+    await releaseListings(page);
+    expect(await page.evaluate(() => tabs.activeId)).toBe(tabC);
+    await expect(crumbCurrent).toHaveText('Pictures');
+
+    // A failed exit is not pending any more: the next Back retries the exit
+    // (it used to step the history behind the results instead).
+    const exitGone = `${root}\\ExitGone-2d`;
+    fs.mkdirSync(exitGone);
+    fs.writeFileSync(path.join(exitGone, 'exit-gone-a.txt'), 'e');
+    await page.evaluate((p) => openBrowserAt(p), exitGone);
+    await expect(crumbCurrent).toHaveText('ExitGone-2d');
+    await searchFor(page, 'exit-gone');
+    fs.rmSync(exitGone, { recursive: true, force: true });
+    const exitHist = await page.evaluate(() => [nav.history.length, nav.index]);
+    await page.evaluate(() => navBack());
+    await expect(page.locator('#toast-container .fp-toast--error')).toHaveCount(1);
+    expect(await page.evaluate(() => browserState.mode)).toBe('search');
+    await page.evaluate(() => navBack());
+    await expect(page.locator('#toast-container .fp-toast--error')).toHaveCount(2);   // the exit, tried again
+    expect(await page.evaluate(() => browserState.mode)).toBe('search');
+    expect(await page.evaluate(() => [nav.history.length, nav.index])).toEqual(exitHist);
+    await expect(rowByName(page, 'exit-gone-a.txt')).toHaveCount(1);
+    await page.locator('#toast-container .fp-toast--error button').first().click();
+    await page.locator('#toast-container .fp-toast--error button').first().click();
+    await page.evaluate((p) => openBrowserAt(p), docsDir);  // leaves the search
+    await expect(crumbCurrent).toHaveText('Documents');
+    expect(await page.evaluate(() => browserState.mode)).toBe('browse');
 
     // ── Opening a folder from Home keeps Home up until the listing lands ─────
     // The fetch is held in the page until released, so "while in flight" is a
