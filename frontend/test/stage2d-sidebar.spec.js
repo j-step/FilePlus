@@ -134,6 +134,8 @@ test('sidebar: 11px headers, hairline dividers, 28px items, overlay scrollbar wi
       expect(Math.abs(d.right - 12)).toBeLessThanOrEqual(1);
       expect([d.mt, d.mb]).toEqual(['6px', '4px']);
     }
+    // The expanded This PC header shows its own label: no tooltip.
+    expect(await page.locator('#sb-thispc .fp-sidebar__section-head').getAttribute('title')).toBeNull();
     // The Tags divider comes and goes with the Tags section.
     expect(await page.evaluate(() => document.getElementById('sb-tags-divider').hidden
       === document.getElementById('sb-tags-label').hidden)).toBe(true);
@@ -197,10 +199,18 @@ test('sidebar: 11px headers, hairline dividers, 28px items, overlay scrollbar wi
       const thumb = document.querySelector('.fp-sidebar .fp-oscroll__thumb').getBoundingClientRect();
       const scr = document.querySelector('.fp-sidebar__scroll').getBoundingClientRect();
       const hit = document.elementFromPoint(side.right - 2, scr.top + scr.height / 2);
-      return { sideRight: side.right - 1, trackRight: track.right, thumbRight: thumb.right, thumbW: thumb.width,
-        trackTop: track.top, scrTop: scr.top, trackH: track.height, scrH: scr.height, handle: hit && hit.id };
+      const item = document.getElementById('nav-home').getBoundingClientRect();
+      const onItem = document.elementFromPoint(item.right - 2, item.top + item.height / 2);
+      return { sideRight: side.right - 1, trackRight: track.right, trackW: track.width, thumbRight: thumb.right, thumbW: thumb.width,
+        trackTop: track.top, scrTop: scr.top, trackH: track.height, scrH: scr.height, handle: hit && hit.id,
+        itemRight: item.right, onItem: onItem && onItem.closest('.fp-sidebar__item')?.id };
     });
-    expect(Math.abs(geo.trackRight - geo.sideRight)).toBeLessThanOrEqual(1);
+    // The track is the thumb's own column, 3px in from the edge, and it
+    // never reaches an item: a press on an item's right edge is the item's.
+    expect(Math.abs(geo.trackRight - (geo.sideRight - 3))).toBeLessThanOrEqual(1);
+    expect(geo.trackW).toBe(7);
+    expect(geo.itemRight).toBeLessThanOrEqual(geo.trackRight - geo.trackW + 0.5);
+    expect(geo.onItem).toBe('nav-home');
     expect(geo.sideRight - geo.thumbRight).toBeLessThanOrEqual(4);
     expect(geo.thumbW).toBe(3);
     expect(Math.abs(geo.trackTop - geo.scrTop)).toBeLessThanOrEqual(1);
@@ -300,10 +310,41 @@ test('sidebar: 11px headers, hairline dividers, 28px items, overlay scrollbar wi
     }
 
     // ── Collapsed rail (§9.2) ───────────────────────────────────────────────
-    await setSize(app, page, 1200, 800);
+    // A short window, so the rail overflows and its thumb is live.
+    await setSize(app, page, 1100, 420);
     await page.keyboard.press('Control+b');
     await expect(page.locator('#sidebar')).toHaveClass(/fp-sidebar--collapsed/);
     await page.waitForTimeout(300);
+    expect(await sc.evaluate((e) => e.scrollHeight > e.clientHeight)).toBe(true);
+    await expect(page.locator('.fp-sidebar .fp-oscroll')).not.toHaveClass(/is-none/);
+    // The rail's thumb column sits in the gutter beside the squares: a press
+    // 2px inside a square's right edge reaches the square and navigates.
+    const qa = page.locator('#sb-quick-access-folders .fp-sidebar__item').first();
+    const qaPath = await qa.getAttribute('data-path');
+    const railHit = await qa.evaluate((b) => {
+      const r = b.getBoundingClientRect();
+      const t = document.querySelector('.fp-sidebar .fp-oscroll').getBoundingClientRect();
+      const hit = document.elementFromPoint(r.right - 2, r.top + r.height / 2);
+      return { own: !!hit && b.contains(hit), x: r.right - 2, y: r.top + r.height / 2, gap: t.left - r.right };
+    });
+    expect(railHit.own).toBe(true);
+    expect(railHit.gap).toBeGreaterThanOrEqual(0);
+    const top0 = await sc.evaluate((e) => e.scrollTop);
+    await page.mouse.click(railHit.x, railHit.y);
+    await expect.poll(() => page.evaluate(() => activeTab().path)).toBe(qaPath);
+    expect(await sc.evaluate((e) => e.scrollTop)).toBe(top0);
+    // …and the rail's thumb itself still drags.
+    await sc.evaluate((e) => { e.scrollTop = 0; });
+    await frames(page);
+    const rt = await thumb.boundingBox();
+    await page.mouse.move(rt.x + rt.width / 2, rt.y + rt.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(rt.x + rt.width / 2, rt.y + rt.height / 2 + 20, { steps: 4 });
+    await page.mouse.up();
+    expect(await sc.evaluate((e) => e.scrollTop)).toBeGreaterThan(5);
+    await windowShot(app, page, 'sidebar-collapsed-overflow');
+    await page.evaluate(() => switchScreen('home'));
+    await setSize(app, page, 1200, 800);
     expect(await page.locator('.fp-sidebar__item .fp-icon').first().evaluate((e) => e.getBoundingClientRect().width)).toBe(22);
     const rail = await page.evaluate(() => {
       const side = document.getElementById('sidebar').getBoundingClientRect();
@@ -404,6 +445,22 @@ test('sidebar items and panel tabs show a keyboard focus ring (pass-2 #173); the
     expect(tabRing.style).toBe('solid');
     expect(tabRing.color).toBe(accent);
 
+    // The window tab strip too, drawn inside the tab: .fp-tabbar clips
+    // anything outside it (overflow-y:hidden).
+    await page.keyboard.press('Shift');
+    const winTab = await page.evaluate(() => {
+      const t = document.querySelector('.fp-tab');
+      t.focus();
+      const cs = getComputedStyle(t);
+      return { visible: t.matches(':focus-visible'), style: cs.outlineStyle, color: cs.outlineColor, offset: cs.outlineOffset,
+        clip: getComputedStyle(document.querySelector('.fp-tabbar')).overflowY };
+    });
+    expect(winTab.visible).toBe(true);
+    expect(winTab.style).toBe('solid');
+    expect(winTab.color).toBe(accent);
+    expect(winTab.offset).toBe('-1px');
+    expect(winTab.clip).toBe('hidden');
+
     // A mouse press on a sidebar item keeps focus where it was (Task 7), and
     // the overlay track/thumb are never focusable.
     expect(await page.$$eval('.fp-oscroll, .fp-oscroll *', (els) => els.filter((e) => e.tabIndex >= 0).length)).toBe(0);
@@ -442,7 +499,7 @@ test('the inspector body and the Properties body use the overlay scrollbar (§9.
       insp: document.getElementById('inspector').getBoundingClientRect().right,
       track: document.querySelector('#inspector .fp-oscroll').getBoundingClientRect().right,
     }));
-    expect(Math.abs(edge.insp - edge.track)).toBeLessThanOrEqual(1);
+    expect(Math.abs(edge.insp - 3 - edge.track)).toBeLessThanOrEqual(1);
     const ib = await page.locator('#inspector').boundingBox();
     await page.mouse.move(ib.x + ib.width / 2, ib.y + ib.height - 80);
     await expect(page.locator('#inspector .fp-oscroll')).toHaveClass(/is-visible/);
@@ -474,7 +531,8 @@ test('sweep (§12): no permanent bars or sideways overflow in settings, search p
       await setZoom(app, page, z);
       const tag = (s) => `${s} @${z}`;
 
-      // Settings screen, every section.
+      // Settings screen, every section — inspector open, the narrowest case.
+      await page.evaluate(() => setInspectorOpen(true, { persist: false }));
       await page.evaluate(() => switchScreen('settings'));
       await page.waitForTimeout(200);
       const navs = await page.locator('.settings-nav__item').count();
@@ -482,7 +540,18 @@ test('sweep (§12): no permanent bars or sideways overflow in settings, search p
         await page.locator('.settings-nav__item').nth(i).click();
         await page.waitForTimeout(100);
         for (const o of await xOverflow(page, '#screen-settings')) offenders.push(tag(`settings x: ${o}`));
-        for (const o of await nativeBars(page, '#screen-settings .settings-nav')) offenders.push(tag(`settings nav bar: ${o}`));
+        for (const o of await nativeBars(page, '#screen-settings')) offenders.push(tag(`settings bar: ${o}`));
+        // The content is never squeezed to nothing: at least 200px of it,
+        // all reachable by scrolling the layout (or the content itself).
+        const room = await page.evaluate(() => {
+          const lay = document.querySelector('#screen-settings .settings-layout');
+          const c = lay.querySelector('.settings-content');
+          const scroller = lay.scrollHeight > lay.clientHeight + 1 ? lay : c;
+          return { h: c.getBoundingClientRect().height, reach: scroller.scrollHeight - scroller.clientHeight >= 0,
+            narrow: getComputedStyle(lay).flexDirection === 'column', lay: lay.scrollHeight, nav: lay.querySelector('.settings-nav').offsetHeight };
+        });
+        if (room.h < 200) offenders.push(tag(`settings content only ${Math.round(room.h)}px tall`));
+        if (room.narrow && room.lay < room.nav + 200) offenders.push(tag('settings content unreachable'));
         if (i === 0) await windowShot(app, page, `sweep-settings-z${Math.round(z * 100)}`);
       }
 

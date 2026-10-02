@@ -804,6 +804,13 @@ function setSidebarCollapsed(collapsed) {
     setSidebarWidthVar(savedSidebarWidth());
   }
   localStorage.setItem('fp-sidebar-collapsed', collapsed ? 'on' : 'off');
+  // The rail's This PC square has no visible label, so it gets a tooltip;
+  // the expanded header shows "This PC" itself and needs none.
+  const thisPcHead = document.querySelector('#sb-thispc .fp-sidebar__section-head');
+  if (thisPcHead) {
+    if (collapsed) thisPcHead.title = 'This PC';
+    else thisPcHead.removeAttribute('title');
+  }
   // Rail icons are bigger (Stage 2D §9.2): shell bitmaps re-resolve at the
   // size they are now drawn at instead of being stretched.
   if (typeof fpInvalidateLazyIcons === 'function') fpInvalidateLazyIcons(sidebar);
@@ -2733,7 +2740,7 @@ function setThisPcOpen(open, { persist = true } = {}) {
 // ── Overlay scrollbars (Stage 2D §9.3) ────────────────────────────────────────
 /** The panels scroll under fpOverlayScroll (overlayscroll.js) instead of a
  * native bar: the sidebar, the inspector body and the Properties body (the
- * §9.3 ruling), and the Settings nav (§12 sweep). Each element is static
+ * §9.3 ruling), and Settings' nav and content (§12 sweep). Each element is static
  * markup, so attaching once at startup is enough — the component's observers
  * follow everything rendered into them later, and a panel shown from
  * display:none re-measures through its ResizeObserver. */
@@ -2743,6 +2750,10 @@ function initOverlayScrollbars() {
     document.getElementById('inspector-body'),
     document.querySelector('#properties-modal .properties__body'),
     document.querySelector('#screen-settings .settings-nav'),
+    // Settings content, and the whole layout, which is what scrolls when a
+    // narrow screen stacks the nav above the content (styles.css).
+    document.querySelector('#screen-settings .settings-content'),
+    document.querySelector('#screen-settings .settings-layout'),
   ]) {
     if (el) fpOverlayScroll(el);
   }

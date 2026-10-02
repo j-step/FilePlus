@@ -194,6 +194,10 @@
   --oscroll-inset: 3px;      /* thumb's gap from the panel edge (clears the resize handle's inner half) */
   --oscroll-cue:   20px;     /* the top/bottom mask fade */
   --dur-oscroll:   160ms;
+  /* The sidebar scroller's right padding keeps the thumb's column (inset +
+     hot width) clear of the items, so a press on an item never pages. */
+  --oscroll-clear: calc(var(--oscroll-inset) + var(--oscroll-w-hot));  /* inset + column */
+  --sidebar-scroll-pad-r: var(--oscroll-clear);
 
   /* ---------- This PC (Stage 2D §8, logical px) ---------- */
   --drive-card-min:  280px;   /* tiles: auto-fill columns at least this wide */
@@ -639,8 +643,8 @@ svg { flex-shrink: 0; }
   flex-shrink: 0;
   height: 1px;
   background: var(--border-subtle);
-  margin: var(--sidebar-section-gap-top) calc(var(--sidebar-divider-inset) - var(--sidebar-pad-x))
-          var(--sidebar-section-gap-bottom);
+  margin: var(--sidebar-section-gap-top) calc(var(--sidebar-divider-inset) - var(--sidebar-scroll-pad-r))
+          var(--sidebar-section-gap-bottom) calc(var(--sidebar-divider-inset) - var(--sidebar-pad-x));
 }
 .fp-sidebar__divider[hidden] { display: none; }
 
@@ -1990,7 +1994,12 @@ svg { flex-shrink: 0; }
   font-weight: 600;
 }
 /* Keyboard focus (pass-2 #173): the accent ring, inside the tab so the strip
-   never clips it. */
+   never clips it. The window tab strip (.fp-tab) likewise: .fp-tabbar is
+   overflow-y:hidden, which would cut an outset ring. */
+.fp-tab:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
 .fp-tabs__item:focus-visible {
   outline: 1px solid var(--accent);
   outline-offset: -1px;
@@ -3458,13 +3467,15 @@ body.is-dragging { cursor: default; }
   mask-image: linear-gradient(to bottom, transparent 0, #000 var(--oscroll-cue),
                               #000 calc(100% - var(--oscroll-cue)), transparent 100%);
 }
-/* The track is the 10px hot zone; JS sets its top/left/height. It stays under
-   a panel's resize handle (z-index 10), which keeps the inner half it shares. */
+/* The track is the thumb's own column (--oscroll-w-hot wide, --oscroll-inset
+   in from the edge); JS sets its box from those CSS values. The wider
+   --oscroll-hot zone only widens the thumb — a press there outside the
+   column reaches the content. It stays under a panel's resize handle. */
 .fp-oscroll {
   position: absolute;
   z-index: 5;
-  width: var(--oscroll-hot);
   opacity: 0;
+  touch-action: none;
   transition: opacity var(--dur-oscroll) ease;
   user-select: none;
   -webkit-app-region: no-drag;
@@ -3475,7 +3486,7 @@ body.is-dragging .fp-oscroll { pointer-events: none; }
 .fp-oscroll__thumb {
   position: absolute;
   top: 0;
-  right: var(--oscroll-inset);
+  right: 0;
   width: var(--oscroll-w);
   border-radius: var(--r-pill);
   background: var(--scrollbar-thumb);
@@ -5472,7 +5483,7 @@ body.is-dragging .fp-oscroll { pointer-events: none; }
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: var(--s-4) var(--sidebar-pad-x) var(--s-8);
+  padding: var(--s-4) var(--sidebar-scroll-pad-r) var(--s-8) var(--sidebar-pad-x);
   scrollbar-width: none;    /* the overlay thumb (overlayscroll.js) replaces it */
 }
 .fp-sidebar__bottom {
@@ -5538,7 +5549,7 @@ body.is-dragging .fp-oscroll { pointer-events: none; }
   justify-content: center;
   align-self: center;
   width: var(--sidebar-rail-item);
-  max-width: calc(100% - var(--s-8));
+  max-width: calc(100% - 2 * var(--oscroll-hot));
   height: var(--sidebar-rail-item);
   padding: 0;
   margin: var(--s-2) auto;
@@ -5604,10 +5615,21 @@ body.is-dragging .fp-oscroll { pointer-events: none; }
 .fp-sidebar--collapsed .fp-sidebar__expand-btn { display: inline-flex; }
 .fp-sidebar--collapsed #btn-sidebar-collapse { display: none; }
 
-/* Collapsed sidebar: center everything in the narrow 52px rail */
+/* Collapsed sidebar: center everything in the narrow 52px rail. The overlay
+   thumb shrinks into the rail's gutter (the squares cap at the rail width
+   minus a --oscroll-hot gutter each side, below), so it never sits over a
+   square. Only the thumb itself takes the pointer there, above the resize
+   handle's inner half: a press beside it reaches the square or the handle. */
 .fp-sidebar--collapsed {
   align-items: center;
+  --oscroll-hot: 5px;
+  --oscroll-inset: 1px;
+  --oscroll-w: 2px;
+  --oscroll-w-hot: 3px;
 }
+.fp-sidebar--collapsed .fp-oscroll { pointer-events: none; z-index: 11; }
+.fp-sidebar--collapsed .fp-oscroll__thumb { pointer-events: auto; }
+body.is-dragging .fp-sidebar--collapsed .fp-oscroll__thumb { pointer-events: none; }
 .fp-sidebar--collapsed .fp-sidebar__scroll {
   display: flex;
   flex-direction: column;
@@ -5661,7 +5683,7 @@ body.is-dragging .fp-oscroll { pointer-events: none; }
 .fp-sidebar--collapsed .fp-sidebar__bottom > * { flex-shrink: 0; }
 .fp-sidebar--collapsed .fp-sidebar__item,
 .fp-sidebar--collapsed .fp-ask,
-.fp-sidebar--collapsed .fp-sidebar__tags-collapsed { max-width: calc(100% - var(--s-8)); }
+.fp-sidebar--collapsed .fp-sidebar__tags-collapsed { max-width: calc(100% - 2 * var(--oscroll-hot)); }
 .fp-sidebar--collapsed .fp-sidebar__drive-letter { max-width: 100%; }
 .fp-sidebar--collapsed .fp-sidebar__section > .fp-sidebar__section-head { align-self: center; }
 
@@ -6324,7 +6346,8 @@ button.fp-pill:hover {
   align-items: center;
   height: 28px;
   padding: 0 var(--s-14);
-  margin: 0 var(--s-6);
+  /* Right margin clears the nav's overlay thumb column (Stage 2D §9.3). */
+  margin: 0 var(--oscroll-clear) 0 var(--s-6);
   border-radius: 6px;
   font: 500 var(--t-body) var(--font-ui);
   color: var(--text-primary);
@@ -6498,8 +6521,10 @@ button.fp-pill:hover {
 /* A narrow settings screen (the file area with the sidebar and inspector open
    at 800px, or at app zoom — Stage 2D §12): the nav moves above the content
    as a wrapping strip of its items, so the content keeps the full width. */
-@container fp-settings (max-width: 600px) {
-  .settings-layout { flex-direction: column; }
+@container fp-settings (max-width: 480px) {
+  /* The whole layout scrolls (nav strip, then the content at its natural
+     height), so the content is never squeezed to nothing by a tall strip. */
+  .settings-layout { flex-direction: column; overflow-x: hidden; overflow-y: auto; }
   .settings-nav {
     width: auto;
     flex-direction: row;
@@ -6508,7 +6533,7 @@ button.fp-pill:hover {
     overflow: visible;
     border-right: none;
     border-bottom: 1px solid var(--border-hairline);
-    padding: var(--s-6);
+    padding: var(--s-6) var(--oscroll-clear) var(--s-6) var(--s-6);
     gap: var(--s-2);
   }
   .settings-nav__section-label { display: none; }
@@ -6524,7 +6549,7 @@ button.fp-pill:hover {
     text-overflow: ellipsis;
   }
   .settings-nav__item--active::before { left: var(--s-6); right: var(--s-6); top: auto; bottom: 0; width: auto; height: 2px; }
-  .settings-content { padding: var(--s-16); min-height: 0; }
+  .settings-content { flex: none; overflow: hidden; padding: var(--s-16) var(--oscroll-clear) var(--s-16) var(--s-16); }
   /* Controls wrap or shrink to the pane instead of pushing it sideways. */
   .settings-content .fp-segmented { flex-wrap: wrap; height: auto; max-width: 100%; }
   .settings-content .fp-input { max-width: 100%; min-width: 0; }
@@ -6535,7 +6560,7 @@ button.fp-pill:hover {
 /* …and at the very narrowest (800px window, both panels open, zoom 150%) the
    insets tighten so a control still fits its card. */
 @container fp-settings (max-width: 360px) {
-  .settings-content { padding: var(--s-8); }
+  .settings-content { padding: var(--s-8) var(--oscroll-clear) var(--s-8) var(--s-8); }
   .settings-card { padding: var(--s-8); }
   .settings-content .fp-segmented__opt { padding-inline: var(--s-6); }
 }
