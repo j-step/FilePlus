@@ -5518,10 +5518,6 @@ button.fp-pill:hover {
 /* Inspector tags wrap */
 .inspector__tags-wrap { display: flex; flex-wrap: wrap; gap: var(--s-6); }
 
-/* When inspector open: list compacts — size/modified/tags collapse into single mono line */
-/* This is done via JS adding .list-pane--compact class */
-/* compact single-line for size+date shown instead */
-
 /* ── A.2 Home screen ──────────────────────────────────────────────────────── */
 .home-section {
   padding: var(--s-20) var(--s-20) var(--s-8);

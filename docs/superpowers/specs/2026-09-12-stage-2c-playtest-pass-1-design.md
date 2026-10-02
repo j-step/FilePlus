@@ -224,7 +224,7 @@ Explorer stores the template in a hidden `desktop.ini` inside the folder: `[View
 
 ### 8.4 Backend
 
-- `GET /fs/search?root=&q=&type=&ext=&modified_after=&modified_before=&created_after=&created_before=&min_size=&max_size=&tag=&hidden=&whole_word=&limit=500` walks `root` with `os.scandir` in a thread: case-insensitive substring match on the name (all words must match; `whole_word` respects boundaries), skipping `.FilePlusTrash`, protected read roots, reparse points, and hidden entries unless `hidden=true`. Budget 4 s wall clock, cap `limit`. Returns `{ results: [{ path, name, is_dir, size, modified, created, ext, match: [[start, end], …] }], truncated, elapsed_ms, walked }`. `tag:` intersects with the tagger's file set. Type groups come from `backend/filetypes.py` (served as `GET /filetypes` so the renderer's `filetypes.js` is generated from it by `scripts/build_filetypes.js`).
+- `GET /fs/search?root=&q=&type=&ext=&modified_after=&modified_before=&created_after=&created_before=&min_size=&max_size=&tag=&hidden=&whole_word=&limit=500` walks `root` with `os.scandir` in a thread: case-insensitive substring match on the name (all words must match; `whole_word` respects boundaries), skipping `.FilePlusTrash`, protected read roots, reparse points, and hidden entries unless `hidden=true`. Budget 4 s wall clock, cap `limit`. Returns `{ results: [{ path, name, is_dir, size, modified, created, ext, match: [[start, end], …] }], truncated, elapsed_ms, walked }`. `tag:` intersects with the tagger's file set. Type groups come from `backend/filetypes.py` (served as `GET /filetypes` so the renderer's `filetypes.js` is generated from it by `scripts/build_filetypes.py`, run as `py -3 scripts/build_filetypes.py`).
 - `root=*` (This PC scope) uses the index (`/search` extended with the same filters) and the response carries `indexed_roots` so the UI can say "3 drives are not indexed — Index now" (the button runs `POST /index` per drive).
 
 ### 8.5 Palette
@@ -246,7 +246,7 @@ The index is the SQLite `files` table that Stage 2A's indexer fills for a folder
 
 ## 10. Frontend module map after this pass
 
-`api.js, filetypes.js (generated), icons.js, fileops.js, browser.js, dragdrop.js, search.js, inspector.js, properties.js, home.js, settings.js, app.js` — same global-script rules as before (each file may call anything defined earlier at top level). `tabs` state lives in `app.js`. New settings keys: `ui.inspector_open, ui.sidebar_thispc_open, ui.quick_access_hidden, ui.list_scale, ui.view_mode, ui.sort, ui.dynamic_media_view, ui.backspace_deletes, ui.properties_mode, ui.icon_source`.
+`api.js, filetypes.js (generated), icons.js, fileops.js, browser.js, dragdrop.js, search.js, inspector.js, properties.js, home.js, settings.js, app.js` (as planned; the order that shipped also has `icons-sprite.js` and `iconCache.js` before `icons.js` and `properties.js` after `settings.js`, and Stage 2D added `overlayscroll.js` and `thispc.js` — CLAUDE.md's "Frontend traps" carries the authoritative order) — same global-script rules as before (each file may call anything defined earlier at top level). `tabs` state lives in `app.js`. New settings keys: `ui.inspector_open, ui.sidebar_thispc_open, ui.quick_access_hidden, ui.list_scale, ui.view_mode, ui.sort, ui.dynamic_media_view, ui.backspace_deletes, ui.properties_mode, ui.icon_source`.
 
 ## 11. Verification
 

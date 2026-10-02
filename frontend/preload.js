@@ -91,9 +91,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   pickFolder:        (defaultPath) => ipcRenderer.invoke('dialog-pick-folder', defaultPath),
   clipboardWriteText: (text) => ipcRenderer.send('clipboard-write-text', text),
   // Icons / thumbnails / native dialogs (Stage 2C Task 4; Tasks 6 and 13 wire
-  // renderer callers; pass 2 — icon-design.md §4.3 — switches sizing from a
-  // coarse enum to physical pixels). px = device pixels (the CSS box size x
-  // devicePixelRatio), computed by icons.js. fileIcon(s) -> {url, px, exact}
+  // renderer callers; pass 2 — docs/superpowers/specs/2026-09-14-stage-2c-
+  // pass-2-icon-design.md §4.3 — switches sizing from a coarse enum to
+  // physical pixels). px = device pixels (the CSS box size x
+  // devicePixelRatio, snapped up to a Stage 2D size bucket by
+  // fpIconBucket), computed by icons.js. fileIcon(s) -> {url, px, exact}
   // | null; fileIcons takes [{path, ext, px}] (<= 64) and answers in the same
   // order. thumbnail -> {url, w, h} | null (w or h == px, the longer edge).
   fileIcon:          (path, ext, px) => ipcRenderer.invoke('get-file-icon', path, ext, px),

@@ -18,8 +18,9 @@ Frontend Electron 41, plain HTML/CSS/JS, no framework, no build step. Tests: pyt
 - Every file operation is written to `operations_log` BEFORE it executes.
 - `path_guard(path, mode)` gates every filesystem touch: reads anywhere; writes inside
   `FILEPLUS_SANDBOX_PATH` (alias `FILEPLUS_ROOT`) unless `FILEPLUS_ENV=prod` *and*
-  `WRITE_UNLOCKED=true` (`dev` is the default; `dev`/`test` never write outside the root); Windows system roots are never
-  writable; the app directory is never writable except the sandbox inside it (`ProtectedPathError`).
+  `WRITE_UNLOCKED=true` (`dev` is the default; `dev`/`test` never write outside the root); Windows
+  system roots are never writable; the app directory is never writable except the sandbox inside it
+  (`ProtectedPathError`).
   Mutations take their operand from `guard_operand(path, mode)`: same containment decisions on the
   resolved path, but a junction/symlink is acted on as the link, never as its target.
 - Every route except `/health` requires `X-FilePlus-Token`: the backend mints one at startup into
@@ -45,6 +46,15 @@ at it, gives Electron a throwaway profile (`FILEPLUS_USER_DATA_DIR`) and writes 
 A Stop hook (`.claude/settings.json` → `scripts/verify.py`) runs pytest + the smoke whenever code
 files are uncommitted and blocks the turn on failure.
 
+Electron test rules: launch through `launchApp()` (`frontend/test/harness/app.js`), which waits for
+`window.__fpInitDone` (startup has applied config, known folders, drives, pins and tags) and resets
+the zoom to 100 % unless `keepZoom`. Assert `errors` after `await app.close()`: it then adds every
+ERROR line main.js wrote to `renderer.log`, including errors Playwright never sees (a ResizeObserver
+loop). No `waitForTimeout` may gate an assertion (the suite has none); wait on the app's signals —
+`__fpRenderCount`, `__fpLoadPending`, `__fpInspectorPending`, `__fpIconsIdle()`, `__fpZoomBusy`,
+`__fpStubHits` — or `expect.poll`. Tests run with reduced motion on, so every animation must switch
+off under `prefers-reduced-motion: reduce`.
+
 ## Working protocol (spec §6)
 
 Brainstorm → stage spec → task plan → one autonomous run on `stage/<n>-<slug>` → author reviews once →
@@ -58,7 +68,7 @@ April "one fix at a time" rule is retired (D10).
 - All paths come from `backend/config.py`; never hardcode one.
 - Backend is async everywhere (`async def`, `aiosqlite`, `aiohttp`). No global DB connection.
 - Frontend talks to the backend with `fetch()` only; the renderer never touches Node fs.
-- API routes have NO `/api/` prefix.
+- API routes have NO `/api/` prefix. Dates on the wire are epoch seconds (listings, search, `/file`).
 - Model IDs and AI tier order live in config only (spec §7); no model string in any `.py` outside
   `config.py` defaults.
 - Placeholders are debt: a screen with fake data is not built. Wire real data or hide the screen.
@@ -69,56 +79,116 @@ April "one fix at a time" rule is retired (D10).
   `frontend/src/{api,filetypes,icons-sprite}.js`, then `frontend/iconCache.js` (dual-mode: also a
   CommonJS module required by `frontend/main.js` and by node-run tests, so the renderer's request
   key and the main process's cache key are one piece of code, not two hand-kept twins), then
-  `frontend/src/{icons,fileops,browser,dragdrop,search,inspector,home,
-  settings,properties,app}.js` — each can call anything defined earlier at its own top level;
-  anything from a later file is only safe to reference from inside a function that runs after
-  `DOMContentLoaded`. `actions.js` is gone (Stage 2B deleted it): click dispatch is the `switch` in
-  `app.js` (`document.addEventListener('click', …)`) plus the `IN_SCOPE_ACTIONS` set (marks an
-  action as a deliberate silent no-op instead of the "not yet implemented" stub toast) — there is
-  no registry.
+  `frontend/src/{overlayscroll,icons,fileops,browser,thispc,dragdrop,search,inspector,home,settings,
+  properties,app}.js` — each can call anything defined earlier at its own top level; anything from a
+  later file is only safe to reference from inside a function that runs after `DOMContentLoaded`.
+  `actions.js` is gone (Stage 2B deleted it; verify fails if it reappears): click dispatch is the
+  `switch` in `app.js` (`document.addEventListener('click', …)`) plus the `IN_SCOPE_ACTIONS` set (an
+  action a listener of its own handles, so the switch leaves it alone). The switch's default branch
+  is the "not yet implemented" stub; it counts `window.__fpStubHits`, which tests assert stays 0.
 - `filetypes.js` and `icons-sprite.js` are generated, not hand-edited: `filetypes.js` from
   `backend/filetypes.py` via `scripts/build_filetypes.py`; `icons-sprite.js` (the Fluent chrome
-  sprite) via `scripts/build_icons.js`. `verify.ps1`'s frontend-gates stage (3/4) runs `check_menu_cases.js`
-  (every `cm-*` action has a switch case; every `data-action` has a case or is in `IN_SCOPE_ACTIONS`,
-  bar a listed set of placeholders on unbuilt screens), `check_icons.js` (sprite references resolve,
-  including `icons.js`'s `FP_DYNAMIC_ICON_SYMBOLS` for names passed as variables — symbol/family
-  counts, no raw `<svg>` outside the sprite) and a real parity gate for `filetypes.js` only (rebuilds
-  to `artifacts/` and compares the text with line endings normalised, logged as
+  sprite; Stage 2D added `fp-this-pc` and `fp-window-restore`) via `scripts/build_icons.js`.
+  `verify.ps1`'s frontend-gates stage (3/4) runs `check_menu_cases.js` (every `cm-*` action has a
+  switch case; every `data-action` in `index.html` and in `src/*.js` templates has a case or is in
+  `IN_SCOPE_ACTIONS` — no exemptions), `check_icons.js` (sprite references resolve, including
+  `icons.js`'s `FP_DYNAMIC_ICON_SYMBOLS` for names passed as variables — symbol/family counts, no raw
+  `<svg>` outside the sprite) and a real parity gate for `filetypes.js` only (rebuilds to
+  `artifacts/` and compares the text with line endings normalised, logged as
   `check_filetypes_parity: ok`); `contrast_check.py` (stage 2/4) is a separate gate. `icons-sprite.js`
   has no parity gate — `verify.ps1` never runs `build_icons.js`, so a hand edit that keeps references
   resolving still passes `check_icons.js`.
-- Bridge methods added in Stage 2C live on `window.electronAPI` (`preload.js`):
-  `fileIcon`, `thumbnail`, `showProperties`, `openWithDialog`, `apiPort` — `icons.js` calls the
-  first two, `properties.js` the native-dialog pair, `api.js` reads the port so the renderer and
-  `verify.ps1`'s `FILEPLUS_PORT=9877` agree.
+- No control ships that does nothing (Stage 2D ruling, "placeholders are debt"). The unbuilt screens
+  (File Tree, Scan, Review Bin, Everything Folder) with their sidebar entries, palette commands and
+  Ctrl+Shift+R, six Settings panes (Everything Folder, Downloads Folder, Organization Engine, AI
+  Configuration, Custom File Types, Privacy), Home's Shared tab and the palette's chat mode are out
+  of the DOM; their markup is in `docs/archive/2026-10-02-unbuilt-screens-markup.html`. The stage
+  that builds one puts it back with a `case` per `data-action` and restores its entry points.
+  `switchScreen(id)` ignores a screen that is not in the DOM. Owner-approved shells stay: the Ask
+  File+ popout and the Tag Canvas Stage-3 banner.
+- Bridge methods live on `window.electronAPI` (`preload.js`). Stage 2C: `fileIcon`/`fileIcons`,
+  `thumbnail`, `showProperties`, `openWithDialog`, `apiPort`. Stage 2D: `zoomTo(factor, ease)`,
+  `zoomSteps`, `getZoom`, `isMaximized` + `onMaximizedChange` (main sends `win-maximized` on
+  maximize/unmaximize/restore), `appInfo`, `openLogDir`, `clearIconCaches`. Callers: `icons.js`
+  (`fileIcons`, `thumbnail`); `properties.js`, `thispc.js` and app.js's `props-advanced` case
+  (`showProperties`); app.js's `cm-open-with` / `props-open-with` cases and `inspector.js`
+  (`openWithDialog`); `api.js` reads the port so the renderer and `verify.ps1`'s
+  `FILEPLUS_PORT=9877` agree; `app.js` (zoom, maximize); `settings.js` (About, Data).
+- Electron's default menu is removed (`Menu.setApplicationMenu(null)`), so every shortcut is the
+  renderer's: Ctrl+R / F5 / the Refresh button call `refreshAll()` (in-place re-list; it never
+  reloads the page), Ctrl+W closes a tab, Ctrl+= / Ctrl+- / Ctrl+0 zoom. F12 opens DevTools only when
+  `FILEPLUS_ENV` is not `prod`. `will-navigate` away from `index.html` and `window.open` are refused.
+- App zoom: `zoomStep` → `electronAPI.zoomTo` eases each step over 70 ms through main's
+  `webContents.setZoomFactor` (not `webFrame`, whose zoom is never persisted). The renderer
+  publishes the factor as `--app-zoom`; sidebar, inspector and rail widths are screen px
+  (`calc(var(--sidebar-w-screen) / var(--app-zoom))`, saved as `ui.sidebar_w` / `ui.inspector_w`),
+  so their contents grow and their width does not. Never size a panel in plain CSS px and never set
+  CSS `zoom`. Ctrl+wheel never changes the zoom factor.
+- File-list views: `browserState.view` is `content | tiles | details | list | small | icons` and
+  `browserState.iconSize` is 48–256 for `icons`. Change them only through `setView` / `stepView` /
+  `applyViewChoice` (browser.js), which write `data-view`, `--icon-size` and `--cell-w` on
+  `#list-scroll` (`--list-scale` no longer exists). A size step inside `icons` only changes CSS
+  variables; a view change renders once from the in-memory entries and never re-fetches. Each
+  folder's view is remembered in `ui.folder_views`, saved only as deltas through `POST
+  /config/merge`. One render per navigation (`__fpRenderCount`); a refresh or a revalidated tab is
+  patched row by row (`patchDirectory`), and unchanged rows keep their DOM nodes.
+- Selection follows operations: `fileops.followOps` (run, undo, redo) calls `followSelectionOps`, so
+  a renamed or moved item stays selected under its new path and a trashed one leaves the selection
+  the moment the operation answers; `selectLandedOps` selects what a paste or undo landed; each tab
+  remembers per folder the scroll and selection that Back / Forward restore. The inspector shows an
+  emptied selection at once and never fetches `GET /file` for a path that is gone.
 - Windows-mode icons have two sources and one sizing contract (`docs/superpowers/specs/
-  2026-09-14-stage-2c-pass-2-icon-design.md`): `POST /shell/icons` (backend `winshell.shell_image`,
-  Explorer-exact at any px) first, `electronAPI.fileIcons` (Chromium `app.getFileIcon`) as the
-  fallback — the fallback is never asked for directories, extension-less files, `.lnk` or `.url`.
-  Every request carries physical px (`fpDevicePx`); the `<img>` is pinned to `px / dpr`; keys end in
-  px, so zoom / DPI / `--list-scale` changes re-resolve (`fpInvalidateLazyIcons`), never resample.
-  `fpShellIconRoute('live'|'absent'|'unknown')` is fed from `/health`'s `shell_icons` flag — do not
-  probe the route with a request that can 404 (Chromium logs it as a console error even when caught,
-  and the smoke's zero-console-errors gate fails).
+  2026-09-14-stage-2c-pass-2-icon-design.md`, amended by the Stage 2D spec §4): `POST /shell/icons`
+  (backend `winshell.shell_image`, Explorer-exact at any px) first, `electronAPI.fileIcons` (Chromium
+  `app.getFileIcon`) as the fallback — never asked for directories, extension-less files, `.lnk` or
+  `.url`. Requests carry physical px snapped up to a bucket (`fpDevicePx` → `fpIconBucket`: 16, 20,
+  24, 32, 40, 48, 64, 96, 128, 192, 256); the `<img>` is CSS-sized to its logical box (`--icon-size`
+  or `.fp-icon--N`), never pinned; keys end in px, so zoom / DPI / view-size changes re-resolve
+  (`fpInvalidateLazyIcons`, debounced 120 ms) and a new bitmap swaps in only after `decode()`. A
+  cache hit is painted settled in the markup (`fpCachedIconImg`); a folder paints the learned
+  generic first; any other miss is an empty fixed-size slot — the FilePlus sprite only after both
+  tiers fail. `fpShellIconRoute('live'|'absent'|'unknown')` is fed from `/health`'s `shell_icons`
+  flag — do not probe the route with a request that can 404 (Chromium logs it as a console error
+  even when caught, and the zero-console-errors gate fails).
+- `thispc:` (`THISPC`, browser.js; `thisPcActive()`) is the This PC page's path. It lives in tab
+  history like a folder, but it must never reach the backend: every path consumer checks it.
+- `#toolbar[data-search="full"|"collapsed"]` (it replaced `data-narrow`) is set only by
+  `layoutToolbar()` (app.js) from measured widths, never a fixed constant: the search box shrinks,
+  then folds to its magnifier, and only then does the left-anchored path overflow.
+- Mouse presses on toolbar, tab-strip and sidebar controls hand keyboard focus back to where it was
+  (`initChromeMouseFocus`, Explorer's model), so Enter after a click opens the focused row.
+- Panels (sidebar, inspector, Properties, Settings, the inspector's text preview) scroll with
+  `fpOverlayScroll(el)` (overlayscroll.js; attached in app.js's `initOverlayScrollbars`): no native
+  bar, no layout width, `is-scroll-top` / `is-scroll-bottom` fade cues. A tall context menu reuses
+  the fade cue with its native bar hidden. The file list keeps its native scrollbar.
 - `showSnackbar`/`showToast` are defined once, in `app.js`. Signature: `showSnackbar(msg, 'Undo', fn)`.
 - Snackbars/toasts are gated by `localStorage['fp-notifications-enabled']` (default off). Only
-  `showToast(msg, 'error')` bypasses. No other exceptions.
-- Tab close affordance is `<span role="button">`, never a nested `<button>`. Per-tab screen state lives
-  on `data-tab-screen`; `switchScreen(id)` mutates the active tab, `switchToTab(tab)` activates another.
+  `showToast(msg, 'error')` bypasses. No other exceptions. Error toasts leave after 8 s (paused
+  while hovered or focused); at most 3 notices show per stack.
+- Per-tab state lives in JS tab records (`createTab()`, app.js: `{id, screen, label, path, history,
+  historyIndex, view, iconSize, scrollTop, scrollLeft, selection, search, listing, stale}`); the DOM
+  carries only `data-tab-id`. `switchScreen(id)` mutates the active tab's record; `activateTab(id)`
+  saves the outgoing tab and paints the incoming one from its cached `listing`, then revalidates.
+  The tab close affordance is `<span role="button">`, never a nested `<button>`.
 - Elevation is flat: borders (`--border-*`) do the work, overlays get one soft shadow
   (`--shadow-popover`/`--shadow-modal`), nothing else casts or insets. Repeating treatments become
   tokens in `:root`; accent-derived colours use `color-mix(... var(--accent) ...)`, never hardcoded
-  rgba. Style spec: `docs/superpowers/specs/2026-09-10-stage-1-redesign-design.md` §3–§4.
+  rgba. Stacking uses `--z-menu` / `--z-notice`; every caps section header uses `--t-section` /
+  `--track-section`. Stage 2D token families: `--sidebar-*`, `--oscroll-*`, `--view-*`, `--drive-*`,
+  `--clip-cut-opacity` / `--clip-badge-size`, `--bad-wash-solid` (opaque error toast),
+  `--dur-refresh-*`, `--notice-bottom`, `--menu-edge`. Style spec:
+  `docs/superpowers/specs/2026-09-10-stage-1-redesign-design.md` §3–§4.
 
 ## Current state
 
-Stage 2C (playtest pass 1) is landed — see `docs/superpowers/runs/2026-09-13-stage-2c.md` for the run
-summary (real tabs, file-type taxonomy and custom icon family with a Windows-icon option, live +
-This-PC search, Properties panel with native-dialog option, pointer-based drag and drop, This PC /
-Quick Access sidebar, View/Sort menus, Ask File+ popout shell). Earlier: `docs/superpowers/runs/
-2026-09-11-stage-2b.md` (frontend wiring) and `2026-09-11-stage-2a.md` (backend core). Canonical docs:
-`PRODUCT.md`, `docs/UI-SPEC.md` (behaviour; style superseded), `docs/backend-integration.md` (wiring
-ledger), `docs/fileplus-feature-list.md` (backlog). Everything else is under `docs/archive/`.
+Stage 2D (playtest pass 2) is landed on `stage/2d-playtest-2`, waiting for the author's merge — run
+summary `docs/superpowers/runs/2026-10-01-stage-2d.md` (Explorer view ladder, flash-free icons, app
+zoom with fixed panel widths, in-place refresh, This PC page, toolbar collapse order, menu flyouts,
+sidebar polish, unbuilt screens hidden). Earlier: `docs/superpowers/runs/2026-09-13-stage-2c.md`
+(playtest pass 1), `2026-09-11-stage-2b.md` (frontend wiring) and `2026-09-11-stage-2a.md` (backend
+core). Canonical docs: `PRODUCT.md`, `docs/UI-SPEC.md` (behaviour; style superseded; Stage 2D notes
+inline), `docs/backend-integration.md` (wiring ledger), `docs/fileplus-feature-list.md` (backlog).
+Everything else is under `docs/archive/`.
 
 The sandbox default is `FILEPLUS_APP_DIR/FilePlusTestSandbox` (`backend/config.py`), so each git
 worktree gets its own empty sandbox with no cross-worktree collisions; `.env` can override it via

@@ -4505,16 +4505,14 @@ document.addEventListener('DOMContentLoaded', async () => {
   window.__fpInitDone = true;
 
   // ── A.17 Edge case INTEGRATION stubs ──────────────────────────────────────
-  // #2  External folder missing on navigation → show fp-error-banner "This folder no longer exists"
-  //     INTEGRATION: catch 404/ENOENT from GET /ls?path=... → toggle .fp-error-banner in browser screen
+  // (#2 missing folder on navigation and #8 drop onto a sidebar folder are
+  // built: failNavigation / showErrorBanner in browser.js, dragdrop.js.)
   // #6  Files added to Everything Folder while tray is closed → update count badge on next open
   //     INTEGRATION: GET /ef/count on tray show event → update #tray-rb-badge
-  // #8  Drop file onto sidebar folder → accept drag event, call POST /move (requires approval)
-  //     INTEGRATION: sidebar items need dragover + drop listeners → openModal('move', {src, dest})
   // #9  Inspector opened on a file that has been deleted externally → show preview fail state
-  //     INTEGRATION: GET /file/preview?path=... → on 404 show commented preview-fail HTML
+  //     INTEGRATION: GET /preview?path=... → on 404 show commented preview-fail HTML
   // #12 Scan starts while one is already running → show toast "Scan already in progress"
-  //     INTEGRATION: POST /scan/start → if 409 response → showToast('Scan already running', 'warn')
+  //     INTEGRATION: POST /scan → if 409 response → showToast('Scan already running', 'warn')
   // #13 Ollama model not downloaded when classification starts → show error banner with install CTA
   //     INTEGRATION: GET /ai/status → if model_status !== 'ready' → show #banner-ai-offline
 });
@@ -4522,8 +4520,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 /**
  * Crash recovery (Task 4): GET /operations/pending returns whatever the
  * backend's startup reconciliation classified as left mid-flight by an
- * abnormal shutdown ([] once reconciliation has run with nothing pending —
- * always [] until Task 9 wires reconcile_pending() into the API's lifespan).
+ * abnormal shutdown ([] when nothing was pending). reconcile_pending() runs
+ * on every startup, inside the API's lifespan (backend/api.py).
  * Non-empty → one line per row: op type, source → dest, resolution.
  */
 async function checkCrashRecovery() {

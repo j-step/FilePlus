@@ -79,7 +79,7 @@ const DEVTOOLS_ALLOWED = devToolsAllowed(APP_ENV);
 const MICA_AVAILABLE = process.platform === 'win32' && Number(os.release().split('.')[2] || 0) >= 22621;
 
 // ── Icon / thumbnail bridge (Stage 2C Task 4; sizing rewritten pass 2 —
-// icon-design.md §4.2) ───────────────────────────────────────────────────
+// docs/superpowers/specs/2026-09-14-stage-2c-pass-2-icon-design.md §4.2) ──
 // Two separate byte-budgeted LRUs: file icons are small and numerous (folder
 // chrome, list rows); thumbnails are bigger images but there are fewer
 // distinct sizes in play at once (grid view). Values: {url, px, exact} for
@@ -322,7 +322,7 @@ app.whenReady().then(() => {
   });
   ipcMain.on('clipboard-write-text', (_e, t) => { if (typeof t === 'string') clipboard.writeText(t); });
 
-  // File icon (Windows-icon sharpness fix, pass 2 — icon-design.md §4.2).
+  // File icon (Windows-icon sharpness fix, pass 2 — 2026-09-14 icon design §4.2).
   // app.getFileIcon's own {size} option is a coarse 'small'/'normal'/'large'
   // enum: small = 16*S px, normal = large = 32*S px for extension groups
   // (16/32/48 regardless of S for .exe/.dll/.ico — the per-file branch).

@@ -1,8 +1,9 @@
 /**
- * FilePlus icon sprite helpers. Loaded right after icons-sprite.js (which
- * defines FP_ICON_SPRITE — see scripts/build_icons.js) and iconCache.js
- * (window.FpIconCache — the dual-mode key/LRU module main.js also requires),
- * and before every other frontend/src module, so icon()/iconFor() are safe
+ * FilePlus icon sprite helpers. Loaded after icons-sprite.js (which
+ * defines FP_ICON_SPRITE — see scripts/build_icons.js), iconCache.js
+ * (window.FpIconCache — the dual-mode key/LRU module main.js also requires)
+ * and overlayscroll.js, and before every other frontend/src module, so
+ * icon()/iconFor() are safe
  * to call from any later file's own top level (const FOO = icon('...')
  * included).
  *

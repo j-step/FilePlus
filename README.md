@@ -7,7 +7,7 @@ AI-powered Windows file explorer replacement with local-first organisation, tagg
 | Layer      | Technology                                |
 |------------|-------------------------------------------|
 | Frontend   | Electron (HTML/CSS/JS)                    |
-| Backend    | Python 3.11 + FastAPI (localhost:9876)    |
+| Backend    | Python 3.14 (`py -3`) + FastAPI (localhost:9876) |
 | Database   | SQLite via aiosqlite (WAL mode)           |
 | AI local   | Ollama llama3.1:8b                        |
 | AI cloud   | Claude API (Anthropic) — fallback only    |
@@ -15,7 +15,7 @@ AI-powered Windows file explorer replacement with local-first organisation, tagg
 ## Quick start (development)
 
 ### Prerequisites
-- Python 3.11+
+- Python 3.14 (run through the `py -3` launcher, as every project script does)
 - Node.js 20+
 - Ollama (optional for AI features)
 
@@ -26,17 +26,14 @@ AI-powered Windows file explorer replacement with local-first organisation, tagg
 git clone https://github.com/j-step/FilePlus.git
 cd FilePlus
 
-# 2. Create and activate a virtual environment
-python -m venv .venv
-.venv\Scripts\activate   # Windows
+# 2. Install Python dependencies into the interpreter `py -3` runs
+#    (verify.ps1, the Stop hook and the Electron harness all call `py -3`)
+py -3 -m pip install -r requirements.txt
 
-# 3. Install Python dependencies
-pip install -r requirements.txt
-
-# 4. Copy and fill in .env
+# 3. Copy and fill in .env
 copy .env.example .env
 
-# 5. Install Electron
+# 4. Install Electron
 cd frontend
 npm install
 cd ..
@@ -46,7 +43,7 @@ cd ..
 
 ```bash
 # Start the backend (from repo root)
-python -m backend.api
+py -3 -m backend.api
 
 # Start the frontend (in a second terminal)
 cd frontend

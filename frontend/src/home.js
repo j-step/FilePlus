@@ -5,8 +5,9 @@
  * app.js's dispatch switch and context-menu wiring call into.
  *
  * Script load order is api.js → filetypes.js → icons-sprite.js →
- * iconCache.js → icons.js → fileops.js → browser.js → dragdrop.js →
- * search.js → inspector.js → home.js → settings.js → properties.js → app.js
+ * iconCache.js → overlayscroll.js → icons.js → fileops.js → browser.js →
+ * thispc.js → dragdrop.js → search.js → inspector.js → home.js →
+ * settings.js → properties.js → app.js
  * (see index.html; CLAUDE.md's module-order bullet) — this file can
  * call anything defined in an earlier file at parse time (iconFor,
  * escapeHtml, parentOfPath, formatModified, ApiError,
