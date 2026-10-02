@@ -188,10 +188,6 @@ function createTab({ screen = 'home', path = null, history = [], historyIndex = 
     // when the tab is activated again and then revalidated. null until the
     // tab has had a listing of its own.
     listing: null,
-    // Set by refreshAll() on every tab but the active one: its listing is
-    // older than the refresh the user asked for. Cleared on activation, which
-    // always revalidates.
-    stale: false,
   };
   tabs.list.push(record);
   const el = createTabElement(record);
@@ -347,7 +343,6 @@ function activateTab(id) {
     }
     showScreenDom('browser');
     if (typeof searchResetBar === 'function') searchResetBar();
-    incoming.stale = false;
     const loaded = loadDirectory(incoming.path, {
       // Empty history means this tab was staged in the background (openBrowserAt
       // on an inactive tab) and is only now getting its first real fetch — treat
@@ -373,7 +368,6 @@ function activateTab(id) {
       Promise.resolve(loaded).then(() => resumeSearchForTab(pendingSearch, incoming.id));
     }
   } else {
-    incoming.stale = false;
     showScreenDom(incoming.screen);
     updateSidebarActive(incoming.screen);
     // browserState is global: a Home/Settings tab must not inherit the
@@ -412,6 +406,11 @@ function showScreenDom(id) {
     loadRecent();
     loadFavorites();
   }
+  // The inspector describes the screen on display too (Task 14 Q2): off the
+  // Browser it starts neutral — Settings has no selection at all, and Home's
+  // rows are re-rendered unselected — never the item another screen had
+  // selected. The Browser repaints it from its own selection when it commits.
+  if (id !== 'browser' && typeof showInspectorNeutral === 'function') showInspectorNeutral();
   // The status bar describes the screen on display (browser.js).
   if (typeof updateStatusBar === 'function') updateStatusBar();
 }
@@ -669,7 +668,7 @@ function closeOtherTabs(id) {
 function seedInitialTab() {
   const el = document.querySelector('.fp-tab[data-tab-id]');
   const id = el ? el.dataset.tabId : 'tab-1';
-  const record = { id, screen: 'home', label: 'Home', path: null, history: [], historyIndex: -1, view: null, iconSize: null, scrollTop: 0, scrollLeft: 0, selection: [], search: null, listing: null, stale: false };
+  const record = { id, screen: 'home', label: 'Home', path: null, history: [], historyIndex: -1, view: null, iconSize: null, scrollTop: 0, scrollLeft: 0, selection: [], search: null, listing: null };
   tabs.list.push(record);
   tabs.activeId = id;
   nav.history = record.history;
@@ -2487,7 +2486,8 @@ function restartClassAnimation(el, cls, ms, timerKey) {
 async function refreshAll() {
   const tab = activeTab();
   if (!tab) return;
-  tabs.list.forEach(t => { if (t.id !== tab.id) t.stale = true; });
+  // Other tabs need no mark: activating a tab always revalidates its
+  // listing (activateTab), so a refresh reaches them when they are shown.
   const onBrowser = browserScreenActive();
   restartClassAnimation(document.getElementById('btn-refresh'), 'is-spinning', refreshFxMs().spin, 'spin');
   if (onBrowser) {

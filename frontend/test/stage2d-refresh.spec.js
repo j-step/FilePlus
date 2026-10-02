@@ -253,11 +253,10 @@ test('refresh in place, one render per navigation, cached tab repaint, no defaul
     await expect(page.locator('#list-scroll .fp-row')).toHaveCount(docsCount);
     expect(await page.evaluate(() => tabs.activeId)).toBe(tab2Id);
 
-    // Refresh marks every other tab stale; activating it clears the flag.
+    // A refresh here, then the other tab: activating it revalidates its
+    // listing (no stale mark is kept: Task 14 M6 removed the unread flag).
     await page.evaluate(() => refreshAll());
-    expect(await page.evaluate((id) => tabs.list.find((t) => t.id === id).stale, tab1Id)).toBe(true);
     await page.evaluate((id) => activateTab(id), tab1Id);
-    expect(await page.evaluate((id) => tabs.list.find((t) => t.id === id).stale, tab1Id)).toBe(false);
     await page.waitForFunction(() => !window.__fpLoadPending);
 
     // ── 4. one render per navigation ────────────────────────────────────────

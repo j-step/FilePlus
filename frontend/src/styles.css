@@ -6451,6 +6451,21 @@ button.fp-pill:hover {
    multi-selection actually hides the preview box (pass 2 #148). */
 .inspector__preview[hidden] { display: none !important; }
 .fp-inspector__tabs { height: 44px; flex-shrink: 0; }
+/* Same restatement for the tab strip (.fp-tabs is display:flex): multi and
+   drive selections hide it, and it used to stay up over "N items selected"
+   (Task 14 Q19). */
+.fp-inspector__tabs[hidden] { display: none; }
+/* This PC drive summary (Task 14 Q18): the card's usage bar, full width. */
+.inspector__drive-bar {
+  height: var(--drive-bar-h);
+  margin: 0 0 var(--s-12);
+  border-radius: var(--r-pill);
+  background: var(--bg-raised);
+  overflow: hidden;
+}
+.inspector__drive-bar[hidden] { display: none; }
+.inspector__drive-bar-fill { height: 100%; border-radius: inherit; background: var(--accent); }
+.inspector__drive-bar-fill--full { background: var(--bad); }
 /* The body reaches the panel's right edge (the panel's padding moves inside
    it) so its overlay scrollbar hugs that edge (Stage 2D §9.3). */
 .inspector__body {

@@ -937,19 +937,45 @@
           <!-- INSPECTOR: multi-select state — shown by updateInspector('multi', ...) when >1 item selected -->
           <!-- Single-file state (preview/tags/history tabs above) is the default -->
           <div class="fp-inspector__pane" data-pane="multi" hidden>
-            <div style="font:500 var(--t-title-sm) var(--font-ui);color:var(--text-primary);margin-bottom:4px">
-              <span id="inspector-multi-count">3</span> items selected
-            </div>
-            <div style="font:400 var(--t-compact) var(--font-data);color:var(--text-secondary);margin-bottom:12px">
-              Total: <span id="inspector-multi-size">42.1 KB</span>
-              <!-- INTEGRATION: sum of sizes from GET /file/info for each selected path -->
+            <!-- The header above already says "N items selected": the pane
+                 only adds what the selection holds (Task 14 Q19 — the count
+                 used to be written twice). -->
+            <div class="inspector__meta" style="margin-bottom:12px">
+              <div class="inspector__meta-row">
+                <span class="inspector__meta-key">Total size</span>
+                <span class="inspector__meta-val mono" id="inspector-multi-size">—</span>
+              </div>
             </div>
             <!-- Union of tags across all selected files -->
-            <div class="fp-chip-group" id="inspector-multi-tags" style="display:flex;flex-wrap:wrap;gap:6px">
-              <span class="fp-chip fp-chip--tinted">design</span>
-              <span class="fp-chip">docs</span>
-              <span class="fp-chip">markdown</span>
-              <!-- INTEGRATION: union of tags from selected files' metadata -->
+            <div class="fp-chip-group" id="inspector-multi-tags" style="display:flex;flex-wrap:wrap;gap:6px"></div>
+          </div>
+
+          <!-- This PC: the selected drive card (Task 14 Q18) — shown by
+               updateInspector('drive', drive). -->
+          <div class="fp-inspector__pane" data-pane="drive" hidden>
+            <div class="inspector__drive-bar" id="inspector-drive-bar" role="meter" aria-label="Space used"
+                 aria-valuemin="0" aria-valuemax="100"><div class="inspector__drive-bar-fill"></div></div>
+            <div class="inspector__meta">
+              <div class="inspector__meta-row">
+                <span class="inspector__meta-key">Type</span>
+                <span class="inspector__meta-val" id="inspector-drive-type">—</span>
+              </div>
+              <div class="inspector__meta-row">
+                <span class="inspector__meta-key">File system</span>
+                <span class="inspector__meta-val" id="inspector-drive-fs">—</span>
+              </div>
+              <div class="inspector__meta-row">
+                <span class="inspector__meta-key">Used</span>
+                <span class="inspector__meta-val mono" id="inspector-drive-used">—</span>
+              </div>
+              <div class="inspector__meta-row">
+                <span class="inspector__meta-key">Free</span>
+                <span class="inspector__meta-val mono" id="inspector-drive-free">—</span>
+              </div>
+              <div class="inspector__meta-row">
+                <span class="inspector__meta-key">Capacity</span>
+                <span class="inspector__meta-val mono" id="inspector-drive-total">—</span>
+              </div>
             </div>
           </div>
 

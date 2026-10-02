@@ -28,6 +28,14 @@ let _inspectorHistoryPath = null;
 
 // Revoked before a new one replaces it so blob: URLs don't leak.
 let _inspectorPreviewUrl = null;
+// The text preview's overlay scrollbar. Its listeners sit on the persistent
+// #inspector-preview box, so it is destroyed before the preview is replaced —
+// otherwise every text file viewed left one behind for the session (Task 14 I2).
+let _inspectorPreviewScroll = null;
+
+function dropInspectorPreviewScroll() {
+  if (_inspectorPreviewScroll) { _inspectorPreviewScroll.destroy(); _inspectorPreviewScroll = null; }
+}
 // path|modified|size of the file the preview box is showing. A re-fetch of
 // the same, unchanged file (every listing refresh re-announces the
 // selection) keeps the preview it has: rebuilding it swapped in a fresh
@@ -57,7 +65,49 @@ function updateInspector(mode, data = {}) {
   const filenameEl  = document.getElementById('inspector-filename');
   const filepathEl  = document.getElementById('inspector-filepath');
 
-  if (mode === 'multi') {
+  // The drive pane belongs to 'drive' mode only.
+  const drivePane = inspector.querySelector('.fp-inspector__pane[data-pane="drive"]');
+  if (drivePane && mode !== 'drive') drivePane.hidden = true;
+
+  if (mode === 'drive') {
+    // A This PC drive card (Task 14 Q18): the drive's name and mount in the
+    // header, its icon in the preview box, type / file system / space in the
+    // pane. No tabs: a drive has no tags or history of its own.
+    _inspectorFileId = null;
+    _inspectorHistoryPath = null;
+    const d = data;
+    _inspectorEntry = { name: driveDisplayName(d), path: d.mount, is_dir: true, ext: '' };
+    singlePanes.forEach(p => { p.hidden = true; });
+    if (multiPane) multiPane.hidden = true;
+    if (tabBar) tabBar.hidden = true;
+    if (preview) preview.hidden = false;
+    renderPreviewNone({ note: '' });
+    const name = driveDisplayName(d);
+    if (filenameEl) { filenameEl.textContent = name; filenameEl.title = name; }
+    if (filepathEl) filepathEl.textContent = d.mount || '';
+    if (drivePane) {
+      drivePane.hidden = false;
+      const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+      const known = driveHasSize(d);
+      const used = known ? (Number.isFinite(d.used_bytes) ? d.used_bytes : d.total_bytes - d.free_bytes) : null;
+      set('inspector-drive-type', driveTypeText(d));
+      set('inspector-drive-fs', d.fs || '—');
+      set('inspector-drive-used', known ? `${formatSize(used)} (${drivePercentUsed(d)}%)` : 'Unavailable');
+      set('inspector-drive-free', known ? formatSize(d.free_bytes) : 'Unavailable');
+      set('inspector-drive-total', known ? formatSize(d.total_bytes) : 'Unavailable');
+      const bar = document.getElementById('inspector-drive-bar');
+      if (bar) {
+        const pct = drivePercentUsed(d);
+        bar.hidden = !known;
+        if (known) { bar.setAttribute('aria-valuenow', String(pct)); bar.setAttribute('aria-valuetext', `${pct}% used`); }
+        const fill = bar.firstElementChild;
+        if (fill) {
+          fill.style.width = `${pct}%`;
+          fill.classList.toggle('inspector__drive-bar-fill--full', driveIsNearlyFull(d));
+        }
+      }
+    }
+  } else if (mode === 'multi') {
     _inspectorEntry = null;
     // The single-file identity goes with it. Leaving _inspectorFileId behind
     // meant a tag typed into the (single-file) Tags pane while several files
@@ -86,9 +136,7 @@ function updateInspector(mode, data = {}) {
     if (filepathEl) filepathEl.textContent = '';
     if (multiPane) {
       multiPane.hidden = false;
-      const countEl = multiPane.querySelector('#inspector-multi-count');
       const sizeEl  = multiPane.querySelector('#inspector-multi-size');
-      if (countEl) countEl.textContent = data.count || 0;
       if (sizeEl)  sizeEl.textContent  = data.totalSize || '—';
     }
   } else if (mode === 'single') {
@@ -252,21 +300,23 @@ function renderInspectorEmptyPreview() {
   if (!el) return;
   _inspectorPreviewFor = null;
   if (_inspectorPreviewUrl) { URL.revokeObjectURL(_inspectorPreviewUrl); _inspectorPreviewUrl = null; }
+  dropInspectorPreviewScroll();
   el.style.display = 'flex';
   el.style.flexDirection = 'row';
   el.innerHTML = `<span style="opacity:.4;display:flex">${icon('file', 'fp-icon--40')}</span>`;
 }
 
-function renderPreviewNone() {
+function renderPreviewNone({ note = 'No preview' } = {}) {
   const el = previewContainer();
   if (!el) return;
   _inspectorPreviewFor = null;
   if (_inspectorPreviewUrl) { URL.revokeObjectURL(_inspectorPreviewUrl); _inspectorPreviewUrl = null; }
   el.style.display = 'flex';
   el.style.flexDirection = 'row'; // back to the container's default centering (a text preview sets 'column')
+  dropInspectorPreviewScroll();
   el.innerHTML = `<div style="display:flex;flex-direction:column;align-items:center;gap:8px;color:var(--text-tertiary)">
     ${iconFor(_inspectorEntry, 40)}
-    <span class="inspector__preview-note" style="font:400 var(--t-compact) var(--font-ui)">No preview</span>
+    ${note ? `<span class="inspector__preview-note" style="font:400 var(--t-compact) var(--font-ui)">${escapeHtml(note)}</span>` : ''}
   </div>`;
 }
 
@@ -299,6 +349,7 @@ async function loadInspectorPreview(path, seq) {
     _inspectorPreviewUrl = URL.createObjectURL(blob);
     el.style.display = 'flex';
     el.style.flexDirection = 'row';
+    dropInspectorPreviewScroll();
     el.innerHTML = '';
     const img = document.createElement('img');
     img.src = _inspectorPreviewUrl;
@@ -318,6 +369,7 @@ async function loadInspectorPreview(path, seq) {
 
   if (data.kind === 'text') {
     if (_inspectorPreviewUrl) { URL.revokeObjectURL(_inspectorPreviewUrl); _inspectorPreviewUrl = null; }
+    dropInspectorPreviewScroll();
     el.innerHTML = '';
     el.style.display = 'flex';
     el.style.flexDirection = 'column';
@@ -328,7 +380,7 @@ async function loadInspectorPreview(path, seq) {
     pre.textContent = data.content;
     el.appendChild(pre);
     // The panel's overlay scrollbar, not a permanent native bar (§9.3 / §12).
-    if (typeof fpOverlayScroll === 'function') fpOverlayScroll(pre, { hoverRoot: el });
+    if (typeof fpOverlayScroll === 'function') _inspectorPreviewScroll = fpOverlayScroll(pre, { hoverRoot: el });
     if (data.truncated) {
       const footer = document.createElement('div');
       footer.className = 'mono';
@@ -670,6 +722,7 @@ async function _showInspectorMulti(paths) {
  * screen's file over a listing selecting something else (pass 2 #75). Same
  * three-way branch as browser.js's onSelectionChanged, minus the debounce. */
 function syncInspectorToBrowserSelection() {
+  if (showInspectorForThisPc()) return;
   const selection = (typeof browserState !== 'undefined' && browserState.selection) || null;
   const n = selection ? selection.size : 0;
   if (n === 0) {
@@ -682,13 +735,43 @@ function syncInspectorToBrowserSelection() {
   }
 }
 
+/** On the This PC page the panel describes the selected drive card, or shows
+ * the empty state with none selected (Task 14 Q18: the status bar said
+ * "1 selected" over "No file selected"). Returns false off This PC. */
+function showInspectorForThisPc() {
+  if (typeof thisPcActive !== 'function' || !thisPcActive()) return false;
+  _inspectorSeq++;   // nothing fetched here; invalidate whatever still is
+  const path = thisPcSelectedPath();
+  const d = path ? (thisPcState.drives || []).find(x => x.mount === path) : null;
+  if (d) updateInspector('drive', d);
+  else updateInspector('none');
+  return true;
+}
+
+/** The neutral "No file selected" panel for a screen that has no selection
+ * of its own (Settings, …): it never names the item another screen had
+ * selected, and its actions are disabled (Task 14 Q2). */
+function showInspectorNeutral() {
+  _inspectorSeq++;
+  updateInspector('none');
+}
+
 // ── Actions row: Open / Open with… / Reveal ──────────────────────────────────
 // They act on the Browser's single selection, so with anything else (nothing
 // selected, several items, the This PC page's drive cards) they are disabled
 // — aria-disabled, not [disabled], so the tooltip can still say why.
 
-/** The one selected Browser item the action row acts on, or null. */
+/** The one item the action row acts on, or null: the Browser's single
+ * selection on the Browser screen, the selected Recent / Favorites row on
+ * Home (the row the panel is showing), nothing on any other screen — the
+ * panel shows no item there (Task 14 Q2). */
 function inspectorSelectedPath() {
+  const screen = typeof activeTab === 'function' && activeTab() ? activeTab().screen : 'browser';
+  if (screen === 'home') {
+    const row = document.querySelector('#screen-home .fp-row--selected[data-path]');
+    return row ? row.dataset.path : null;
+  }
+  if (screen !== 'browser') return null;
   const sel = (typeof browserState !== 'undefined' && browserState.selection) || null;
   return sel && sel.size === 1 ? [...sel][0] : null;
 }

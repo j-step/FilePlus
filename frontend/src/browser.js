@@ -119,6 +119,10 @@ const browserState = {
   // bail out instead of painting stale data over whatever's current. See
   // loadDirectory()'s reqTabId/reqSeq guard.
   _loadSeq: 0,
+  // The latest navigation (loadDirectory): its _loadSeq and, while it loads,
+  // { seq, tabId, done } — refreshDirectory() waits for it (Task 14 M1).
+  _navSeq: 0,
+  _navInFlight: null,
   // The tab whose listing browserState.path/entries (and #list-scroll) hold —
   // set by every committed listing. A failed navigation may only fall back
   // to "keep what is on screen" when what is on screen is this tab's own.
@@ -586,6 +590,10 @@ function decideView(path, entries) {
  * ui.view_migrated_2d marks it done.
  */
 function migrateViewSettings(cfg) {
+  // Only once GET /config has really answered (Task 14 M5): with the backend
+  // not up yet, cfg is an empty stand-in and the "migrated" write failed with
+  // an error toast at launch. refreshBackendData() re-runs this on reconnect.
+  if (!window.__fpConfigLoaded) return;
   if (!cfg || cfg['ui.view_migrated_2d']) return;
   saveSetting('ui.view_migrated_2d', true);
   if ('ui.view_mode' in cfg) deleteSetting('ui.view_mode');
@@ -795,6 +803,13 @@ function initMarqueeSelection() {
 /** The one byte formatter: B, then KB / MB / GB / TB with one decimal
  * (Stage 2D §8 — drive sizes read "120.3 GB free of 237.0 GB"). Anything that
  * is not a number (an unknown size) is an em dash, never "NaN". */
+/** "1 item" / "3 items" — every count the UI prints goes through this, so
+ * none says "1 items" (Task 14 Q4). `n` is printed with locale grouping. */
+function countLabel(n, singular, plural = `${singular}s`) {
+  const v = Number(n) || 0;
+  return `${v.toLocaleString()} ${v === 1 ? singular : plural}`;
+}
+
 function formatSize(bytes) {
   if (bytes == null || !Number.isFinite(Number(bytes))) return '—';
   const n = Number(bytes);
@@ -909,7 +924,18 @@ function parentOfPath(p) {
  * moved on). A late answer for a tab that is no longer active may refresh
  * that tab's cached listing, and never touches the DOM.
  */
-async function loadDirectory(absPath, opts = {}) {
+function loadDirectory(absPath, opts = {}) {
+  // The navigation in flight, for refreshDirectory() (Task 14 M1): a refresh
+  // that lands while it loads waits for it rather than superseding it.
+  const done = _loadDirectory(absPath, opts);
+  const rec = { seq: browserState._navSeq, tabId: tabs.activeId, done };
+  browserState._navInFlight = rec;
+  const clear = () => { if (browserState._navInFlight === rec) browserState._navInFlight = null; };
+  done.then(clear, clear);
+  return done;
+}
+
+async function _loadDirectory(absPath, opts = {}) {
   const { addToHistory = true, preserveSelection = false, restore = null, cached = null, historyIndex = null, focusChild = null } = opts;
   // No path (a tab with no folder yet) is This PC, never the sandbox.
   if (!absPath) absPath = THISPC;
@@ -917,6 +943,7 @@ async function loadDirectory(absPath, opts = {}) {
   rememberFolderPlace();
   const reqTabId = tabs.activeId;
   const reqSeq = ++browserState._loadSeq;
+  browserState._navSeq = reqSeq;
   const superseded = () => tabs.activeId !== reqTabId || browserState._loadSeq !== reqSeq;
   // Any real navigation ends a search — opening a result folder, Back, a
   // sidebar click, a spring-loaded drop, the breadcrumb's ×. This tab's OWN
@@ -1080,7 +1107,6 @@ function commitListing(data, { absPath, addToHistory = true, restore: restoreIn 
     tab.path = data.path;
     tab.screen = 'browser';
     tab.listing = listingRecordFrom(data, fetchedAt);
-    tab.stale = false;
   }
   // Tab label/icon, sidebar highlight and breadcrumb — only now that the
   // folder is known to exist (pass-2 #55).
@@ -1270,6 +1296,15 @@ function refreshDirectory() {
       }
     });
   }
+  // A navigation still loading in this tab is not cancelled by a refresh
+  // (Task 14 M1): F5, or a file operation's trailing refresh, used to bump
+  // _loadSeq and so drop the folder the user had just clicked into. The
+  // refresh waits for the navigation instead and then refreshes whatever is
+  // on screen (the new folder, or the old one if the navigation failed).
+  const nav = browserState._navInFlight;
+  if (nav && nav.tabId === tabs.activeId && nav.seq === browserState._loadSeq) {
+    return nav.done.then(() => refreshDirectory(), () => refreshDirectory());
+  }
   if (!browserState.path || !browserHasOwnListing()) return Promise.resolve();
   // The This PC page re-reads the drives (thispc.js).
   if (browserState.path === THISPC) return refreshThisPc();
@@ -1299,7 +1334,13 @@ function refreshDirectory() {
 /** What a row shows, as one comparable string — patchDirectory() replaces a
  * row only when this changes. */
 function rowSignature(e) {
-  return [e.name, e.is_dir ? 1 : 0, e.size ?? '', e.modified ?? '', e.created ?? '', e.accessed ?? '',
+  // Only the date the row shows counts (Task 14 M2): Windows moves a file's
+  // last-access time whenever something reads it (the shell making its
+  // thumbnail, an Open), and counting that replaced the row on the next
+  // refresh — over 30% of them, a full render — for a column not on screen.
+  // A sort change to another date field re-renders every row anyway.
+  const date = e[dateFieldForSort()];
+  return [e.name, e.is_dir ? 1 : 0, e.size ?? '', date ?? '',
     e.is_hidden ? 1 : 0, e.error || '', e.ext || ''].join('\u0001');
 }
 
@@ -1960,7 +2001,7 @@ function renderSearchResults(payload, { query = '', root = '', preserveSelection
   listScroll.scrollLeft = 0;
 
   const n = browserState.entries.length;
-  setSearchHeader(payload.truncated ? `First ${n} results — refine the search` : `${n} results`);
+  setSearchHeader(payload.truncated ? `First ${countLabel(n, 'result')} — refine the search` : countLabel(n, 'result'));
   onSelectionChanged();
   refreshNavButtons();
 }
@@ -2125,9 +2166,25 @@ function getSelectedPaths() { return [...browserState.selection]; }
 function canRenameSelection() { return browserState.selection.size === 1; }
 
 /** Looks up the entry object for an absolute path in the current directory, or null. */
+let _entryMap = { entries: null, path: null, map: new Map() };
 function entryForPath(path) {
   if (!browserState.path && browserState.mode !== 'search') return null;
-  return browserState.entries.find(e => entryPath(e) === path) || null;
+  // A path -> entry map, built once per listing (Task 14 M8): every writer
+  // replaces browserState.entries with a new array, so the array and the
+  // folder it was joined against identify the listing. The linear find this
+  // replaces made Ctrl+A in a 10,000-item folder a multi-second freeze
+  // (selectionTotalSize looks up every selected path).
+  const entries = browserState.entries || [];
+  const m = _entryMap;
+  if (m.entries !== entries || m.path !== browserState.path) {
+    const map = new Map();
+    for (const e of entries) {
+      const p = entryPath(e);
+      if (!map.has(p)) map.set(p, e);
+    }
+    _entryMap = { entries, path: browserState.path, map };
+  }
+  return _entryMap.map.get(path) || null;
 }
 
 /** Finds the rendered row element for an absolute path, or null. */
@@ -2626,6 +2683,7 @@ let _inspectorDebounceTimer = null;
 let _inspectorTimerKey = null;   // selection key the armed timer will show
 let _inspectorLastChange = -Infinity;
 let _inspectorShownKey = '';     // the last selection the panel was pointed at
+let _inspectorShownKind = 0;     // 0 none, 1 one item, 2 several — of that selection
 
 function inspectorSelectionKey() {
   return [...browserState.selection].join('|');
@@ -2633,6 +2691,7 @@ function inspectorSelectionKey() {
 
 /** Points the inspector at the current selection now. */
 function showInspectorForSelection() {
+  if (typeof showInspectorForThisPc === 'function' && showInspectorForThisPc()) return;
   const n = browserState.selection.size;
   if (n === 0) {
     _inspectorSeq++; // invalidate any fetch still in flight from the prior selection
@@ -2676,15 +2735,26 @@ function onSelectionChanged() {
   // A burst is one item replacing another within the settle window. Emptying
   // the selection is never part of one, and a repeat of the same selection
   // (a refresh) does not start one.
+  // A change between one item and several is never part of a burst either
+  // (Task 14 Q3): the status bar said "2 selected" while the panel still
+  // showed the one file for the settle window — the panel's kind follows the
+  // selection at once.
   const now = performance.now();
-  const burst = now - _inspectorLastChange < INSPECTOR_SETTLE_MS;
-  if (browserState.selection.size === 0) { _inspectorLastChange = -Infinity; _inspectorShownKey = ''; }
+  const size = browserState.selection.size;
+  const kind = size === 0 ? 0 : size === 1 ? 1 : 2;
+  const burst = now - _inspectorLastChange < INSPECTOR_SETTLE_MS && kind === _inspectorShownKind;
+  _inspectorShownKind = kind;
+  if (size === 0) { _inspectorLastChange = -Infinity; _inspectorShownKey = ''; }
   else if (key !== _inspectorShownKey) { _inspectorLastChange = now; _inspectorShownKey = key; }
-  if (browserState.selection.size === 0 || !burst) {
+  if (size === 0 || !burst) {
     cancelInspectorTimer();
     showInspectorForSelection();
     return;
   }
+  // Several items changing fast (a marquee drag): the count and total size
+  // are known here and cheap — they follow at once; only the tag fetch waits
+  // for the selection to settle.
+  if (kind === 2) updateInspector('multi', { count: size, totalSize: formatSize(selectionTotalSize()) });
   // An armed debounce counts as inspector work still to come
   // (window.__fpInspectorPending, inspector.js — the tests' settle signal).
   if (_inspectorDebounceTimer === null) window.__fpInspectorPending++;
@@ -2762,7 +2832,7 @@ function updateStatusBar() {
   const countEl = document.getElementById('status-count');
   const selEl = document.getElementById('status-selected');
   const n = browserState.entries.length;
-  if (countEl) countEl.textContent = browserState.mode === 'search' ? `${n} results` : `${n} items`;
+  if (countEl) countEl.textContent = countLabel(n, browserState.mode === 'search' ? 'result' : 'item');
   if (selEl) {
     const n = browserState.selection.size;
     if (n === 0) selEl.textContent = 'Nothing selected';
@@ -2783,7 +2853,7 @@ function updateScreenStatus() {
   const pane = onHome ? [...home.querySelectorAll('.home-pane')].find(p => p.style.display !== 'none') : null;
   const n = pane ? pane.querySelectorAll('.fp-row[data-path]').length : 0;
   const sel = pane ? pane.querySelectorAll('.fp-row--selected').length : 0;
-  if (countEl) { countEl.textContent = onHome ? `${n} item${n === 1 ? '' : 's'}` : ''; countEl.hidden = !onHome; }
+  if (countEl) { countEl.textContent = onHome ? countLabel(n, 'item') : ''; countEl.hidden = !onHome; }
   if (selEl) { selEl.textContent = onHome ? (sel ? `${sel} selected` : 'Nothing selected') : ''; selEl.hidden = !onHome; }
   const sep = countEl && countEl.nextElementSibling;
   if (sep && sep.classList.contains('fp-statusbar__sep')) sep.hidden = !onHome;
@@ -2927,6 +2997,9 @@ function browserKeydown(e) {
   // see and the re-run search would not show (pass 2 #51).
   if (ctrl && key.toLowerCase() === 'v') {
     e.preventDefault();
+    // A held Ctrl+V must not paste over and over (copy mode would make
+    // "x - Copy (2)", "(3)"…: Task 14 I1). Only a real press acts.
+    if (e.repeat) return;
     if (browserState.mode === 'search') { showToast('Leave search results to paste here', 'error'); return; }
     if (browserState.path) fileops.pasteInto(browserState.path).catch(fileopsReported);
     return;
@@ -2942,7 +3015,9 @@ function browserKeydown(e) {
     return;
   }
   if (key === 'F2') { e.preventDefault(); if (canRenameSelection() && browserState.focus) startInlineRename(browserState.focus); return; }
-  if (key === 'Delete') { e.preventDefault(); fileops.trashSelection().catch(fileopsReported); return; }
+  // A held Delete auto-repeats, and a delete selects the next item, so each
+  // repeat would trash the next file too (Task 14 I1): only a real press acts.
+  if (key === 'Delete') { e.preventDefault(); if (!e.repeat) fileops.trashSelection().catch(fileopsReported); return; }
 
   switch (key) {
     case 'ArrowDown':  e.preventDefault(); moveFocusDir('down', { shift: e.shiftKey }); break;
@@ -2961,7 +3036,7 @@ function browserKeydown(e) {
       // no-ops on an empty selection, so "nothing selected" falls out for
       // free rather than needing its own check here.
       const backspaceDeletes = !!(window.__fpConfig && window.__fpConfig['ui.backspace_deletes']);
-      if (backspaceDeletes) fileops.trashSelection().catch(fileopsReported);
+      if (backspaceDeletes) { if (!e.repeat) fileops.trashSelection().catch(fileopsReported); }
       else navUp();
       break;
     }

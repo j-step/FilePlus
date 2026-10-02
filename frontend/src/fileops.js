@@ -223,14 +223,24 @@ const fileops = {
     }
   },
 
+  // A second Delete while one is still out is a no-op (Task 14 I1): the
+  // selection still holds the items being trashed, and once the first one
+  // lands the next item is selected (selectAfterDelete) — a double press must
+  // not send a duplicate request or trash that next item too.
+  _trashInFlight: false,
+
   async trashSelection() {
+    if (this._trashInFlight) return;
     const paths = getSelectedPaths();
     if (!paths.length) return;
     // Where the first deleted item sat: the item that takes its place is
     // selected afterwards (Explorer), so the keyboard carries on from there.
     const place = typeof deletePlace === 'function' ? deletePlace(paths) : null;
-    await this.run('Deleted', (overridePaths) => API.post('/fs/trash', { paths: overridePaths || paths }));
-    if (place && typeof selectAfterDelete === 'function') selectAfterDelete(place);
+    this._trashInFlight = true;
+    try {
+      await this.run('Deleted', (overridePaths) => API.post('/fs/trash', { paths: overridePaths || paths }));
+      if (place && typeof selectAfterDelete === 'function') selectAfterDelete(place);
+    } finally { this._trashInFlight = false; }
   },
 
   async newFolder(dir) {

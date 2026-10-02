@@ -560,7 +560,10 @@ function homeClearSelection() {
   // that selection had not changed. Hand it back to whatever the Browser has
   // selected instead (pass 2 #75) — which IS updateInspector('none') when the
   // Browser has nothing selected.
-  if (typeof syncInspectorToBrowserSelection === 'function') syncInspectorToBrowserSelection();
+  // On Home itself the panel has nothing left to show: neutral (Task 14 Q2).
+  const onHome = typeof activeTab === 'function' && activeTab() && activeTab().screen === 'home';
+  if (onHome && typeof showInspectorNeutral === 'function') showInspectorNeutral();
+  else if (typeof syncInspectorToBrowserSelection === 'function') syncInspectorToBrowserSelection();
   else if (typeof updateInspector === 'function') updateInspector('none');
 }
 

@@ -248,6 +248,7 @@ function selectThisPcCard(path, { focus = true } = {}) {
   thisPcState.selected = path;
   applyThisPcSelection();
   updateThisPcStatus();
+  if (typeof showInspectorForThisPc === 'function') showInspectorForThisPc();
   if (focus && document.activeElement !== card) card.focus({ preventScroll: true });
   card.scrollIntoView({ block: 'nearest', inline: 'nearest' });
 }
@@ -257,6 +258,7 @@ function clearThisPcSelection() {
   thisPcState.selected = null;
   applyThisPcSelection();
   updateThisPcStatus();
+  if (typeof showInspectorForThisPc === 'function') showInspectorForThisPc();
 }
 
 /** Puts DOM focus on the card under the cursor. `onlyIfInside`: only when
@@ -345,7 +347,6 @@ function commitThisPc(drives, { addToHistory = true, restore = null, historyInde
     tab.path = THISPC;
     tab.screen = 'browser';
     tab.listing = null;
-    tab.stale = false;
   }
 
   // What is selected: the tab's own selection when it is being restored;

@@ -39,6 +39,9 @@ const FP_OSCROLL_FADE_MS = 900;   // the thumb fades this long after the last sc
 const FP_OSCROLL_PAD_PX = 2;      // the thumb's gap from the track's top/bottom ends
 const FP_OSCROLL_MIN_THUMB = 24;  // shortest thumb, CSS px
 const FP_OSCROLL_SLACK = 1;       // px of scroll that still counts as "at the end"
+// Live (attached, not destroyed) overlay scrollbars — a leak check for the
+// tests (Task 14 I2: one per text preview used to pile up for the session).
+window.__fpOverlayScrollLive = 0;
 
 /** A px length custom property of `el` (e.g. --oscroll-hot), or `fallback`. */
 function _fpOscrollVar(cs, name, fallback) {
@@ -215,8 +218,11 @@ function fpOverlayScroll(el, opts = {}) {
     mo.observe(el, { childList: true, subtree: true });
   }
   update();
+  window.__fpOverlayScrollLive++;
 
   function destroy() {
+    if (el._fpOverlayScroll !== handle) return;   // already destroyed
+    window.__fpOverlayScrollLive--;
     clearTimeout(fadeTimer);
     if (raf) cancelAnimationFrame(raf);
     ro?.disconnect();

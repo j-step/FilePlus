@@ -16,8 +16,12 @@ async function loadConfig() {
     // so an unbounded GET /config can sit connected-but-unanswered for the
     // whole of a slow startup and stall everything init awaits after it.
     window.__fpConfig = await API.get('/config', null, apiTimeout());
+    window.__fpConfigLoaded = true;
   } catch (err) {
     window.__fpConfig = {};
+    // An empty stand-in, not the user's settings: nothing may be decided
+    // (or written back) from it — see migrateViewSettings (Task 14 M5).
+    window.__fpConfigLoaded = false;
   }
 }
 
@@ -434,7 +438,7 @@ async function loadIndexStatus() {
       ${roots.map(r => `<div class="settings-index__row" role="listitem">
         <span class="settings-index__main">
           <span class="settings-index__root fp-mono" title="${escapeHtml(r.root)}">${escapeHtml(r.root)}</span>
-          <span class="settings-index__meta">${Number(r.file_count || 0).toLocaleString()} files · indexed ${escapeHtml(formatIndexRunTime(r.last_run))}</span>
+          <span class="settings-index__meta">${countLabel(r.file_count, 'file')} · indexed ${escapeHtml(formatIndexRunTime(r.last_run))}</span>
         </span>
         <span class="settings-index__actions-cell">
           <button class="fp-btn fp-btn--ghost fp-btn--sm" data-action="settings-index-reindex"
@@ -488,7 +492,7 @@ function removeIndexRoot(root) {
           // the stale-sweep's count, which was 0 whenever the files were
           // still on disk — i.e. always).
           const n = res && Number(res.removed);
-          const suffix = n ? ` (${n.toLocaleString()} files)` : '';
+          const suffix = n ? ` (${countLabel(n, 'file')})` : '';
           showToast(`Removed ${pathBaseName(root) || root} from the index${suffix}`, 'default');
           loadIndexStatus();
         })
