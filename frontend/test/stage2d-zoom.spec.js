@@ -203,13 +203,21 @@ test('inspector open: no view squeezes or clips a name at 125% and 150%; toolbar
   try {
     const root = (await apiGet('/fs/list/root')).path;
     await open(page, `${root}\\Views`, 20);
-    await page.evaluate(() => setInspectorOpen(true, { persist: false }));
+    const steps = await page.evaluate(() => window.electronAPI.zoomSteps());
     const offenders = [];
     let checked = 0;
-    for (const z of [0.8, 1, 1.25, 1.5, 2]) {
+    let chromeChecks = 0;
+    // Every zoom step of the ladder (plus 125%, the views sweep's in-between
+    // point); the chrome is checked with the inspector closed AND open.
+    for (const z of [...new Set([...steps, 1.25])].sort((a, b) => a - b)) {
       await setZoom(app, page, z);
       expect(await page.evaluate(() => document.querySelectorAll('#list-scroll > .fp-row').length)).toBeGreaterThanOrEqual(20);
-      offenders.push(...(await chromeClips(page)).map((b) => `chrome@${z}: ${b}`));
+      for (const inspectorOpen of [false, true]) {
+        await page.evaluate((o) => setInspectorOpen(o, { persist: false }), inspectorOpen);
+        await twoFrames(page);
+        offenders.push(...(await chromeClips(page)).map((b) => `chrome@${z} inspector ${inspectorOpen ? 'open' : 'closed'}: ${b}`));
+        chromeChecks += 1;
+      }
       if (z !== 1.25 && z !== 1.5) continue;
       for (const [label, view, size] of NAMED) {
         await page.evaluate(([v, s]) => setView(v, s, { manual: false }), [view, size]);
@@ -236,6 +244,7 @@ test('inspector open: no view squeezes or clips a name at 125% and 150%; toolbar
     }
     expect(offenders).toEqual([]);
     expect(checked).toBe(NAMED.length * 2);
+    expect(chromeChecks).toBe((steps.length + 1) * 2);
   } finally {
     await resetZoom(app);
     await app.close();
@@ -366,6 +375,94 @@ test('each zoom step eases in (or records the instant fallback) and the panels h
     expect(await page.evaluate(() => window.__fpZoomEase)).toBe('instant');
   } finally {
     await resetZoom(app);
+    await app.close();
+  }
+  expect(errors).toEqual([]);
+});
+
+test('one Ctrl+wheel notch is exactly one ladder step at every app zoom; resizes cost no zoom IPC; a stale display scale cannot bend a step', async () => {
+  const { app, page, errors } = await launchApp();
+  try {
+    const root = (await apiGet('/fs/list/root')).path;
+    await open(page, `${root}\\Views`, 20);
+    await page.evaluate(() => setView('details', null, { manual: false }));
+    // A real notch, delivered by the OS path: Chromium reports it as 100
+    // screen units, i.e. 100 / zoom CSS px (90.909… at 110%, 66.666… at 150%).
+    const notch = async (z) => {
+      const b = await page.locator('#list-scroll').boundingBox();
+      await app.evaluate(({ BrowserWindow }, a) => {
+        BrowserWindow.getAllWindows()[0].webContents.sendInputEvent({ type: 'mouseWheel', x: a.x, y: a.y,
+          deltaX: 0, deltaY: 100, wheelTicksY: 1, canScroll: true, modifiers: ['control'] });
+      }, { x: Math.round((b.x + b.width / 2) * z), y: Math.round((b.y + b.height / 2) * z) });
+    };
+    for (const z of [1.1, 1.5, 1.75]) {
+      await setZoom(app, page, z);
+      const before = await page.evaluate(() => currentViewStep());
+      await notch(z);
+      await expect.poll(() => page.evaluate(() => currentViewStep()), { message: `notch @${z}` }).toBe(before + 1);
+      await page.waitForTimeout(150);
+      expect(await page.evaluate(() => currentViewStep()), `notch @${z} stepped once`).toBe(before + 1);
+      await page.evaluate(() => setView('details', null, { manual: false }));
+    }
+
+    // Window resizes (no zoom change) ask the main process nothing.
+    await app.evaluate(({ ipcMain }) => {
+      globalThis.__fpZoomGets = 0;
+      ipcMain.on('win-zoom-get', () => { globalThis.__fpZoomGets += 1; });
+    });
+    for (const [w, h] of [[1100, 760], [1000, 700], [1200, 800]]) {
+      await app.evaluate(({ BrowserWindow }, a) => BrowserWindow.getAllWindows()[0].setSize(a.w, a.h), { w, h });
+      await page.waitForTimeout(150);
+    }
+    expect(await app.evaluate(() => globalThis.__fpZoomGets)).toBe(0);
+
+    // The display scale moved under us (a monitor DPI change that reached
+    // nothing here): the next step re-reads it before it starts, so every
+    // eased frame still publishes the zoom the page really applied.
+    await setZoom(app, page, 1);
+    await page.emulateMedia({ reducedMotion: 'no-preference' });
+    const sw0 = await screenW(page, '#sidebar');
+    const base = await page.evaluate(() => window.devicePixelRatio);
+    await page.evaluate(() => {
+      appZoom.scale *= 1.25;
+      window.__zs = [];
+      window.__zsOn = true;
+      const tick = () => {
+        const z = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--app-zoom'));
+        window.__zs.push({ z, dpr: window.devicePixelRatio, sb: document.getElementById('sidebar').getBoundingClientRect().width });
+        if (window.__zsOn) requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    });
+    await page.keyboard.press('Control+=');
+    await settled(page, 1.1);
+    const samples = await page.evaluate(() => { window.__zsOn = false; return window.__zs; });
+    expect(samples.length).toBeGreaterThan(2);
+    for (const s of samples) {
+      const applied = s.dpr / base;
+      expect(Math.abs(s.z - applied), `--app-zoom vs applied zoom ${applied}`).toBeLessThan(0.001);
+      expect(Math.abs(s.sb * applied - sw0), `sidebar at ${applied}`).toBeLessThanOrEqual(1);
+    }
+  } finally {
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1200, 800)).catch(() => {});
+    await resetZoom(app);
+    await app.close();
+  }
+  expect(errors).toEqual([]);
+});
+
+test('the 32 ms fallback ignores the session\'s warm-up frame and nothing else', async () => {
+  const { app, page, errors } = await launchApp();
+  try {
+    const v = await page.evaluate(() => ({
+      warmupSpike: zoomFramesTooSlow([8, 120, 8, 8], true),
+      firstFrameSpike: zoomFramesTooSlow([120, 8, 8, 8], true),
+      laterSpikeFirstStep: zoomFramesTooSlow([8, 8, 40, 8], true),
+      spikeSecondStep: zoomFramesTooSlow([120, 8, 8], false),
+      smooth: zoomFramesTooSlow([8, 8, 8, 8], false),
+    }));
+    expect(v).toEqual({ warmupSpike: false, firstFrameSpike: false, laterSpikeFirstStep: true, spikeSecondStep: true, smooth: false });
+  } finally {
     await app.close();
   }
   expect(errors).toEqual([]);

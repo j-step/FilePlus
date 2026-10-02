@@ -1297,14 +1297,17 @@ function applyTheme(mode) {
 // --app-zoom follows the zoom the page has actually APPLIED: it is set in a
 // capture-phase `resize` listener, which runs in the frame the new zoom first
 // lays out in, before any layout of it — so no frame shows a panel at the
-// old width. Mid-ease the factor comes from devicePixelRatio over the
-// display scale (renderer-local truth); asking the main process then could
-// answer with a step it has received but the page has not drawn yet.
+// old width. A zoom change always changes devicePixelRatio, so a resize that
+// leaves it alone (the user dragging the window edge) costs nothing; a
+// matchMedia(resolution) watcher catches a monitor-DPI move that fires no
+// resize. Mid-ease the factor comes from devicePixelRatio over the display
+// scale (renderer-local truth, re-read before every step); asking the main
+// process then could answer with a step the page has not drawn yet.
 const ZOOM_DEFAULT = 1.0;
 const ZOOM_EASE_FRAME_LIMIT_MS = 32;
 const ZOOM_PILL_FADE_MS = 1200;
 const appZoom = {
-  current: 1, target: null, busy: 0, scale: null, steps: null,
+  current: 1, target: null, busy: 0, scale: null, dpr: null, steps: null,
   measured: [], dropped: false, pillTimer: 0, pillHideTimer: 0, settleRaf: 0,
 };
 window.__fpZoomFrames = [];
@@ -1323,6 +1326,16 @@ function getCurrentZoom() {
   return Number(window.electronAPI?.getZoom?.()) || ZOOM_DEFAULT;
 }
 
+/** The 32 ms fallback test for one eased step's rAF-to-rAF frame times. The
+ * session's first eased step skips its first two frames: its first factor
+ * goes out in the first frame and is drawn in the next, and the first frame
+ * a page ever draws at a new zoom can take 100+ ms while the GPU warms up
+ * (measured: 108–129 ms on a fresh profile, never again after) — that one
+ * frame must not switch the whole session to instant steps. */
+function zoomFramesTooSlow(frames, firstOfSession) {
+  return frames.slice(firstOfSession ? 2 : 0).some((ms) => ms > ZOOM_EASE_FRAME_LIMIT_MS);
+}
+
 function zoomEaseMode() {
   const reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   return (appZoom.dropped || reduced) ? 'instant' : 'eased';
@@ -1331,17 +1344,26 @@ function zoomEaseMode() {
 /** Publishes the applied zoom as --app-zoom. Panel width transitions are
  * held off for the frame so the panels never animate toward their new CSS
  * width (that is exactly the "closing in" the owner disliked). */
-function syncAppZoom() {
+function syncAppZoom(force = false) {
   const dpr = window.devicePixelRatio || 1;
+  const root = document.documentElement;
+  const first = !root.style.getPropertyValue('--app-zoom');
+  if (!force && !first && dpr === appZoom.dpr) return;   // a plain window resize
+  appZoom.dpr = dpr;
   let z;
   if (appZoom.busy && appZoom.scale) {
     z = Math.round((dpr / appZoom.scale) * 1e6) / 1e6;
   } else {
     z = getCurrentZoom();
+    if (force && appZoom.scale && Math.abs(dpr / appZoom.scale - z) > 0.001) {
+      // The step's reply beat its first frame: the page still draws the old
+      // zoom. Publishing now would size the panels for a zoom not drawn yet;
+      // the resize that comes with it publishes instead.
+      appZoom.dpr = null;
+      return;
+    }
     appZoom.scale = dpr / z;
   }
-  const root = document.documentElement;
-  const first = !root.style.getPropertyValue('--app-zoom');
   const moved = first || Math.abs(z - appZoom.current) >= 0.00005;
   // Always keep the exact factor, even when only float noise moved (the
   // mid-ease devicePixelRatio estimate vs the settled IPC value): the wheel
@@ -1357,8 +1379,15 @@ function syncAppZoom() {
   // Startup at 100% is not a change: no pill. Startup zoomed shows it once.
   if (moved && !appZoom.busy && !(first && Math.abs(z - ZOOM_DEFAULT) < 0.005)) updateZoomPill(z);
 }
-window.addEventListener('resize', syncAppZoom, true);
+window.addEventListener('resize', () => syncAppZoom(), true);
+// Re-armed against the new ratio after every change (matchMedia's `change`
+// fires once per crossing) — same pattern as icons.js's _fpWatchDpr.
+function watchAppZoomDpr() {
+  const mq = window.matchMedia(`(resolution: ${window.devicePixelRatio || 1}dppx)`);
+  mq.addEventListener('change', () => { syncAppZoom(); watchAppZoomDpr(); }, { once: true });
+}
 syncAppZoom();
+watchAppZoomDpr();
 window.__fpZoomEase = zoomEaseMode();
 
 // Status-bar zoom pill (spec §5): shows the percentage on every change and
@@ -1403,7 +1432,10 @@ async function setAppZoom(target) {
   appZoom.target = t;
   updateZoomPill(t);
   const ease = zoomEaseMode() === 'eased';
-  if (!appZoom.scale) appZoom.scale = (window.devicePixelRatio || 1) / getCurrentZoom();
+  // The display scale is re-read before every step that starts from rest
+  // (the window may have moved to a monitor with another DPI since): the
+  // mid-ease --app-zoom is devicePixelRatio over it.
+  if (!appZoom.busy) appZoom.scale = (window.devicePixelRatio || 1) / getCurrentZoom();
   appZoom.busy += 1;
   window.__fpZoomBusy = true;
   let r = null;
@@ -1415,21 +1447,22 @@ async function setAppZoom(target) {
     appZoom.busy -= 1;
   }
   if (ease && r && !r.superseded && r.frames && r.frames.length && appZoom.measured.length < 2) {
+    const firstOfSession = appZoom.measured.length === 0;
     appZoom.measured.push(r.frames);
     window.__fpZoomFrames = appZoom.measured.map((f) => f.slice());
-    if (r.frames.some((ms) => ms > ZOOM_EASE_FRAME_LIMIT_MS)) appZoom.dropped = true;
+    if (zoomFramesTooSlow(r.frames, firstOfSession)) appZoom.dropped = true;
   }
   window.__fpZoomEase = zoomEaseMode();
   if (!appZoom.busy) {
     appZoom.target = null;
-    syncAppZoom();           // exact final factor (and the pill) from the main process
+    syncAppZoom(true);       // exact final factor (and the pill) from the main process
     window.__fpZoomBusy = false;
   }
 }
 
 function zoomStep(dir) {
   const steps = zoomSteps();
-  const cur = appZoom.target ?? getCurrentZoom();
+  const cur = appZoom.target ?? appZoom.current;
   const next = dir > 0
     ? (steps.find((s) => s > cur + 0.001) ?? steps[steps.length - 1])
     : ([...steps].reverse().find((s) => s < cur - 0.001) ?? steps[0]);
@@ -1437,12 +1470,7 @@ function zoomStep(dir) {
 }
 function zoomIn()  { zoomStep(1); }
 function zoomOut() { zoomStep(-1); }
-function zoomReset() {
-  // Clears the old CSS-zoom font scale too, in case a previous build left one.
-  document.documentElement.style.zoom = '';
-  localStorage.removeItem('fp-zoom');
-  setAppZoom(ZOOM_DEFAULT);
-}
+function zoomReset() { setAppZoom(ZOOM_DEFAULT); }
 
 // ── Context-menu applicability (Task 11, playtest pass 1 §4.2) ─────────────
 // Shared enabled(ctx)/label(ctx) predicates, built from buildMenuContext()'s
@@ -2611,7 +2639,7 @@ const IN_SCOPE_ACTIONS = new Set([
   'settings-set-show-notifications', 'settings-toggle', 'settings-set-click-mode',
   'settings-set-icon-source', 'settings-quick-access-toggle', 'settings-set-backspace-deletes',
   'settings-empty-trash',
-  'settings-set-font-scale', 'settings-reset-shortcuts',
+  'settings-reset-shortcuts',
   // Handled by the 'input'/'change' listeners at the bottom of this file, not
   // by a click case — listed so a click on the slider is a silent no-op.
   'settings-inspector-width',
@@ -2990,13 +3018,6 @@ document.addEventListener('click', e => {
         },
       });
       break;
-    case 'settings-set-font-scale': {
-      const scale = btn.dataset.scale;
-      // Font scale applied as CSS zoom; for Ctrl+/- Electron native zoom is used instead.
-      document.documentElement.style.zoom = scale;
-      localStorage.setItem('fp-zoom', scale);
-      break;
-    }
     case 'settings-reset-shortcuts':
       // INTEGRATION: reset to default keybindings
       break;
@@ -3767,7 +3788,9 @@ document.addEventListener('auxclick', e => {
   let wheelAcc = 0;
   const screenDelta = (e) => {
     const unit = e.deltaMode === 1 ? 100 / 3 : (e.deltaMode === 2 ? 300 : 1);
-    return e.deltaY * unit * (e.deltaMode === 0 ? appZoom.current : 1);
+    // Rounded to 1/1000: a 100-unit notch at 110% arrives as 90.9090907 CSS px,
+    // and × 1.1 that is 99.9999997 — one hair short of a step without it.
+    return Math.round(e.deltaY * unit * (e.deltaMode === 0 ? appZoom.current : 1) * 1000) / 1000;
   };
   document.addEventListener('wheel', e => {
     const listScroll = e.target.closest && e.target.closest('#list-scroll');
