@@ -279,7 +279,7 @@ function thisPcProperties(path) {
   if (!path) return;
   Promise.resolve(window.electronAPI?.showProperties?.(path)).then(ok => {
     if (!ok) showToast('Failed to open Properties', 'error');
-  });
+  }).catch(err => showToast(`Failed to open Properties: ${formatApiError(err)}`, 'error'));
 }
 
 // ── Loading ──────────────────────────────────────────────────────────────────

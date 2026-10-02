@@ -88,15 +88,15 @@ function pathBaseName(p) {
 }
 
 /** Tab label for a browser-screen path: 'This PC' for the This PC page
- * (THISPC, or a tab with no folder yet), the drive's full name for a drive
- * root ('Local Disk (C:)' — what its crumb and sidebar row say), the
- * folder's basename otherwise. (A Home tab's label comes from createTab's
+ * (THISPC, or a tab with no folder yet), the bare drive letter for a drive
+ * root ('C:' — the owner's pass-1 rule; the full name lives in the
+ * breadcrumb), the folder's basename otherwise. (A Home tab's label comes from createTab's
  * own 'Home' default, not from here — this only ever runs for the browser
  * screen, from onNavigated().) */
 function tabLabelFor(path) {
   if (!path || path === THISPC) return 'This PC';
   const norm = String(path).replace(/[\\/]+$/, '');
-  if (/^[A-Za-z]:$/.test(norm)) return driveDisplayLabel(norm);
+  if (/^[A-Za-z]:$/.test(norm)) return norm.toUpperCase();
   return pathBaseName(norm) || norm;
 }
 
@@ -705,6 +705,19 @@ function updateSidebarActive(pathOrScreen) {
     it.classList.remove('fp-sidebar__item--active');
     it.classList.remove('active');
   });
+  // The This PC section head is the This PC page's sidebar entry (Stage 2D §8).
+  const thisPcHead = document.querySelector('#sb-thispc .fp-sidebar__section-head');
+  if (thisPcHead) {
+    thisPcHead.classList.remove('fp-sidebar__section-head--active');
+    thisPcHead.removeAttribute('aria-current');
+  }
+  if (pathOrScreen === THISPC) {
+    if (thisPcHead) {
+      thisPcHead.classList.add('fp-sidebar__section-head--active');
+      thisPcHead.setAttribute('aria-current', 'page');
+    }
+    return;
+  }
 
   const isKnownScreen = typeof pathOrScreen === 'string'
     && pathOrScreen !== 'browser'
@@ -2478,12 +2491,11 @@ async function loadDrives() {
 
 /**
  * The one drive model (Stage 2D §8): the sidebar's This PC list, the This PC
- * page, the drive crumb and drive-root tab labels all read window.__fpDrives.
+ * page and the drive crumb all read window.__fpDrives.
  * When the same drives come back (only their free space moved), every row and
  * card is patched in place — no icon repaints, no lost highlight.
  */
 function setDriveList(list) {
-  const prev = Array.isArray(window.__fpDrives) ? window.__fpDrives : null;
   window.__fpDrives = list; // driveDisplayLabel() reads this synchronously
   const container = document.getElementById('sb-drives');
   if (container) {
@@ -2501,15 +2513,6 @@ function setDriveList(list) {
     }
   }
   if (thisPcActive()) renderThisPC(list);
-  // A drive-root tab named before the drives were known says just "C:".
-  const renamed = !prev || prev.length !== list.length || prev.some((d, i) => driveDisplayName(d) !== driveDisplayName(list[i]));
-  if (renamed) {
-    tabs.list.forEach(t => {
-      if (t.screen !== 'browser' || !isDriveRootPath(t.path)) return;
-      const label = tabLabelFor(t.path);
-      if (t.label !== label) { t.label = label; updateTabElementAppearance(t); }
-    });
-  }
 }
 
 /** A sidebar drive row: the shared name, a 3px usage bar (--bad above 90%)
@@ -3211,11 +3214,16 @@ document.addEventListener('click', e => {
     case 'switch-inspector-tab':
       switchInspectorTab(btn.dataset.tab);
       break;
+    // The Inspector's action row: aria-disabled (no single selection) keeps
+    // the tooltip but does nothing.
     case 'inspector-open':
-      inspectorOpenSelected();
+      if (btn.getAttribute('aria-disabled') !== 'true') inspectorOpenSelected();
+      break;
+    case 'open-file-with':
+      if (btn.getAttribute('aria-disabled') !== 'true') inspectorOpenWithSelected();
       break;
     case 'inspector-reveal':
-      inspectorRevealSelected();
+      if (btn.getAttribute('aria-disabled') !== 'true') inspectorRevealSelected();
       break;
     case 'inspector-remove-tag': {
       const tagId = btn.dataset.tagId;

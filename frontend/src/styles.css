@@ -609,6 +609,11 @@ svg { flex-shrink: 0; }
 .fp-sidebar__section-head:hover .fp-sidebar__section-label {
   color: var(--text-secondary);
 }
+/* The This PC page is open in the active tab (Stage 2D §8): the head is that
+   page's sidebar entry, so it carries the accent the way an active item does. */
+.fp-sidebar__section-head--active .fp-sidebar__section-label,
+.fp-sidebar__section-head--active:hover .fp-sidebar__section-label,
+.fp-sidebar__section-head--active .fp-sidebar__chevron { color: var(--accent); }
 .fp-sidebar__chevron {
   display: inline-flex;
   align-items: center;
@@ -1509,6 +1514,19 @@ svg { flex-shrink: 0; }
 .fp-button--secondary:active, .fp-btn--secondary:active {
   background: var(--bg-pressed);
   border-color: var(--border-mid);
+}
+/* aria-disabled: looks like [disabled] but keeps pointer events, so the
+   button's tooltip still says why (the Inspector's action row, Stage 2D §8
+   fix round 1). Hover and press do nothing visible. */
+.fp-btn[aria-disabled="true"] {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.fp-btn[aria-disabled="true"]:active { transform: none; }
+.fp-btn--primary[aria-disabled="true"]:is(:hover, :active) { background: var(--accent); }
+.fp-btn--secondary[aria-disabled="true"]:is(:hover, :active) {
+  background: var(--bg-raised);
+  border-color: var(--border-subtle);
 }
 
 .fp-button--ghost, .fp-btn--ghost {

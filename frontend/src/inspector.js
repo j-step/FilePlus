@@ -37,6 +37,7 @@ let _inspectorEntry = null;
 function updateInspector(mode, data = {}) {
   const inspector = document.getElementById('inspector');
   if (!inspector) return;
+  syncInspectorActions();
 
   const singlePanes = inspector.querySelectorAll('.fp-inspector__pane:not([data-pane="multi"])');
   const multiPane   = inspector.querySelector('.fp-inspector__pane[data-pane="multi"]');
@@ -602,9 +603,41 @@ function syncInspectorToBrowserSelection() {
   }
 }
 
-// ── Actions row: Open / Reveal ────────────────────────────────────────────────
+// ── Actions row: Open / Open with… / Reveal ──────────────────────────────────
+// They act on the Browser's single selection, so with anything else (nothing
+// selected, several items, the This PC page's drive cards) they are disabled
+// — aria-disabled, not [disabled], so the tooltip can still say why.
+
+/** The one selected Browser item the action row acts on, or null. */
+function inspectorSelectedPath() {
+  const sel = (typeof browserState !== 'undefined' && browserState.selection) || null;
+  return sel && sel.size === 1 ? [...sel][0] : null;
+}
+
+const INSPECTOR_ACTION_TITLES = {
+  'inspector-open': 'Open the selected item',
+  'open-file-with': 'Choose the app to open the selected file with',
+  'inspector-reveal': 'Show the selected item in Windows Explorer',
+};
+
+/** Enables the action row for exactly one selected item (Open with… for a
+ * file only) and disables it otherwise. */
+function syncInspectorActions() {
+  const path = inspectorSelectedPath();
+  const entry = path && typeof entryForPath === 'function' ? entryForPath(path) : null;
+  document.querySelectorAll('#inspector .inspector__actions [data-action]').forEach(btn => {
+    const action = btn.dataset.action;
+    if (!(action in INSPECTOR_ACTION_TITLES)) return;
+    let why = path ? '' : 'Select one item first';
+    if (!why && action === 'open-file-with' && entry && entry.is_dir) why = 'Open with… is for files';
+    if (why) btn.setAttribute('aria-disabled', 'true');
+    else btn.removeAttribute('aria-disabled');
+    btn.title = why ? `${INSPECTOR_ACTION_TITLES[action]} — ${why}` : INSPECTOR_ACTION_TITLES[action];
+  });
+}
+
 function inspectorOpenSelected() {
-  const path = browserState.selection.size ? [...browserState.selection][0] : null;
+  const path = inspectorSelectedPath();
   if (!path) return;
   const openPath = window.electronAPI?.openPath;
   if (openPath) {
@@ -615,9 +648,21 @@ function inspectorOpenSelected() {
 }
 
 function inspectorRevealSelected() {
-  const path = browserState.selection.size ? [...browserState.selection][0] : null;
+  const path = inspectorSelectedPath();
   if (!path) return;
   window.electronAPI?.showItemInFolder?.(path);
+}
+
+/** Open with… — the native Windows "Open with" dialog for the selected file
+ * (pass 2 #185: the button used to be a dead stub). */
+function inspectorOpenWithSelected() {
+  const path = inspectorSelectedPath();
+  if (!path) return;
+  const entry = typeof entryForPath === 'function' ? entryForPath(path) : null;
+  if (entry && entry.is_dir) return;
+  Promise.resolve(window.electronAPI?.openWithDialog?.(path)).then(ok => {
+    if (!ok) showToast('Failed to open the Open With dialog', 'error');
+  }).catch(err => showToast(`Failed to open the Open With dialog: ${formatApiError(err)}`, 'error'));
 }
 
 // ── Inspector tabs ────────────────────────────────────────────────────────────

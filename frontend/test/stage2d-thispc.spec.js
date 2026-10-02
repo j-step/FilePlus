@@ -8,7 +8,7 @@
 const fs = require('fs');
 const path = require('path');
 const { test, expect } = require('@playwright/test');
-const { launchApp, apiGet, API, apiHeaders, SHOTS, expectNoErrors } = require('./harness/app');
+const { launchApp, apiGet, API, apiHeaders, SHOTS, shot, expectNoErrors } = require('./harness/app');
 
 test.setTimeout(240_000);
 
@@ -83,6 +83,10 @@ test('This PC: drive cards with icon, name, usage bar and free-of-total; history
     expect(await page.evaluate(() => activeTab().label)).toBe('This PC');
     expect(await page.evaluate(() => activeTab().path)).toBe('thispc:');
     await expect(crumbCurrent(page)).toHaveText('This PC');
+    // The sidebar's This PC header is this page's entry: it shows active.
+    await expect(page.locator('#sb-thispc .fp-sidebar__section-head')).toHaveClass(/fp-sidebar__section-head--active/);
+    await expect(page.locator('#sb-thispc .fp-sidebar__section-head')).toHaveAttribute('aria-current', 'page');
+    expect(await page.locator('#sidebar .fp-sidebar__item--active').count()).toBe(0);
     // The names are Explorer's, from the shared formatter the sidebar uses.
     const names = await page.evaluate(() => window.__fpDrives.map(driveDisplayName));
     await expect(cards.locator('.fp-drive-card__name')).toHaveText(names);
@@ -131,8 +135,14 @@ test('This PC: drive cards with icon, name, usage bar and free-of-total; history
     await expect(page.locator('#thispc-view')).toBeHidden();
     await settled(page);
     expect(await page.evaluate(() => activeTab().path)).toBe(first.mount);
-    // The drive root's tab label is its full name, like its crumb.
-    expect(await page.evaluate(() => activeTab().label)).toBe(names[0]);
+    // Leaving the page takes the header's active state with it.
+    await expect(page.locator('#sb-thispc .fp-sidebar__section-head')).not.toHaveClass(/fp-sidebar__section-head--active/);
+    expect(await page.evaluate(() => document.querySelector('#sb-thispc .fp-sidebar__section-head').hasAttribute('aria-current'))).toBe(false);
+    // A drive-root tab says just its letter (the owner's pass-1 rule); the
+    // full name is the breadcrumb's.
+    expect(await page.evaluate(() => activeTab().label)).toMatch(/^[A-Z]:$/);
+    expect(await page.evaluate(() => activeTab().label)).toBe(first.letter.toUpperCase());
+    await expect(crumbCurrent(page)).toHaveText(names[0]);
     // The breadcrumb root is This PC, then the drive.
     await expect(page.locator('#breadcrumb .fp-breadcrumb__crumb').first()).toHaveAttribute('aria-label', 'This PC');
     await page.click('#btn-back');
@@ -341,10 +351,11 @@ test('sweep (§12): every sidebar item and the breadcrumb root land where their 
       expect(loc.crumbPath.replace(/\\$/, '').toLowerCase(), p).toBe(loc.path.replace(/\\$/, '').toLowerCase());
       expect(loc.list, p).toBe(true);
       expect(loc.thispc, p).toBe(false);
-      // A drive root names itself the way the sidebar and the crumb do.
+      // A drive root: the tab says the letter, the crumb the full name the
+      // sidebar row says.
       if (/^[A-Za-z]:\\?$/.test(p)) {
         const name = await page.evaluate((q) => driveDisplayName(window.__fpDrives.find((d) => d.mount === q)), p);
-        expect(loc.label).toBe(name);
+        expect(loc.label).toMatch(/^[A-Z]:$/);
         expect(loc.crumb).toBe(name);
       }
     }
@@ -354,9 +365,12 @@ test('sweep (§12): every sidebar item and the breadcrumb root land where their 
     await expect(page.locator('#thispc-view')).toBeVisible();
     expect(await location(page)).toMatchObject({ path: 'thispc:', label: 'This PC', tabText: 'This PC', crumb: 'This PC', thispc: true, list: false });
 
+    await expect(page.locator('#sb-thispc .fp-sidebar__section-head')).toHaveClass(/fp-sidebar__section-head--active/);
+
     // Home: the Home screen, labelled Home.
     await page.locator('#sidebar .fp-sidebar__item[data-screen="home"]').click();
     expect(await page.evaluate(() => [activeTab().screen, activeTab().label])).toEqual(['home', 'Home']);
+    await expect(page.locator('#sb-thispc .fp-sidebar__section-head')).not.toHaveClass(/fp-sidebar__section-head--active/);
 
     // The breadcrumb root is This PC — from a drive root, where the whole
     // path fits (a long path scrolls its leading crumbs under the fade), and
@@ -381,6 +395,128 @@ test('sweep (§12): every sidebar item and the breadcrumb root land where their 
     await page.evaluate(() => switchScreen('browser'));
     await expect(page.locator('#thispc-view')).toBeVisible();
     expect(await location(page)).toMatchObject({ path: 'thispc:', label: 'This PC', crumb: 'This PC' });
+  } finally {
+    await app.close();
+  }
+  expectNoErrors(errors);
+});
+
+test('Back/Forward across This PC leave no step marked in flight; Back out of a search started there', async () => {
+  const { app, page, errors } = await launchApp();
+  try {
+    const root = (await apiGet('/fs/list/root')).path;
+    const docsDir = `${root}\\_gen\\Documents`;
+    const pending = () => page.evaluate(() => [pendingNavFor(browserState._pendingHistory), pendingNavFor(browserState._pendingExit)]);
+    await page.waitForFunction(() => Array.isArray(window.__fpDrives));
+
+    await page.evaluate((p) => openBrowserAt(p), docsDir);
+    await settled(page);
+    await page.click('[data-action="thispc-open"]');
+    await expect(page.locator('#thispc-view')).toBeVisible();
+    await page.click('#btn-back');
+    await expect(crumbCurrent(page)).toHaveText('Documents');
+    await settled(page);
+    expect(await pending()).toEqual([false, false]);
+    // Forward to This PC commits synchronously (the drives are known): the
+    // step is over the moment the call returns.
+    await page.click('#btn-forward');
+    await expect(page.locator('#thispc-view')).toBeVisible();
+    expect(await pending()).toEqual([false, false]);
+    await settled(page);
+    expect(await page.evaluate(() => [nav.index, nav.history.length])).toEqual([1, 2]);
+
+    // A search from This PC; the first Back leaves it for This PC, the next
+    // Back goes on to Documents.
+    await page.evaluate(() => {
+      const input = document.getElementById('search-input');
+      input.value = 'doc-0';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await page.waitForFunction(() => browserState.mode === 'search' && window.__fpLoadPending === 0, null, { timeout: 8000 });
+    await page.click('#btn-back');
+    await expect(page.locator('#thispc-view')).toBeVisible();
+    expect(await page.evaluate(() => browserState.mode)).toBe('browse');
+    expect(await pending()).toEqual([false, false]);
+    await page.click('#btn-back');
+    await expect(crumbCurrent(page)).toHaveText('Documents');
+    await settled(page);
+    expect(await page.evaluate(() => [activeTab().path, nav.index])).toEqual([docsDir, 0]);
+  } finally {
+    await app.close();
+  }
+  expectNoErrors(errors);
+});
+
+test('Inspector action row: disabled (tooltip kept) without one selected item; Open with… opens the native dialog for a file', async () => {
+  const { app, page, errors } = await launchApp();
+  try {
+    const root = (await apiGet('/fs/list/root')).path;
+    const docsDir = `${root}\\_gen\\Documents`;
+    // Record the native calls instead of popping real dialogs.
+    await app.evaluate(({ ipcMain }) => {
+      globalThis.__fpCalls = [];
+      for (const ch of ['open-with-dialog', 'shell-open-path']) {
+        ipcMain.removeHandler(ch);
+        ipcMain.handle(ch, (_e, p) => { globalThis.__fpCalls.push([ch, p]); return ch === 'open-with-dialog' ? true : ''; });
+      }
+    });
+    const calls = () => app.evaluate(() => globalThis.__fpCalls);
+    await page.evaluate(() => setInspectorOpen(true, { persist: false }));
+    const btns = {
+      open: page.locator('#inspector [data-action="inspector-open"]'),
+      openWith: page.locator('#inspector [data-action="open-file-with"]'),
+      reveal: page.locator('#inspector [data-action="inspector-reveal"]'),
+    };
+    const states = () => page.evaluate(() => Object.fromEntries(['inspector-open', 'open-file-with', 'inspector-reveal'].map((a) => {
+      const b = document.querySelector(`#inspector [data-action="${a}"]`);
+      return [a, { disabled: b.getAttribute('aria-disabled') === 'true', title: b.title, pe: getComputedStyle(b).pointerEvents, op: getComputedStyle(b).opacity }];
+    })));
+
+    // This PC: nothing in the Browser is selected — all three disabled, with
+    // a tooltip that says why, and a click does nothing.
+    await page.click('[data-action="thispc-open"]');
+    await expect(page.locator('#thispc-view')).toBeVisible();
+    await page.locator('#thispc-view .fp-drive-card').first().click();
+    let st = await states();
+    for (const [a, v] of Object.entries(st)) {
+      expect(v.disabled, a).toBe(true);
+      expect(v.title, a).toMatch(/Select one item first/);
+      expect(v.pe, a).not.toBe('none');
+      expect(Number(v.op), a).toBeLessThan(1);
+    }
+    await btns.open.click({ force: true });
+    await btns.openWith.click({ force: true });
+    expect(await calls()).toEqual([]);
+
+    // A folder: an empty selection is disabled too.
+    await page.evaluate((p) => openBrowserAt(p), docsDir);
+    await settled(page);
+    st = await states();
+    expect(Object.values(st).every((v) => v.disabled)).toBe(true);
+
+    // One file: all three on; Open with… asks for the native dialog.
+    const file = `${docsDir}\\doc-00.txt`;
+    await page.locator(`#list-scroll .fp-row[data-path="${file.replace(/\\/g, '\\\\')}"]`).click();
+    st = await states();
+    expect(Object.values(st).every((v) => !v.disabled)).toBe(true);
+    expect(st['open-file-with'].title).not.toMatch(/Select one/);
+    await btns.openWith.click();
+    await expect.poll(calls).toEqual([['open-with-dialog', file]]);
+    expect(await page.locator('.fp-toast, .toast').filter({ hasText: /not yet implemented/ }).count()).toBe(0);
+
+    // A folder selected: Open and Reveal on, Open with… (files only) off.
+    await page.locator(`#list-scroll .fp-row[data-path="${(docsDir + '\\old').replace(/\\/g, '\\\\')}"]`).click();
+    st = await states();
+    expect(st['inspector-open'].disabled).toBe(false);
+    expect(st['inspector-reveal'].disabled).toBe(false);
+    expect(st['open-file-with'].disabled).toBe(true);
+    expect(st['open-file-with'].title).toMatch(/for files/);
+
+    // Two items: off again.
+    await page.locator(`#list-scroll .fp-row[data-path="${file.replace(/\\/g, '\\\\')}"]`).click({ modifiers: ['Control'] });
+    st = await states();
+    expect(Object.values(st).every((v) => v.disabled)).toBe(true);
+    await shot(page, 'thispc-inspector-actions-disabled');
   } finally {
     await app.close();
   }

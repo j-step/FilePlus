@@ -873,7 +873,8 @@ function parentOfPath(p) {
  */
 async function loadDirectory(absPath, opts = {}) {
   const { addToHistory = true, preserveSelection = false, restore = null, cached = null, historyIndex = null } = opts;
-  if (absPath == null) absPath = THISPC;
+  // No path (a tab with no folder yet) is This PC, never the sandbox.
+  if (!absPath) absPath = THISPC;
   const reqTabId = tabs.activeId;
   const reqSeq = ++browserState._loadSeq;
   const superseded = () => tabs.activeId !== reqTabId || browserState._loadSeq !== reqSeq;
@@ -911,9 +912,7 @@ async function loadDirectory(absPath, opts = {}) {
   let data;
   window.__fpLoadPending++;
   try {
-    data = absPath
-      ? await API.get('/fs/list', { path: absPath, show_hidden: browserState.showHidden })
-      : await API.get('/fs/list/root', { show_hidden: browserState.showHidden });
+    data = await API.get('/fs/list', { path: absPath, show_hidden: browserState.showHidden });
   } catch (err) {
     if (superseded()) return;
     // The Back/Forward (or exit from search) this was went nowhere: the next
@@ -1424,10 +1423,12 @@ function pendingHistoryIndex() {
 }
 
 function visitHistory(index) {
-  const p = loadDirectory(nav.history[index], { addToHistory: false, historyIndex: index });
-  // loadDirectory() bumped _loadSeq synchronously, before its first await.
-  browserState._pendingHistory = { seq: browserState._loadSeq, index, tabId: tabs.activeId };
-  return p;
+  // Recorded BEFORE the load, under the sequence number loadDirectory() is
+  // about to take (its first statement bumps it): a commit that happens
+  // synchronously inside the call — a cached listing, the This PC page —
+  // clears it again, instead of leaving a finished step marked in flight.
+  browserState._pendingHistory = { seq: browserState._loadSeq + 1, index, tabId: tabs.activeId };
+  return loadDirectory(nav.history[index], { addToHistory: false, historyIndex: index });
 }
 
 function navUp() {
@@ -1919,10 +1920,10 @@ function exitSearchResults() {
   const target = tab && tab.path !== undefined ? tab.path : browserState.path;
   // loadDirectory() ends this tab's search once the folder has loaded (and
   // keeps the results if it cannot be).
-  const p = loadDirectory(target, { addToHistory: false });
-  // loadDirectory() bumped _loadSeq synchronously, before its first await.
-  browserState._pendingExit = { seq: browserState._loadSeq, tabId: tabs.activeId };
-  return p;
+  // Recorded before the load, like visitHistory()'s step: a synchronous
+  // commit (This PC, a cached listing) clears it.
+  browserState._pendingExit = { seq: browserState._loadSeq + 1, tabId: tabs.activeId };
+  return loadDirectory(target, { addToHistory: false });
 }
 
 function updateAddressBar(path) {
@@ -2416,6 +2417,9 @@ function onSelectionChanged() {
   const listScroll = document.getElementById('list-scroll');
   if (listScroll) listScroll.dataset.selectionCount = String(browserState.selection.size);
   updateStatusBar();
+  // The Inspector's Open / Open with… / Reveal follow the selection at once,
+  // not after the panel's debounce.
+  if (typeof syncInspectorActions === 'function') syncInspectorActions();
   clearTimeout(_inspectorDebounceTimer);
   _inspectorDebounceTimer = setTimeout(() => {
     const n = browserState.selection.size;
