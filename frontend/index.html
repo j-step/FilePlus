@@ -410,7 +410,13 @@
                    Hidden outside search mode. -->
               <div class="list-search-header" id="list-search-header" role="status" aria-live="polite" hidden></div>
 
-              <!-- Column header (32px, bg-content, sticky) -->
+              <!-- Listing notice (Stage 2D §3.2): "Showing the first 10,000
+                   entries" — above the listing, never a cell of it, so it
+                   reads the same in every view, including List's
+                   column-by-column flow. Filled by browser.js setListNotice. -->
+              <div class="list-notice" id="list-notice" hidden></div>
+
+              <!-- Column header (32px, bg-content, sticky; Details only) -->
               <div class="list-head" id="list-head">
                 <div class="list-col list-col--icon"></div>
                 <div class="list-col list-col--name fp-sortable active" data-sort="name"

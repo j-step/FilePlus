@@ -175,13 +175,15 @@ function createTab({ screen = 'home', path = null, history = [], historyIndex = 
     screen, label, path,
     history: history.slice(),
     historyIndex,
+    // This tab's own view and icon size (Stage 2D §3.1: tabs keep their own
+    // view state), or null until it has had a listing of its own. The view
+    // is global DOM state, so without per-tab values a Ctrl+wheel step in
+    // one tab silently changed every other tab's listing on the next switch
+    // (pass 2 #19).
     view: null,
-    // This tab's own --list-scale (a LIST_SCALE_STEPS member), or null until
-    // it has had a listing of its own. The custom property is global, so
-    // without a per-tab value a Ctrl+wheel zoom in one tab silently resized
-    // every other tab's listing on the next switch (pass 2 #19).
-    listScale: null,
+    iconSize: null,
     scrollTop: 0,
+    scrollLeft: 0,
     selection: [],
     // True when this tab was opened at the root entry point ("This PC") rather
     // than at a folder that happens to share its resolved path — keeps its
@@ -265,7 +267,7 @@ function syncActiveTabRecord() {
   if (!tab) return;
   tab.path = browserState.path;
   tab.view = browserState.view;
-  tab.listScale = browserState.listScale;
+  tab.iconSize = browserState.iconSize;
   tab.selection = [...browserState.selection];
   tab.historyIndex = nav.index;
   // The live search bar + its results, or null when this tab is showing a
@@ -276,7 +278,7 @@ function syncActiveTabRecord() {
   // the tab keeps the one committed before the search started.
   if (typeof rememberTabListing === 'function') rememberTabListing();
   const listScroll = document.getElementById('list-scroll');
-  if (listScroll) tab.scrollTop = listScroll.scrollTop;
+  if (listScroll) { tab.scrollTop = listScroll.scrollTop; tab.scrollLeft = listScroll.scrollLeft; }
 }
 
 /** Activates tab `id`: saves the outgoing tab's live state into its own
@@ -323,20 +325,14 @@ function activateTab(id) {
     browserState.path = incoming.path;
     browserState.parent = null;
     browserState.isRoot = false;
-    // Apply the INCOMING tab's own view/scale before repainting its results —
+    // Apply the INCOMING tab's own view before repainting its results —
     // otherwise renderDirectory() (called from inside restoreSearchResultsForTab
-    // → renderSearchResults) paints them with whatever view/scale the OUTGOING
-    // tab left behind (e.g. a grid Pictures tab making another tab's results
-    // render as tiles). Mirrors the listing branch's restore.view handling below.
-    const cfg = window.__fpConfig || {};
-    const cfgView = ['details', 'list', 'grid'].includes(cfg['ui.view_mode']) ? cfg['ui.view_mode'] : 'details';
-    // render:false / invalidate:false — the results render right below is the
+    // → renderSearchResults) paints them with whatever view the OUTGOING tab
+    // left behind (e.g. a Large-icons Pictures tab making another tab's
+    // results render as icons). Mirrors the listing branch's restore.view
+    // handling below. render:false — the results render right below is the
     // only render (Stage 2D §4.2).
-    if (typeof setViewMode === 'function') setViewMode(incoming.view || cfgView, { render: false });
-    if (typeof setListScale === 'function' && typeof LIST_SCALE_STEPS !== 'undefined') {
-      const cfgScale = LIST_SCALE_STEPS.includes(cfg['ui.list_scale']) ? cfg['ui.list_scale'] : 1;
-      setListScale(incoming.listScale || cfgScale, { persist: false, invalidate: false });
-    }
+    setView(incoming.view || 'details', incoming.iconSize, { render: false });
     // This tab's own selection + scroll offset come back with its results, the
     // same two things the folder branch below restores (pass 2 #153).
     restoreSearchResultsForTab(pendingSearch, {
@@ -367,9 +363,10 @@ function activateTab(id) {
       addToHistory: incoming.history.length === 0,
       restore: {
         scrollTop: incoming.scrollTop,
+        scrollLeft: incoming.scrollLeft,
         selection: incoming.selection,
         view: incoming.view,
-        listScale: incoming.listScale,
+        iconSize: incoming.iconSize,
       },
       // Stale-while-revalidate (Stage 2D §4.2): the tab's own last listing is
       // painted synchronously — rows, scroll and selection in this same task,
@@ -487,9 +484,10 @@ function switchScreen(id, labelOverride) {
         addToHistory: false,
         restore: {
           scrollTop: tab.scrollTop,
+          scrollLeft: tab.scrollLeft,
           selection: tab.selection,
           view: tab.view,
-          listScale: tab.listScale,
+          iconSize: tab.iconSize,
         },
         // A listing fetched before a settings change (listingStale) is not
         // worth painting first: the fetch would replace most of it.
@@ -607,8 +605,9 @@ function reopenLastTab() {
     label: record.label,
   });
   restored.view = record.view;
-  restored.listScale = record.listScale;
+  restored.iconSize = record.iconSize;
   restored.scrollTop = record.scrollTop;
+  restored.scrollLeft = record.scrollLeft || 0;
   restored.selection = record.selection;
   restored.isRootTarget = record.isRootTarget;
   // The closed record carried its search (closeTabById pushes the whole thing,
@@ -632,9 +631,10 @@ function duplicateTab(id) {
     label: source.label,
   });
   copy.view = source.view;
-  copy.listScale = source.listScale;
+  copy.iconSize = source.iconSize;
   copy.selection = source.selection.slice();
   copy.scrollTop = source.scrollTop;
+  copy.scrollLeft = source.scrollLeft || 0;
   copy.isRootTarget = source.isRootTarget;
   // Duplicating a results tab duplicates the results, not the folder under
   // them — deep-cloned so the two tabs' snapshots never alias (pass 2 #18).
@@ -659,7 +659,7 @@ function closeOtherTabs(id) {
 function seedInitialTab() {
   const el = document.querySelector('.fp-tab[data-tab-id]');
   const id = el ? el.dataset.tabId : 'tab-1';
-  const record = { id, screen: 'home', label: 'Home', path: null, history: [], historyIndex: -1, view: null, listScale: null, scrollTop: 0, selection: [], isRootTarget: false, search: null, listing: null, stale: false };
+  const record = { id, screen: 'home', label: 'Home', path: null, history: [], historyIndex: -1, view: null, iconSize: null, scrollTop: 0, scrollLeft: 0, selection: [], isRootTarget: false, search: null, listing: null, stale: false };
   tabs.list.push(record);
   tabs.activeId = id;
   nav.history = record.history;
@@ -1436,8 +1436,19 @@ const CONTEXT_MENUS = {
     { label: 'Paste',      action: 'cm-paste',      kbd: 'Ctrl+V', enabled: cmClipboardEnabled },
     { label: 'Refresh',    action: 'cm-refresh',    kbd: 'F5' },
     'sep',
-    { label: 'View → Details',    action: 'cm-view-list' },
-    { label: 'View → Grid',       action: 'cm-view-grid' },
+    // The same eight views as the toolbar's View menu, as a flyout (§3.1).
+    // Written out (not viewMenuItems()) so check_menu_cases.js can see every
+    // cm-* action in this block.
+    { label: 'View', items: [
+      { label: 'Extra large icons', action: 'cm-view-xl',      checked: () => viewMenuKey() === 'xl' },
+      { label: 'Large icons',       action: 'cm-view-large',   checked: () => viewMenuKey() === 'large' },
+      { label: 'Medium icons',      action: 'cm-view-medium',  checked: () => viewMenuKey() === 'medium' },
+      { label: 'Small icons',       action: 'cm-view-small',   checked: () => viewMenuKey() === 'small' },
+      { label: 'List',              action: 'cm-view-list',    checked: () => viewMenuKey() === 'list' },
+      { label: 'Details',           action: 'cm-view-details', checked: () => viewMenuKey() === 'details' },
+      { label: 'Tiles',             action: 'cm-view-tiles',   checked: () => viewMenuKey() === 'tiles' },
+      { label: 'Content',           action: 'cm-view-content', checked: () => viewMenuKey() === 'content' },
+    ] },
     { label: 'Sort by → name',    action: 'cm-sort-name' },
     { label: 'Sort by → modified', action: 'cm-sort-modified' },
     'sep',
@@ -1498,29 +1509,20 @@ const INSPECTOR_MORE_MENU_ITEMS = [
 // click point, and {ctx: menuContext()} drives each item's checked(ctx)
 // predicate (Task 11 adds enabled(ctx) to the same item shape — unknown
 // fields are simply ignored by showContextMenu, not an error).
-/** Which icon-size item a grid scale belongs to. The four menu presets are
- * 0.75 / 1 / 1.5 / 2, but Ctrl+wheel steps through all eight of
- * LIST_SCALE_STEPS — so an exact-equality check left the whole View menu with
- * no checkmark at all at 0.875, 1.125, 1.25 or 1.75 (pass 2 #202). Each item
- * claims the band around its own preset instead. */
-function viewScaleBucket(scale) {
-  const s = Number(scale) || 1;
-  if (s >= 1.75) return 'xl';
-  if (s >= 1.25) return 'large';
-  if (s >= 0.875) return 'medium';
-  return 'small';
+/** The eight views, top to bottom as Explorer lists them (Stage 2D §3.1).
+ * The check sits on the item viewMenuKey() (browser.js) names: the view
+ * itself, or for icons the nearest named size — so every Ctrl+wheel step
+ * checks exactly one item (pass 2 #202). Built twice: the toolbar View menu
+ * (view-*) and the empty-area menu's View flyout (cm-view-*). */
+function viewMenuItems(prefix) {
+  return [
+    ['Extra large icons', 'xl'], ['Large icons', 'large'], ['Medium icons', 'medium'], ['Small icons', 'small'],
+    ['List', 'list'], ['Details', 'details'], ['Tiles', 'tiles'], ['Content', 'content'],
+  ].map(([label, key]) => ({ label, action: `${prefix}${key}`, checked: () => viewMenuKey() === key }));
 }
 
 const VIEW_MENU_ITEMS = [
-  { label: 'Extra large icons', action: 'view-xl',      checked: ctx => ctx.view === 'grid' && viewScaleBucket(ctx.scale) === 'xl' },
-  { label: 'Large icons',       action: 'view-large',   checked: ctx => ctx.view === 'grid' && viewScaleBucket(ctx.scale) === 'large' },
-  { label: 'Medium icons',      action: 'view-medium',  checked: ctx => ctx.view === 'grid' && viewScaleBucket(ctx.scale) === 'medium' },
-  { label: 'Small icons',       action: 'view-small',   checked: ctx => ctx.view === 'grid' && viewScaleBucket(ctx.scale) === 'small' },
-  'sep',
-  // "List" is deliberately not Explorer's multi-column flowing list — ours
-  // is a single-column, name-only row (see browser.js's setViewMode).
-  { label: 'List',              action: 'view-list',    checked: ctx => ctx.view === 'list' },
-  { label: 'Details',           action: 'view-details', checked: ctx => ctx.view === 'details' },
+  ...viewMenuItems('view-'),
   'sep',
   { label: 'Show hidden files',    action: 'toggle-show-hidden',     checked: ctx => ctx.showHidden },
   { label: 'Show file extensions', action: 'toggle-show-extensions', checked: ctx => ctx.showExtensions },
@@ -1548,7 +1550,7 @@ function menuContext() {
   const cfg = window.__fpConfig || {};
   return {
     view: browserState.view,
-    scale: browserState.listScale,
+    iconSize: browserState.iconSize,
     showHidden: browserState.showHidden,
     showExtensions: browserState.showExtensions,
     dynamicMediaView: cfg['ui.dynamic_media_view'] !== false,
@@ -2497,10 +2499,11 @@ const IN_SCOPE_ACTIONS = new Set([
   'cm-cut', 'cm-copy', 'cm-paste', 'cm-paste-here', 'cm-rename', 'cm-delete',
   'cm-new-folder', 'cm-new-file', 'cm-refresh', 'refresh-directory',
   'cm-favorite', 'cm-pin-sidebar', 'cm-index-folder', 'cm-properties', 'cm-toggle-hidden',
-  'cm-view-list', 'cm-view-grid', 'cm-sort-name', 'cm-sort-modified',
+  'cm-view-xl', 'cm-view-large', 'cm-view-medium', 'cm-view-small',
+  'cm-view-list', 'cm-view-details', 'cm-view-tiles', 'cm-view-content', 'cm-sort-name', 'cm-sort-modified',
   // View/Sort toolbar dropdowns + their checked items (Task 10)
   'open-view-menu', 'open-sort-menu',
-  'view-xl', 'view-large', 'view-medium', 'view-small', 'view-list', 'view-details',
+  'view-xl', 'view-large', 'view-medium', 'view-small', 'view-list', 'view-details', 'view-tiles', 'view-content',
   'toggle-show-hidden', 'toggle-show-extensions', 'toggle-dynamic-media',
   'sort-name', 'sort-created', 'sort-modified', 'sort-accessed', 'sort-type', 'sort-size', 'sort-asc', 'sort-desc',
   // Properties panel (Task 13)
@@ -3274,16 +3277,10 @@ document.addEventListener('click', e => {
     case 'cm-toggle-hidden':
       toggleShowHidden();
       break;
-    case 'cm-view-list':
-      // Empty-area menu's "View → Details" — maps to the View menu's own
-      // Details item (the renamed columns view).
-      setViewMode('details', { manual: true });
-      break;
-    case 'cm-view-grid':
-      // Empty-area menu's "View → Grid" — maps to the View menu's Medium
-      // icons (the grid default scale).
-      setListScale(1);
-      setViewMode('grid', { manual: true });
+    // The empty-area menu's View flyout — the same eight as the View menu.
+    case 'cm-view-xl': case 'cm-view-large': case 'cm-view-medium': case 'cm-view-small':
+    case 'cm-view-list': case 'cm-view-details': case 'cm-view-tiles': case 'cm-view-content':
+      applyViewChoice(action.slice('cm-view-'.length));
       break;
     case 'cm-sort-name':
       applySort('name', (browserState.sort.key === 'name' && browserState.sort.dir === 'asc') ? 'desc' : 'asc');
@@ -3299,27 +3296,9 @@ document.addEventListener('click', e => {
     case 'open-sort-menu':
       showContextMenu(0, 0, SORT_MENU_ITEMS, { anchor: btn, ctx: menuContext() });
       break;
-    case 'view-xl':
-      setListScale(2);
-      setViewMode('grid', { manual: true });
-      break;
-    case 'view-large':
-      setListScale(1.5);
-      setViewMode('grid', { manual: true });
-      break;
-    case 'view-medium':
-      setListScale(1);
-      setViewMode('grid', { manual: true });
-      break;
-    case 'view-small':
-      setListScale(0.75);
-      setViewMode('grid', { manual: true });
-      break;
-    case 'view-list':
-      setViewMode('list', { manual: true });
-      break;
-    case 'view-details':
-      setViewMode('details', { manual: true });
+    case 'view-xl': case 'view-large': case 'view-medium': case 'view-small':
+    case 'view-list': case 'view-details': case 'view-tiles': case 'view-content':
+      applyViewChoice(action.slice('view-'.length));
       break;
     case 'toggle-show-hidden':
       toggleShowHidden();
@@ -3648,25 +3627,42 @@ document.addEventListener('auxclick', e => {
   closeTabById(tabEl.dataset.tabId);
 });
 
-// Ctrl + scroll wheel over the file list — steps --list-scale (Task 10,
-// explorer-only zoom of just the listing), one step per gesture; anywhere
-// else it's now ignored entirely — application zoom is keyboard-only
-// (Ctrl+=/-/0 above). Throttled because trackpads (and high-resolution
-// wheels) emit dozens of wheel events per swipe; without a cooldown a single
-// flick would jump straight to the min/max scale. ~80ms matches the natural
-// pacing of one "notch" of a physical wheel without making intentional fast
-// scrolls feel sluggish.
+// Ctrl + scroll wheel over the file list — walks the view ladder (Stage 2D
+// §3.1): anywhere over #list-scroll, empty space included, one step per 100
+// units of deltaY (wheel up = larger, down = smaller). Deltas accumulate, so
+// a trackpad's or a high-resolution wheel's small deltas add up to steps
+// instead of each firing one, and a fast flick is as many steps as notches —
+// no cooldown. It never zooms the app (that is Ctrl+=/-/0 only). Chromium
+// reports deltas in CSS px, which app zoom shrinks: they are scaled back to
+// screen units so one notch is one step at every zoom. The row under the
+// pointer is the scroll anchor.
+//
+// List view (column-major, horizontal scroll): a plain vertical wheel
+// scrolls sideways — Chromium would otherwise do nothing.
 {
-  let lastWheelAt = 0;
-  const COOLDOWN_MS = 80;
+  let wheelAcc = 0;
+  let wheelZoom = null;
+  window.addEventListener('resize', () => { wheelZoom = null; });
+  const screenDelta = (e) => {
+    const unit = e.deltaMode === 1 ? 100 / 3 : (e.deltaMode === 2 ? 300 : 1);
+    if (wheelZoom === null) wheelZoom = Number(getCurrentZoom()) || 1;
+    return e.deltaY * unit * (e.deltaMode === 0 ? wheelZoom : 1);
+  };
   document.addEventListener('wheel', e => {
-    if (!(e.ctrlKey || e.metaKey)) return;
-    if (!e.target.closest('#list-scroll')) return; // outside the list: ignore
-    e.preventDefault(); // suppress the default page-scroll while scaling
-    const now = performance.now();
-    if (now - lastWheelAt < COOLDOWN_MS) return;
-    lastWheelAt = now;
-    stepListScale(e.deltaY < 0 ? 1 : -1);
+    const listScroll = e.target.closest && e.target.closest('#list-scroll');
+    if (e.ctrlKey || e.metaKey) {
+      if (!listScroll) return; // outside the list: ignore
+      e.preventDefault();
+      wheelAcc += screenDelta(e);
+      while (wheelAcc <= -100) { wheelAcc += 100; stepView(1, { anchorEl: e.target }); }
+      while (wheelAcc >= 100) { wheelAcc -= 100; stepView(-1, { anchorEl: e.target }); }
+      return;
+    }
+    wheelAcc = 0;
+    if (listScroll && browserState.view === 'list' && !e.deltaX && e.deltaY) {
+      e.preventDefault();
+      listScroll.scrollLeft += e.deltaY * (e.deltaMode === 1 ? 100 / 3 : (e.deltaMode === 2 ? listScroll.clientWidth : 1));
+    }
   }, { passive: false });
 }
 
@@ -3834,6 +3830,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   initColumnSort();
   initMarqueeSelection();
   initRowInteractions();
+  // View ladder layout: List's rows-per-column follows the pane's height.
+  initViewLayout();
 
   // Drag and drop: rows onto folder rows / sidebar items / breadcrumb crumbs /
   // the Up button, on pointer events (Task 12 — dragdrop.js; the three HTML5
@@ -3844,10 +3842,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   initHomeRowInteractions();
   initFavoritesDragDrop();
 
-  // View mode is no longer restored from sessionStorage here — ui.view_mode/
-  // ui.list_scale (config) are applied by applySettingsFromConfig() below,
-  // and every real navigation re-decides the view itself (loadDirectory()'s
-  // dynamic-media-view check, Task 10).
+  // The view is decided per folder on every navigation (browser.js
+  // decideView — ui.folder_views, the media share, ui.view_default); the old
+  // global ui.view_mode/ui.list_scale migrate once in applySettingsFromConfig.
 
   // Init underline tabs in any pre-existing tab containers
   document.querySelectorAll('.fp-tabs').forEach(initUnderlineTabs);

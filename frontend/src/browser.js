@@ -16,29 +16,50 @@
 // app.js's seedInitialTab() at boot.
 const nav = { history: [], index: -1 };
 
-// ── List/grid scale (Task 10) ────────────────────────────────────────────────
-// Ctrl+wheel over #list-scroll and the View menu's icon-size presets both
-// step/set this — it drives --list-scale on #list-scroll (see styles.css:
-// row height/icon/font in list & details view, tile/thumb size in grid).
-const LIST_SCALE_STEPS = [0.75, 0.875, 1, 1.125, 1.25, 1.5, 1.75, 2];
+// ── The view ladder (Stage 2D §3) ────────────────────────────────────────────
+// Explorer's eight views, smallest to largest, as one ladder Ctrl+wheel walks
+// a notch at a time: Content, Tiles, Details, List, Small icons, then icons
+// at every size from 48 to 256 (Medium = 48, Large = 96, Extra large = 256).
+// Only `icons` carries a size; the other five are fixed-size (only app zoom
+// makes them bigger). browserState.view/iconSize hold where the active tab
+// sits on it; setView() is the only writer.
+const VIEW_ICON_SIZES = [48, 56, 64, 72, 80, 96, 112, 128, 160, 192, 224, 256];
+const VIEW_LADDER = Object.freeze([
+  { view: 'content', size: null },
+  { view: 'tiles', size: null },
+  { view: 'details', size: null },
+  { view: 'list', size: null },
+  { view: 'small', size: null },
+  ...VIEW_ICON_SIZES.map(size => ({ view: 'icons', size })),
+].map(Object.freeze));
+const VIEW_NAMES = ['content', 'tiles', 'details', 'list', 'small', 'icons'];
+// What the View menu's three icon items set.
+const VIEW_NAMED_ICON_SIZES = { medium: 48, large: 96, xl: 256 };
+// The icon size of the five fixed views, in logical px (spec §3.2).
+const VIEW_FIXED_ICON_PX = { content: 32, tiles: 48, details: 16, list: 16, small: 16 };
+// An icon cell is the icon plus this much: s + 28 (spec §3.4).
+const VIEW_CELL_EXTRA = 28;
+// List / Small icons row height (styles.css --view-row-list).
+const VIEW_LIST_ROW_PX = 22;
+// List / Small icons column width: the longest name, clamped, plus the 16px
+// icon, the 8px gap, 2 x 6px padding and 2 x 1px border of a cell.
+const VIEW_COL_NAME_MIN = 160;
+const VIEW_COL_NAME_MAX = 360;
+const VIEW_COL_CHROME = 16 + 8 + 12 + 2;
 
-// Per-path manual view override, this session only (Map, never persisted) —
-// set by setViewMode(mode, {manual: true}) (View menu items, the empty-area
-// menu's View → Details/Grid). Read by loadDirectory()'s dynamic-media-view
-// check (decideViewAndScale, below) so a folder the user has explicitly
-// switched away from its auto-decided view stays that way for the rest of
-// the session, even if its media share still qualifies it for the other view.
-const manualViewByPath = new Map();
+// Per-folder view memory (spec §3.1): {[normalised path]: {view, size, t}},
+// persisted as one settings key, the 500 most recently set paths.
+const FOLDER_VIEWS_KEY = 'ui.folder_views';
+const FOLDER_VIEWS_MAX = 500;
 
 // ── Browser state ─────────────────────────────────────────────────────────────
 // The last-loaded directory listing. `parent`/`isRoot` come straight from the
 // /fs/list response so navUp() and the up-button never need to re-derive a
 // parent by string-slicing the path. `showHidden` is seeded from
 // config['ui.show_hidden'] by app.js's init sequence, before the first load.
-// `sort`/`view`/`listScale` are re-applied from ui.sort/ui.view_mode/
-// ui.list_scale by settings.js's applySettingsFromConfig() once GET /config
-// has answered — the literal defaults below only cover the brief window
-// before that first resolves. `selection` is the set of absolute paths
+// `sort` is re-applied from ui.sort by settings.js's
+// applySettingsFromConfig() once GET /config has answered; the view is
+// decided per folder on every navigation (decideView). `selection` is the set of absolute paths
 // currently selected; `anchor` is the shift-range origin, `focus` is the
 // last row acted on (keyboard/click).
 const browserState = {
@@ -50,15 +71,12 @@ const browserState = {
   focus: null,
   showHidden: false,
   showExtensions: true,
-  // 'details' (the old 'list' — columns) | 'list' (name-only, single
-  // column) | 'grid' — mirrors #list-scroll[data-view], read by renderFsRow
-  // to pick row vs tile markup (a tile carries a thumbnail area a row has no
-  // place for). setViewMode() is the only writer, and re-renders the
-  // listing after changing it.
+  // One of VIEW_NAMES — mirrors #list-scroll[data-view], read by renderFsRow
+  // to pick each view's markup. setView() is the only writer.
   view: 'details',
-  // Current --list-scale value (a LIST_SCALE_STEPS member) applied to
-  // #list-scroll; setListScale() is the only writer.
-  listScale: 1,
+  // The icons view's size (a VIEW_ICON_SIZES member). Kept while another
+  // view is showing, so Ctrl+wheel back into icons lands where it left.
+  iconSize: 96,
   // 'browse' (a real /fs/list listing) | 'search' (a results listing from
   // search.js — see renderSearchResults). loadDirectory()'s dynamic-media-view
   // check never runs in 'search', so a results listing never has its own view
@@ -110,114 +128,335 @@ const browserState = {
 window.__fpRenderCount = 0;
 window.__fpLoadPending = 0;
 
-// ── View modes ────────────────────────────────────────────────────────────────
-/**
- * Sets the active view + syncs every DOM surface that reflects it (list vs
- * grid layout, the column header's visibility, Home's Recent/Favorites
- * panes) and re-renders the listing (row and tile markup differ).
- *
- * `manual` (View menu items, the empty-area menu's View → Details/Grid,
- * Task 11's future callers) records the choice into manualViewByPath for the
- * CURRENT folder and persists it as the ui.view_mode default; an automatic
- * choice (loadDirectory()'s dynamic-media-view check, via decideViewAndScale)
- * does neither, so it never clobbers a default the user picked deliberately,
- * nor a future folder's own auto-decision.
- *
- * `render: false` is for internal callers that render the listing themselves
- * right afterwards (loadDirectory() decides the view BEFORE its one render —
- * Stage 2D §4.2 "one render per navigation").
- */
-function setViewMode(mode, { manual = false, render = true } = {}) {
-  const v = (mode === 'list' || mode === 'grid') ? mode : 'details';
-  browserState.view = v;
+// ── Views (Stage 2D §3) ──────────────────────────────────────────────────────
+
+/** The ladder size nearest `px` (ties go to the smaller one). */
+function snapIconSize(px) {
+  const n = Number(px);
+  if (!Number.isFinite(n)) return VIEW_NAMED_ICON_SIZES.large;
+  let best = VIEW_ICON_SIZES[0];
+  for (const s of VIEW_ICON_SIZES) if (Math.abs(s - n) < Math.abs(best - n)) best = s;
+  return best;
+}
+
+/** {view, size} with `view` one of VIEW_NAMES (anything else is Details) and
+ * `size` a ladder size for icons, null otherwise. */
+function normalizeView(view, size = null) {
+  const v = VIEW_NAMES.includes(view) ? view : 'details';
+  return { view: v, size: v === 'icons' ? snapIconSize(size ?? VIEW_NAMED_ICON_SIZES.large) : null };
+}
+
+/** Index of a view (and, for icons, size) on VIEW_LADDER. */
+function viewStepIndex(view, size = null) {
+  const n = normalizeView(view, size);
+  return VIEW_LADDER.findIndex(s => s.view === n.view && (n.view !== 'icons' || s.size === n.size));
+}
+
+/** Where the listing sits on VIEW_LADDER now. */
+function currentViewStep() {
+  return viewStepIndex(browserState.view, browserState.iconSize);
+}
+
+/** Which View-menu item names the current view: the view itself, or for
+ * icons the nearest named size (spec §3.1: < 80 Medium, < 192 Large, else
+ * Extra large). */
+function viewMenuKey() {
+  if (browserState.view !== 'icons') return browserState.view;
+  const s = browserState.iconSize;
+  return s < 80 ? 'medium' : (s < 192 ? 'large' : 'xl');
+}
+
+/** The listing's logical icon size in CSS px — what --icon-size on
+ * #list-scroll is set to: the size for icons, the fixed size of every other
+ * view (spec §3.2). Row markup asks icons.js for this size, so its
+ * synchronous cache lookup uses the same px bucket the lazy path would. */
+function fpListIconSize() {
+  return browserState.view === 'icons'
+    ? browserState.iconSize
+    : (VIEW_FIXED_ICON_PX[browserState.view] || 16);
+}
+
+/** Puts browserState's view on every DOM surface that reflects it: the
+ * listing's data-view and size variables, the column header (Details only),
+ * Home's Recent/Favorites panes (icons → their grid). */
+function applyViewDom() {
+  const v = browserState.view;
+  const px = fpListIconSize();
   const listScroll = document.getElementById('list-scroll');
-  const listHead   = document.getElementById('list-head');
   if (listScroll) {
     listScroll.dataset.view = v;
-    // Only 'details' shows the column header — 'list' (name-only) and
-    // 'grid' both hide it (A.3.1's rule extended to the new name-only view).
-    if (listHead) listHead.classList.toggle('list-head--grid-hidden', v !== 'details');
+    // One synchronous update: every icon and thumbnail box is sized from
+    // these by CSS, so cells and icons change in the same frame (§3.5).
+    listScroll.style.setProperty('--icon-size', `${px}px`);
+    listScroll.style.setProperty('--cell-w', `${px + VIEW_CELL_EXTRA}px`);
   }
-  // Home — Recent and Favorites panes share the same view-mode toggle
+  const listHead = document.getElementById('list-head');
+  if (listHead) listHead.classList.toggle('list-head--grid-hidden', v !== 'details');
   document.querySelectorAll('.home-pane').forEach(pane => {
-    pane.dataset.view = v;
+    pane.dataset.view = v === 'icons' ? 'grid' : 'details';
   });
-  if (manual) {
-    if (browserState.path) manualViewByPath.set(browserState.path, v);
-    saveSetting('ui.view_mode', v);
-  }
-  // Rows and tiles are different markup (a tile has a 96px thumbnail area
-  // that requests a real shell thumbnail; a row has a 16px icon), so the
-  // listing has to be re-rendered rather than just re-styled.
-  if (render && browserState.entries && browserState.entries.length) renderDirectory();
 }
 
 /**
- * Sets --list-scale on #list-scroll (list row height/icon/font, grid
- * tile/thumb size — see styles.css) and, by default, persists it as
- * ui.list_scale. loadDirectory()'s dynamic-media-view check passes
- * {persist: false} to apply a listing-scoped scale (the auto-grid default,
- * or just re-syncing the already-persisted value) without touching the
- * user's actual saved preference.
- */
-function setListScale(v, { persist = true, invalidate = true } = {}) {
-  const scale = LIST_SCALE_STEPS.includes(v) ? v : 1;
-  browserState.listScale = scale;
-  const listScroll = document.getElementById('list-scroll');
-  if (listScroll) {
-    listScroll.style.setProperty('--list-scale', String(scale));
-    // `invalidate: false` — the navigation path sets the scale BEFORE its one
-    // render, so every icon is requested at the right size already and there
-    // is nothing on screen to re-resolve (Stage 2D §4.1 #1).
-    if (!invalidate) { if (persist) saveSetting('ui.list_scale', scale); return; }
-    // Row/tile icons and thumbnails are requested at the px bucket of their
-    // CSS box (Stage 2D §4.3), so a --list-scale change may move them into
-    // another bucket. The boxes resize with the custom property in this very
-    // frame; the sharper bitmaps swap in after decode, 120 ms after the last
-    // change (fpInvalidateLazyIcons debounces), into the same boxes.
-    if (typeof fpInvalidateLazyIcons === 'function') fpInvalidateLazyIcons(listScroll);
-  }
-  if (persist) saveSetting('ui.list_scale', scale);
-}
-
-/** Steps --list-scale by one LIST_SCALE_STEPS entry in `direction` (+1/-1) —
- * Ctrl+wheel over #list-scroll (app.js). Persists like any other manual
- * scale change (setListScale's default). */
-function stepListScale(direction) {
-  const idx = LIST_SCALE_STEPS.indexOf(browserState.listScale);
-  const curIdx = idx === -1 ? LIST_SCALE_STEPS.indexOf(1) : idx;
-  const nextIdx = Math.max(0, Math.min(LIST_SCALE_STEPS.length - 1, curIdx + direction));
-  setListScale(LIST_SCALE_STEPS[nextIdx]);
-}
-
-/**
- * Dynamic media view (playtest pass 1, Task 10): decides the view + scale
- * for `path`'s freshly-fetched `entries`. Called by loadDirectory() after
- * every real navigation — never for a tab-switch restore, which reapplies
- * whatever that tab last showed instead (see loadDirectory()'s restore.view
- * handling), and never in a future search-results mode (browserState.mode).
+ * Sets the view (and, for icons, the size) and shows it.
  *
- * A manual override recorded for this exact path this session wins outright,
- * at the persisted scale. Otherwise, unless ui.dynamic_media_view is
- * explicitly false, a folder whose own non-hidden files are more than half
- * pictures/video opens in grid at scale 1 — not persisted, since this is a
- * per-listing default, not a change to the user's actual preference.
- * Anything else falls back to the persisted ui.view_mode/ui.list_scale.
+ * A change of view re-renders the listing once from the in-memory entries
+ * (each view has its own markup) — never a fetch. A size change inside the
+ * icons view does not re-render at all: the cells and icon boxes follow
+ * --icon-size / --cell-w in this very frame, and every bitmap re-resolves at
+ * its new px bucket after decode(), into the same box (spec §3.5, §4.3) — a
+ * re-render would rebuild every image at a bucket the cache may not have yet
+ * and blank it.
+ *
+ * Scroll anchoring: the row `anchorEl` sits in (the row under the pointer
+ * for Ctrl+wheel), else the first visible row, keeps its offset from the top
+ * of the list (from its left in List) across the change.
+ *
+ * `manual` (the View menu, the empty-area flyout, Ctrl+wheel) remembers the
+ * choice for this folder (ui.folder_views) and for this tab; an automatic
+ * choice (a navigation deciding its view) does neither. `render: false` is
+ * for callers that render the listing themselves right afterwards (one
+ * render per navigation, §4.2).
  */
-function decideViewAndScale(path, entries) {
-  const cfg = window.__fpConfig || {};
-  const persistedScale = LIST_SCALE_STEPS.includes(cfg['ui.list_scale']) ? cfg['ui.list_scale'] : 1;
-  const defaultView = ['details', 'list', 'grid'].includes(cfg['ui.view_mode']) ? cfg['ui.view_mode'] : 'details';
-  const manualPicked = manualViewByPath.get(path);
-  if (manualPicked) return { view: manualPicked, scale: persistedScale };
-  if (cfg['ui.dynamic_media_view'] !== false) {
-    const files = entries.filter(e => !e.is_dir && !e.is_hidden);
-    const mediaShare = files.length
-      ? files.filter(e => typeof fpIsMedia === 'function' && fpIsMedia(e.ext)).length / files.length
-      : 0;
-    if (mediaShare > 0.5) return { view: 'grid', scale: 1 };
+function setView(view, size = null, { manual = false, anchorEl = null, render = true } = {}) {
+  const want = normalizeView(view, view === 'icons' ? (size ?? browserState.iconSize) : null);
+  const prevView = browserState.view;
+  const changed = prevView !== want.view || (want.view === 'icons' && browserState.iconSize !== want.size);
+  const listScroll = document.getElementById('list-scroll');
+  const hasRows = !!(render && changed && listScroll && listScroll.querySelector(':scope > .fp-row[data-path]'));
+  const anchor = hasRows ? captureScrollAnchor(listScroll, anchorEl) : null;
+
+  browserState.view = want.view;
+  if (want.view === 'icons') browserState.iconSize = want.size;
+  applyViewDom();
+  if (manual) rememberViewChoice();
+  if (!render || !changed) return;
+
+  if (prevView === want.view && hasRows) {
+    // icons → icons: CSS alone resizes; the sharper bitmaps swap in later.
+    listScroll.querySelectorAll(':scope > .fp-row .fp-tile__thumb [data-size]').forEach(el => {
+      if (!el.classList.contains('fp-thumb--mini')) el.dataset.size = String(want.size);
+    });
+    if (typeof fpInvalidateLazyIcons === 'function') fpInvalidateLazyIcons(listScroll);
+  } else if (browserState.entries && browserState.entries.length) {
+    renderDirectory();
+  } else {
+    syncViewMetrics();
   }
-  return { view: defaultView, scale: persistedScale };
+  if (anchor) restoreScrollAnchor(listScroll, anchor);
+}
+
+/** One ladder step up (+1, larger) or down (-1); clamps at both ends.
+ * Ctrl+wheel (app.js) comes through here. Returns whether the view
+ * changed. */
+function stepView(delta, { anchorEl = null } = {}) {
+  const at = currentViewStep();
+  const cur = at === -1 ? viewStepIndex('details') : at;
+  const next = Math.max(0, Math.min(VIEW_LADDER.length - 1, cur + Math.sign(delta || 0)));
+  if (next === cur) return false;
+  const s = VIEW_LADDER[next];
+  setView(s.view, s.size, { manual: true, anchorEl });
+  return true;
+}
+
+/** A View-menu / empty-area-flyout choice: 'xl' | 'large' | 'medium' (the
+ * icons view at 256 / 96 / 48) or a fixed view's own name. */
+function applyViewChoice(key) {
+  const size = VIEW_NAMED_ICON_SIZES[key];
+  if (size) setView('icons', size, { manual: true });
+  else setView(key, null, { manual: true });
+}
+
+/** Where a view change leaves the listing: the anchor row and its offset
+ * along the scroll axis (vertical, or horizontal in List). */
+function captureScrollAnchor(listScroll, anchorEl) {
+  const row = (anchorEl && anchorEl.closest && listScroll.contains(anchorEl) && anchorEl.closest('.fp-row[data-path]'))
+    || firstVisibleRow(listScroll);
+  if (!row) return null;
+  const horiz = browserState.view === 'list';
+  const lr = listScroll.getBoundingClientRect();
+  const rr = row.getBoundingClientRect();
+  return { path: row.dataset.path, horiz, offset: horiz ? rr.left - lr.left : rr.top - lr.top };
+}
+
+function restoreScrollAnchor(listScroll, anchor) {
+  const row = findListRow(anchor.path);
+  if (!row) return;
+  const horiz = browserState.view === 'list';
+  const lr = listScroll.getBoundingClientRect();
+  const rr = row.getBoundingClientRect();
+  if (horiz) {
+    // Coming from a vertical view the old offset is a distance from the top:
+    // keep it as a distance from the left, inside the pane.
+    const offset = anchor.horiz ? anchor.offset : Math.min(Math.max(0, anchor.offset), Math.max(0, lr.width - rr.width));
+    listScroll.scrollLeft += (rr.left - lr.left) - offset;
+  } else {
+    const offset = anchor.horiz ? Math.min(Math.max(0, anchor.offset), Math.max(0, lr.height - rr.height)) : anchor.offset;
+    listScroll.scrollTop += (rr.top - lr.top) - offset;
+  }
+}
+
+/** The first row at least partly inside the list's viewport — a binary
+ * search over the rows' positions, which grow monotonically in DOM order in
+ * every view (row-major down the page, or column-major across it in List). */
+function firstVisibleRow(listScroll) {
+  const rows = listScroll.querySelectorAll(':scope > .fp-row[data-path]');
+  if (!rows.length) return null;
+  const lr = listScroll.getBoundingClientRect();
+  const horiz = browserState.view === 'list';
+  let lo = 0, hi = rows.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    const r = rows[mid].getBoundingClientRect();
+    if (horiz ? r.right > lr.left : r.bottom > lr.top) hi = mid;
+    else lo = mid + 1;
+  }
+  return rows[lo];
+}
+
+/** The rendered row for an absolute path (direct children of #list-scroll). */
+function findListRow(path) {
+  const listScroll = document.getElementById('list-scroll');
+  if (!listScroll || !path) return null;
+  return listScroll.querySelector(`:scope > .fp-row[data-path="${CSS.escape(path)}"]`);
+}
+
+// ── Layout metrics: List / Small icons column width, List rows per column ──
+let _colWidthCache = { entries: null, ext: null, mode: null, width: 0 };
+let _measureCtx = null;
+
+/** One List / Small icons column width for the whole listing (spec §3.2):
+ * the widest display name (canvas measureText, once per listing), clamped to
+ * 160–360, plus the icon, gap, padding and border of a cell. */
+function listColumnWidth() {
+  const c = _colWidthCache;
+  if (c.entries === browserState.entries && c.ext === browserState.showExtensions && c.mode === browserState.mode) {
+    return c.width;
+  }
+  if (!_measureCtx) _measureCtx = document.createElement('canvas').getContext('2d');
+  const family = getComputedStyle(document.documentElement).getPropertyValue('--font-ui').trim() || 'sans-serif';
+  // The cell's name font (styles.css: 500 var(--t-body) — 13px).
+  _measureCtx.font = `500 13px ${family}`;
+  let widest = 0;
+  for (const e of browserState.entries || []) {
+    const w = _measureCtx.measureText(displayNameFor(e)).width;
+    if (w > widest) widest = w;
+  }
+  const width = Math.ceil(Math.min(VIEW_COL_NAME_MAX, Math.max(VIEW_COL_NAME_MIN, widest))) + VIEW_COL_CHROME;
+  _colWidthCache = { entries: browserState.entries, ext: browserState.showExtensions, mode: browserState.mode, width };
+  return width;
+}
+
+/** List view: how many 22px rows fit the pane's height — set on every render
+ * and on every resize of #list-scroll (initViewLayout). */
+function syncListRows(listScroll) {
+  const cs = getComputedStyle(listScroll);
+  const inner = listScroll.clientHeight - parseFloat(cs.paddingTop || 0) - parseFloat(cs.paddingBottom || 0);
+  const rows = String(Math.max(1, Math.floor(inner / VIEW_LIST_ROW_PX)));
+  if (listScroll.style.getPropertyValue('--list-rows') !== rows) listScroll.style.setProperty('--list-rows', rows);
+}
+
+/** Brings the layout variables that depend on the listing (List / Small
+ * column width, List rows per column) up to date. */
+function syncViewMetrics() {
+  const listScroll = document.getElementById('list-scroll');
+  if (!listScroll) return;
+  const v = browserState.view;
+  if (v === 'list' || v === 'small') listScroll.style.setProperty('--list-col-w', `${listColumnWidth()}px`);
+  if (v === 'list') syncListRows(listScroll);
+}
+
+/** Keeps List's rows-per-column in step with the pane's height (a window
+ * resize, app zoom, the inspector opening, the horizontal scrollbar
+ * appearing). */
+function initViewLayout() {
+  const listScroll = document.getElementById('list-scroll');
+  if (!listScroll || typeof ResizeObserver !== 'function') return;
+  new ResizeObserver(() => { if (browserState.view === 'list') syncListRows(listScroll); }).observe(listScroll);
+  applyViewDom();
+}
+
+// ── Per-folder view memory ────────────────────────────────────────────────
+let _folderViewsSaveTimer = 0;
+
+/** The remembered {view, size} for `path`, or null. */
+function folderViewFor(path) {
+  const map = (window.__fpConfig || {})[FOLDER_VIEWS_KEY];
+  if (!path || !map || typeof map !== 'object') return null;
+  const rec = map[fpNormalizePath(path)];
+  return rec && VIEW_NAMES.includes(rec.view) ? normalizeView(rec.view, rec.size) : null;
+}
+
+/** A manual view choice belongs to this tab and to this folder. The folder
+ * map keeps the 500 most recently set paths and is saved once a Ctrl+wheel
+ * run has stopped (the in-memory config changes at once). */
+function rememberViewChoice() {
+  const tab = typeof activeTab === 'function' ? activeTab() : null;
+  if (tab) { tab.view = browserState.view; tab.iconSize = browserState.iconSize; }
+  if (browserState.mode === 'search' || !browserState.path) return;
+  const cfg = window.__fpConfig || (window.__fpConfig = {});
+  const prev = (cfg[FOLDER_VIEWS_KEY] && typeof cfg[FOLDER_VIEWS_KEY] === 'object') ? cfg[FOLDER_VIEWS_KEY] : {};
+  const next = { ...prev };
+  next[fpNormalizePath(browserState.path)] = {
+    view: browserState.view,
+    size: browserState.view === 'icons' ? browserState.iconSize : null,
+    t: Date.now(),
+  };
+  const keys = Object.keys(next);
+  if (keys.length > FOLDER_VIEWS_MAX) {
+    keys.sort((a, b) => (next[a].t || 0) - (next[b].t || 0))
+      .slice(0, keys.length - FOLDER_VIEWS_MAX)
+      .forEach(k => { delete next[k]; });
+  }
+  cfg[FOLDER_VIEWS_KEY] = next;
+  clearTimeout(_folderViewsSaveTimer);
+  _folderViewsSaveTimer = setTimeout(() => {
+    const latest = (window.__fpConfig || {})[FOLDER_VIEWS_KEY];
+    if (latest) saveSetting(FOLDER_VIEWS_KEY, latest);
+  }, 250);
+}
+
+/**
+ * The view a freshly-loaded folder opens in (spec §3.1): what the user last
+ * picked for it; else, unless ui.dynamic_media_view is off, Large icons for a
+ * folder whose entries are more than half pictures/videos; else the default
+ * (Details, or what an older version's global view setting migrated to).
+ */
+function decideView(path, entries) {
+  const remembered = folderViewFor(path);
+  if (remembered) return remembered;
+  const cfg = window.__fpConfig || {};
+  if (cfg['ui.dynamic_media_view'] !== false) {
+    const shown = (entries || []).filter(e => !e.is_hidden);
+    const media = shown.filter(e => !e.is_dir && typeof fpIsMedia === 'function' && fpIsMedia(e.ext)).length;
+    if (shown.length && media / shown.length > 0.5) return { view: 'icons', size: VIEW_NAMED_ICON_SIZES.large };
+  }
+  const def = cfg['ui.view_default'];
+  if (def && typeof def === 'object' && VIEW_NAMES.includes(def.view)) return normalizeView(def.view, def.size);
+  return { view: 'details', size: null };
+}
+
+/**
+ * One-time move from the old global view settings (ui.view_mode +
+ * ui.list_scale, Stage 2C) to the ladder (spec §3.1): grid at scale s → icons
+ * at the ladder size nearest 96·s, list → list, details → details. The
+ * result is the default for folders with no memory of their own
+ * (ui.view_default); Details needs no entry. Guarded by ui.view_migrated_2d.
+ */
+function migrateViewSettings(cfg) {
+  if (!cfg || cfg['ui.view_migrated_2d']) return;
+  const old = cfg['ui.view_mode'];
+  let def = null;
+  if (old === 'grid') {
+    const scale = Number(cfg['ui.list_scale']) || 1;
+    def = { view: 'icons', size: snapIconSize(Math.min(256, Math.max(48, 96 * scale))) };
+  } else if (old === 'list') {
+    def = { view: 'list', size: null };
+  }
+  if (def) saveSetting('ui.view_default', def);
+  saveSetting('ui.view_migrated_2d', true);
+  if ('ui.view_mode' in cfg) deleteSetting('ui.view_mode');
+  if ('ui.list_scale' in cfg) deleteSetting('ui.list_scale');
 }
 
 // ── Column sort cycling (A.3.1 / Task 3) ────────────────────────────────────
@@ -504,7 +743,7 @@ function parentOfPath(p) {
 /**
  * Loads `absPath` (null = the sandbox root) into the Browser listing.
  *
- * opts.restore (Stage 2C Task 7) — {scrollTop, selection, view, listScale}
+ * opts.restore (Stage 2C Task 7) — {scrollTop, scrollLeft, selection, view, iconSize}
  * from a tab record being reactivated: applied with the render (selection
  * only for paths present in the listing). Mutually exclusive with
  * opts.preserveSelection — activateTab()/switchScreen() are the restore
@@ -519,7 +758,7 @@ function parentOfPath(p) {
  * opts.historyIndex — Back/Forward: the nav.history slot being visited. It
  * becomes nav.index only once the fetch succeeds.
  *
- * One render per navigation (§4.2): the view and scale are decided BEFORE
+ * One render per navigation (§4.2): the view and size are decided BEFORE
  * the single renderDirectory(). Navigation state — browserState.path, the
  * tab's label, the breadcrumb, the sidebar highlight and history — commits
  * only after a successful fetch (pass-2 #55): a failed navigation leaves the
@@ -638,7 +877,7 @@ function storeBackgroundListing(tabId, data) {
 /**
  * Makes `data` the Browser listing: browserState, the tab record, the chrome
  * (tab label, sidebar, breadcrumb, address bar, history) and ONE render, with
- * the view and scale decided before it.
+ * the view decided before it.
  */
 function commitListing(data, { absPath, addToHistory = true, restore = null, preserveSelection = false, historyIndex = null, fetchedAt = Date.now() } = {}) {
   const prevSelection = preserveSelection ? new Set(browserState.selection) : null;
@@ -664,23 +903,14 @@ function commitListing(data, { absPath, addToHistory = true, restore = null, pre
   browserState._pendingExit = null;
   browserState._orderDirty = false;
 
-  // View + scale first, so the one render below paints rows at their final
-  // size. A tab-switch restore reapplies whatever that tab last showed;
-  // every real navigation decides fresh (dynamic media view, Task 10).
-  let view = null, scale = null;
-  if (restore && restore.view) {
-    view = restore.view;
-    // --list-scale is a single global custom property, so a restore has to
-    // re-assert THIS tab's scale too — otherwise the tab inherits whatever
-    // scale the outgoing tab (or a Ctrl+wheel zoom in it) last set (pass 2 #19).
-    scale = restore.listScale || null;
-  } else if (browserState.mode !== 'search') {
-    const decided = decideViewAndScale(data.path, data.entries);
-    view = decided.view;
-    scale = decided.scale;
-  }
-  if (scale) setListScale(scale, { persist: false, invalidate: false });
-  if (view) setViewMode(view, { manual: false, render: false });
+  // View first, so the one render below paints rows at their final size. A
+  // tab-switch restore reapplies whatever that tab last showed (tabs keep
+  // their own view state); every real navigation decides fresh from the
+  // folder's own memory, its media share, or the default (decideView).
+  const decided = (restore && restore.view)
+    ? normalizeView(restore.view, restore.iconSize)
+    : (browserState.mode !== 'search' ? decideView(data.path, data.entries) : null);
+  if (decided) setView(decided.view, decided.size, { render: false });
 
   // Keep the active tab's own record continuously pointed at the real
   // (resolved) path — this is what lets switchScreen() tell "this tab has
@@ -732,7 +962,10 @@ function commitListing(data, { absPath, addToHistory = true, restore = null, pre
   onSelectionChanged();
 
   const listScroll = document.getElementById('list-scroll');
-  if (listScroll) listScroll.scrollTop = restore ? (restore.scrollTop || 0) : 0;
+  if (listScroll) {
+    listScroll.scrollTop = restore ? (restore.scrollTop || 0) : 0;
+    listScroll.scrollLeft = restore ? (restore.scrollLeft || 0) : 0;
+  }
 }
 
 /**
@@ -902,6 +1135,7 @@ function patchDirectory(newEntries, data = null) {
   if (!listScroll) return;
 
   const scrollTop = listScroll.scrollTop;
+  const scrollLeft = listScroll.scrollLeft;
   const active = document.activeElement;
   // DOM focus is put back only when it sat on a row itself. Focus inside a
   // row (the inline-rename input) is never taken: blurring that input
@@ -976,7 +1210,10 @@ function patchDirectory(newEntries, data = null) {
     applySelectionState();
     updateStatusBar();
   }
+  // A new or renamed entry may be the widest name (List / Small icons).
+  syncViewMetrics();
   listScroll.scrollTop = scrollTop;
+  listScroll.scrollLeft = scrollLeft;
   if (focusOnRow) {
     const row = browserState.focus ? findRowByPath(browserState.focus) : null;
     if (row) row.focus({ preventScroll: true });
@@ -1132,6 +1369,7 @@ function browserHasOwnListing() {
 function clearBrowserListing() {
   leaveSearchMode();
   document.getElementById('list-scroll')?.replaceChildren();
+  setListNotice('');
   browserState.path = null;
   browserState.entries = [];
   browserState.parent = null;
@@ -1171,19 +1409,32 @@ function renderDirectory(data) {
   if (!listScroll) return;
 
   const isSearch = browserState.mode === 'search';
-  // The 10,000-entry banner belongs to a /fs/list listing; a truncated search
-  // says so in its own results header instead (renderSearchResults).
-  const truncatedHtml = (!isSearch && browserState.truncated) ? renderTruncatedBanner() : '';
+  // The 10,000-entry notice belongs to a /fs/list listing; a truncated search
+  // says so in its own results header instead (renderSearchResults). It sits
+  // above the listing, outside it, so it never takes a cell of a flowing
+  // grid (List flows column by column — pass-2 #169).
+  setListNotice((!isSearch && browserState.truncated) ? renderTruncatedBanner() : '');
 
   if (!browserState.entries || browserState.entries.length === 0) {
-    listScroll.innerHTML = truncatedHtml + (isSearch ? renderNoSearchResults() : renderEmptyFolder());
+    listScroll.innerHTML = isSearch ? renderNoSearchResults() : renderEmptyFolder();
     updateStatusBar();
     return;
   }
 
-  listScroll.innerHTML = truncatedHtml + sortedEntries().map(entry => renderFsRow(entry, browserState.path)).join('');
+  // Column width / rows per column first, so the rows land in their final
+  // cells with the one innerHTML below.
+  syncViewMetrics();
+  listScroll.innerHTML = sortedEntries().map(entry => renderFsRow(entry, browserState.path)).join('');
   applySelectionState();
   updateStatusBar();
+}
+
+/** Fills (or, with '', hides) #list-notice — the strip above the listing. */
+function setListNotice(html) {
+  const el = document.getElementById('list-notice');
+  if (!el) return;
+  el.innerHTML = html;
+  el.hidden = !html;
 }
 
 function renderTruncatedBanner() {
@@ -1202,42 +1453,50 @@ function stemOf(name) {
   return dot > 0 ? name.slice(0, dot) : name;
 }
 
-/** Leading visual for one entry: a 16px family icon in list view, a 96px
- * thumbnail area in grid view.
+/** The label a row shows for `entry`: its name, minus the extension for a
+ * file when ui.show_extensions is off. */
+function displayNameFor(entry) {
+  return (!entry.is_dir && browserState.showExtensions === false) ? stemOf(entry.name) : entry.name;
+}
+
+/** Leading visual for one entry, per view (spec §3.2, §4.4).
  *
- * Grid tiles show real content wherever the shell can produce it — a shell
- * thumbnail for media files, and, for a folder in 'fileplus' mode, up to two
- * of the folder's own pictures fanned over the folder icon (GET /fs/peek,
- * requested only once the tile is on screen). In 'windows' mode every tile
- * asks the shell directly, folders included, which is what Explorer shows.
- * List view keeps the family icon everywhere except image rows, which get a
- * 16px thumbnail of the picture itself. */
+ * Details, List and Small icons: a 16px icon (FilePlus mode shows a 16px
+ * thumbnail for a picture; Explorer, and Windows mode, keep the type icon at
+ * 16 — §4.4 ruling).
+ *
+ * Content (32), Tiles (48) and Icons (s): an s×s slot (.fp-tile__thumb,
+ * sized by --icon-size) showing real content wherever the shell can produce
+ * it — a thumbnail for pictures and videos in every folder, and in
+ * 'fileplus' mode a large icon's folder fans up to two of its own pictures
+ * over the folder (GET /fs/peek, requested only once the cell is on screen).
+ * In 'windows' mode every slot asks the shell directly, folders included,
+ * which is what Explorer shows. */
 function renderFsIcon(entry) {
+  const view = browserState.view;
   const source = fpIconSource();
-  const size = fpListIconSize();
-  if (browserState.view !== 'grid') {
-    const wantsThumb = !entry.is_dir && !entry.error && source === 'fileplus'
-      && typeof fpIsMedia === 'function' && fpIsMedia(entry.ext)
-      && fpFamilyFor(entry.ext) !== 'svg'; // an SVG's own markup is its icon
-    return wantsThumb
+  const isMedia = !entry.is_dir && typeof fpIsMedia === 'function' && fpIsMedia(entry.ext)
+    && fpFamilyFor(entry.ext) !== 'svg'; // an SVG's own markup is its icon
+  if (view === 'details' || view === 'list' || view === 'small') {
+    return (isMedia && !entry.error && source === 'fileplus')
       ? fpThumbBox(entry, 16, 'fp-row__icon fp-row__icon--thumb')
       : iconFor(entry, 16, 'fp-row__icon');
   }
+  const size = fpListIconSize();
   if (entry.error) return fpTileIcon(entry, size);
   if (source === 'windows') return fpThumbBox(entry, size, 'fp-tile__thumb');
-  if (entry.is_dir) return fpFolderPeekBox(entry, 'fp-tile__thumb');
-  if (typeof fpIsMedia === 'function' && fpIsMedia(entry.ext) && fpFamilyFor(entry.ext) !== 'svg') {
-    return fpThumbBox(entry, size, 'fp-tile__thumb');
-  }
+  if (entry.is_dir) return view === 'icons' ? fpFolderPeekBox(entry, 'fp-tile__thumb') : fpTileIcon(entry, size);
+  if (isMedia) return fpThumbBox(entry, size, 'fp-tile__thumb');
   return fpTileIcon(entry, size);
 }
 
-/** The listing's logical icon size in CSS px — what --icon-size on
- * #list-scroll resolves to (styles.css): 96 x --list-scale for grid tiles,
- * 16 for list/details rows. Row markup asks icons.js for this size, so its
- * synchronous cache lookup uses the same px bucket the lazy path would. */
-function fpListIconSize() {
-  return browserState.view === 'grid' ? Math.round(96 * (browserState.listScale || 1)) : 16;
+/** A short type description for Tiles / Content: "File folder", or the
+ * extension's own name ("PNG File") — what Explorer shows when no richer
+ * description is registered. */
+function typeLabelFor(entry) {
+  if (entry.is_dir) return 'File folder';
+  const ext = String(entry.ext || '').replace(/^\./, '');
+  return ext ? `${ext.toUpperCase()} File` : 'File';
 }
 
 function renderFsRow(entry, parentPath) {
@@ -1248,22 +1507,24 @@ function renderFsRow(entry, parentPath) {
   // a /fs/list entry only carries its own name — join it on here rather than
   // making every icon call site re-derive it.
   const iconHtml = renderFsIcon({ ...entry, path: childPath });
+  const view = browserState.view;
   const sizeText = (entry.is_dir || entry.error) ? '—' : formatSize(entry.size);
-  // The column follows the sort: created / modified / accessed (a result
-  // that lacks the field, e.g. an index-backed search hit's accessed, shows —).
-  const dateValue = entry[dateFieldForSort()];
-  const modifiedText = (entry.error || dateValue == null) ? '—' : formatDate(dateValue * 1000);
+  // The date follows the sort: created / modified / accessed (a result that
+  // lacks the field, e.g. an index-backed search hit's accessed, shows —).
+  const dateField = dateFieldForSort();
+  const dateValue = entry[dateField];
+  const dateText = (entry.error || dateValue == null) ? '—' : formatDate(dateValue * 1000);
   const rowClass = `fp-row${entry.is_dir ? ' fp-row--folder' : ''}${entry.error ? ' fp-row--disabled' : ''}`;
   const titleAttr = entry.error ? ' title="Access denied"' : '';
   // ui.show_extensions === false hides the extension on FILE rows only —
-  // folders never have one to hide. The full name still shows as a tooltip.
-  const hideExt = !entry.is_dir && browserState.showExtensions === false;
-  const displayName = hideExt ? stemOf(entry.name) : entry.name;
-  const nameTitleAttr = hideExt ? ` title="${escapeHtml(entry.name)}"` : '';
-  // Search mode: wrap the matched substrings in <mark> and hang the parent
-  // folder under the name as a "Location" subline. entry.match's offsets index
-  // the RAW name, so highlighting is skipped when show-extensions has trimmed
-  // it — the spans would no longer line up with what is being rendered.
+  // folders never have one to hide. The full name is always the name's
+  // tooltip: any view may ellipsize or clamp it (spec §3.2, §3.4).
+  const displayName = displayNameFor(entry);
+  const hideExt = displayName !== entry.name;
+  const nameTitleAttr = ` title="${escapeHtml(entry.name)}"`;
+  // Search mode: wrap the matched substrings in <mark>. entry.match's offsets
+  // index the RAW name, so highlighting is skipped when show-extensions has
+  // trimmed it — the spans would no longer line up with what is rendered.
   const isSearch = browserState.mode === 'search';
   const nameHtml = (isSearch && !hideExt)
     ? highlightMatch(displayName, entry.match)
@@ -1275,6 +1536,49 @@ function renderFsRow(entry, parentPath) {
   const starHtml = (typeof favoritesHas === 'function' && favoritesHas(childPath))
     ? `<span class="fp-row__star" title="In Favorites">${icon('star')}</span>`
     : '';
+  const nameSpan = `<span class="fp-row__name"${nameTitleAttr}>${nameHtml}</span>`;
+
+  let body;
+  if (view === 'details') {
+    // Search results hang the parent folder under the name as a "Location"
+    // subline (Details only; the other views keep it in the name's tooltip).
+    body = `${isSearch
+      ? `<span class="fp-row__namecell">
+          ${nameSpan}
+          <span class="fp-row__location" title="${escapeHtml(location)}"><bdi>${escapeHtml(location)}</bdi></span>
+        </span>`
+      : nameSpan}
+    ${starHtml}
+    <span class="fp-row__size mono">${sizeText}</span>
+    <span class="fp-row__modified mono">${dateText}</span>
+    <div class="fp-row__tags"></div>`;
+  } else if (view === 'content') {
+    // Two lines: name | "Date <field>: …" over type (or, for a search
+    // result, its folder) | "Size: …".
+    const second = isSearch
+      ? `<span class="fp-row__meta fp-row__meta--start" title="${escapeHtml(location)}"><bdi>${escapeHtml(location)}</bdi></span>`
+      : `<span class="fp-row__meta fp-row__meta--start" title="${escapeHtml(typeLabelFor(entry))}">${escapeHtml(typeLabelFor(entry))}</span>`;
+    const dateLabel = `Date ${dateField}:`;
+    body = `<span class="fp-row__content">
+      ${nameSpan}
+      <span class="fp-row__meta" title="${escapeHtml(`${dateLabel} ${dateText}`)}"><span class="fp-row__meta-label">${dateLabel}</span> ${escapeHtml(dateText)}</span>
+      ${second}
+      ${(entry.is_dir || entry.error) ? '<span class="fp-row__meta"></span>'
+        : `<span class="fp-row__meta" title="${escapeHtml(`Size: ${sizeText}`)}"><span class="fp-row__meta-label">Size:</span> ${escapeHtml(sizeText)}</span>`}
+    </span>
+    ${starHtml}`;
+  } else if (view === 'tiles') {
+    const type = typeLabelFor(entry);
+    body = `<span class="fp-row__lines">
+      ${nameSpan}
+      <span class="fp-row__line" title="${escapeHtml(type)}">${escapeHtml(type)}</span>
+      ${(entry.is_dir || entry.error) ? '' : `<span class="fp-row__line" title="${escapeHtml(sizeText)}">${escapeHtml(sizeText)}</span>`}
+    </span>
+    ${starHtml}`;
+  } else {
+    // List, Small icons, Icons: the icon and the name.
+    body = `${nameSpan}${starHtml}`;
+  }
   // No draggable="true": Stage 2C Task 12 replaced HTML5 drag and drop with a
   // pointer-event drag session (dragdrop.js). The native attribute would now
   // only get in the way — a native drag starting under our own pointermove
@@ -1283,16 +1587,7 @@ function renderFsRow(entry, parentPath) {
             data-path="${escapeHtml(childPath)}"
             data-type="${entry.is_dir ? 'folder' : 'file'}" tabindex="-1"${titleAttr}>
     ${iconHtml}
-    ${isSearch
-      ? `<span class="fp-row__namecell">
-          <span class="fp-row__name"${nameTitleAttr}>${nameHtml}</span>
-          <span class="fp-row__location" title="${escapeHtml(location)}"><bdi>${escapeHtml(location)}</bdi></span>
-        </span>`
-      : `<span class="fp-row__name"${nameTitleAttr}>${nameHtml}</span>`}
-    ${starHtml}
-    <span class="fp-row__size mono">${sizeText}</span>
-    <span class="fp-row__modified mono">${modifiedText}</span>
-    <div class="fp-row__tags"></div>
+    ${body}
   </div>`;
 }
 
@@ -1385,6 +1680,7 @@ function showSearchPending(query, root) {
     browserState.anchor = null;
     browserState.focus = null;
     if (listScroll) listScroll.innerHTML = '';
+    setListNotice('');
   }
   updateSearchBreadcrumb(root);
   setSearchHeader('Searching…');
@@ -1539,6 +1835,7 @@ function showErrorBanner(message, opts = {}) {
         `<button class="fp-error-banner__action fp-btn fp-btn--ghost" data-action="${escapeHtml(a.name)}">${escapeHtml(a.label)}</button>`
       ).join('')}</div>`
     : '';
+  setListNotice('');
   listScroll.innerHTML = `<div class="fp-error-banner" role="alert">
     ${icon('error', 'fp-icon--14')}
     <span class="fp-body" style="color: var(--text-primary)">${escapeHtml(message)}</span>
@@ -1672,8 +1969,14 @@ function moveFocus(delta, { shift = false } = {}) {
   if (delta === 'home') idx = 0;
   else if (delta === 'end') idx = order.length - 1;
   else idx = curIdx === -1 ? 0 : Math.max(0, Math.min(order.length - 1, curIdx + delta));
+  moveFocusTo(order[idx], { shift }, order);
+}
 
-  const path = order[idx];
+/** Focuses `path` (selecting it, or with `shift` the range from the anchor
+ * in sorted order) and scrolls it into view along both axes. */
+function moveFocusTo(path, { shift = false } = {}, order = sortedEntries().map(entryPath)) {
+  const idx = order.indexOf(path);
+  if (idx === -1) return;
   if (shift) {
     if (!browserState.anchor) browserState.anchor = browserState.focus || path;
     const a = order.indexOf(browserState.anchor);
@@ -1686,8 +1989,108 @@ function moveFocus(delta, { shift = false } = {}) {
   browserState.focus = path;
 
   applySelectionState();
-  findRowByPath(path)?.scrollIntoView({ block: 'nearest' });
+  findListRow(path)?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   onSelectionChanged();
+}
+
+/**
+ * Arrow keys and PageUp/PageDown, by the rendered positions of the cells
+ * (spec §3.3, pass-2 #168):
+ *  - Icons, Tiles, Small icons: ←/→ step through DOM order (within a row,
+ *    wrapping to the previous/next row); ↑/↓ go to the cell in the row
+ *    above/below whose centre is nearest.
+ *  - List: ↑/↓ step through DOM order (down a column, on into the next);
+ *    ←/→ go to the neighbouring column at the same row.
+ *  - Details, Content: ↑/↓ only.
+ * PageUp/PageDown move a viewport's worth along the scroll axis. Rects are
+ * read once per keypress, lazily, only for the rows the search looks at.
+ * `dir` is 'left' | 'right' | 'up' | 'down' | 'pageup' | 'pagedown'.
+ */
+function moveFocusDir(dir, { shift = false } = {}) {
+  if (!browserState.path) return;
+  const listScroll = document.getElementById('list-scroll');
+  if (!listScroll) return;
+  const rows = listScroll.querySelectorAll(':scope > .fp-row[data-path]');
+  if (!rows.length) return;
+  let cur = -1;
+  if (browserState.focus) {
+    const focused = findListRow(browserState.focus);
+    if (focused) cur = Array.prototype.indexOf.call(rows, focused);
+  }
+  if (cur === -1) { moveFocusTo(rows[0].dataset.path, { shift }); return; }
+
+  const view = browserState.view;
+  const grid = view === 'icons' || view === 'tiles' || view === 'small';
+  const rects = new Array(rows.length);
+  const rectOf = (i) => rects[i] || (rects[i] = rows[i].getBoundingClientRect());
+  const step = (d) => Math.max(0, Math.min(rows.length - 1, cur + d));
+  let target = cur;
+  if (dir === 'left' || dir === 'right') {
+    if (grid) target = step(dir === 'right' ? 1 : -1);
+    else if (view === 'list') target = nearestAcross(rows.length, cur, rectOf, dir === 'right' ? 1 : -1, true);
+    else return;
+  } else if (dir === 'up' || dir === 'down') {
+    target = grid
+      ? nearestAcross(rows.length, cur, rectOf, dir === 'down' ? 1 : -1, false)
+      : step(dir === 'down' ? 1 : -1);
+  } else if (dir === 'pageup' || dir === 'pagedown') {
+    const horiz = view === 'list';
+    const c = rectOf(cur);
+    const page = Math.max(1, (horiz ? listScroll.clientWidth - c.width : listScroll.clientHeight - c.height));
+    target = pageTarget(rows.length, cur, rectOf, dir === 'pagedown' ? 1 : -1, horiz, page);
+  }
+  if (target === cur || target < 0) return;
+  moveFocusTo(rows[target].dataset.path, { shift });
+}
+
+/** The cell in the next line (row, or column when `horiz`) in direction
+ * `sign` whose centre is nearest the current cell's, or `cur` when there is
+ * no such line. DOM order runs line by line, so the scan stops at the first
+ * cell past that line. */
+function nearestAcross(n, cur, rectOf, sign, horiz) {
+  const c = rectOf(cur);
+  const centre = horiz ? (c.top + c.bottom) / 2 : (c.left + c.right) / 2;
+  const start = (r) => (horiz ? r.left : r.top);
+  let line = null, best = cur, bestD = Infinity;
+  for (let i = cur + sign; i >= 0 && i < n; i += sign) {
+    const r = rectOf(i);
+    const beyond = sign > 0 ? start(r) >= (horiz ? c.right : c.bottom) - 1 : (horiz ? r.right : r.bottom) <= start(c) + 1;
+    if (!beyond) continue;
+    if (line === null) line = start(r);
+    else if (Math.abs(start(r) - line) > 1) break;
+    const d = Math.abs((horiz ? (r.top + r.bottom) / 2 : (r.left + r.right) / 2) - centre);
+    if (d < bestD) { bestD = d; best = i; }
+  }
+  return best;
+}
+
+/** PageUp/PageDown: the farthest line within one page in direction `sign`
+ * (the last line when the list ends sooner), and in it the cell nearest the
+ * current one across the other axis. */
+function pageTarget(n, cur, rectOf, sign, horiz, page) {
+  const c = rectOf(cur);
+  const pos = (r) => (horiz ? (r.left + r.right) / 2 : (r.top + r.bottom) / 2);
+  const across = (r) => (horiz ? (r.top + r.bottom) / 2 : (r.left + r.right) / 2);
+  const from = pos(c);
+  let lineIdx = cur;
+  // Walk outwards until a cell lies more than a page away.
+  for (let i = cur + sign; i >= 0 && i < n; i += sign) {
+    if (Math.abs(pos(rectOf(i)) - from) > page) break;
+    lineIdx = i;
+  }
+  if (lineIdx === cur) return sign > 0 ? n - 1 : 0;
+  // In the line of lineIdx, the cell nearest across.
+  const linePos = pos(rectOf(lineIdx));
+  let best = lineIdx, bestD = Math.abs(across(rectOf(lineIdx)) - across(c));
+  for (const dirn of [-1, 1]) {
+    for (let i = lineIdx + dirn; i >= 0 && i < n; i += dirn) {
+      const r = rectOf(i);
+      if (Math.abs(pos(r) - linePos) > 1) break;
+      const d = Math.abs(across(r) - across(c));
+      if (d < bestD) { bestD = d; best = i; }
+    }
+  }
+  return best;
 }
 
 /** Opens a directory entry: folder navigates into it, file opens via the OS
@@ -2034,8 +2437,12 @@ function browserKeydown(e) {
   if (key === 'Delete') { e.preventDefault(); fileops.trashSelection().catch(fileopsReported); return; }
 
   switch (key) {
-    case 'ArrowDown': e.preventDefault(); moveFocus(1, { shift: e.shiftKey }); break;
-    case 'ArrowUp':   e.preventDefault(); moveFocus(-1, { shift: e.shiftKey }); break;
+    case 'ArrowDown':  e.preventDefault(); moveFocusDir('down', { shift: e.shiftKey }); break;
+    case 'ArrowUp':    e.preventDefault(); moveFocusDir('up', { shift: e.shiftKey }); break;
+    case 'ArrowLeft':  e.preventDefault(); moveFocusDir('left', { shift: e.shiftKey }); break;
+    case 'ArrowRight': e.preventDefault(); moveFocusDir('right', { shift: e.shiftKey }); break;
+    case 'PageDown':   e.preventDefault(); moveFocusDir('pagedown', { shift: e.shiftKey }); break;
+    case 'PageUp':     e.preventDefault(); moveFocusDir('pageup', { shift: e.shiftKey }); break;
     case 'Home':      e.preventDefault(); moveFocus('home', { shift: e.shiftKey }); break;
     case 'End':       e.preventDefault(); moveFocus('end', { shift: e.shiftKey }); break;
     case 'Enter':     e.preventDefault(); openFocused(); break;

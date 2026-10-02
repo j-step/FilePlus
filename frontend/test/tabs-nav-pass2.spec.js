@@ -247,19 +247,26 @@ test('tabs and navigation: pass-2 regressions', async () => {
     await page.evaluate((id) => { closeOtherTabs(id); }, tabA);
     await page.evaluate(() => clearSearch());
 
-    // ── #19  --list-scale is per tab ─────────────────────────────────────────
+    // ── #19  the view and icon size are per tab ──────────────────────────────
+    // Two tabs on the SAME folder: a view change in the second must not
+    // reach the first, even though the folder now remembers the second's
+    // choice (Stage 2D §3.1: tabs keep their own view state).
     await page.evaluate((p) => openBrowserAt(p), docsDir);
-    await page.evaluate(() => setListScale(2));
-    expect(await page.evaluate(() => browserState.listScale)).toBe(2);
+    await page.evaluate(() => setView('icons', 256, { manual: true }));
+    expect(await page.evaluate(() => [browserState.view, browserState.iconSize])).toEqual(['icons', 256]);
     const scaleTab = await page.evaluate(() => tabs.activeId);
     await page.keyboard.press('Control+t');
+    await page.evaluate((p) => openBrowserAt(p), docsDir);
+    await page.evaluate(() => setView('icons', 48, { manual: true }));
     await page.evaluate((p) => openBrowserAt(p), picsDir);
-    await page.evaluate(() => setListScale(1));
+    await page.evaluate(() => setView('list', null, { manual: true }));
     await page.locator(`.fp-tab[data-tab-id="${scaleTab}"]`).click();
     await expect(crumbCurrent).toHaveText('Documents');
-    expect(await page.evaluate(() => browserState.listScale)).toBe(2);
+    expect(await page.evaluate(() => [browserState.view, browserState.iconSize])).toEqual(['icons', 256]);
+    expect(await page.locator('#list-scroll').getAttribute('data-view')).toBe('icons');
     await page.evaluate((id) => { closeOtherTabs(id); }, scaleTab);
-    await page.evaluate(() => setListScale(1));
+    await page.evaluate(() => setView('details'));
+    await fetch(`${API}/config/ui.folder_views`, { method: 'DELETE', headers });
   } finally {
     await app.close();
   }

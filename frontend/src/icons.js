@@ -967,6 +967,7 @@ function _fpApplyThumb(imgEl, seq, res) {
     if (!isMini && imgEl.parentElement) _fpRestoreTypeIcon(imgEl.parentElement);
     return;
   }
+  const wasReady = imgEl.classList.contains('fp-thumb--ready');
   const apply = () => {
     imgEl.classList.remove('fp-thumb--failed');
     imgEl.src = res.url;
@@ -978,9 +979,18 @@ function _fpApplyThumb(imgEl, seq, res) {
     // it, and only the full-size thumbnail gets the freeform box (a mini
     // keeps its CSS 40% size).
     if (!isMini) {
-      const box = _fpThumbBoxSize(res);
-      imgEl.style.width = box.width;
-      imgEl.style.height = box.height;
+      // A sharper bucket of the SAME picture comes back with its sides
+      // rounded at another px (a 3:2 photo is 96x64 at one bucket, 128x85 at
+      // the next): keep the box the picture already has, so nothing changes
+      // size after a size change has settled (Stage 2D §3.5).
+      const oldW = parseFloat(imgEl.style.width), oldH = parseFloat(imgEl.style.height);
+      const sameShape = wasReady && oldW > 0 && oldH > 0
+        && Math.abs((res.w / res.h) / (oldW / oldH) - 1) < 0.03;
+      if (!sameShape) {
+        const box = _fpThumbBoxSize(res);
+        imgEl.style.width = box.width;
+        imgEl.style.height = box.height;
+      }
       if (imgEl.parentElement) imgEl.parentElement.classList.add('fp-thumb-box--has-thumb');
     }
   };
@@ -1056,7 +1066,7 @@ async function _fpResolveFolderPeek(el, seq) {
     // Registered like any other lazy element (not called directly) so it
     // measures its OWN box (40% of the tile, styles.css) via the shared
     // IntersectionObserver instead of a hardcoded size, and is covered by
-    // fpInvalidateLazyIcons on a DPR/zoom/list-scale change.
+    // fpInvalidateLazyIcons on a DPR/zoom/icon-size change.
     _fpObserve(img);
   });
 }
@@ -1109,7 +1119,7 @@ function _fpQueueScan(records) {
  * size change never blanks an icon or moves a box. Keys are per px bucket,
  * so a re-request inside the same bucket is answered from cache and leaves
  * the image untouched. Called on zoom / monitor-DPI change (below) and by
- * setListScale (browser.js). Prewarms the generic folder icon for the new
+ * setView (browser.js) on an icon-size step. Prewarms the generic folder icon for the new
  * bucket too. */
 let _fpInvalidateTimer = 0;
 const _fpInvalidateRoots = new Set();

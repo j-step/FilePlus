@@ -103,6 +103,41 @@ function buildVoteFixture(dir) {
   }
 }
 
+// Stage 2D Task 5 (the view ladder, spec §3): a plain folder whose names
+// stress every layout — a ~60-character name with no break opportunity, long
+// multi-word names, and enough short ones to fill several rows and List
+// columns — and an image folder (Gallery) of pictures in several aspect
+// ratios, which opens in Large icons on its own. Beside _gen, Icons and
+// Votes, so none of their listings change.
+const VIEWS_LONG_UNBROKEN = 'AnExtremelyLongUnbrokenFileNameThatNeverOffersAWrapPoint60ch.txt';
+function buildViewsFixture(dir) {
+  fs.mkdirSync(dir);
+  for (const name of ['Folder One', 'Folder Two', 'Another folder with a fairly long name for a folder']) {
+    fs.mkdirSync(path.join(dir, name));
+  }
+  const files = [
+    VIEWS_LONG_UNBROKEN,
+    'A long multi-word document name that has to wrap over several lines in an icon cell before it ends.docx',
+    'Quarterly planning notes for the team offsite and the follow-up actions we agreed on.md',
+    'short.txt',
+    'readme.md',
+    'budget.xlsx',
+    'slides.pptx',
+  ];
+  for (let i = 1; i <= 24; i++) files.push(`note-${String(i).padStart(2, '0')}.txt`);
+  files.forEach((name, i) => fs.writeFileSync(path.join(dir, name), `views fixture ${i}\n`.repeat(i + 1)));
+  const gallery = path.join(dir, 'Gallery');
+  fs.mkdirSync(gallery);
+  const shapes = [[320, 200], [200, 320], [256, 256], [400, 120], [180, 240], [300, 300],
+    [360, 240], [240, 360], [128, 96], [96, 128], [420, 280], [280, 210]];
+  shapes.forEach(([w, h], i) => {
+    const rgb = [(40 + i * 37) % 256, (90 + i * 53) % 256, (160 + i * 29) % 256];
+    fs.writeFileSync(path.join(gallery, `photo-${String(i + 1).padStart(2, '0')}.png`), solidPng(w, h, rgb));
+  });
+  fs.writeFileSync(path.join(gallery, 'A very long photograph name from the summer holiday at the lake house.png'),
+    solidPng(300, 200, [220, 160, 60]));
+}
+
 module.exports = async function globalSetup() {
   const port = process.env.FILEPLUS_PORT || '9877';
   if (await healthy(port)) {
@@ -147,6 +182,7 @@ module.exports = async function globalSetup() {
   }
   buildIconFixture(path.join(sandbox, 'Icons'));
   buildVoteFixture(path.join(sandbox, 'Votes'));
+  buildViewsFixture(path.join(sandbox, 'Views'));
 
   const backend = spawn(PY.cmd, [...PY.pre, '-m', 'backend.api'], {
     cwd: REPO, env, stdio: 'ignore', windowsHide: true, detached: false,

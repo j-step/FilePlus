@@ -106,7 +106,7 @@ function homeIconFor(entry) {
   // Asked for at the size the panes actually draw it (40 px tiles in grid
   // view, styles.css), so a Windows-mode request is the bucket of the real
   // box and its cache lookup matches the lazy path's (Stage 2D §4.3).
-  const size = (typeof browserState !== 'undefined' && browserState.view === 'grid') ? 40 : 16;
+  const size = (typeof browserState !== 'undefined' && browserState.view === 'icons') ? 40 : 16;
   return iconFor({ ...entry, is_dir: homeIsDir(entry) }, size, 'fp-row__icon');
 }
 

@@ -210,17 +210,16 @@ test('every screen renders with no renderer errors', async () => {
     // Every list row carries a file-type family symbol from the sprite.
     expect(await page.locator('#list-scroll use[href^="#fp-ft-"]').count()).toBeGreaterThan(0);
 
-    // Grid view: at least one tile resolves a real shell thumbnail. The blank
+    // Large icons: at least one cell resolves a real shell thumbnail. The blank
     // placeholder is a data:image/gif, so matching data:image/png proves the
     // bridge actually answered rather than the <img> merely existing.
-    await page.evaluate(() => setViewMode('grid'));
+    await page.evaluate(() => setView('icons', 96));
     await expect(page.locator('#list-scroll img.fp-thumb[src^="data:image/png"]').first())
       .toBeVisible({ timeout: 3000 });
     await page.screenshot({ path: path.join(SHOTS, 'browser-grid.png') });
-    // 'list' now means the new name-only view (Task 10) — 'details' is the
-    // renamed equivalent of what used to be called 'list' (columns), which
-    // is what the Windows-icon-mode assertions below actually want back.
-    await page.evaluate(() => setViewMode('details'));
+    // Back to Details (the columns view), which is what the Windows-icon-mode
+    // assertions below want.
+    await page.evaluate(() => setView('details'));
 
     // Settings ▸ Personalization ▸ File icons = Windows: rows swap to real
     // Windows shell icons (an <img>, not a sprite <use>).
@@ -350,12 +349,12 @@ test('every screen renders with no renderer errors', async () => {
     await expect(rowByName('app').locator('img.fp-icon--win[src^="data:image/png"]')).toHaveCount(1, { timeout: 3000 });
     expect(await page.evaluate(() => fpShellIconRoute())).toBe('live');
 
-    // 5. Grid thumbnails in Windows mode: every bitmap's longer edge is the
-    // px bucket of the tile box x dpr, and the <img> (CSS-sized at the
+    // 5. Icon-view thumbnails in Windows mode: every bitmap's longer edge is
+    // the px bucket of the icon box x dpr, and the <img> (CSS-sized at the
     // picture's aspect ratio) fills its slot along its longer edge.
     await page.evaluate((p) => loadDirectory(p), picsDir);
     await page.waitForFunction(() => document.querySelectorAll('.fp-row').length >= 6);
-    await page.evaluate(() => setViewMode('grid'));
+    await page.evaluate(() => setView('icons', 96));
     await expect(page.locator('#list-scroll img.fp-thumb--ready[src^="data:image/png"]').first())
       .toBeVisible({ timeout: 3000 });
     const gridProofs = await page.evaluate(() => [...document.querySelectorAll('#list-scroll img.fp-thumb--ready')].map((el) => {
@@ -371,22 +370,22 @@ test('every screen renders with no renderer errors', async () => {
       expect(g.width).toBeLessThanOrEqual(g.boxW + 0.5);
       expect(g.height).toBeLessThanOrEqual(g.boxH + 0.5);
     }
-    await page.evaluate(() => setViewMode('details'));
+    await page.evaluate(() => setView('details'));
 
-    // 6. List-scale re-request: --list-scale 1.5 makes the row box 24 CSS px
-    // and every icon re-resolves at round(24 * dpr) instead of Chromium
-    // stretching the 16-px bitmap (needs the styles.css cascade fix:
-    // .fp-row .fp-row__icon beats .fp-icon--16). Then back.
+    // 6. Icon size vs Details rows: whatever size the icons view was last at,
+    // Details rows are 16 CSS px and every icon resolves at the 16-px bucket
+    // instead of Chromium stretching a bigger bitmap (needs the styles.css
+    // cascade fix: .fp-row .fp-row__icon beats .fp-icon--16).
     const rowsAt = (css) => page.waitForFunction(({ want, css }) => {
       const rows = [...document.querySelectorAll('#list-scroll img.fp-icon--win[src^="data:image/png"]')];
       return rows.length >= 6 && !document.querySelector('#list-scroll img.fp-icon--win[data-fp-lazy="pending"]')
         && rows.every((el) => el.naturalWidth === want && Math.abs(el.getBoundingClientRect().width - css) < 0.01);
     }, { want: iconPx(css), css }, { timeout: 5000 });
-    await page.evaluate(() => setListScale(1.5, { persist: false }));
-    // Details rows stay 16 px at any --list-scale: --icon-size is 16 for
-    // list/details (Stage 2D §3.2; only grid tiles follow the scale).
+    await page.evaluate(() => { setView('icons', 160); setView('details'); });
+    // Details rows stay 16 px at any icon size: --icon-size is 16 in Details
+    // (Stage 2D §3.2; only the icons view follows the ladder size).
     await rowsAt(16);
-    await page.evaluate(() => setListScale(1, { persist: false }));
+    await page.evaluate(() => { setView('icons', 96); setView('details'); });
     await rowsAt(16);
 
     // 7. Zoom round trip: Electron zoom changes devicePixelRatio; the
@@ -770,10 +769,11 @@ test('every screen renders with no renderer errors', async () => {
     // media view (playtest pass 1) ---
 
     // Pictures is all images (6/6 PNGs) — dynamic media view opens it in
-    // grid automatically, with no View menu interaction at all.
+    // Large icons automatically, with no View menu interaction at all.
     await page.evaluate((p) => loadDirectory(p), picsDir);
     await page.waitForFunction(() => document.querySelectorAll('.fp-row').length >= 6);
-    await expect(page.locator('#list-scroll')).toHaveAttribute('data-view', 'grid');
+    await expect(page.locator('#list-scroll')).toHaveAttribute('data-view', 'icons');
+    expect(await page.evaluate(() => browserState.iconSize)).toBe(96);
 
     // Documents is all text/markdown/PDF — opens in 'details' (the renamed
     // columns view) instead.
@@ -782,18 +782,18 @@ test('every screen renders with no renderer errors', async () => {
     await expect(page.locator('#list-scroll')).toHaveAttribute('data-view', 'details');
 
     // The View menu opens below the toolbar button; "List" switches
-    // Documents to the new name-only single-column view (#list-head hidden).
+    // Documents to the name-only, column-by-column view (#list-head hidden).
     await page.locator('#btn-view-menu').click();
     await expect(page.locator('#context-menu')).toBeVisible();
     await page.screenshot({ path: path.join(SHOTS, 'view-menu.png') });
-    await page.locator('#context-menu .fp-context-menu__item', { hasText: 'List' }).click();
+    await page.locator('#context-menu [data-menu-label="List"]').click();
     await expect(page.locator('#list-scroll')).toHaveAttribute('data-view', 'list');
     await expect(page.locator('#list-head')).toBeHidden();
 
-    // The manual "List" override on Documents must not leak onto Pictures —
-    // it still opens in grid on its own (manualViewByPath is keyed by path).
+    // The manual "List" choice on Documents must not leak onto Pictures — it
+    // still opens in Large icons on its own (ui.folder_views is per path).
     await page.evaluate((p) => loadDirectory(p), picsDir);
-    await expect(page.locator('#list-scroll')).toHaveAttribute('data-view', 'grid');
+    await expect(page.locator('#list-scroll')).toHaveAttribute('data-view', 'icons');
 
     // Sort menu: Size + Descending puts the largest file first — verified
     // against GET /fs/list's own sizes rather than a hardcoded name.
@@ -806,11 +806,11 @@ test('every screen renders with no renderer errors', async () => {
     await page.locator('#context-menu .fp-context-menu__item', { hasText: 'Descending' }).click();
     await expect(page.locator('#list-scroll .fp-row').first().locator('.fp-row__name')).toHaveText(largestPicName);
 
-    // Ctrl+wheel over the file list changes --list-scale and leaves
+    // Ctrl+wheel over the file list steps the view ladder and leaves
     // Electron's own application zoom (Ctrl+=/-/0) completely alone.
     const getZoom = () => page.evaluate(() => (window.electronAPI?.getZoom ? window.electronAPI.getZoom() : null));
     const zoomBefore = await getZoom();
-    const scaleBefore = await page.evaluate(() => browserState.listScale);
+    const stepBefore = await page.evaluate(() => currentViewStep());
     const listScrollBoxForWheel = await page.locator('#list-scroll').boundingBox();
     await page.mouse.move(
       listScrollBoxForWheel.x + listScrollBoxForWheel.width / 2,
@@ -819,26 +819,24 @@ test('every screen renders with no renderer errors', async () => {
     await page.keyboard.down('Control');
     await page.mouse.wheel(0, -100);
     await page.keyboard.up('Control');
-    await expect.poll(() => page.evaluate(() => browserState.listScale)).not.toBe(scaleBefore);
+    await expect.poll(() => page.evaluate(() => currentViewStep())).toBe(stepBefore + 1);
     expect(await getZoom()).toBe(zoomBefore);
-    const scaleAfter = await page.evaluate(() => browserState.listScale);
+    const sizeAfter = await page.evaluate(() => browserState.iconSize);
 
-    // /config holds the persisted scale, matching what the page just
-    // applied — setListScale()'s saveSetting() POST is fire-and-forget, so
-    // poll rather than assuming the round trip already landed the instant
-    // the in-page value changed above.
+    // /config remembers the step for Pictures (ui.folder_views) — the save is
+    // debounced and fire-and-forget, so poll rather than assuming the round
+    // trip already landed the instant the in-page value changed above.
     await expect.poll(async () => {
       const cfg = await (await fetch(`${API}/config`, { headers: apiHeaders })).json();
-      return cfg['ui.list_scale'];
-    }).toBe(scaleAfter);
+      const rec = (cfg['ui.folder_views'] || {})[picsDir.toLowerCase()];
+      return rec ? [rec.view, rec.size] : null;
+    }).toEqual(['icons', sizeAfter]);
 
-    // Reset the config keys and in-memory manual-view map this block set,
-    // and reload Documents in 'details' so later smoke steps (and the next
-    // verify run) see the documented defaults again.
-    await fetch(`${API}/config/ui.view_mode`, { method: 'DELETE', headers: apiHeaders });
+    // Reset the config keys this block set, and reload Documents in
+    // 'details' so later smoke steps (and the next verify run) see the
+    // documented defaults again.
+    await fetch(`${API}/config/ui.folder_views`, { method: 'DELETE', headers: apiHeaders });
     await fetch(`${API}/config/ui.sort`, { method: 'DELETE', headers: apiHeaders });
-    await fetch(`${API}/config/ui.list_scale`, { method: 'DELETE', headers: apiHeaders });
-    await page.evaluate(() => manualViewByPath.clear());
     await page.evaluate(async () => { await loadConfig(); applySettingsFromConfig(); });
     await page.evaluate((p) => loadDirectory(p), docsDir);
     await page.waitForFunction(() => document.querySelectorAll('.fp-row').length >= 10);
@@ -1638,11 +1636,11 @@ test('shell bitmaps are device-pixel exact at a forced 150% scale', async () => 
     await page.evaluate((p) => loadDirectory(p), `${root}\\_gen\\Projects`);
     await expect(rowByName('Makefile').locator('svg.fp-row__icon use[href="#fp-ft-generic"]')).toHaveCount(1, { timeout: 5000 });
 
-    // Grid thumbnails at 150%: a 96-CSS-px tile box -> a 144-px bitmap.
+    // Large-icon thumbnails at 150%: a 96-CSS-px icon box -> a 144-px bitmap.
     await page.evaluate(() => fpShellIconRoute('unknown'));
     await page.evaluate((p) => loadDirectory(p), `${root}\\_gen\\Pictures`);
     await page.waitForFunction(() => document.querySelectorAll('.fp-row').length >= 6);
-    await page.evaluate(() => setViewMode('grid'));
+    await page.evaluate(() => setView('icons', 96));
     const thumb = page.locator('#list-scroll img.fp-thumb--ready[src^="data:image/png"]').first();
     await expect(thumb).toBeVisible({ timeout: 5000 });
     const thumbProof = await thumb.evaluate((el) => {
@@ -1651,7 +1649,7 @@ test('shell bitmaps are device-pixel exact at a forced 150% scale', async () => 
     });
     // 96 css x 1.5 = 144 physical px, snapped up to the 192 bucket (§4.3).
     expect(thumbProof.long).toBe(require('../iconCache').fpIconBucket(Math.round(thumbProof.box * 1.5)));
-    await page.evaluate(() => setViewMode('details'));
+    await page.evaluate(() => setView('details'));
   } finally {
     // The icon-source setting is persisted server-side (POST /config), not
     // per-window -- reset it so it doesn't leak into a later run.

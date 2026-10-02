@@ -150,13 +150,12 @@ function applySettingsFromConfig() {
   const backspaceToggle = document.getElementById('settings-backspace-deletes');
   if (backspaceToggle) backspaceToggle.checked = backspaceDeletes;
 
-  // Sort / list-scale / dynamic media view (Task 10). ui.sort replaces the
-  // old sessionStorage['fp-sort'] entirely; ui.list_scale is re-applied to
-  // --list-scale with {persist: false} so reading it straight back never
-  // fires a redundant POST /config on startup (same pattern as
-  // ui.inspector_open/ui.sidebar_thispc_open above). ui.dynamic_media_view
-  // only syncs its Settings checkbox here — loadDirectory() (browser.js)
-  // reads the config key directly on every navigation.
+  // Sort / views / dynamic media view (Task 10, Stage 2D §3). ui.sort
+  // replaces the old sessionStorage['fp-sort'] entirely. Views are decided
+  // per folder on every navigation (browser.js decideView reads
+  // ui.folder_views / ui.view_default / ui.dynamic_media_view directly); the
+  // old global ui.view_mode + ui.list_scale migrate once, here.
+  // ui.dynamic_media_view only syncs its Settings checkbox here.
   const savedSort = cfg['ui.sort'];
   if (savedSort && typeof savedSort === 'object'
       && ['name', 'size', 'modified', 'created', 'accessed', 'type'].includes(savedSort.key)
@@ -164,8 +163,7 @@ function applySettingsFromConfig() {
     browserState.sort = { key: savedSort.key, dir: savedSort.dir };
     if (typeof updateSortHeaderUI === 'function') updateSortHeaderUI();
   }
-  const savedScale = LIST_SCALE_STEPS.includes(cfg['ui.list_scale']) ? cfg['ui.list_scale'] : 1;
-  setListScale(savedScale, { persist: false });
+  if (typeof migrateViewSettings === 'function') migrateViewSettings(cfg);
   const dmToggle = document.querySelector('[data-action="settings-toggle"][data-setting="dynamic-media-view"]');
   if (dmToggle) dmToggle.checked = cfg['ui.dynamic_media_view'] !== false;
 }

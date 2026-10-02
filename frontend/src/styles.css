@@ -83,9 +83,11 @@
   --t-display-sm: 22px/30px;
   --t-display:    28px/34px;
 
-  /* Bare font-size (no line-height) for calc() — Task 10's --list-scale
-     multiplies this for the file-list row name in list/details view. */
+  /* Bare font-size (no line-height) for calc(). */
   --fs-13: 13px;
+  /* Icon-cell and tile text (Stage 2D §3.4): 12px on a 16px line, so four
+     clamped lines are exactly 64px. */
+  --t-cell:       12px/16px;
 
   --track-body:    0;
   --track-button:  0;
@@ -142,6 +144,17 @@
   --row-comfortable: 32px;
   --row-spacious:    40px;
   --row-height:      var(--row-default);
+
+  /* ---------- Views (Stage 2D §3.2, logical px before app zoom) ----------
+     Details rows follow the density above; the other views are fixed-size.
+     browser.js mirrors --view-row-list (VIEW_LIST_ROW_PX) to count List's
+     rows per column, and sets --icon-size / --cell-w / --list-col-w /
+     --list-rows on #list-scroll itself. */
+  --view-row-list:    22px;   /* List and Small icons cells */
+  --view-row-content: 56px;   /* Content rows */
+  --view-tile-w:      256px;  /* Tiles */
+  --view-tile-h:      64px;
+  --view-cell-gap:    2px;    /* between icon cells / tiles */
 
   --sidebar-item-h:  28px;
 
@@ -2440,10 +2453,10 @@ svg { flex-shrink: 0; }
   display: flex;
   align-items: center;
   gap: 8px;
-  /* --list-scale (Task 10, Ctrl+wheel over #list-scroll / the View menu's
-     icon-size presets) scales the row height in list & details view; grid
-     mode's own rule below (height: auto) overrides this by specificity. */
-  height: calc(var(--row-height, 26px) * var(--list-scale, 1));
+  /* A minimum, never a fixed height: a row grows rather than clip its text
+     at any app zoom (Stage 2D §3.4). Each view's own block (§40f) sets its
+     own minimum. */
+  min-height: var(--row-height, 26px);
   padding: 0 12px;
   background: transparent;
   border: 1px solid transparent;
@@ -2482,15 +2495,15 @@ svg { flex-shrink: 0; }
    row of an adjacent pair drops its own top border/radius so only the upper
    row's bottom edge shows at the seam, and the upper row squares its bottom
    corners to match — the pair (and any longer run) reads as one block with
-   one accent bar spanning it. Scoped away from grid tiles, whose "adjacent"
-   DOM siblings are not necessarily adjacent visually (they can land in
-   different grid rows). */
-#list-scroll:not([data-view="grid"]) .fp-row--selected + .fp-row--selected {
+   one accent bar spanning it. Only in the one-column views (Details,
+   Content): in the others, DOM neighbours are not necessarily visual
+   neighbours (they can land in different rows or columns). */
+#list-scroll:is([data-view="details"], [data-view="content"]) .fp-row--selected + .fp-row--selected {
   border-top-color: transparent;
   border-top-left-radius: 0;
   border-top-right-radius: 0;
 }
-#list-scroll:not([data-view="grid"]) .fp-row--selected:has(+ .fp-row--selected) {
+#list-scroll:is([data-view="details"], [data-view="content"]) .fp-row--selected:has(+ .fp-row--selected) {
   border-bottom-left-radius: 0;
   border-bottom-right-radius: 0;
 }
@@ -2597,7 +2610,7 @@ body.is-dragging { cursor: default; }
 /* Sizing and colour are split on purpose. The SIZE lives on
    .fp-row .fp-row__icon (specificity 0,2,0), not bare .fp-row__icon: it must
    beat .fp-icon--16 (0,1,0, later in source) so a row icon actually follows
-   --list-scale as spec §3.10 says — at equal specificity the later rule won
+   --icon-size (Stage 2D §3.5) — at equal specificity the later rule won
    and every row icon was stuck at 16 CSS px regardless of scale (pass 2 —
    icon design §4.6). The COLOUR stays on the bare (0,1,0) rule: at (0,2,0)
    it would also outrank .fp-row--selected .fp-row__icon and
@@ -2615,8 +2628,8 @@ body.is-dragging { cursor: default; }
 }
 .fp-row__name {
   flex: 1;
+  min-width: 0;
   font: 500 var(--t-body) var(--font-ui);
-  font-size: calc(var(--fs-13, 13px) * var(--list-scale, 1));
   color: var(--text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2657,8 +2670,8 @@ body.is-dragging { cursor: default; }
   border-radius: 2px;
   padding: 0 1px;
 }
-#list-scroll[data-mode="search"]:not([data-view="grid"]) .fp-row {
-  height: calc(var(--row-height, 26px) * var(--list-scale, 1) * 1.6);
+#list-scroll[data-mode="search"][data-view="details"] .fp-row {
+  min-height: calc(var(--row-height, 26px) * 1.6);
 }
 
 .fp-row__size,
@@ -2714,8 +2727,7 @@ body.is-dragging { cursor: default; }
 .fp-list--comfortable { --row-height: var(--row-comfortable); }
 /* Density (data-density attribute, canonical, set on <html>) — sets
    --row-height rather than a literal .fp-row height so the base rule above
-   (height: calc(var(--row-height) * var(--list-scale))) still scales it with
-   Ctrl+wheel/the View menu's icon-size presets. .fp-row is shared by Browser
+   (min-height: var(--row-height)) picks it up. .fp-row is shared by Browser
    rows and Home's Recent/Favorites rows (.fp-row--recent), so one set of
    rules covers both (playtest pass 1 §3.14 — spacious had a Settings button
    but no rule until Task 8's review). */
@@ -4169,10 +4181,11 @@ body.is-dragging { cursor: default; }
 /* --icon-size (Stage 2D §3.5/§4.3): the one logical icon size of the listing.
    Every row icon and thumbnail box in #list-scroll is sized from it, so a
    size change is one synchronous custom-property update and every icon
-   scales in the same frame as its cell. icons.js asks the shell for the px
-   bucket of this size (browser.js fpListIconSize mirrors it). */
+   scales in the same frame as its cell. browser.js (applyViewDom) sets it on
+   #list-scroll — and --cell-w, the icon cell width — from the view ladder;
+   icons.js asks the shell for the px bucket of this size. 16px is only the
+   value before the first listing. */
 #list-scroll { --icon-size: 16px; }
-#list-scroll[data-view="grid"] { --icon-size: calc(96px * var(--list-scale, 1)); }
 .list-scroll {
   flex: 1;
   overflow-y: auto;
@@ -4181,47 +4194,192 @@ body.is-dragging { cursor: default; }
      list edge (Task 11, playtest pass 1 §4.1). */
   padding-left: 0;
 }
+/* The strip above the listing (browser.js setListNotice). */
+.list-notice[hidden] { display: none; }
 
-/* ── 40f. BROWSER GRID VIEW (A.3.1) ──────────────────────────────────────── */
-#list-scroll[data-view="grid"] {
+/* ── 40f. VIEWS (Stage 2D §3.2) ────────────────────────────────────────────
+   One block per [data-view]. Nothing here is a fixed height around text:
+   rows and cells use min-height (or auto), so no name clips at any app zoom
+   (§3.4); text that is cut on purpose ellipsizes and carries the full name
+   as its tooltip. Column widths never stretch (no 1fr), so an icon never
+   resizes when the grid reflows. */
+
+/* Grid-flow views: Icons, Tiles, Small icons — row-major, vertical scroll. */
+#list-scroll:is([data-view="icons"], [data-view="tiles"], [data-view="small"]) {
   display: grid;
-  /* --list-scale (Task 10): grid tile size, matching .fp-tile__thumb's own
-     calc(96px * var(--list-scale, 1)) below. */
-  grid-template-columns: repeat(auto-fill, minmax(calc(120px * var(--list-scale, 1)), 1fr));
-  gap: var(--s-8);
-  padding: var(--s-12);
+  justify-content: start;
   align-content: start;
+  align-items: start;
+  gap: var(--view-cell-gap);
+  padding: var(--s-8);
 }
-/* Adapt existing fp-row to tile layout in grid mode */
-#list-scroll[data-view="grid"] .fp-row {
+/* An empty folder / an error spans every column. */
+#list-scroll > .fp-empty-state,
+#list-scroll > .fp-error-banner { grid-column: 1 / -1; }
+
+/* Icons (48–256): square icon first, the name grows downward (§3.4). */
+#list-scroll[data-view="icons"] {
+  grid-template-columns: repeat(auto-fill, var(--cell-w, 124px));
+  /* A row is as tall as its tallest cell. max-content, not auto: #list-scroll
+     has a definite height, and auto rows would be squeezed into it (cells
+     overlapping) instead of overflowing it. */
+  grid-auto-rows: max-content;
+}
+#list-scroll[data-view="icons"] .fp-row {
   flex-direction: column;
   align-items: center;
+  justify-content: flex-start;
+  gap: var(--s-4);
+  min-height: 0;
+  padding: var(--s-4) 0 var(--s-6);
+}
+#list-scroll[data-view="icons"] .fp-row__name {
+  flex: none;
+  width: 100%;
+  padding: 0 var(--s-4);
+  font: 400 var(--t-cell) var(--font-ui);
   text-align: center;
-  height: auto;
-  min-height: calc(120px * var(--list-scale, 1));
-  padding: var(--s-8);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--r-card);
-  background: var(--bg-raised);
-  box-shadow: var(--shadow-card);
-  cursor: default;
+  white-space: normal;
+  /* A long unbroken word wraps inside the cell and never leaves it. */
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-#list-scroll[data-view="grid"] .fp-row:hover {
-  background: var(--bg-pressed);
+/* Explorer: the item that is selected AND focused shows its whole name; the
+   cell (and its grid row) grows downward for it. */
+#list-scroll[data-view="icons"] .fp-row--selected.fp-row--focused .fp-row__name {
+  display: block;
+  -webkit-line-clamp: unset;
+  overflow: visible;
 }
-#list-scroll[data-view="grid"] .fp-row--selected {
-  background: var(--accent-wash);
-  border-color: var(--accent-edge);
+#list-scroll[data-view="icons"] .fp-row__rename {
+  flex: none;
+  width: calc(100% - 2 * var(--s-4));
+  text-align: center;
 }
-/* Grid selection bar (Task 11, playtest pass 1 §4.1): a single selected tile
-   gets an accent bar along its bottom edge; several selected tiles show only
-   the wash/border above, no bar. #list-scroll's own data-selection-count
-   (browser.js onSelectionChanged) is the source of truth for "single" since
-   it counts the WHOLE selection, not this tile alone. */
-#list-scroll[data-view="grid"] .fp-row--selected::before {
-  display: none;
+
+/* Tiles: 256 x 64 cells, 48px icon, name / type / size. */
+#list-scroll[data-view="tiles"] {
+  grid-template-columns: repeat(auto-fill, var(--view-tile-w));
+  grid-auto-rows: minmax(var(--view-tile-h), max-content);
 }
-#list-scroll[data-view="grid"][data-selection-count="1"] .fp-row--selected::before {
+#list-scroll[data-view="tiles"] .fp-row {
+  min-height: var(--view-tile-h);
+  gap: var(--s-8);
+  padding: var(--s-4) var(--s-8);
+}
+.fp-row__lines {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+#list-scroll[data-view="tiles"] .fp-row__name,
+.fp-row__line {
+  flex: none;
+  font: 400 var(--t-cell) var(--font-ui);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.fp-row__line { color: var(--text-secondary); }
+
+/* Small icons: 16px icon + name, fixed-width columns, row-major. */
+#list-scroll[data-view="small"] {
+  grid-template-columns: repeat(auto-fill, var(--list-col-w, 200px));
+  grid-auto-rows: minmax(var(--view-row-list), max-content);
+  column-gap: var(--s-4);
+  row-gap: 0;
+}
+
+/* List: the same cells, flowing top to bottom then into the next column to
+   the right; the pane scrolls sideways (the plain wheel too — app.js).
+   browser.js sets --list-rows to the rows that fit the pane's height. */
+#list-scroll[data-view="list"] {
+  display: grid;
+  grid-auto-flow: column;
+  grid-template-rows: repeat(var(--list-rows, 20), var(--view-row-list));
+  grid-auto-columns: var(--list-col-w, 200px);
+  justify-content: start;
+  align-content: start;
+  column-gap: var(--s-4);
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: var(--s-4) var(--s-8);
+}
+/* Nothing to flow (an empty folder, an error): a plain block, so the message
+   spans the pane instead of taking one 22px cell (pass-2 #169). */
+#list-scroll[data-view="list"]:not(:has(> .fp-row)) {
+  display: block;
+  overflow-x: hidden;
+}
+#list-scroll:is([data-view="list"], [data-view="small"]) .fp-row {
+  min-height: var(--view-row-list);
+  padding: 0 var(--s-6);
+  gap: var(--s-8);
+}
+
+/* Content: full-width two-line rows with a hairline between them. */
+#list-scroll[data-view="content"] .fp-row {
+  min-height: var(--view-row-content);
+  gap: var(--s-12);
+  padding: var(--s-6) var(--s-12);
+  border-radius: 0;
+  border-bottom-color: var(--border-hairline);
+}
+#list-scroll[data-view="content"] .fp-row--selected { border-color: var(--accent-edge); }
+.fp-row__content {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  /* The name side always keeps at least half the row (up to 160px): the
+     date/size side takes its natural width only from what is left, so a
+     narrow pane ellipsizes the date before the name. */
+  grid-template-columns: minmax(min(50%, 160px), 1fr) minmax(0, max-content);
+  column-gap: var(--s-24);
+  row-gap: var(--s-2);
+  align-items: baseline;
+}
+.fp-row__meta {
+  min-width: 0;
+  font: 400 var(--t-compact) var(--font-ui);
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: right;
+}
+.fp-row__meta--start { text-align: left; color: var(--text-tertiary); }
+.fp-row__meta-label { color: var(--text-tertiary); }
+
+/* The s x s slot of Content (32), Tiles (48) and Icons (s): a FilePlus sprite
+   fills it at the small sizes; at Icons sizes it keeps the 58% that matches
+   the shell art's own margin (§57b). */
+#list-scroll:is([data-view="content"], [data-view="tiles"]) .fp-tile__thumb > .fp-icon,
+#list-scroll:is([data-view="content"], [data-view="tiles"]) .fp-tile__thumb > .fp-icon-badged--compact > .fp-icon {
+  width: var(--icon-size);
+  height: var(--icon-size);
+}
+
+/* The favourite star: inline in Details and Content; a corner badge on an
+   icon cell or tile; not shown in the name-only List / Small icons cells. */
+#list-scroll:is([data-view="icons"], [data-view="tiles"]) .fp-row__star {
+  position: absolute;
+  top: var(--s-4);
+  right: var(--s-4);
+}
+#list-scroll:is([data-view="list"], [data-view="small"]) .fp-row__star { display: none; }
+
+/* Selection bar: the edge-hugging left bar fits rows and the small cells; an
+   icon cell or tile shows a bottom bar, and only when it is the one
+   selected item (Task 11, playtest pass 1 §4.1 — several selected cells show
+   only the wash). #list-scroll's data-selection-count (browser.js
+   onSelectionChanged) counts the whole selection. */
+#list-scroll:is([data-view="icons"], [data-view="tiles"]) .fp-row--selected::before { display: none; }
+#list-scroll:is([data-view="icons"], [data-view="tiles"])[data-selection-count="1"] .fp-row--selected::before {
   display: block;
   left: 0;
   right: 0;
@@ -4230,31 +4388,29 @@ body.is-dragging { cursor: default; }
   height: 2px;
   width: auto;
 }
-/* Grid tiles carry .fp-tile__thumb (see §57b) instead of the list view's
-   16px .fp-row__icon — the tile's whole point is a thumbnail area big
-   enough to show the file's actual content. */
-#list-scroll[data-view="grid"] .fp-row__name {
-  font: 500 var(--t-compact) var(--font-ui);
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  white-space: normal;
-}
-/* 'list' (Task 10): name-only rows — same column hiding as grid, but the
-   row stays a normal single-column flex row (no tile layout applies, since
-   every rule above this is scoped to [data-view="grid"] specifically). */
-#list-scroll[data-view="grid"] .fp-row__size,
-#list-scroll[data-view="grid"] .fp-row__modified,
-#list-scroll[data-view="grid"] .fp-row__tags,
-#list-scroll[data-view="grid"] .fp-row__star,
-#list-scroll[data-view="list"] .fp-row__size,
-#list-scroll[data-view="list"] .fp-row__modified,
-#list-scroll[data-view="list"] .fp-row__tags { display: none; }
-/* Hide column headers outside details view (grid and the name-only list) */
+/* Hide column headers outside Details. */
 .list-head--grid-hidden { display: none !important; }
+
+/* Details in a narrow file area (a small window, a high app zoom): the Name
+   column keeps at least 120px and the lower-priority columns drop out
+   instead — Tags first, then Size, then the date — header and rows together,
+   so they stay aligned. Thresholds are 120px of name plus the row padding,
+   icon, gaps and the columns still showing. */
+.list-pane { container: list-pane / inline-size; }
+#list-scroll[data-view="details"] .fp-row__name,
+#list-scroll[data-view="details"] .fp-row__namecell { min-width: 120px; }
+@container list-pane (max-width: 560px) {
+  .list-col--tags,
+  #list-scroll[data-view="details"] .fp-row__tags { display: none; }
+}
+@container list-pane (max-width: 440px) {
+  .list-col--size,
+  #list-scroll[data-view="details"] .fp-row__size { display: none; }
+}
+@container list-pane (max-width: 320px) {
+  .list-col--modified,
+  #list-scroll[data-view="details"] .fp-row__modified { display: none; }
+}
 
 /* Marquee selection rectangle (A.3.1) */
 .fp-marquee,
@@ -5974,8 +6130,8 @@ button.fp-pill:hover {
   gap: 2px;
 }
 .fp-tile__thumb > .fp-icon-badged > .fp-icon {
-  width: calc(var(--icon-size, 96px) * 0.58);
-  height: calc(var(--icon-size, 96px) * 0.58);
+  width: max(calc(var(--icon-size, 96px) * 0.58), min(var(--icon-size, 96px), 48px) - 14px);
+  height: max(calc(var(--icon-size, 96px) * 0.58), min(var(--icon-size, 96px), 48px) - 14px);
 }
 .fp-tile__thumb .fp-ext-badge { font-size: calc(var(--icon-size, 96px) * 0.094); }
 .fp-ext-badge {
@@ -6059,15 +6215,22 @@ button.fp-pill:hover {
 .fp-thumb--mini-1 { transform: translate(-90%, 0) rotate(-9deg); }
 .fp-thumb--mini-2 { transform: translate(-10%, 0) rotate(9deg); }
 
-/* Grid tile thumbnail area: the s x s slot, s = --icon-size (96px x
-   --list-scale until Task 5's view ladder drives the variable). A FilePlus
+/* Icon slot of Content / Tiles / Icons: the s x s box, s = --icon-size (the
+   view ladder, browser.js applyViewDom). A FilePlus
    sprite sits at 58% of it; a Windows shell icon fills it, as Explorer's own
    large icons do (the shell's art carries its own margin). */
 .fp-tile__thumb {
   width: var(--icon-size, 96px);
   height: var(--icon-size, 96px);
 }
-.fp-tile__thumb > .fp-icon { width: 58%; height: 58%; }
+/* The sprite glyph is 58% of a large slot, but never under 48px (or the
+   whole slot below that): at Medium icons (48) 58% left a 28px glyph in a
+   48px cell. Monotonic in the slot size, so a Ctrl+wheel step never shrinks
+   a glyph while its cell grows. */
+.fp-tile__thumb > .fp-icon {
+  width: max(58%, min(100%, 48px));
+  height: max(58%, min(100%, 48px));
+}
 .fp-thumb-box > .fp-icon--win { width: 100%; height: 100%; }
 
 /* List row whose 16px icon is a thumbnail of the picture itself. */
@@ -6272,7 +6435,7 @@ button.fp-pill:hover {
        so a 0.01ms duration turns EVERY style change on EVERY element into a
        one-frame transition whose first frame samples the OLD value — an
        IntersectionObserver record or getBoundingClientRect() taken in that
-       frame (icons.js re-measuring a row icon after a --list-scale change)
+       frame (icons.js re-measuring a row icon after an icon-size change)
        read the pre-change size and pinned the wrong bitmap. A 0s transition
        never starts, which is what "instant" means; nothing in the renderer
        waits on transitionend (pass 2, icons). */

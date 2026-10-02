@@ -311,25 +311,27 @@ test('drag/drop, selection and menus: pass-2 regressions', async () => {
     }, fileA)).toBe(true);
     await page.evaluate(async (p) => { await API.del('/favorites', { path: p }); await favoritesReload(); }, fileA);
 
-    // ── #202  Every Ctrl+wheel scale checks exactly one View-menu item ───────
+    // ── #202  Every Ctrl+wheel step checks exactly one View-menu item ────────
     const checks = await page.evaluate(() => {
-      const sizeActions = new Set(['view-xl', 'view-large', 'view-medium', 'view-small']);
-      const view = browserState.view, scale = browserState.listScale;
-      browserState.view = 'grid';
-      const out = LIST_SCALE_STEPS.map(s => {
-        browserState.listScale = s;
+      const view = browserState.view, size = browserState.iconSize;
+      const out = VIEW_LADDER.map(step => {
+        browserState.view = step.view;
+        if (step.size) browserState.iconSize = step.size;
         const ctx = menuContext();
-        const on = VIEW_MENU_ITEMS.filter(i => i !== 'sep' && sizeActions.has(i.action) && i.checked(ctx));
-        return [s, on.length === 1 ? on[0].action : `${on.length} checked`];
+        const on = VIEW_MENU_ITEMS.filter(i => i !== 'sep' && /^view-/.test(i.action) && i.checked(ctx));
+        return [step.view + (step.size ? `@${step.size}` : ''), on.length === 1 ? on[0].action : `${on.length} checked`];
       });
-      browserState.view = view; browserState.listScale = scale;
+      browserState.view = view; browserState.iconSize = size;
       return out;
     });
-    // Exactly one item checked at every Ctrl+wheel step, and each step lands in
-    // the bracket around its own preset.
+    // Exactly one item checked at every Ctrl+wheel step; an icon size lands in
+    // its named bucket (< 80 Medium, < 192 Large, else Extra large — §3.1).
     expect(checks).toEqual([
-      [0.75, 'view-small'], [0.875, 'view-medium'], [1, 'view-medium'], [1.125, 'view-medium'],
-      [1.25, 'view-large'], [1.5, 'view-large'], [1.75, 'view-xl'], [2, 'view-xl'],
+      ['content', 'view-content'], ['tiles', 'view-tiles'], ['details', 'view-details'], ['list', 'view-list'],
+      ['small', 'view-small'], ['icons@48', 'view-medium'], ['icons@56', 'view-medium'], ['icons@64', 'view-medium'],
+      ['icons@72', 'view-medium'], ['icons@80', 'view-large'], ['icons@96', 'view-large'], ['icons@112', 'view-large'],
+      ['icons@128', 'view-large'], ['icons@160', 'view-large'], ['icons@192', 'view-xl'], ['icons@224', 'view-xl'],
+      ['icons@256', 'view-xl'],
     ]);
 
     await page.evaluate(() => clearSelection());

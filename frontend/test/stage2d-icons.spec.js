@@ -87,13 +87,13 @@ test('Windows-icon mode paints without flashing (Stage 2D §4)', async () => {
     expect(revisit.frame.every((s) => s.settled)).toBe(true);
     expect(revisit.frame.some((s) => s.spriteVisible)).toBe(false);
 
-    // Same in grid (Pictures decides Large icons): the thumbnail itself is
+    // Same in Large icons (Pictures decides them): the thumbnail itself is
     // the settled image on a revisit, with no type icon under it.
     const revisitGrid = await page.evaluate(async ({ p }) => {
       await openBrowserAt(p);
       return { same: window.__fpSampleRows(), view: browserState.view };
     }, { p: picsDir });
-    expect(revisitGrid.view).toBe('grid');
+    expect(revisitGrid.view).toBe('icons');
     expect(revisitGrid.same.length).toBeGreaterThanOrEqual(6);
     expect(revisitGrid.same.filter((s) => !s.settled).map((s) => s.name)).toEqual([]);
     expect(revisitGrid.same.some((s) => s.spriteVisible)).toBe(false);
@@ -159,7 +159,7 @@ test('Windows-icon mode paints without flashing (Stage 2D §4)', async () => {
     await expect(props).toBeHidden();
 
     // -- 4. Freeform thumbnails: aspect kept, bottom-aligned, outlined ----
-    await page.evaluate(() => setViewMode('grid'));
+    await page.evaluate(() => setView('icons', 96));
     await page.waitForFunction(() => document.querySelectorAll('#list-scroll img.fp-thumb--ready').length >= 2, null, { timeout: 8000 });
     const free = await page.evaluate(() => Object.fromEntries(['wide.png', 'tall.png'].map((n) => {
       const row = [...document.querySelectorAll('#list-scroll .fp-row')].find((r) => r.querySelector('.fp-row__name').textContent === n);
@@ -185,13 +185,14 @@ test('Windows-icon mode paints without flashing (Stage 2D §4)', async () => {
     expect(Math.abs(free['tall.png'].h - free['tall.png'].slotH)).toBeLessThan(0.6);
     await shot(page, 'stage2d-icons-freeform-thumbs');
 
-    // -- 5. Icon box stable across a size change; the sharper bitmap swaps
-    // in later at the new bucket, into the same box, never through a blank --
+    // -- 5. Icon box stable across a size step (icons 96 -> 128); the sharper
+    // bitmap swaps in later at the new bucket, into the same box, never
+    // through a blank --
     const sizeProbe = await page.evaluate(async () => {
       const row = [...document.querySelectorAll('#list-scroll .fp-row')].find((r) => r.querySelector('.fp-row__name').textContent === 'doc.txt');
       const img = row.querySelector('img[data-win-icon]');
       const rec = () => ({ w: img.getBoundingClientRect().width, h: img.getBoundingClientRect().height, src: img.src, connected: img.isConnected });
-      setListScale(1.5, { persist: false });
+      setView('icons', 128);
       const out = [rec()];
       for (const ms of [50, 250]) { await new Promise((r) => setTimeout(r, ms)); out.push(rec()); }
       return out;
@@ -202,18 +203,18 @@ test('Windows-icon mode paints without flashing (Stage 2D §4)', async () => {
       expect(Math.abs(s.h - sizeProbe[0].h)).toBeLessThan(0.01);
       expect(s.src).toMatch(/^data:image\/png/);
     }
-    expect(Math.abs(sizeProbe[0].w - 144)).toBeLessThan(0.5);
-    const want144 = await bucket(Math.round(144 * dpr));
-    await expect(rowByName(page, 'doc.txt').locator('img[data-win-icon]')).toHaveAttribute('data-px', String(want144), { timeout: 5000 });
-    expect(await rowByName(page, 'doc.txt').locator('img[data-win-icon]').evaluate((el) => el.naturalWidth)).toBe(want144);
-    await page.evaluate(() => setListScale(1, { persist: false }));
+    expect(Math.abs(sizeProbe[0].w - 128)).toBeLessThan(0.5);
+    const want128 = await bucket(Math.round(128 * dpr));
+    await expect(rowByName(page, 'doc.txt').locator('img[data-win-icon]')).toHaveAttribute('data-px', String(want128), { timeout: 5000 });
+    expect(await rowByName(page, 'doc.txt').locator('img[data-win-icon]').evaluate((el) => el.naturalWidth)).toBe(want128);
+    await page.evaluate(() => setView('icons', 96));
 
     // -- 6. A corrupt picture with Tier A gone ends on a type icon or the
     // sprite — never an empty slot --------------------------------------
     await page.evaluate(() => fpShellIconRoute('absent'));
     await page.evaluate((p) => openBrowserAt(p), `${root}\\_gen`); // away and back: a fresh render
     await page.evaluate((p) => openBrowserAt(p), iconsDir);
-    await page.evaluate(() => setViewMode('grid'));
+    await page.evaluate(() => setView('icons', 96));
     await page.waitForTimeout(2000);
     const broken = await page.evaluate(() => {
       const row = [...document.querySelectorAll('#list-scroll .fp-row')].find((r) => r.querySelector('.fp-row__name').textContent === 'broken.png');
@@ -227,7 +228,7 @@ test('Windows-icon mode paints without flashing (Stage 2D §4)', async () => {
     expect(broken.length).toBeGreaterThan(0);
     await shot(page, 'stage2d-icons-broken-tierb');
     await page.evaluate(() => fpShellIconRoute('live'));
-    await page.evaluate(() => setViewMode('details'));
+    await page.evaluate(() => setView('details'));
 
     // -- 7. Every item icon site carries a shell <img> --------------------
     await apiPost('/recent', { path: `${docsDir}\\doc-00.txt`, action: 'opened' });
