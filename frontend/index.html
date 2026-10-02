@@ -228,9 +228,10 @@
             <svg class="fp-icon fp-icon--10" aria-hidden="true"><use href="#fp-close"></use></svg>
           </span>
         </div>
-        <!-- New tab button -->
-        <button class="fp-icon-btn fp-icon-btn--sm" id="btn-new-tab" data-action="new-tab" title="New tab (Ctrl+T)" style="margin-left:2px;flex-shrink:0;-webkit-app-region:no-drag">
-          <svg class="fp-icon fp-icon--14" aria-hidden="true"><use href="#fp-new-tab"></use></svg>
+        <!-- New tab button: the plain "+" in a 28px ghost square, centred
+             with the tabs (Stage 2D §6.1; .fp-tab-new in styles.css) -->
+        <button class="fp-icon-btn fp-tab-new" id="btn-new-tab" data-action="new-tab" title="New tab (Ctrl+T)" aria-label="New tab">
+          <svg class="fp-icon fp-icon--16" aria-hidden="true"><use href="#fp-add"></use></svg>
         </button>
         <!-- spacer fills rest of row (also acts as window drag region) -->
         <div style="flex:1;align-self:stretch;-webkit-app-region:drag"></div>
@@ -240,7 +241,7 @@
            A.1.4  TOOLBAR  (48px)
            Back/Forward/Up | Breadcrumb (flex-grow) | Search | View seg | Inspector toggle
       ══════════════════════════════════════════════════════════════ -->
-      <div class="fp-toolbar" id="toolbar">
+      <div class="fp-toolbar" id="toolbar" data-search="full">
 
         <!-- Nav: Back / Forward / Up -->
         <div style="display:flex;gap:2px;flex-shrink:0">
@@ -255,10 +256,12 @@
           </button>
         </div>
 
-        <!-- Breadcrumb / address bar. The WRAPPER is what flexes: it is
-             right-anchored with a leading fade, so as the search bar grows
-             the start of the path scrolls out of view while its end (the
-             folder you are actually in) stays put — design §8.3. -->
+        <!-- Breadcrumb / address bar. The WRAPPER is what flexes. The path
+             starts at its left edge and grows rightward; only once the
+             search bar has collapsed to its magnifier and the path still
+             does not fit does app.js's layoutToolbar() mark it
+             .is-overflowing, which right-anchors it under a leading fade so
+             the folder you are actually in stays visible (Stage 2D §6.2). -->
         <!-- middot separator, never > or / — per spec A.1.4 -->
         <div class="fp-breadcrumb-wrap" id="breadcrumb-wrap">
           <nav class="fp-breadcrumb" id="breadcrumb" aria-label="Location">
@@ -287,12 +290,17 @@
         <!-- Search field (Task 14, design §8.1). Focusing it opens
              #search-dropdown; picked filters become .fp-search-chip chips
              BEFORE the input, Discord-style, and the text after them is the
-             name query. The bar grows with its content up to 60% of the
-             toolbar (styles.css) and pushes the path left. -->
+             name query. The SLOT is the toolbar's flex child: app.js's
+             layoutToolbar() sizes it (280 preferred, more for long content,
+             180 minimum) or folds it to the 28px magnifier
+             (#toolbar[data-search="collapsed"], Stage 2D §6.2). Opened while
+             collapsed, the bar overlays the path from inside the slot, so
+             nothing reflows. -->
+        <div class="fp-toolbar__search-slot" id="search-slot">
         <div class="fp-search fp-toolbar__search" id="search-wrap">
-          <!-- Narrow-toolbar stand-in: the whole bar folds into this button
-               below #toolbar[data-narrow]'s threshold; clicking it expands the
-               bar again (app.js's initToolbarNarrowMode / search.js). -->
+          <!-- Collapsed stand-in: the whole bar folds into this button under
+               #toolbar[data-search="collapsed"]; clicking it (or Ctrl+F)
+               opens the bar as an overlay (search.js expandSearchBar). -->
           <button class="fp-search__collapsed" id="search-collapsed"
                   data-action="focus-search" title="Search files" aria-label="Search files">
             <svg class="fp-icon fp-icon--14" aria-hidden="true"><use href="#fp-search"></use></svg>
@@ -311,6 +319,7 @@
           <!-- Filters + History dropdown — body rendered by search.js -->
           <div class="fp-search-dd" id="search-dropdown" role="menu" aria-label="Search filters" hidden></div>
         </div>
+        </div><!-- /#search-slot -->
 
         <!-- View / Sort: Windows-style dropdown menus (Task 10), replacing
              the old List/Grid segmented toggle. Both open the shared

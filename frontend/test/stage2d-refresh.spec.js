@@ -638,7 +638,10 @@ test('refresh in place, one render per navigation, cached tab repaint, no defaul
     // pass only if Chromium's own editing handles them (no Edit-menu roles).
     await page.evaluate((p) => openBrowserAt(p), docsDir);
     const input = page.locator('#search-input');
-    await input.click();
+    // The bar, not the <input>: the long fixture path may have folded search
+    // into its magnifier (Stage 2D §6.2); a click on the bar opens it either way.
+    await page.locator('#search-wrap').click();
+    await expect(input).toBeFocused();
     await page.keyboard.type('zqx-2d');
     await expect(input).toHaveValue('zqx-2d');
     await nativeKey(app, 'A', ['control']);

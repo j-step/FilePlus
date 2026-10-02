@@ -45,6 +45,10 @@ test('toolbar search: pass-2 regressions', async () => {
 
     const searchInput = page.locator('#search-input');
     const searchDropdown = page.locator('#search-dropdown');
+    // The bar, not the <input>: with a long path the toolbar folds search
+    // into its magnifier (Stage 2D §6.2), and a click on the bar opens it
+    // in either mode (search.js's mousedown handler).
+    const searchBar = page.locator('#search-wrap');
     const searchHeader = page.locator('#list-search-header');
     const filtersModal = page.locator('#search-filters-modal');
     const filtersScrim = page.locator('#search-filters-scrim');
@@ -66,7 +70,7 @@ test('toolbar search: pass-2 regressions', async () => {
     const before = await listNames(docsDir);
     await page.locator('#list-scroll .fp-row[data-path]').first().click();
     expect(await page.evaluate(() => browserState.selection.size)).toBe(1);
-    await searchInput.click();
+    await searchBar.click();
     await searchDropdown.locator('[data-action="search-more-filters"]').click();
     await expect(filtersModal).toBeVisible();
     // openMoreFilters() focuses a control, so activeElement is never <body>.
@@ -81,7 +85,7 @@ test('toolbar search: pass-2 regressions', async () => {
     // -- #92  Escape and a backdrop click both dismiss it --------------------
     await page.keyboard.press('Escape');
     await expect(filtersModal).toBeHidden();
-    await searchInput.click();
+    await searchBar.click();
     await searchDropdown.locator('[data-action="search-more-filters"]').click();
     await expect(filtersModal).toBeVisible();
     await filtersScrim.click({ position: { x: 8, y: 8 } });
@@ -266,7 +270,7 @@ test('toolbar search: pass-2 regressions', async () => {
         { chips: [], text: 'doc-0', scope: 'current' },
       ]));
     });
-    await searchInput.click();
+    await searchBar.click();
     await expect(searchDropdown.locator('[data-action="search-history-run"]')).toHaveCount(2);
     // A newer search lands while the panel stays open: the rendered rows are
     // now positionally wrong, so an index-addressed click ran the wrong one.
@@ -291,7 +295,7 @@ test('toolbar search: pass-2 regressions', async () => {
     await expect(marks.first()).toBeVisible({ timeout: 4000 });
     expect(await page.evaluate(() => loadSearchHistory().length)).toBe(0);
     // A deliberate commit (Enter) still records it.
-    await searchInput.click();
+    await searchBar.click();
     await page.keyboard.press('Enter');
     await expect(marks.first()).toBeVisible({ timeout: 4000 });
     // Polled: the marks above are still the previous run's, so they do not
@@ -300,11 +304,16 @@ test('toolbar search: pass-2 regressions', async () => {
     await expect.poll(() => page.evaluate(() => loadSearchHistory().map(e => e.text)), { timeout: 4000 })
       .toEqual(['doc-0']);
 
-    // -- #97 / #165  Narrow toolbar: the bar opens for a sidebar tag chip and
-    //                folds again when the search is cleared -----------------
+    // -- #97 / #165  Collapsed toolbar: the bar opens for a sidebar tag chip
+    //                and folds again when the search is cleared ------------
+    //                (a real narrow bar: the widest sidebar at the minimum
+    //                window width collapses the search — Stage 2D §6.2)
     await page.evaluate(() => clearSearch());
+    const winSize = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].getSize());
+    await app.evaluate(({ BrowserWindow }) => { BrowserWindow.getAllWindows()[0].setSize(800, 600); });
+    await page.evaluate(() => document.documentElement.style.setProperty('--sidebar-w-screen', '480px'));
+    await expect(page.locator('#toolbar')).toHaveAttribute('data-search', 'collapsed', { timeout: 3000 });
     await page.evaluate(() => {
-      document.getElementById('toolbar').setAttribute('data-narrow', '');
       const btn = document.createElement('button');
       btn.id = 'test-tag-chip';
       btn.dataset.action = 'filter-by-tag';
@@ -318,13 +327,21 @@ test('toolbar search: pass-2 regressions', async () => {
     await expect(page.locator('#search-wrap')).toHaveClass(/fp-search--expanded/);
     await expect(page.locator('#search-chips .fp-search-chip').first()).toBeVisible();
     await expect(searchHeader).toBeVisible({ timeout: 6000 });
-    await page.locator('#breadcrumb [data-action="search-clear"]').click();
+    // The open bar overlays the path (it never reflows it), so the search
+    // header's × sits under it: dispatched like the chip above — the clear
+    // that does not come from a blur or Escape is what is under test.
+    // Focus has moved on (the user clicked into the results) before the ×.
+    await page.evaluate(() => document.activeElement?.blur());
+    await expect(page.locator('#search-wrap')).toHaveClass(/fp-search--expanded/);
+    await page.locator('#breadcrumb [data-action="search-clear"]').dispatchEvent('click');
     await expect(searchHeader).toBeHidden();
     await expect(page.locator('#search-wrap')).not.toHaveClass(/fp-search--expanded/);
+    await expect(page.locator('#search-collapsed')).toBeVisible();
     await page.evaluate(() => {
-      document.getElementById('toolbar').removeAttribute('data-narrow');
       document.getElementById('test-tag-chip')?.remove();
+      document.documentElement.style.setProperty('--sidebar-w-screen', '240px');
     });
+    await app.evaluate(({ BrowserWindow }, s) => { BrowserWindow.getAllWindows()[0].setSize(s[0], s[1]); }, winSize);
 
     // -- #89  A new tab starts with a clean bar, and its first query runs ----
     await page.evaluate((p) => openBrowserAt(p), docsDir);

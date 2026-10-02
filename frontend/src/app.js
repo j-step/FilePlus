@@ -909,61 +909,123 @@ function initDeviceName() {
   });
 }
 
-// ── Toolbar layout ─────────────────────────────────────────────────
-// The old JS resize model (initToolbarResponsive: a ResizeObserver +
-// MutationObserver pair that measured the breadcrumb every frame and wrote a
-// pixel width onto the search bar, collapsing it to an icon below a threshold)
-// is gone — Task 14's layout is pure CSS (styles.css §7/§9/§10, design §8.3):
-// #breadcrumb-wrap flexes and is right-anchored with a leading mask fade, and
-// #search-wrap grows with its own content (field-sizing: content, with
-// search.js's measuring-span fallback) up to 60% of the toolbar. Nothing has
-// to run per frame, and the search bar no longer collapses into a button that
-// opened the palette instead of searching.
+// ── Toolbar layout (Stage 2D §6.2) ─────────────────────────────────
+// The path and the search bar share the bar. The path starts at the left
+// (right after the nav group) and grows rightward. As the bar narrows, or
+// the path grows, the order is fixed:
+//   1. the search bar shrinks from its preferred width (280, or wider while
+//      chips and text need it, up to 60% of the free space) to its 180 min;
+//   2. it collapses fully to the 28px magnifier;
+//   3. only then does the path overflow: #breadcrumb-wrap.is-overflowing
+//      right-anchors it under the leading fade, current folder in view.
+// Every decision uses the path's MEASURED natural width against the free
+// space — never a fixed constant — so a short path keeps a full search bar
+// on a narrow window and a deep one collapses it on a wide window. Nothing
+// measured depends on the mode it decides (the two flexible children are
+// excluded from `fixed`, the gap never changes), so it cannot oscillate; the
+// 24px hysteresis keeps a window drag across the threshold from flickering.
+// Runs from a ResizeObserver (toolbar and path), a MutationObserver on the
+// crumbs, updateBreadcrumb(), every zoom change, font loads and search
+// content changes — never per frame.
+const TOOLBAR_SEARCH_PREFERRED = 280;
+const TOOLBAR_SEARCH_MIN       = 180;
+const TOOLBAR_SEARCH_COLLAPSED = 28;
+const TOOLBAR_SEARCH_GROW_MAX  = 0.6;   // share of the free space content may grow the bar to
+const TOOLBAR_HYSTERESIS       = 24;
 
-// The toolbar stays on one line at every width: the breadcrumb yields its
-// space first (it can shrink to nothing under its fade), then the search bar
-// folds into a single magnifier button, and the nav/View/Sort/Inspector/Theme
-// buttons never move. The only thing JS decides is WHEN that fold happens —
-// once per resize, never per frame.
-const TOOLBAR_SEARCH_MIN = 140;  // px the expanded search bar wants
-const TOOLBAR_PATH_MIN   = 120;  // px the breadcrumb wants before the bar folds
-// Extra room the toolbar must regain before it leaves narrow mode — wider than
-// the 12px the mode's own gap change is worth (pass 2 #163).
-const TOOLBAR_NARROW_HYSTERESIS = 24;
+/** The width the search bar's content wants: its chrome, the chips and the
+ * typed text (or the placeholder). Measured off the hidden ruler span, so it
+ * never depends on the width the bar currently has. */
+function searchContentWidth() {
+  const wrap = document.getElementById('search-wrap');
+  const input = document.getElementById('search-input');
+  const ruler = document.getElementById('search-measure');
+  const chips = document.getElementById('search-chips');
+  if (!wrap || !input || !ruler) return 0;
+  const cs = getComputedStyle(wrap);
+  const px = (v) => parseFloat(v) || 0;
+  const gap = px(cs.columnGap);
+  ruler.textContent = input.value || input.placeholder || '';
+  const text = Math.ceil(ruler.getBoundingClientRect().width) + 4;   // + caret
+  const chipsW = chips && chips.childElementCount ? chips.scrollWidth + gap : 0;
+  const icon = wrap.querySelector('.fp-search__icon');
+  const iconW = icon ? icon.getBoundingClientRect().width || 14 : 14;
+  return px(cs.paddingLeft) + px(cs.paddingRight) + px(cs.borderLeftWidth) + px(cs.borderRightWidth)
+    + iconW + gap + chipsW + text;
+}
 
-function initToolbarNarrowMode() {
+function layoutToolbar() {
   const toolbar = document.getElementById('toolbar');
-  if (!toolbar || typeof ResizeObserver === 'undefined') return;
+  const wrap = document.getElementById('breadcrumb-wrap');
+  const crumbs = document.getElementById('breadcrumb');
+  const slot = document.getElementById('search-slot');
+  if (!toolbar || !wrap || !crumbs || !slot) return;
+  const width = toolbar.getBoundingClientRect().width;
+  if (!width) return;                     // not laid out (hidden window)
 
-  function recalc() {
-    const style = getComputedStyle(toolbar);
-    const gap = parseFloat(style.gap) || 0;
-    let fixed = 0;
-    let visible = 0;
-    for (const child of toolbar.children) {
-      const width = child.getBoundingClientRect().width;
-      if (width === 0) continue;
-      visible++;
-      // The two flexible children are excluded so the measurement cannot
-      // change as a result of the mode it decides — no oscillation.
-      if (child.id === 'search-wrap' || child.id === 'breadcrumb-wrap') continue;
-      fixed += width;
-    }
-    const padding = (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0);
-    const available = toolbar.clientWidth - padding - gap * Math.max(0, visible - 1);
-    // The gap IS mode-dependent (#toolbar[data-narrow] tightens it from 6px to
-    // 4px), so `available` is ~12px larger when measured in the mode it is
-    // deciding — entry and exit thresholds sat 12px apart and the bar flickered
-    // for that whole band of a window drag (pass 2 #163). Leaving narrow mode
-    // needs that much more room than entering it did, so no width can satisfy
-    // both tests at once.
-    const narrow = toolbar.hasAttribute('data-narrow');
-    const needed = fixed + TOOLBAR_SEARCH_MIN + TOOLBAR_PATH_MIN + (narrow ? TOOLBAR_NARROW_HYSTERESIS : 0);
-    toolbar.toggleAttribute('data-narrow', available < needed);
+  const style = getComputedStyle(toolbar);
+  const gap = parseFloat(style.columnGap) || 0;
+  let fixed = 0;
+  let visible = 0;
+  for (const child of toolbar.children) {
+    if (child === wrap || child === slot) { visible++; continue; }
+    const w = child.getBoundingClientRect().width;
+    if (!w) continue;
+    visible++;
+    fixed += w;
   }
+  const padding = (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0);
+  // The room the path and the search slot share.
+  const free = width - padding - fixed - gap * Math.max(0, visible - 1);
+  const crumbNatural = Math.max(crumbs.scrollWidth, crumbs.getBoundingClientRect().width);
 
-  new ResizeObserver(recalc).observe(toolbar);
-  recalc();
+  const room = free - crumbNatural;       // what the search may take beside the whole path
+  const wasCollapsed = toolbar.dataset.search === 'collapsed';
+  const collapsed = room < TOOLBAR_SEARCH_MIN + (wasCollapsed ? TOOLBAR_HYSTERESIS : 0);
+  const preferred = Math.max(TOOLBAR_SEARCH_PREFERRED,
+    Math.min(Math.ceil(searchContentWidth()), Math.floor(free * TOOLBAR_SEARCH_GROW_MAX)));
+  const slotW = collapsed ? TOOLBAR_SEARCH_COLLAPSED : Math.floor(Math.min(preferred, room));
+
+  if (collapsed && !wasCollapsed) {
+    // A bar that is in use when the toolbar collapses stays open as the
+    // overlay rather than vanishing from under the caret (search.js).
+    const sw = document.getElementById('search-wrap');
+    const inUse = (sw && sw.contains(document.activeElement))
+      || (typeof searchState !== 'undefined' && (searchState.text.trim() || searchState.chips.length));
+    if (inUse && typeof expandSearchBar === 'function') expandSearchBar();
+  }
+  toolbar.dataset.search = collapsed ? 'collapsed' : 'full';
+  if (!collapsed) slot.style.setProperty('--search-slot-w', `${slotW}px`);
+  // The overlay grows leftward from the slot up to the path's left edge.
+  const overlayW = Math.floor(Math.min(preferred, free - gap));
+  slot.style.setProperty('--search-overlay-w', `${Math.max(TOOLBAR_SEARCH_COLLAPSED, overlayW)}px`);
+  // The path overflows only when it does not fit beside what the slot takes.
+  wrap.classList.toggle('is-overflowing', crumbNatural > free - slotW + 0.5);
+  // The Filters/History dropdown hangs leftward from the bar's right edge;
+  // on a narrow bar it must not run past the toolbar's left edge, where the
+  // main column clips it (styles.css .fp-search-dd).
+  const ddRoom = slot.getBoundingClientRect().right - toolbar.getBoundingClientRect().left - 4;
+  slot.style.setProperty('--search-dd-room', `${Math.max(0, Math.floor(ddRoom))}px`);
+}
+
+function initToolbarLayout() {
+  const toolbar = document.getElementById('toolbar');
+  const crumbs = document.getElementById('breadcrumb');
+  if (!toolbar || !crumbs) return;
+  if (typeof ResizeObserver !== 'undefined') {
+    const ro = new ResizeObserver(() => layoutToolbar());
+    ro.observe(toolbar);
+    ro.observe(crumbs);                   // the path's natural width (crumbs, font, zoom)
+  }
+  // Crumb changes from anywhere (updateBreadcrumb, the search header, Home):
+  // re-laid out before the next paint.
+  new MutationObserver(() => layoutToolbar())
+    .observe(crumbs, { childList: true, subtree: true, characterData: true });
+  if (document.fonts) {
+    document.fonts.ready.then(() => layoutToolbar());
+    document.fonts.addEventListener?.('loadingdone', () => layoutToolbar());
+  }
+  layoutToolbar();
 }
 
 // ── Command palette ───────────────────────────────���──────────────────────��─────
@@ -1372,6 +1434,9 @@ function syncAppZoom(force = false) {
   if (root.style.getPropertyValue('--app-zoom') === String(z)) return;
   root.classList.add('fp-zoom-changing');
   root.style.setProperty('--app-zoom', String(z));
+  // The toolbar's collapse order re-runs at the new zoom in this same frame
+  // (the panels just changed the toolbar's CSS width) — Stage 2D §5/§6.2.
+  layoutToolbar();
   cancelAnimationFrame(appZoom.settleRaf);
   appZoom.settleRaf = requestAnimationFrame(() => {
     appZoom.settleRaf = requestAnimationFrame(() => root.classList.remove('fp-zoom-changing'));
@@ -2599,6 +2664,11 @@ function initUnderlineTabs(container) {
       ro.observe(first);
     }
   }
+  // Items can change width after that (Home's sub-tabs shrink in a narrow
+  // file area, Stage 2D §12): the underline follows the active one.
+  if (typeof ResizeObserver !== 'undefined') {
+    new ResizeObserver(() => moveTabIndicator(container)).observe(container);
+  }
 }
 
 // ── data-action global delegation ─────────────────────────────────────────────
@@ -2814,7 +2884,7 @@ document.addEventListener('click', e => {
       ];
       searchState.scope = 'pc';
       renderSearchChips();
-      // In narrow-toolbar mode the chips are display:none until the bar is
+      // In the collapsed toolbar the chips are display:none until the bar is
       // expanded, so the two chips that define this search were invisible and
       // unremovable (pass 2 #97). Same call addChip() makes after every pick.
       focusSearchInput({ keepDropdownClosed: true });
@@ -3686,6 +3756,13 @@ document.addEventListener('keydown', e => {
   }
   // ⌘K / Ctrl+K — command palette
   if ((e.metaKey || e.ctrlKey) && e.key === 'k') { e.preventDefault(); openPalette(); }
+  // Ctrl+F — the search bar (Explorer's key). In the collapsed toolbar it
+  // opens as the overlay over the path (Stage 2D §6.2). Not behind a dialog.
+  if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && (e.key === 'f' || e.key === 'F')) {
+    e.preventDefault();
+    if (!(typeof anyScrimOpen === 'function' && anyScrimOpen())) focusSearchInput();
+    return;
+  }
   // Ctrl+B — sidebar
   if ((e.metaKey || e.ctrlKey) && e.key === 'b') { e.preventDefault(); toggleSidebar(); }
   // ⌘I / Ctrl+I — inspector
@@ -3748,13 +3825,18 @@ document.addEventListener('keydown', e => {
   const activeEl = document.activeElement;
   const activeTag = activeEl && activeEl.tagName;
   const isEditableTarget = activeTag === 'INPUT' || activeTag === 'TEXTAREA' || (activeEl && activeEl.isContentEditable);
-  const sidebarKeyActivation = (e.key === 'Enter' || e.key === ' ') && activeEl?.closest?.('#sidebar');
+  // The same holds for a focused toolbar or tab-strip control (a View/Sort
+  // button, a crumb, the new-tab "+", a tab): Enter/Space act on THAT
+  // control (Stage 2D Task 7) — browserKeydown's preventDefault used to
+  // swallow the button's own click and open the focused row instead.
+  const controlKeyActivation = (e.key === 'Enter' || e.key === ' ')
+    && activeEl?.closest?.('#sidebar, #toolbar, #tabbar');
   const browserScreenActive = document.getElementById('screen-browser')?.classList.contains('active');
-  if (browserScreenActive && !isEditableTarget && !sidebarKeyActivation && typeof browserKeydown === 'function') {
+  if (browserScreenActive && !isEditableTarget && !controlKeyActivation && typeof browserKeydown === 'function') {
     browserKeydown(e);
   }
   const homeScreenActive = document.getElementById('screen-home')?.classList.contains('active');
-  if (homeScreenActive && !isEditableTarget && typeof homeKeydown === 'function') {
+  if (homeScreenActive && !isEditableTarget && !controlKeyActivation && typeof homeKeydown === 'function') {
     homeKeydown(e);
   }
 });
@@ -3885,7 +3967,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   initSidebarResize();
   restoreSidebarState();
   initSearch();
-  initToolbarNarrowMode();
+  initToolbarLayout();
   // Tab strip: wheel-to-scrollLeft, the overflow hint, and the tablist's own
   // keyboard model (pass 2 #156/#158). The seed tab is already in the DOM, so
   // this also has to run after seedInitialTab().

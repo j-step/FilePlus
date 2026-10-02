@@ -183,6 +183,16 @@ module.exports = async function globalSetup() {
   buildIconFixture(path.join(sandbox, 'Icons'));
   buildVoteFixture(path.join(sandbox, 'Votes'));
   buildViewsFixture(path.join(sandbox, 'Views'));
+  // Stage 2D Task 7 (spec §6.2): a path deep and long enough that its
+  // breadcrumb overflows any toolbar — the collapse-order tests open its
+  // innermost folder. Names stay short enough for MAX_PATH under %TEMP%.
+  let deep = path.join(sandbox, 'Deep');
+  for (const name of ['Client-Projects', 'Northwind-Archive', 'Quarterly-Reports', 'Finance-Review',
+    'Year-End-Closing', 'Supporting-Files', 'Scanned-Receipts', 'Final-Approved']) {
+    deep = path.join(deep, name);
+  }
+  fs.mkdirSync(deep, { recursive: true });
+  fs.writeFileSync(path.join(deep, 'deep-note.txt'), 'deep fixture\n');
 
   const backend = spawn(PY.cmd, [...PY.pre, '-m', 'backend.api'], {
     cwd: REPO, env, stdio: 'ignore', windowsHide: true, detached: false,

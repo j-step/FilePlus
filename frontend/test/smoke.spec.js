@@ -1171,10 +1171,20 @@ test('every screen renders with no renderer errors', async () => {
     // with doc-00.txt .. doc-11.txt, three .md files and a .pdf.
     const searchInput = page.locator('#search-input');
     const searchDropdown = page.locator('#search-dropdown');
+    // The bar, not the <input>: with a long path the toolbar folds search
+    // into its magnifier (Stage 2D §6.2), and a click on the bar opens it
+    // in either mode (search.js's mousedown handler).
+    const searchBar = page.locator('#search-wrap');
     const searchHeader = page.locator('#list-search-header');
+    // Search itself is exercised with the bar at full width: a wide window
+    // and the inspector closed leave it room beside the long %TEMP% fixture
+    // path (the collapsed bar has its own spec, stage2d-toolbar.spec.js).
+    await app.evaluate(({ BrowserWindow }) => { BrowserWindow.getAllWindows()[0].setSize(1600, 900); });
+    await page.evaluate(() => setInspectorOpen(false, { persist: false }));
+    await expect(page.locator('#toolbar')).toHaveAttribute('data-search', 'full', { timeout: 3000 });
 
     // 1. Focus opens the Filters + History dropdown.
-    await searchInput.click();
+    await searchBar.click();
     await expect(searchDropdown).toBeVisible();
     await expect(searchDropdown).toContainText('Filters');
     await expect(searchDropdown).toContainText('History');
@@ -1195,7 +1205,7 @@ test('every screen renders with no renderer errors', async () => {
     await expect(page.locator('#breadcrumb [data-action="search-clear"]')).toBeVisible();
 
     // 3. A filter row expands inline and its choice becomes a chip in the bar.
-    await searchInput.click();
+    await searchBar.click();
     await searchDropdown.locator('[data-action="search-expand-filter"][data-filter="type"]').click();
     await searchDropdown.locator('[data-action="search-pick-filter"][data-value="document"]').click();
     const typeChip = page.locator('#search-chips .fp-search-chip');
@@ -1212,7 +1222,7 @@ test('every screen renders with no renderer errors', async () => {
 
     // 4. Backspace at the start of the text eats the last chip; a second one
     //    is a no-op (nothing left to eat) and the results stay put.
-    await searchInput.click();
+    await searchBar.click();
     await page.keyboard.press('Home');
     await page.keyboard.press('Backspace');
     await page.keyboard.press('Backspace');
@@ -1250,7 +1260,7 @@ test('every screen renders with no renderer errors', async () => {
     //     so this proves the modal -> chip -> query parameter path end to end).
     await searchInput.fill('doc-0');
     await expect(searchHeader).toHaveText(/\d+ results/, { timeout: 2500 });
-    await searchInput.click();
+    await searchBar.click();
     await searchDropdown.locator('[data-action="search-more-filters"]').click();
     await expect(page.locator('#search-filters-modal')).toBeVisible();
     await page.locator('#search-filter-ext').fill('txt');
@@ -1317,7 +1327,7 @@ test('every screen renders with no renderer errors', async () => {
     await page.evaluate((p) => loadDirectory(p), docsDir);
 
     // 7. The search just run is in History, ready to restore.
-    await searchInput.click();
+    await searchBar.click();
     await expect(searchDropdown.locator('[data-action="search-history-run"]').first())
       .toContainText('doc-0');
     await page.keyboard.press('Escape');
@@ -1352,15 +1362,18 @@ test('every screen renders with no renderer errors', async () => {
     // state this one did.
     await fetch(`${API}/index?root=${encodeURIComponent(genDir)}`, { method: 'DELETE', headers: apiHeaders });
 
+    await page.evaluate(() => setInspectorOpen(true, { persist: false }));
+
     // 10. Toolbar never overflows (fix round 1). At the app's minimum window
     //     width with the sidebar dragged to its 480px maximum, the toolbar has
-    //     ~300px for everything: the breadcrumb yields to nothing, the search
-    //     bar folds into its magnifier button, and every other control stays.
+    //     ~300px for everything: the search bar folds into its magnifier
+    //     button, the path caves in under its fade (Stage 2D §6.2), and every
+    //     other control stays.
     await page.evaluate(() => switchScreen('browser'));
     await app.evaluate(({ BrowserWindow }) => { BrowserWindow.getAllWindows()[0].setSize(800, 600); });
     // Same property the drag handle writes (app.js's initSidebarResize).
     await page.evaluate(() => document.documentElement.style.setProperty('--sidebar-w-screen', '480px'));
-    await expect(page.locator('#toolbar')).toHaveAttribute('data-narrow', '', { timeout: 3000 });
+    await expect(page.locator('#toolbar')).toHaveAttribute('data-search', 'collapsed', { timeout: 3000 });
     await expect(page.locator('#search-collapsed')).toBeVisible();
     for (const id of ['#btn-view-menu', '#btn-sort-menu', '#btn-inspector-toggle', '#btn-theme', '#btn-up']) {
       await expect(page.locator(id)).toBeVisible();
@@ -1381,7 +1394,11 @@ test('every screen renders with no renderer errors', async () => {
     // Restore the window and sidebar for the screenshots below.
     await app.evaluate(({ BrowserWindow }) => { BrowserWindow.getAllWindows()[0].setSize(1200, 800); });
     await page.evaluate(() => document.documentElement.style.setProperty('--sidebar-w-screen', '240px'));
-    await expect(page.locator('#toolbar')).not.toHaveAttribute('data-narrow', '', { timeout: 3000 });
+    // Back at 1200 px the long fixture path still keeps search folded (the
+    // path wins, Stage 2D §6.2) — but the path no longer has to cave in.
+    await expect.poll(() => page.evaluate(() => document.getElementById('breadcrumb-wrap').classList.contains('is-overflowing')
+      && document.getElementById('toolbar').dataset.search === 'full')).toBe(false);
+    await expect.poll(() => page.evaluate(() => { const t = document.getElementById('toolbar'); return t.scrollWidth <= t.clientWidth; })).toBe(true);
 
     // 11. Ask File+ (Task 15, design spec §9): sidebar pill opens a popout
     // shell with no model wired in — Send stays disabled, an example chip

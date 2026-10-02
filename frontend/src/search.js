@@ -254,6 +254,8 @@ function renderSearchChips() {
   const wrap = document.getElementById('search-wrap');
   if (wrap) wrap.classList.toggle('fp-search--has-chips', searchState.chips.length > 0);
   resizeSearchInput();
+  // Chips widen the bar's content: the toolbar re-lays out (app.js, §6.2).
+  if (typeof layoutToolbar === 'function') layoutToolbar();
 }
 
 // ── Query building ────────────────────────────────────────────────────────────
@@ -512,7 +514,7 @@ function searchResetBar() {
   const input = document.getElementById('search-input');
   if (input) input.value = '';
   renderSearchChips();
-  // In narrow-toolbar mode the bar is only expanded while it has something in
+  // In the collapsed toolbar the bar is only expanded while it has something in
   // it. Nothing else folds it back after a clear that didn't come from a blur
   // or Escape (the breadcrumb ×, leaving search mode), which left it wedged
   // open over the breadcrumb for the rest of the session (pass 2 #165).
@@ -526,6 +528,7 @@ function setSearchText(text) {
   const input = document.getElementById('search-input');
   if (input) input.value = searchState.text;
   resizeSearchInput();
+  if (typeof layoutToolbar === 'function') layoutToolbar();
 }
 
 // ── Results header extras ─────────────────────────────────────────────────────
@@ -963,7 +966,7 @@ let _searchSuppressDropdown = false;
 function focusSearchInput({ keepDropdownClosed = false } = {}) {
   const input = document.getElementById('search-input');
   if (!input) return;
-  expandSearchBar();           // no-op unless the toolbar is in narrow mode
+  expandSearchBar();           // only visible while the toolbar is collapsed
   _searchSuppressDropdown = keepDropdownClosed;
   input.focus();               // dispatches 'focus' synchronously
   _searchSuppressDropdown = false;
@@ -1052,12 +1055,12 @@ function resumeSearchForTab(snapshot, tabId) {
   runSearch({ pushHistory: false });
 }
 
-// ── Narrow-toolbar collapse ───────────────────────────────────────────────────
-// Below the toolbar's narrow threshold (app.js's initToolbarNarrowMode sets
-// #toolbar[data-narrow]) the bar shrinks to a single magnifier button so the
-// View/Sort/Inspector/Theme buttons stay reachable. Clicking it (the
-// data-action="focus-search" button inside the bar) expands it again; leaving
-// it with nothing typed and no chips collapses it back.
+// ── Collapsed-toolbar overlay ─────────────────────────────────────────────────
+// When the path needs the room (app.js's layoutToolbar sets
+// #toolbar[data-search="collapsed"], Stage 2D §6.2) the bar folds into a
+// single magnifier button. Clicking it (the data-action="focus-search" button
+// inside the bar) or Ctrl+F opens it again as an overlay over the path, which
+// never reflows; leaving it with nothing typed and no chips folds it back.
 function expandSearchBar() {
   document.getElementById('search-wrap')?.classList.add('fp-search--expanded');
 }
@@ -1097,6 +1100,7 @@ function initSearch() {
   input.addEventListener('input', () => {
     searchState.text = input.value;
     resizeSearchInput();
+    if (typeof layoutToolbar === 'function') layoutToolbar();
     clearTimeout(_searchDebounceTimer);
     // pushHistory:false — a 300 ms pause mid-word is not a search the user
     // asked to remember. Pushing one per pause stored "q", "qu", "qua", … and
@@ -1121,7 +1125,7 @@ function initSearch() {
       e.preventDefault();
       e.stopPropagation();
       closeSearchDropdown();
-      // In narrow mode an empty bar folds back into its icon button.
+      // In the collapsed toolbar an empty bar folds back into its magnifier.
       if (!searchState.text.trim() && !searchState.chips.length) {
         maybeCollapseSearchBar();
         input.blur();

@@ -1908,6 +1908,9 @@ function updateBreadcrumb(path) {
     return `<button class="${cls}" data-action="navigate-crumb" data-path="${escapeHtml(cumulative)}">${iconHtml}${escapeHtml(label)}</button>`;
   }).join('<span class="fp-breadcrumb__sep">·</span>');
   crumb.innerHTML = html;
+  // The path's natural width just changed: re-run the path/search collapse
+  // order now, not a frame later (app.js, Stage 2D §6.2).
+  if (typeof layoutToolbar === 'function') layoutToolbar();
 }
 
 /**

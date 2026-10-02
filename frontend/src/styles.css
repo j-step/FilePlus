@@ -822,50 +822,58 @@ svg { flex-shrink: 0; }
   flex: 1;
   min-width: 0;
 }
-/* Search bar sizing (Task 14, design §8.3). The bar is content-sized: it
-   starts at its placeholder width and grows as chips and text are added, up
-   to 60% of the toolbar, at which point the input scrolls inside it. No JS
-   runs per frame — #breadcrumb-wrap (§9) absorbs whatever the bar takes. */
+/* Path and search share the bar (Stage 2D §6.2). The search SLOT is the
+   toolbar's flex child; app.js's layoutToolbar() measures the path's natural
+   width against the free space and writes the slot's width as
+   --search-slot-w: 280 preferred (more when chips and text need it), down to
+   180, and below that #toolbar[data-search="collapsed"] folds it to the 28px
+   magnifier. Only after that does the path overflow (.is-overflowing, §9).
+   The bar itself always fills its slot. */
+.fp-toolbar__search-slot {
+  flex: 0 0 auto;
+  width: var(--search-slot-w, 280px);
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  position: relative;
+}
 .fp-toolbar__search {
-  flex: 0 1 auto;
-  width: auto;
-  max-width: 60%;
-  min-width: 148px;
+  flex: 1 1 auto;
+  width: 100%;
   position: relative;
   overflow: visible;
 }
 
-/* Order of yielding as the toolbar narrows: the breadcrumb gives first (it
-   shrinks to nothing under its own fade), then the search bar folds into the
-   magnifier button below; the button groups never move or clip. Fix round 1
-   restores the no-overflow guarantee the deleted per-frame JS used to give,
-   with one ResizeObserver toggle (app.js's initToolbarNarrowMode) instead. */
+/* The button groups never move or clip; the two flexible children (path and
+   search slot) are the only things layoutToolbar() resizes. */
 #toolbar > * { min-width: 0; }
-#toolbar[data-narrow] {
-  gap: var(--s-4);
-}
-#toolbar[data-narrow] .fp-breadcrumb-wrap {
-  min-width: 0;
-}
 /* Collapsed: a 28px icon button, exactly like its toolbar neighbours. */
-#toolbar[data-narrow] .fp-toolbar__search:not(.fp-search--expanded) {
+#toolbar[data-search="collapsed"] .fp-toolbar__search-slot { width: 28px; }
+#toolbar[data-search="collapsed"] .fp-toolbar__search:not(.fp-search--expanded) {
   flex: 0 0 auto;
   width: 28px;
-  min-width: 28px;
-  max-width: 28px;
   padding: 0;
   border-color: transparent;
   background: transparent;
   justify-content: center;
 }
-#toolbar[data-narrow] .fp-toolbar__search:not(.fp-search--expanded) .fp-search__icon,
-#toolbar[data-narrow] .fp-toolbar__search:not(.fp-search--expanded) .fp-search__chips,
-#toolbar[data-narrow] .fp-toolbar__search:not(.fp-search--expanded) .fp-search__input {
+#toolbar[data-search="collapsed"] .fp-toolbar__search:not(.fp-search--expanded) .fp-search__icon,
+#toolbar[data-search="collapsed"] .fp-toolbar__search:not(.fp-search--expanded) .fp-search__chips,
+#toolbar[data-search="collapsed"] .fp-toolbar__search:not(.fp-search--expanded) .fp-search__input {
   display: none;
 }
-#toolbar[data-narrow] .fp-toolbar__search.fp-search--expanded {
-  min-width: 140px;
-  max-width: 70%;
+/* Opened while collapsed (the magnifier, Ctrl+F, a tag chip): an overlay that
+   grows LEFTWARD from the slot over the path. The slot keeps its 28px, so
+   the path underneath never reflows. --search-overlay-w is set by
+   layoutToolbar() (the preferred width, capped at the path's left edge). */
+#toolbar[data-search="collapsed"] .fp-toolbar__search.fp-search--expanded {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  margin-top: calc(var(--h-input) / -2);
+  width: var(--search-overlay-w, 280px);
+  z-index: 2;
+  background: var(--bg-raised);
 }
 .fp-search__collapsed {
   display: none;
@@ -880,7 +888,7 @@ svg { flex-shrink: 0; }
   align-items: center;
   justify-content: center;
 }
-#toolbar[data-narrow] .fp-toolbar__search:not(.fp-search--expanded) .fp-search__collapsed {
+#toolbar[data-search="collapsed"] .fp-toolbar__search:not(.fp-search--expanded) .fp-search__collapsed {
   display: inline-flex;
 }
 .fp-search__collapsed:hover { background: var(--bg-raised); color: var(--text-primary); }
@@ -945,16 +953,21 @@ svg { flex-shrink: 0; }
    9. BREADCRUMB (Section 14)
    ----------------------------------------------------------------------------- */
 /* === fp-breadcrumb === */
-/* The WRAPPER flexes and clips; the path inside keeps its natural width and
-   is pinned to the wrapper's right edge, so when the search bar grows the
-   START of the path slides out under the leading fade and the folder you are
-   actually in stays visible (design §8.3). */
+/* The WRAPPER flexes and clips; the path inside keeps its natural width. It
+   starts at the wrapper's LEFT edge and grows rightward (Stage 2D §6.2).
+   Once the search bar has collapsed and the path still does not fit,
+   layoutToolbar() adds .is-overflowing: the path pins to the RIGHT edge, so
+   the START of it caves in under the leading fade and the folder you are
+   actually in stays visible. */
 .fp-breadcrumb-wrap {
-  flex: 1 1 auto;
-  min-width: 120px;
+  flex: 1 1 0;
+  min-width: 0;
   overflow: hidden;
   display: flex;
   align-items: center;
+  justify-content: flex-start;
+}
+.fp-breadcrumb-wrap.is-overflowing {
   justify-content: flex-end;
   -webkit-mask-image: linear-gradient(to right, transparent 0, #000 24px, #000 100%);
           mask-image: linear-gradient(to right, transparent 0, #000 24px, #000 100%);
@@ -1046,7 +1059,7 @@ svg { flex-shrink: 0; }
      hidden ruler span instead where field-sizing is unsupported. flex-shrink
      lets the input give way once the bar has hit its 60% cap. */
   field-sizing: content;
-  flex: 0 1 auto;
+  flex: 1 1 auto;           /* fills whatever width layoutToolbar() gave the bar */
   width: 14ch;              /* empty-state width: enough for the placeholder */
   min-width: 6ch;
   background: transparent;
@@ -1106,8 +1119,10 @@ svg { flex-shrink: 0; }
   position: absolute;
   top: calc(100% + 6px);
   right: 0;
-  min-width: 340px;
-  max-width: 460px;
+  /* --search-dd-room: the room left of the bar's right edge (app.js
+     layoutToolbar) — a collapsed or narrow bar never clips the panel. */
+  min-width: min(340px, var(--search-dd-room, 340px));
+  max-width: min(460px, var(--search-dd-room, 460px));
   max-height: 420px;
   overflow-y: auto;
   padding: var(--s-4);
@@ -4956,6 +4971,16 @@ body.is-dragging { cursor: default; }
 }
 .fp-tabbar::-webkit-scrollbar { display: none; }
 
+/* New-tab button (Stage 2D §6.1): the plain "+" (fp-add, 16px) in a 28px
+   square ghost .fp-icon-btn. The strip bottom-aligns its 28px tabs, so the
+   same alignment centres the button on them. */
+.fp-tab-new {
+  flex: none;
+  align-self: flex-end;
+  margin-left: 2px;
+  -webkit-app-region: no-drag;
+}
+
 .fp-tab {
   -webkit-app-region: no-drag;
   position: relative;
@@ -5649,7 +5674,21 @@ button.fp-pill:hover {
   min-height: 0;
 }
 /* Sub-tab bar at top of Home content area */
-#home-tabs { flex-shrink: 0; }
+#home-tabs { flex-shrink: 0; min-width: 0; }
+/* A narrow file area (the minimum window with the inspector open, a high app
+   zoom) gives the Home header less room than its three sub-tabs' natural
+   width: the padding gives first, then the labels end in an ellipsis —
+   nothing runs past the edge (Stage 2D §12 sibling sweep). */
+#home-tabs .fp-tabs__item {
+  display: block;
+  line-height: 44px;
+  flex: 0 1 auto;
+  min-width: 0;
+  padding: 0 min(16px, 2.5%);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
 /* Recent file rows have inline path + time + hover actions */
 .fp-row--recent {
   display: grid;
