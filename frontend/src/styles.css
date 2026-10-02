@@ -3272,17 +3272,6 @@ body.is-dragging { cursor: default; }
 }
 
 /* === fp-toast (bottom-right stack, variants) === */
-.fp-toast-stack {
-  position: fixed;
-  bottom: var(--s-16);
-  right: var(--s-16);
-  display: flex;
-  flex-direction: column-reverse;
-  gap: var(--s-8);
-  z-index: 1100;
-}
-/* legacy alias */
-.fp-toast-region { bottom: var(--s-16); right: var(--s-16); display: flex; flex-direction: column-reverse; gap: var(--s-8); z-index: 1100; position: fixed; }
 .fp-toast {
   display: flex;
   align-items: flex-start;

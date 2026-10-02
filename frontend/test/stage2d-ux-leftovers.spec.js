@@ -354,6 +354,23 @@ test('#172 cut and copied items stay visible in every view, across refreshes, un
     await expect(rowByName(page, 'clip-a.txt')).toHaveClass(/fp-row--cut/);
     expect(await page.evaluate(() => fileops.clipboard.paths.map((p) => p.split(/[\\/]/).pop()))).toEqual(['clip-a.txt']);
 
+    // An op that changes nothing about where the item lives (an attribute
+    // change from Properties: attr-set, src with no dest) and its undo leave
+    // the cut alone.
+    const clipNames = () => page.evaluate(() => [fileops.clipboard.mode, ...fileops.clipboard.paths.map((p) => p.split(/[\\/]/).pop())]);
+    // The same wrapper Properties uses (properties.js applyProperties).
+    await page.evaluate((p) => fileops.run('Changed attributes', async () => {
+      const res = await API.post('/fs/attributes', { path: p, read_only: true });
+      return { batch_id: res.batch_id, ops: res.op ? [res.op] : [] };
+    }), `${clip}\\clip-a.txt`);
+    expect(await clipNames()).toEqual(['cut', 'clip-a.txt']);
+    await expect(rowByName(page, 'clip-a.txt')).toHaveClass(/fp-row--cut/);
+    await page.evaluate(() => fileops.undoLast());
+    expect(await page.evaluate(() => fileops.undoStack.length)).toBe(0);   // the undo really ran
+    expect(await clipNames()).toEqual(['cut', 'clip-a.txt']);
+    await expect(rowByName(page, 'clip-a.txt')).toHaveClass(/fp-row--cut/);
+    await expect(page.locator('#status-clipboard')).toHaveText('1 item cut');
+
     // A cut item sent to the trash leaves the clipboard.
     await rowByName(page, 'clip-a.txt').click();
     await page.evaluate(() => fileops.trashSelection());

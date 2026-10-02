@@ -41,6 +41,9 @@ function uniqueNameFor(dir, baseName) {
  * failure. They pass this instead of swallowing it anonymously. */
 function fileopsReported() { /* run() already showed the toast */ }
 
+/** Op types that change where a path lives (fileops.followOps). */
+const FOLLOWED_OPS = new Set(['move', 'rename', 'restore', 'trash']);
+
 const fileops = {
   clipboard: { mode: null, paths: [] },          // 'copy' | 'cut'
   undoStack: [], redoStack: [],                  // batch ids
@@ -161,14 +164,18 @@ const fileops = {
    * clipboard item (or anything under a clipboard folder) that was renamed or
    * moved now lives at its new path; one sent to the trash is dropped. So the
    * status-bar count always matches the ghosted rows, and Paste never offers
-   * a path that is gone (pass 2 #172 review). Copies leave their source. */
+   * a path that is gone (pass 2 #172 review). Only the four path-changing
+   * op types act; every other (copy, attr-set, folder-type-set, mkdir, …)
+   * leaves the clipboard alone — an attribute change from Properties must
+   * not drop a pending cut. */
   followOps(ops) {
     const { mode, paths } = this.clipboard;
     if (!mode || !paths.length || !ops || !ops.length) return;
     let next = paths.slice();
     let changed = false;
     for (const op of ops) {
-      if (!op || !op.src || op.op_type === 'copy') continue;
+      if (!op || !op.src || !FOLLOWED_OPS.has(op.op_type)) continue;
+      if (op.op_type !== 'trash' && !op.dest) continue;
       const src = String(op.src);
       const lsrc = src.toLowerCase();
       const prefix = lsrc.endsWith('\\') ? lsrc : `${lsrc}\\`;
@@ -176,7 +183,7 @@ const fileops = {
         const lp = String(p).toLowerCase();
         if (lp !== lsrc && !lp.startsWith(prefix)) return [p];
         changed = true;
-        if (op.op_type === 'trash' || !op.dest) return [];
+        if (op.op_type === 'trash') return [];
         return [String(op.dest) + String(p).slice(src.length)];
       });
     }
