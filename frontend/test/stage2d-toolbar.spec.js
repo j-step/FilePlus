@@ -373,6 +373,11 @@ test('narrowest bar: collapsed + overflowing, current folder visible; Ctrl+F / m
     await expect(page.locator('#search-wrap')).not.toHaveClass(/fp-search--expanded/);
     await expect(page.locator('#search-collapsed')).toBeVisible();
     await expect(clearX).toBeHidden();
+    // ...and focus is back on the list, not on the hidden ×.
+    expect(await page.evaluate(() => {
+      const a = document.activeElement;
+      return !!a && (a.id === 'list-scroll' || a.classList.contains('fp-row'));
+    })).toBe(true);
     expect(await crumbRects()).toEqual(before);
   } finally {
     await page.evaluate(() => document.documentElement.style.setProperty('--sidebar-w-screen', '240px')).catch(() => {});
@@ -450,8 +455,63 @@ test('Enter/Space on a focused toolbar button act on that button, not the focuse
     await page.keyboard.press('Enter');
     await page.waitForFunction((p) => activeTab().path === p && window.__fpLoadPending === 0, root);
 
-    // MOUSE users: a click leaves focus on the toolbar button, but arrowing
-    // through the list hands DOM focus to the row, so Enter opens the row.
+    // KEYBOARD users: Tab to Up, Enter fires Up.
+    await open(page, `${viewsDir}\\Folder One`);
+    await page.locator('#breadcrumb .fp-breadcrumb__crumb').first().focus();
+    await page.keyboard.press('Shift+Tab');
+    await expect(page.locator('#btn-up')).toBeFocused();
+    await page.keyboard.press('Enter');
+    await page.waitForFunction((p) => activeTab().path === p && window.__fpLoadPending === 0, viewsDir);
+
+    // MOUSE users (Explorer's model): a click on Up runs Up but leaves
+    // keyboard focus where it was, so an Enter RIGHT AFTER (no arrow first)
+    // opens the list's focused row — or does nothing — and never re-fires Up.
+    await open(page, `${viewsDir}\\Folder One`);
+    await page.evaluate(() => document.activeElement?.blur());   // focus is in the page, not on Up
+    await page.locator('#btn-up').click();                     // -> Views
+    await page.waitForFunction((p) => activeTab().path === p && window.__fpLoadPending === 0, viewsDir);
+    expect(await page.evaluate(() => document.activeElement?.closest('#toolbar, #tabbar, #sidebar') ? document.activeElement.id || 'chrome' : null)).toBeNull();
+    const cursorAfterUp = await page.evaluate(() => browserState.focus);
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(300);
+    await page.waitForFunction(() => window.__fpLoadPending === 0);
+    const afterEnter = await page.evaluate(() => activeTab().path);
+    expect(afterEnter).not.toBe(root);                          // Up did not fire again
+    expect([viewsDir, cursorAfterUp]).toContain(afterEnter);
+    // Same for Refresh and for a tab click.
+    await open(page, viewsDir);
+    await page.locator('#list-scroll .fp-row[data-path$="Folder Two"]').click();
+    await page.locator('#btn-refresh').click();
+    await page.waitForFunction(() => window.__fpLoadPending === 0);
+    await page.keyboard.press('Enter');
+    await page.waitForFunction((p) => activeTab().path === p && window.__fpLoadPending === 0, `${viewsDir}\\Folder Two`);
+    await open(page, viewsDir);
+    await page.locator('#list-scroll .fp-row[data-path$="Folder Two"]').click();
+    await page.locator('.fp-tab--active').click();
+    await page.keyboard.press('Enter');
+    await page.waitForFunction((p) => activeTab().path === p && window.__fpLoadPending === 0, `${viewsDir}\\Folder Two`);
+
+    // An open search dropdown owns the cursor keys: ArrowDown walks into it,
+    // never the list cursor behind it; Escape hands the caret back.
+    await open(page, viewsDir);
+    await page.locator('#list-scroll .fp-row[data-path$="Folder One"]').click();
+    const cursor0 = await page.evaluate(() => browserState.focus);
+    await page.locator('#search-wrap').click();
+    await expect(page.locator('#search-dropdown')).toBeVisible();
+    await page.keyboard.press('ArrowDown');
+    expect(await page.evaluate(() => document.getElementById('search-dropdown').contains(document.activeElement))).toBe(true);
+    await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('End');
+    await page.keyboard.press('ArrowUp');
+    await page.keyboard.press('ArrowLeft');
+    expect(await page.evaluate(() => browserState.focus)).toBe(cursor0);
+    await expect(page.locator('#search-dropdown')).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#search-dropdown')).toBeHidden();
+    await expect(page.locator('#search-input')).toBeFocused();
+    await page.evaluate(() => document.activeElement.blur());
+
+    // MOUSE users, arrows first: arrowing hands DOM focus to the row.
     await open(page, `${viewsDir}\\Folder One`);
     await page.locator('#btn-up').click();                   // -> Views
     await page.waitForFunction((p) => activeTab().path === p && window.__fpLoadPending === 0, viewsDir);

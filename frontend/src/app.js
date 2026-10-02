@@ -2928,6 +2928,12 @@ document.addEventListener('click', e => {
       clearSearch();
       if (document.getElementById('toolbar')?.dataset.search !== 'collapsed') {
         focusSearchInput({ keepDropdownClosed: true });
+      } else {
+        // The × just folded away with the overlay: focus goes back to the
+        // list, never left on a hidden button.
+        const row = browserState.focus ? findListRow(browserState.focus) : null;
+        if (row) row.focus({ preventScroll: true });
+        else focusListContainer();
       }
       break;
     case 'search-remove-chip':
@@ -3778,6 +3784,40 @@ function initTabbarScroll() {
   updateTabbarOverflow();
 }
 
+// ── Mouse presses on chrome keep keyboard focus (Explorer's model) ───────────
+// A click on a toolbar, tab-strip or sidebar control acts (its click handler
+// runs as usual) but does not take keyboard focus from where it was — the
+// file list, usually — so the next Enter or arrow key still goes to the list
+// (Stage 2D Task 7). Done by handing focus straight back when a press
+// focuses such a control, not by cancelling mousedown: the tabs are native
+// HTML5 drag sources, which a cancelled mousedown would never start. Text
+// fields (the search bar, an inline tab rename) take focus as normal. A
+// keyboard user who Tabs to a control still activates it with Enter/Space.
+const CHROME_FOCUS_REGIONS = '#toolbar, #tabbar, #sidebar';
+let _chromePressPrevFocus = undefined;
+function initChromeMouseFocus() {
+  document.addEventListener('mousedown', e => {
+    _chromePressPrevFocus = undefined;
+    const t = e.target;
+    if (!(t instanceof Element) || !t.closest(CHROME_FOCUS_REGIONS)) return;
+    if (t.closest('input, textarea, select, [contenteditable="true"], #search-wrap')) return;
+    _chromePressPrevFocus = document.activeElement;
+  }, true);
+  document.addEventListener('focusin', e => {
+    if (_chromePressPrevFocus === undefined) return;
+    const prev = _chromePressPrevFocus;
+    _chromePressPrevFocus = undefined;
+    const t = e.target;
+    if (!(t instanceof Element) || !t.closest(CHROME_FOCUS_REGIONS)) return;
+    if (prev && prev !== t && prev !== document.body && prev.isConnected && !prev.closest?.(CHROME_FOCUS_REGIONS)) {
+      prev.focus({ preventScroll: true });
+    } else {
+      t.blur();
+    }
+  }, true);
+  document.addEventListener('mouseup', () => { _chromePressPrevFocus = undefined; }, true);
+}
+
 // ── Keyboard shortcuts ────────────────────────────────────────────────────────
 document.addEventListener('keydown', e => {
   // Ctrl+R / F5 — refresh in place (Stage 2D §7.1). There is no Electron menu
@@ -3869,15 +3909,21 @@ document.addEventListener('keydown', e => {
   // The same holds for a focused toolbar or tab-strip control (a View/Sort
   // button, a crumb, the new-tab "+", a tab): Enter/Space act on THAT
   // control (Stage 2D Task 7) — browserKeydown's preventDefault used to
-  // swallow the button's own click and open the focused row instead.
-  // Only while that control has KEYBOARD focus (:focus-visible): a mouse
-  // click also leaves focus on a toolbar button, and a list cursor moved
-  // with the arrows since (browserKeydown hands DOM focus to the row then)
-  // must still open its row on Enter.
+  // swallow the button's own click and open the focused row instead. Such a
+  // control only ever holds focus because the KEYBOARD put it there: a mouse
+  // press on chrome leaves focus where it was (initChromeMouseFocus below),
+  // so after clicking Up, Enter still opens the list's row.
   const controlKeyActivation = (e.key === 'Enter' || e.key === ' ')
-    && !!activeEl?.closest?.('#sidebar, #toolbar, #tabbar')
-    && activeEl.matches(':focus-visible');
+    && !!activeEl?.closest?.(CHROME_FOCUS_REGIONS);
   const browserScreenActive = document.getElementById('screen-browser')?.classList.contains('active');
+  // An open search Filters/History dropdown owns the cursor keys: they never
+  // move the list cursor hidden behind it (search.js navigates inside it when
+  // it has focus; anywhere else the keys just close it).
+  const searchDd = document.getElementById('search-dropdown');
+  if (searchDd && !searchDd.hidden && LIST_CURSOR_KEYS.has(e.key)) {
+    if (!searchDd.contains(activeEl) && activeEl?.id !== 'search-input') closeSearchDropdown();
+    return;
+  }
   if (browserScreenActive && !isEditableTarget && !controlKeyActivation && typeof browserKeydown === 'function') {
     browserKeydown(e);
   }
@@ -4014,6 +4060,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   restoreSidebarState();
   initSearch();
   initToolbarLayout();
+  initChromeMouseFocus();
   // Tab strip: wheel-to-scrollLeft, the overflow hint, and the tablist's own
   // keyboard model (pass 2 #156/#158). The seed tab is already in the DOM, so
   // this also has to run after seedInitialTab().

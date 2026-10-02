@@ -717,6 +717,14 @@ function restoreSearchHistoryEntry(key) {
 // ── Dropdown ──────────────────────────────────────────────────────────────────
 function searchDropdownEl() { return document.getElementById('search-dropdown'); }
 
+/** The dropdown's focusable entries, in order (filter rows, their choices,
+ * history entries, the clear-history button). */
+function searchDropdownItems() {
+  const el = searchDropdownEl();
+  if (!el || el.hidden) return [];
+  return [...el.querySelectorAll('button:not([disabled])')].filter((b) => b.getClientRects().length);
+}
+
 function openSearchDropdown() {
   const el = searchDropdownEl();
   if (!el) return;
@@ -1136,6 +1144,14 @@ function initSearch() {
       runSearch();
       return;
     }
+    // ArrowDown from the field walks into the open dropdown (a combobox);
+    // it never reaches the file list behind it.
+    if (e.key === 'ArrowDown') {
+      const dd = searchDropdownEl();
+      const first = dd && !dd.hidden ? searchDropdownItems()[0] : null;
+      if (first) { e.preventDefault(); e.stopPropagation(); first.focus(); }
+      return;
+    }
     if (e.key === 'Escape') {
       // Escape in the bar closes the dropdown and nothing else — the results,
       // chips and text all stay (design §8.2). stopPropagation keeps the
@@ -1160,6 +1176,32 @@ function initSearch() {
       e.preventDefault();
       removeChip(searchState.chips.length - 1);
     }
+  });
+
+  // Cursor keys inside the open dropdown move between its entries; Escape
+  // hands the caret back to the field. Nothing here reaches the file list.
+  searchDropdownEl()?.addEventListener('keydown', e => {
+    const items = searchDropdownItems();
+    if (!items.length) return;
+    const cur = items.indexOf(document.activeElement);
+    let next = null;
+    if (e.key === 'ArrowDown') next = items[(cur + 1) % items.length];
+    else if (e.key === 'ArrowUp') {
+      if (cur <= 0) { e.preventDefault(); e.stopPropagation(); focusSearchInput({ keepDropdownClosed: true }); return; }
+      next = items[cur - 1];
+    } else if (e.key === 'Home' || e.key === 'PageUp') next = items[0];
+    else if (e.key === 'End' || e.key === 'PageDown') next = items[items.length - 1];
+    else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); e.stopPropagation(); return; }
+    else if (e.key === 'Escape') {
+      e.preventDefault(); e.stopPropagation();
+      closeSearchDropdown();
+      focusSearchInput({ keepDropdownClosed: true });
+      return;
+    }
+    if (!next) return;
+    e.preventDefault();
+    e.stopPropagation();
+    next.focus();
   });
 
   // Clicking anywhere outside the bar closes the dropdown but keeps the search.
