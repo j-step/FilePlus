@@ -21,6 +21,10 @@ let _propsPath = null;     // GET /fs/properties's own `path` (updates after a r
 let _propsData = null;     // last-fetched /fs/properties response
 let _propsEntry = null;    // {name, path, is_dir, ext} for iconFor()
 let _propsDetailsLoaded = false;
+// Bumped by every open and close: a GET /fs/properties that answers after a
+// newer open (Alt+Enter on another item) or after the panel was closed must
+// not paint — or re-open — the panel for the earlier item (spec §12 sweep).
+let _propsSeq = 0;
 // The folder type the panel LOADED (renderFolderTypeSelect's own `current`),
 // not whatever the <select> resolved to. desktop.ini can hold a FolderType
 // outside the five options below, in which case no <option> is selected and
@@ -118,13 +122,16 @@ async function openProperties(path) {
     return;
   }
 
+  const seq = ++_propsSeq;
   let props;
   try {
     props = await API.get('/fs/properties', { path });
   } catch (err) {
+    if (seq !== _propsSeq) return;
     showToast(`Failed to load properties: ${formatApiError(err)}`, 'error');
     return;
   }
+  if (seq !== _propsSeq) return;
 
   _propsPath = props.path;
   _propsData = props;
@@ -152,6 +159,7 @@ function closeProperties() {
   if (!scrim) return;
   scrim.style.display = 'none';
   scrim.setAttribute('aria-hidden', 'true');
+  _propsSeq++;
   _propsPath = null;
   _propsData = null;
   _propsEntry = null;
@@ -362,13 +370,17 @@ function renderDetails(details) {
  * (design spec: "modal stays open with refreshed data") and nowhere else,
  * since nothing but Apply changes the item out from under an open panel. */
 async function reloadProperties(path) {
+  const seq = _propsSeq;
   let fresh;
   try {
     fresh = await API.get('/fs/properties', { path });
   } catch (err) {
+    if (seq !== _propsSeq) return;
     showToast(`Failed to refresh properties: ${formatApiError(err)}`, 'error');
     return;
   }
+  // Closed (or re-opened on another item) while Apply's refresh was out.
+  if (seq !== _propsSeq) return;
   _propsPath = fresh.path;
   _propsData = fresh;
   _propsEntry = propsEntryFrom(fresh);

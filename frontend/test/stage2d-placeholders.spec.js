@@ -154,6 +154,10 @@ const NOT_CLICKED = new Set([
   'inspector-open', 'open-file-with', 'inspector-reveal',
   'open-recent-file', 'open-file', 'reveal-file', 'home-toggle-favorite', 'unfavorite-file',
   'props-open-with', 'props-advanced', 'props-apply',
+  // Real changes the sweep must not make: undoing a logged operation and
+  // removing a tag act on the run's data, and Copy path writes the real OS
+  // clipboard (the developer's own, outside the test). Task 12b.
+  'inspector-undo-op', 'inspector-remove-tag', 'copy-path',
 ]);
 
 test('every visible control on every screen reaches a real handler, never the stub', async () => {
@@ -230,6 +234,10 @@ test('every visible control on every screen reaches a real handler, never the st
         await resetOverlays();
         await setup();
         await frames(page);
+        // The inspector repaints its panes when a fetch lands: mark a control
+        // only once it has settled, or the marked node can be replaced
+        // between the mark and the click.
+        await page.waitForFunction(() => window.__fpInspectorPending === 0 && !window.__fpLoadPending, null, { timeout: 20_000 });
         // The i-th control a user could click right now: laid out, visible,
         // not under pointer-events:none (the dimmed Tag Canvas mock body).
         const target = await page.evaluate(([sel, idx]) => {

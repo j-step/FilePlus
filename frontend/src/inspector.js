@@ -28,6 +28,11 @@ let _inspectorHistoryPath = null;
 
 // Revoked before a new one replaces it so blob: URLs don't leak.
 let _inspectorPreviewUrl = null;
+// path|modified|size of the file the preview box is showing. A re-fetch of
+// the same, unchanged file (every listing refresh re-announces the
+// selection) keeps the preview it has: rebuilding it swapped in a fresh
+// blob: <img> that painted empty until it decoded — a flash (spec §12).
+let _inspectorPreviewFor = null;
 
 // The entry currently in the header, in the {name, path, ext, is_dir} shape
 // iconFor() wants — so the "No preview" placeholder shows the file's own
@@ -76,6 +81,7 @@ function updateInspector(mode, data = {}) {
     // The last single selection's image blob goes with it.
     if (preview)  preview.hidden = true;
     if (_inspectorPreviewUrl) { URL.revokeObjectURL(_inspectorPreviewUrl); _inspectorPreviewUrl = null; }
+    _inspectorPreviewFor = null;
     if (filenameEl) { filenameEl.textContent = `${data.count} items selected`; filenameEl.removeAttribute('title'); }
     if (filepathEl) filepathEl.textContent = '';
     if (multiPane) {
@@ -175,11 +181,34 @@ async function _showInspectorFor(path) {
   // the same way a click does. A folder never has a preview to show, so skip
   // the doomed fetch entirely rather than let it round-trip into a console
   // error every time a folder is selected.
+  const previewKey = `${path}|${data.modified}|${data.size}`;
   if (data.kind === 'Folder') renderPreviewNone();
-  else await loadInspectorPreview(path, seq);
-  if (seq !== _inspectorSeq) return;
+  else if (previewKey !== _inspectorPreviewFor) {
+    // Only real content is kept: the "No preview" type icon repaints, so an
+    // icon-source change (refreshBackendData) still reaches it.
+    const shown = await loadInspectorPreview(path, seq);
+    if (seq !== _inspectorSeq) return;
+    if (shown) _inspectorPreviewFor = previewKey;
+  }
 
   await loadInspectorHistory(path, seq);
+}
+
+/** The panel for an item that no longer exists where it was (a Home row
+ * whose file was moved or deleted): its name and old location, "Moved or
+ * deleted" as its kind, nothing fetched (Stage 2D §12 sweep). */
+function showInspectorMissing(path) {
+  _inspectorSeq++;
+  const name = basenameOf(path);
+  updateInspector('single', { name, path });
+  _inspectorEntry = { name, path, is_dir: false, ext: '' };
+  _inspectorFileId = null;
+  _inspectorHistoryPath = null;
+  updateTagInputAvailability();
+  renderInspectorMeta({ kind: 'Moved or deleted' });
+  renderTagChips([]);
+  renderPreviewNone();
+  renderInspectorHistory([]);
 }
 
 function renderInspectorMeta(data) {
@@ -192,8 +221,9 @@ function renderInspectorMeta(data) {
 
   if (kindEl)     kindEl.textContent     = (data && data.kind) || '—';
   if (sizeEl)     sizeEl.textContent     = (!data || isFolder || data.size == null) ? '—' : formatSize(data.size);
-  if (modifiedEl) modifiedEl.textContent = (data && data.modified) ? formatModified(data.modified) : '—';
-  if (createdEl)  createdEl.textContent  = (data && data.created) ? formatModified(data.created) : '—';
+  // GET /file's dates are epoch seconds, like every listing's.
+  if (modifiedEl) modifiedEl.textContent = (data && data.modified) ? formatModified(data.modified * 1000) : '—';
+  if (createdEl)  createdEl.textContent  = (data && data.created) ? formatModified(data.created * 1000) : '—';
   if (hashEl) {
     if (!data || isFolder || !data.hash) {
       hashEl.textContent = '—';
@@ -217,6 +247,7 @@ function previewContainer() { return document.getElementById('inspector-preview'
 function renderInspectorEmptyPreview() {
   const el = previewContainer();
   if (!el) return;
+  _inspectorPreviewFor = null;
   if (_inspectorPreviewUrl) { URL.revokeObjectURL(_inspectorPreviewUrl); _inspectorPreviewUrl = null; }
   el.style.display = 'flex';
   el.style.flexDirection = 'row';
@@ -226,12 +257,13 @@ function renderInspectorEmptyPreview() {
 function renderPreviewNone() {
   const el = previewContainer();
   if (!el) return;
+  _inspectorPreviewFor = null;
   if (_inspectorPreviewUrl) { URL.revokeObjectURL(_inspectorPreviewUrl); _inspectorPreviewUrl = null; }
   el.style.display = 'flex';
   el.style.flexDirection = 'row'; // back to the container's default centering (a text preview sets 'column')
   el.innerHTML = `<div style="display:flex;flex-direction:column;align-items:center;gap:8px;color:var(--text-tertiary)">
     ${iconFor(_inspectorEntry, 40)}
-    <span style="font:400 var(--t-compact) var(--font-ui)">No preview</span>
+    <span class="inspector__preview-note" style="font:400 var(--t-compact) var(--font-ui)">No preview</span>
   </div>`;
 }
 
@@ -270,7 +302,7 @@ async function loadInspectorPreview(path, seq) {
     img.alt = '';
     img.style.cssText = 'max-width:100%;max-height:100%;object-fit:contain';
     el.appendChild(img);
-    return;
+    return true;
   }
 
   let data;
@@ -300,6 +332,7 @@ async function loadInspectorPreview(path, seq) {
       footer.textContent = `truncated · ${formatSize(data.total_size)} total`;
       el.appendChild(footer);
     }
+    return true;
   } else {
     // 'binary' or 'too-large'
     renderPreviewNone();
@@ -323,14 +356,25 @@ function updateTagInputAvailability() {
   if (!input) return;
   const taggable = _inspectorFileId != null;
   input.disabled = !taggable;
-  input.placeholder = taggable ? 'Add tag…' : 'Only files can be tagged';
+  // Why it is off, in the panel's own terms: nothing selected said "Only
+  // files can be tagged" under "No file selected" (Stage 2D §12 sweep).
+  let why = 'Only files can be tagged';
+  if (!_inspectorEntry) why = 'Select a file to tag it';
+  else if (_inspectorEntry.is_dir === false) why = 'This file can’t be tagged';
+  input.placeholder = taggable ? 'Add tag…' : why;
   if (!taggable) input.value = '';
 }
 
 async function refreshInspectorTags() {
   if (_inspectorFileId == null) return;
+  // The chips land after a round-trip: if the panel has moved on to another
+  // item by then, they are that earlier file's tags and must not be painted
+  // under the new one's name (Stage 2D §12 sweep).
+  const seq = _inspectorSeq;
+  const id = _inspectorFileId;
   try {
-    const tags = await API.get(`/files/${_inspectorFileId}/tags`);
+    const tags = await API.get(`/files/${id}/tags`);
+    if (seq !== _inspectorSeq || id !== _inspectorFileId) return;
     renderTagChips(tags);
   } catch (_) { /* leave the chips as they were */ }
 }
@@ -496,8 +540,11 @@ async function loadInspectorHistory(path, seq) {
  * selected, so nothing else is already about to reload it). */
 async function reloadInspectorHistoryFor(path) {
   _inspectorHistoryPath = path;
+  const seq = _inspectorSeq;
   try {
     const rows = await API.get('/files/history', { path });
+    // Same guard as the selection pipeline's own History load.
+    if (seq !== _inspectorSeq || _inspectorHistoryPath !== path) return;
     renderInspectorHistory(rows);
   } catch (_) { /* history refresh is best-effort */ }
 }
@@ -522,6 +569,9 @@ async function inspectorUndoOp(opId, batchId) {
   if (typeof fileops !== 'undefined' && fileops.noteExternalUndo) {
     fileops.noteExternalUndo(batchId, res && res.batch_id);
   }
+  // The selection and the clipboard follow the inverse the same way they
+  // follow every other operation (a rename undone keeps its row selected).
+  if (res && typeof fileops !== 'undefined' && fileops.followOps) fileops.followOps([res]);
   if (typeof refreshDirectory === 'function') await refreshDirectory();
 
   const destPath = res && res.dest;

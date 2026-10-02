@@ -103,6 +103,8 @@ const fileops = {
       // ops: []} and must be a silent no-op, not a false "Undone".
       else if (res.ops && res.ops.length) showSnackbar('Undone', null, null);
       await refreshDirectory();
+      // What the undo put back into this folder is selected (Explorer).
+      if (typeof selectLandedOps === 'function') selectLandedOps(res.ops);
     } catch (err) { showToast(`Undo failed: ${formatApiError(err)}`, 'error'); }
   },
 
@@ -141,6 +143,7 @@ const fileops = {
         this.redoStack = this.redoStack.filter(b => b !== id);
       }
       await refreshDirectory();
+      if (typeof selectLandedOps === 'function') selectLandedOps(res.ops);
     } catch (err) { showToast(`Redo failed: ${formatApiError(err)}`, 'error'); }
     finally { this._inFlight = false; }
   },
@@ -169,6 +172,8 @@ const fileops = {
    * leaves the clipboard alone — an attribute change from Properties must
    * not drop a pending cut. */
   followOps(ops) {
+    // The selection (and with it the inspector) follows the same ops.
+    if (typeof followSelectionOps === 'function') followSelectionOps(ops);
     const { mode, paths } = this.clipboard;
     if (!mode || !paths.length || !ops || !ops.length) return;
     let next = paths.slice();
@@ -208,6 +213,8 @@ const fileops = {
     // Otherwise the moved items are done (followOps already pointed them at
     // their new home); any item still at its original path failed (an error,
     // or skipped) and stays cut, so Ctrl+V can retry just those.
+    // The pasted items are selected, as in Explorer.
+    if (res && res !== 'cancel' && typeof selectLandedOps === 'function') selectLandedOps(res.ops);
     if (mode === 'cut' && res !== 'cancel') {
       const original = new Set(paths.map(p => String(p).toLowerCase()));
       const left = this.clipboard.mode === 'cut'

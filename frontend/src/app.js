@@ -412,6 +412,8 @@ function showScreenDom(id) {
     loadRecent();
     loadFavorites();
   }
+  // The status bar describes the screen on display (browser.js).
+  if (typeof updateStatusBar === 'function') updateStatusBar();
 }
 
 /**
@@ -451,6 +453,17 @@ function switchScreen(id, labelOverride) {
   if (!document.getElementById(`screen-${id}`)) return;
   tab.screen = id;
   if (id === 'browser') {
+    if (tab.searchResume && browserState.mode === 'search' && typeof resumeSearchForTab === 'function') {
+      // A search a failed navigation stopped while this tab was off the
+      // Browser (failNavigation): run it again now that it is shown.
+      const snap = tab.searchResume;
+      tab.searchResume = null;
+      showScreenDom('browser');
+      updateSidebarActive(tab.path);
+      resumeSearchForTab(snap, tab.id);
+      return;
+    }
+    tab.searchResume = null;
     if (tab.path === null) {
       // This tab has never shown Browser before — open This PC (Stage 2D
       // §8). The Browser screen appears when that page commits, never
@@ -1850,8 +1863,8 @@ function getMenuTypeForTarget(target) {
   // Home's Recent/Favorites rows get their own menu — checked before the
   // generic folder/file checks below so a Home row never falls into those.
   if (target.closest('.fp-row--recent')) return 'home-row';
-  if (target.closest('.fp-row[data-type="folder"], .ef-row[data-type="folder"]')) return 'folder';
-  if (target.closest('.fp-row, .ef-row, .rb-row')) return 'file';
+  if (target.closest('.fp-row[data-type="folder"]')) return 'folder';
+  if (target.closest('.fp-row')) return 'file';
   return 'empty-area';
 }
 
@@ -2058,7 +2071,11 @@ let cmPrevFocus = null;              // focus to give back when the menu closes 
 // fires pointerenter with the same coordinates and must not close a flyout the
 // user opened with the arrow keys).
 let cmKbdPointer = null;
-let cmLastPointer = { x: -1, y: -1 };
+// null until the pointer has been seen: a keyboard-opened menu then learns
+// where the (stationary) pointer is from the first pointerenter instead of
+// treating it as movement — an invented -1,-1 made that first layout-shift
+// pointerenter close the flyout the keys had just opened (§12 sweep).
+let cmLastPointer = null;
 
 function cmOpenMenus() { return [contextMenu, ...cmFlyouts.map(f => f.menu)]; }
 
@@ -2181,6 +2198,7 @@ function buildContextMenuItems(menuEl, items, ctx, depth) {
     // entering the flyout (or coming back to the parent row) cancels that.
     btn.addEventListener('pointerenter', e => {
       if (cmKbdPointer) {
+        if (cmKbdPointer.unknown) { cmKbdPointer = { x: e.clientX, y: e.clientY }; return; }
         if (e.clientX === cmKbdPointer.x && e.clientY === cmKbdPointer.y) return;
         cmKbdPointer = null;
       }
@@ -2214,6 +2232,12 @@ function closeContextMenuAfterActivation() {
   if (prev && prev.isConnected && prev !== document.body) prev.focus({ preventScroll: true });
 }
 
+/** The keyboard closes (Tab, Escape on the root menu) give focus back the
+ * same way — one copy of the rule, so the body guard cannot drift. */
+function closeContextMenuByKeyboard() {
+  closeContextMenuAfterActivation();
+}
+
 function contextMenuIsOpen() {
   return !!contextMenu && contextMenu.style.display === 'block';
 }
@@ -2228,7 +2252,9 @@ document.addEventListener('click', e => {
 // root menu closes everything. Capture phase + stopPropagation so the keys
 // never also reach the file list (arrow selection, Enter to open) or the
 // global Escape handler behind the menu.
-document.addEventListener('pointermove', e => { cmLastPointer = { x: e.clientX, y: e.clientY }; }, true);
+for (const type of ['pointermove', 'pointerdown', 'pointerover']) {
+  document.addEventListener(type, e => { cmLastPointer = { x: e.clientX, y: e.clientY }; }, true);
+}
 
 // Tab leaves the menu: close it all and put focus back, so Tab then continues
 // from where the user was. Focus moving to anything outside the menu tree by
@@ -2244,16 +2270,14 @@ document.addEventListener('keydown', e => {
   if (!contextMenuIsOpen()) return;
   const key = e.key;
   if (key === 'Tab') {
-    const prev = cmPrevFocus;
-    hideContextMenu();
-    if (prev && prev.isConnected && prev !== document.body) prev.focus({ preventScroll: true });
+    closeContextMenuByKeyboard();
     return;
   }
   if (!['ArrowDown', 'ArrowUp', 'ArrowLeft', 'ArrowRight', 'Enter', 'Escape', 'Home', 'End'].includes(key)) return;
   if (e.ctrlKey || e.metaKey || e.altKey) return;
   e.preventDefault();
   e.stopPropagation();
-  cmKbdPointer = { ...cmLastPointer };
+  cmKbdPointer = cmLastPointer ? { ...cmLastPointer } : { unknown: true };
   const menus = cmOpenMenus();
   const active = menus[menus.length - 1];
   const items = cmFocusableItems(active);
@@ -2275,8 +2299,7 @@ document.addEventListener('keydown', e => {
     closeContextFlyouts(cmFlyouts.length - 1);
     owner.focus();
   } else if (key === 'Escape') {
-    hideContextMenu();
-    if (cmPrevFocus && cmPrevFocus.isConnected) cmPrevFocus.focus();
+    closeContextMenuByKeyboard();
   }
 }, true);
 
@@ -2551,7 +2574,10 @@ async function refreshBackendData() {
   // fpLoadKnownFolders() returns its cache when already populated; drop it so
   // a reconnect actually re-fetches (on the failing path it was never set).
   delete window.__fpKnownFolders;
-  await fpLoadKnownFolders();
+  // The generic folder bitmap is learned by the prewarm (icons.js), which
+  // skips folders until the known-folders map exists: a map that failed at
+  // startup and arrives only now must prewarm again (Stage 2D §12 sweep).
+  if (await fpLoadKnownFolders()) fpPrewarmIconSizes();
   await Promise.allSettled([loadDrives(), loadPins(), loadSidebarTags()]);
   loadQuickAccess();
   if (activeTab()?.screen === 'home') { loadRecent(); loadFavorites(); }
@@ -2852,6 +2878,10 @@ function initOverlayScrollbars() {
   ]) {
     if (el) fpOverlayScroll(el);
   }
+  // The inspector as a whole scrolls only when even a shrunk preview leaves
+  // its body no room (a short window at high zoom); its own hover root.
+  const inspector = document.getElementById('inspector');
+  if (inspector) fpOverlayScroll(inspector, { hoverRoot: inspector });
 }
 
 // ── Window controls (Electron IPC) ───────────────────────────────────────────
@@ -2906,6 +2936,8 @@ function initUnderlineTabs(container) {
     container.closest('.screen')?.querySelectorAll('[data-pane]').forEach(pane => {
       pane.style.display = pane.dataset.pane === targetPane ? '' : 'none';
     });
+    // Home's status bar counts the visible pane.
+    if (container.closest('#screen-home') && typeof updateStatusBar === 'function') updateStatusBar();
   }
   tabs.forEach(tab => {
     tab.addEventListener('click', () => setActive(tab));
@@ -2960,7 +2992,6 @@ const IN_SCOPE_ACTIONS = new Set([
   'unfavorite-file', 'open-recent-file',
   'open-file', 'reveal-file', 'copy-path', 'home-toggle-favorite',
   'palette-open-file', 'palette-open-folder', 'palette-search-files',
-  'open-palette', 'close-palette',
   // Toolbar search (Task 14)
   'search-clear', 'search-clear-inline', 'search-remove-chip', 'search-expand-filter', 'search-pick-filter',
   'search-more-filters', 'search-more-apply', 'search-more-cancel',
@@ -3367,12 +3398,15 @@ document.addEventListener('click', e => {
         if (r !== row) r.classList.remove('fp-row--selected');
       });
       row.classList.add('fp-row--selected');
+      updateStatusBar();
       // Populate the (browser-screen) inspector through the SAME pipeline a
       // Browser selection uses. updateInspector('single', …) only rewrote the
       // header: the meta grid, preview, tag chips and History stayed on the
       // previously-inspected file, and _inspectorFileId with them — so the
-      // Tags pane then tagged that other file (pass 2 #75).
-      showInspectorFor(path);
+      // Tags pane then tagged that other file (pass 2 #75). An item that is
+      // gone since gets the panel's own "moved or deleted" state, no fetch.
+      if (row.hasAttribute('data-missing')) showInspectorMissing(path);
+      else showInspectorFor(path);
       break;
     }
     // Home hover actions (Recent + Favorites rows) and the home-row context
@@ -4036,11 +4070,18 @@ function initChromeMouseFocus() {
     if (!(t instanceof Element) || !t.closest(CHROME_FOCUS_REGIONS)) return;
     if (prev && prev !== t && prev !== document.body && prev.isConnected && !prev.closest?.(CHROME_FOCUS_REGIONS)) {
       prev.focus({ preventScroll: true });
+      // prev can refuse focus (hidden, disabled or inert since the press):
+      // then the control still must not keep it (Stage 2D §12 sweep).
+      if (document.activeElement === t) t.blur();
     } else {
       t.blur();
     }
   }, true);
-  document.addEventListener('mouseup', () => { _chromePressPrevFocus = undefined; }, true);
+  // A press is over when the button comes up — or when it became a native
+  // drag (a tab), which swallows the mouseup: a record left behind would
+  // pull a LATER keyboard focus on the chrome back to the list.
+  const endPress = () => { _chromePressPrevFocus = undefined; };
+  for (const type of ['mouseup', 'pointerup', 'dragstart', 'dragend']) document.addEventListener(type, endPress, true);
 }
 
 // ── Keyboard shortcuts ────────────────────────────────────────────────────────
@@ -4253,6 +4294,7 @@ document.addEventListener('contextmenu', e => {
       const pane = row.closest('.home-pane');
       pane?.querySelectorAll('.fp-row--selected').forEach(r => { if (r !== row) r.classList.remove('fp-row--selected'); });
       row.classList.add('fp-row--selected');
+      updateStatusBar();
     }
   }
 
@@ -4435,6 +4477,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   try {
     await loadConfig();
     applySettingsFromConfig();
+    initSettingsNavSelect();
     restoreSettingsPane();
     // Before the first listing renders: iconFor() decides the special folder
     // icons (Desktop, Downloads, …) by matching a path against this map, and

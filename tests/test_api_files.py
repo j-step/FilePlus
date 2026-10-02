@@ -208,3 +208,18 @@ def test_index_search_created_is_epoch_float(client, sandbox):
     con.commit(); con.close()
     hit = client.get("/search", params={"q": "epoch-me"}).json()["results"][0]
     assert "created" not in hit
+
+
+def test_file_and_files_id_dates_are_epoch_seconds(client, sandbox):
+    """Stage 2D §12 sweep: /file and /files/{id} carry created/modified as
+    epoch seconds -- the unit /fs/list and both search routes use."""
+    import os
+    p = sandbox / "dated.txt"; p.write_text("d")
+    body = client.get("/file", params={"path": str(p)}).json()
+    assert isinstance(body["created"], float) and isinstance(body["modified"], float)
+    assert abs(body["modified"] - os.stat(p).st_mtime) < 2
+    row = client.get(f"/files/{body['id']}").json()
+    assert isinstance(row["created"], float) and isinstance(row["modified"], float)
+    d = sandbox / "dated-dir"; d.mkdir()
+    folder = client.get("/file", params={"path": str(d)}).json()
+    assert isinstance(folder["created"], float) and isinstance(folder["modified"], float)

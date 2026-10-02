@@ -26,7 +26,7 @@ import psutil
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Any
 
 import backend.config as _config
@@ -38,8 +38,24 @@ from backend import filetypes as ft, mover, operations_log as ol, searcher, stor
 logger = logging.getLogger(__name__)
 
 
+def _quiet_connection_reset(loop, context) -> None:
+    """asyncio exception handler: a client that resets its socket (the
+    Electron window closing right after a keepalive request, a renderer
+    reload) makes the Windows proactor log ``ConnectionResetError`` from
+    ``_call_connection_lost`` as an ERROR with a traceback, though the request
+    was answered and nothing failed. That one case goes to DEBUG so a real
+    error stays findable in backend.log (Stage 2D §12 sweep); everything else
+    keeps asyncio's default handling."""
+    exc = context.get("exception")
+    if isinstance(exc, ConnectionResetError) and "_call_connection_lost" in str(context.get("handle") or context.get("message") or ""):
+        logging.getLogger("backend.api").debug("client reset its connection: %s", exc)
+        return
+    loop.default_exception_handler(context)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    asyncio.get_running_loop().set_exception_handler(_quiet_connection_reset)
     # Auth is never off: an unset FILEPLUS_API_TOKEN is replaced here by a
     # minted, persisted one (config.ensure_api_token) before the first
     # request can be served. Assigned onto the module so _require_token's
@@ -411,8 +427,8 @@ async def file_meta(path: str = Query(..., description="Absolute path of the fil
             "extension": "",
             "size": None,
             "hash": None,
-            "created": datetime.fromtimestamp(st.st_ctime).isoformat(),
-            "modified": datetime.fromtimestamp(st.st_mtime).isoformat(),
+            "created": st.st_ctime,
+            "modified": st.st_mtime,
             "category": None,
             "confidence": 0.0,
             "status": "directory",
@@ -432,10 +448,21 @@ async def file_meta(path: str = Query(..., description="Absolute path of the fil
             await conn.commit()
             cur = await conn.execute("SELECT * FROM files WHERE path = ?", (str(resolved),))
             row = await cur.fetchone()
-        data = dict(row)
+        data = _epoch_dates(dict(row))
         data["tags"] = await tagger.get_tags(conn, data["id"])
     data["kind"] = _kind_for(resolved, is_dir=False)
     return data
+
+
+def _epoch_dates(row: dict) -> dict:
+    """`created` / `modified` as epoch seconds, the unit every listing and
+    search result uses (the index stores naive local ISO strings). Stage 2D
+    §12 sweep: GET /file and /files/{id} were the only routes still shipping
+    the ISO string, so one renderer formatter had to take two shapes."""
+    for key in ("created", "modified"):
+        if key in row and not isinstance(row[key], (int, float)):
+            row[key] = _iso_to_epoch(row[key])
+    return row
 
 
 @app.get("/preview")
@@ -640,7 +667,7 @@ async def get_file(file_id: int):
         row = await cur.fetchone()
     if row is None:
         raise HTTPException(status_code=404, detail="File not found")
-    return dict(row)
+    return _epoch_dates(dict(row))
 
 
 # ---------------------------------------------------------------------------
@@ -1605,6 +1632,12 @@ class ConfigSet(BaseModel):
     value: Any
 
 
+class ConfigMerge(BaseModel):
+    key: str
+    value: dict[str, Any]
+    max_keys: Optional[int] = Field(None, ge=1)
+
+
 class RecentAdd(BaseModel):
     path: str
     action: str
@@ -1651,6 +1684,15 @@ async def post_config(body: ConfigSet):
     async with _db() as conn:
         await stores.config_set(conn, body.key, body.value)
     return {"key": body.key, "value": body.value}
+
+
+@app.post("/config/merge")
+async def merge_config(body: ConfigMerge):
+    """Merges ``value``'s entries into the object stored at ``key`` (see
+    stores.config_merge) -- a small delta instead of the whole map."""
+    async with _db() as conn:
+        merged = await stores.config_merge(conn, body.key, body.value, body.max_keys)
+    return {"key": body.key, "count": len(merged)}
 
 
 @app.delete("/config/{key}")

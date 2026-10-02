@@ -31,20 +31,47 @@ async function loadConfig() {
  * the change and is not rolled back here, since each caller owns its own
  * apply step and can re-apply if it wants to.
  */
+// One POST /config per key at a time (Stage 2D §12 sweep). Two requests for
+// the same key could reach the backend in either order — the browser runs
+// them on separate connections — so a quick double toggle could persist the
+// FIRST click. A save made while one is in flight waits, and only the newest
+// waiting value is sent when the flight lands.
+const _settingSaves = new Map();   // key -> { next: {value, hadPrev, prev} | null, done: Promise }
+
 async function saveSetting(key, value) {
   if (!window.__fpConfig) window.__fpConfig = {};
   const hadPrev = Object.prototype.hasOwnProperty.call(window.__fpConfig, key);
   const prev = window.__fpConfig[key];
   window.__fpConfig[key] = value;
-  try {
-    await API.post('/config', { key, value });
-  } catch (err) {
-    if (hadPrev) window.__fpConfig[key] = prev;
-    else delete window.__fpConfig[key];
-    if (typeof showToast === 'function') {
-      showToast(`Failed to save setting: ${formatApiError(err)}`, 'error');
-    }
+  const queued = _settingSaves.get(key);
+  if (queued) {
+    queued.next = { value, hadPrev, prev };
+    return queued.done;
   }
+  const slot = { next: null, done: null };
+  _settingSaves.set(key, slot);
+  slot.done = (async () => {
+    let cur = { value, hadPrev, prev };
+    while (cur) {
+      try {
+        await API.post('/config', { key, value: cur.value });
+      } catch (err) {
+        // A newer value already waiting is still sent (and is what the user
+        // last asked for); otherwise put back what was there before.
+        if (!slot.next && window.__fpConfig[key] === cur.value) {
+          if (cur.hadPrev) window.__fpConfig[key] = cur.prev;
+          else delete window.__fpConfig[key];
+        }
+        if (typeof showToast === 'function') {
+          showToast(`Failed to save setting: ${formatApiError(err)}`, 'error');
+        }
+      }
+      cur = slot.next;
+      slot.next = null;
+    }
+    _settingSaves.delete(key);
+  })();
+  return slot.done;
 }
 
 /** Removes a persisted setting (DELETE /config/{key}) — used by "Reset to
@@ -285,20 +312,30 @@ async function openLogsFolder() {
  * icon changed, a stale preview). Files and the index are untouched. The
  * per-layer counts are kept on window.__fpLastCacheClear for diagnostics. */
 async function clearIconCachesEverywhere() {
-  const renderer = typeof fpClearIconCaches === 'function' ? fpClearIconCaches() : 0;
+  // The layers the renderer refills FROM go first, each on its own: emptying
+  // the renderer first re-requested every visible icon at once, and those
+  // requests were answered from the main-process and backend caches that had
+  // not been cleared yet — the stale images came straight back (Stage 2D §12
+  // sweep). One layer failing no longer skips the next.
   let main = { icons: 0, thumbnails: 0 };
   let backend = 0;
+  const failed = [];
   try {
     if (window.electronAPI?.clearIconCaches) main = (await window.electronAPI.clearIconCaches()) || main;
+  } catch (_) { failed.push('the app’s'); }
+  try {
     const res = await API.del('/shell/icons/cache');
     backend = Number(res && res.cleared) || 0;
-  } catch (err) {
-    showToast(`Couldn’t clear every cache: ${formatApiError(err)}`, 'error');
-  }
-  window.__fpLastCacheClear = { renderer, main, backend };
+  } catch (_) { failed.push('the backend’s'); }
+  const renderer = typeof fpClearIconCaches === 'function' ? fpClearIconCaches() : 0;
+  window.__fpLastCacheClear = { renderer, main, backend, failed };
   const total = renderer + (main.icons || 0) + (main.thumbnails || 0) + backend;
-  setSettingsRowStatus('settings-cache-status',
-    total ? `Cleared ${total.toLocaleString()} cached image${total === 1 ? '' : 's'}` : 'Already empty');
+  const cleared = total ? `Cleared ${total.toLocaleString()} cached image${total === 1 ? '' : 's'}` : 'Already empty';
+  // Said plainly on the row itself when a layer could not be reached.
+  setSettingsRowStatus('settings-cache-status', failed.length
+    ? `${total ? cleared : 'Cleared what could be'} — couldn’t clear ${failed.join(' or ')} cache`
+    : cleared);
+  if (failed.length) showToast(`Couldn’t clear ${failed.join(' or ')} icon cache`, 'error');
 }
 
 /** "Clear Recent": empties Home › Recent (DELETE /recent). The files are
@@ -470,6 +507,8 @@ function switchSettingsPane(pane) {
   document.querySelectorAll('.settings-nav__item').forEach(btn => {
     btn.classList.toggle('settings-nav__item--active', btn.dataset.pane === pane);
   });
+  const select = document.getElementById('settings-nav-select');
+  if (select) select.value = pane;
   document.querySelectorAll('.settings-pane').forEach(p => {
     p.style.display = p.dataset.pane === pane ? '' : 'none';
   });
@@ -484,6 +523,29 @@ function switchSettingsPane(pane) {
   }
   if (pane === 'about') renderAboutPane();
   try { sessionStorage.setItem('fp-settings-pane', pane); } catch (_) { /* storage disabled */ }
+}
+
+/** The narrow Settings layout's section picker: one <select> in place of the
+ * nav list, which in a narrow pane (800px window, sidebar and inspector open,
+ * 150%) wrapped into a strip of rows that filled the screen (Stage 2D §12
+ * sweep). Built from the nav buttons, so the two lists never disagree;
+ * styles.css shows one or the other (the fp-settings container query). */
+function initSettingsNavSelect() {
+  const nav = document.querySelector('#screen-settings .settings-nav');
+  if (!nav || document.getElementById('settings-nav-select')) return;
+  const select = document.createElement('select');
+  select.id = 'settings-nav-select';
+  select.className = 'fp-input settings-nav__select';
+  select.setAttribute('aria-label', 'Settings section');
+  for (const btn of nav.querySelectorAll('.settings-nav__item[data-pane]')) {
+    const opt = document.createElement('option');
+    opt.value = btn.dataset.pane;
+    opt.textContent = btn.textContent.trim();
+    select.appendChild(opt);
+  }
+  select.value = nav.querySelector('.settings-nav__item--active')?.dataset.pane || select.value;
+  select.addEventListener('change', () => switchSettingsPane(select.value));
+  nav.appendChild(select);
 }
 
 /** Reopens the Settings screen on the pane last used in this window --

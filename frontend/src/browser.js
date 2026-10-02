@@ -500,20 +500,23 @@ function flushFolderViews() {
 
 /** The window is going away with a Ctrl+wheel run still unsaved: send it with
  * a keepalive request, which outlives the page (an ordinary fetch is
- * cancelled on unload). */
+ * cancelled on unload). A keepalive body is capped at 64 KB, which the whole
+ * 500-folder map can exceed — so only the pending entries go, to
+ * POST /config/merge, which merges and prunes them server-side (Stage 2D §12
+ * sweep). */
 function flushFolderViewsOnExit() {
   clearTimeout(_folderViewsSaveTimer);
   _folderViewsSaveTimer = 0;
   if (!Object.keys(_folderViewsPending).length) return;
-  const next = _mergedFolderViews();
+  const pending = _folderViewsPending;
+  if (window.__fpConfig) window.__fpConfig[FOLDER_VIEWS_KEY] = _mergedFolderViews();
   _folderViewsPending = {};
-  if (window.__fpConfig) window.__fpConfig[FOLDER_VIEWS_KEY] = next;
   try {
-    fetch(`${API.base}/config`, {
+    fetch(`${API.base}/config/merge`, {
       method: 'POST',
       keepalive: true,
       headers: apiHeaders({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify({ key: FOLDER_VIEWS_KEY, value: next }),
+      body: JSON.stringify({ key: FOLDER_VIEWS_KEY, value: pending, max_keys: FOLDER_VIEWS_MAX }),
     }).catch(() => { /* the window is closing; nothing left to tell */ });
   } catch (_) { /* ditto */ }
 }
@@ -885,9 +888,11 @@ function parentOfPath(p) {
  * that tab's cached listing, and never touches the DOM.
  */
 async function loadDirectory(absPath, opts = {}) {
-  const { addToHistory = true, preserveSelection = false, restore = null, cached = null, historyIndex = null } = opts;
+  const { addToHistory = true, preserveSelection = false, restore = null, cached = null, historyIndex = null, focusChild = null } = opts;
   // No path (a tab with no folder yet) is This PC, never the sandbox.
   if (!absPath) absPath = THISPC;
+  // Where the user was in the folder being left — Back/Forward return to it.
+  rememberFolderPlace();
   const reqTabId = tabs.activeId;
   const reqSeq = ++browserState._loadSeq;
   const superseded = () => tabs.activeId !== reqTabId || browserState._loadSeq !== reqSeq;
@@ -919,7 +924,7 @@ async function loadDirectory(absPath, opts = {}) {
       parent: cachedListing.parent ?? null,
       is_root: !!cachedListing.isRoot,
       truncated: !!cachedListing.truncated,
-    }, { absPath, addToHistory, restore, historyIndex, fetchedAt: cachedListing.fetchedAt || 0 });
+    }, { absPath, addToHistory, restore, historyIndex, focusChild, fetchedAt: cachedListing.fetchedAt || 0 });
   }
 
   let data;
@@ -955,7 +960,7 @@ async function loadDirectory(absPath, opts = {}) {
     rememberTabListing();
     return;
   }
-  commitListing(data, { absPath, addToHistory, restore, preserveSelection, historyIndex });
+  commitListing(data, { absPath, addToHistory, restore, preserveSelection, historyIndex, focusChild });
 }
 
 /** The tab-record form of a listing (Stage 2D §4.2) — `entries` by
@@ -997,7 +1002,19 @@ function storeBackgroundListing(tabId, data) {
  * (tab label, sidebar, breadcrumb, address bar, history) and ONE render, with
  * the view decided before it.
  */
-function commitListing(data, { absPath, addToHistory = true, restore = null, preserveSelection = false, historyIndex = null, fetchedAt = Date.now() } = {}) {
+function commitListing(data, { absPath, addToHistory = true, restore: restoreIn = null, preserveSelection = false, historyIndex = null, focusChild = null, fetchedAt = Date.now() } = {}) {
+  // Back/Forward land where the user left the folder (scroll and selection,
+  // Explorer's rule); Up selects the folder it came out of. Both used to land
+  // at the top with nothing selected (Stage 2D §12 sweep, "refresh loses
+  // place"). A tab restore's own record wins over both.
+  let restore = restoreIn;
+  let revealFocus = false;
+  if (!restore && historyIndex !== null) restore = folderPlaceFor(data.path);
+  if (!restore && focusChild) {
+    const want = fpNormalizePath(focusChild);
+    const child = data.entries.map(e => joinPath(data.path, e.name)).find(p => fpNormalizePath(p) === want);
+    if (child) { restore = { selection: [child], scrollTop: 0, scrollLeft: 0 }; revealFocus = true; }
+  }
   const prevSelection = preserveSelection ? new Set(browserState.selection) : null;
   const prevAnchor    = preserveSelection ? browserState.anchor : null;
   const prevFocus     = preserveSelection ? browserState.focus : null;
@@ -1077,6 +1094,38 @@ function commitListing(data, { absPath, addToHistory = true, restore = null, pre
     listScroll.scrollTop = restore ? (restore.scrollTop || 0) : 0;
     listScroll.scrollLeft = restore ? (restore.scrollLeft || 0) : 0;
   }
+  if (revealFocus && browserState.focus) findListRow(browserState.focus)?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+}
+
+// ── Where the user was in each folder (Back/Forward) ─────────────────────────
+// Per tab and folder: the scroll position and selection the folder had when
+// the user navigated away from it. Bounded; the oldest entries go first.
+const FOLDER_PLACES_MAX = 200;
+const _folderPlaces = new Map();
+
+function _folderPlaceKey(tabId, path) { return `${tabId}|${fpNormalizePath(path)}`; }
+
+/** Records the listing on screen (the active tab's own folder) before a
+ * navigation replaces it. */
+function rememberFolderPlace() {
+  if (browserState.mode === 'search' || !browserState.path || browserState.path === THISPC) return;
+  if (typeof tabs === 'undefined' || browserState.listingTabId !== tabs.activeId) return;
+  const listScroll = document.getElementById('list-scroll');
+  if (!listScroll) return;
+  const key = _folderPlaceKey(tabs.activeId, browserState.path);
+  _folderPlaces.delete(key);
+  _folderPlaces.set(key, {
+    scrollTop: listScroll.scrollTop,
+    scrollLeft: listScroll.scrollLeft,
+    selection: [...browserState.selection],
+  });
+  while (_folderPlaces.size > FOLDER_PLACES_MAX) _folderPlaces.delete(_folderPlaces.keys().next().value);
+}
+
+/** The place recorded for `path` in the active tab, or null. */
+function folderPlaceFor(path) {
+  if (typeof tabs === 'undefined') return null;
+  return _folderPlaces.get(_folderPlaceKey(tabs.activeId, path)) || null;
 }
 
 /**
@@ -1094,6 +1143,14 @@ function commitListing(data, { absPath, addToHistory = true, restore = null, pre
 function failNavigation(err, absPath, { reqTabId, ownSearch = false, searchWasInFlight = false }) {
   const tab = activeTab();
   const message = loadErrorMessage(err, absPath);
+  // The navigation stopped this tab's own search mid-flight. On the Browser
+  // it is re-run below; off it (a failed open from Home) re-running now would
+  // pull the user onto the Browser, so it waits for the Browser to be shown
+  // again (switchScreen) — it used to be dropped, and the tab came back with
+  // its folder instead of the search (Stage 2D §12 sweep).
+  const stoppedSearch = ownSearch && searchWasInFlight && typeof searchState !== 'undefined'
+    ? searchState.inflightQuery : null;
+  if (stoppedSearch && tab && (!browserScreenActive() || tab.screen !== 'browser')) tab.searchResume = stoppedSearch;
   if (!browserScreenActive()) {
     // The Browser was never revealed (it appears only when a listing
     // commits): the user is still on the screen they started from, and the
@@ -1454,7 +1511,7 @@ function navUp() {
   // Up from a drive root is This PC (Stage 2D §8), as in Explorer.
   if (isDriveRootPath(browserState.path)) { loadDirectory(THISPC); return; }
   if (browserState.isRoot || !browserState.parent) return;
-  loadDirectory(browserState.parent);
+  loadDirectory(browserState.parent, { focusChild: browserState.path });
 }
 
 /** "C:\\" or "C:" — a drive's root folder. */
@@ -2132,6 +2189,74 @@ function selectAll() {
   onSelectionChanged();
 }
 
+/**
+ * Keeps the selection on the items an operation just moved (Stage 2D §12
+ * sweep): a renamed or moved item stays selected under its new path and a
+ * trashed one leaves the selection — the moment the operation answers, not
+ * after the listing refresh that follows. Until then the selection named a
+ * path that no longer existed, and any selection event in between sent the
+ * inspector to GET /file for it (a 404, a console error). An item moved out
+ * of the folder on screen leaves the selection too (a search lists results
+ * from anywhere, so there it follows). Same op shape and op types as
+ * fileops.followOps (the clipboard's twin).
+ */
+function followSelectionOps(ops) {
+  if (!ops || !ops.length || !browserState.selection.size) return;
+  const folder = browserState.mode === 'search' ? null : fpNormalizePath(browserState.path);
+  const remap = (p) => {
+    if (!p) return p;
+    let out = p;
+    for (const op of ops) {
+      if (!op || !op.src || !FOLLOWED_OPS.has(op.op_type)) continue;
+      if (op.op_type !== 'trash' && !op.dest) continue;
+      const src = String(op.src);
+      const lsrc = src.toLowerCase();
+      const lp = String(out).toLowerCase();
+      if (lp !== lsrc && !lp.startsWith(lsrc.endsWith('\\') ? lsrc : `${lsrc}\\`)) continue;
+      if (op.op_type === 'trash') return null;
+      out = String(op.dest) + String(out).slice(src.length);
+    }
+    if (out !== p && folder !== null && fpNormalizePath(parentOfPath(out)) !== folder) return null;
+    return out;
+  };
+  let changed = false;
+  const next = [];
+  for (const p of browserState.selection) {
+    const q = remap(p);
+    if (q !== p) changed = true;
+    if (q) next.push(q);
+  }
+  if (!changed) return;
+  browserState.selection = new Set(next);
+  browserState.anchor = remap(browserState.anchor) || null;
+  browserState.focus = remap(browserState.focus) || null;
+  onSelectionChanged();
+}
+
+/** Selects what an operation just brought INTO the folder on screen — the
+ * pasted items, or what an undo put back — as Explorer does. Without it a
+ * paste or an undone delete left nothing selected, and in a long folder the
+ * user had to hunt for what had just arrived (Stage 2D §12 sweep). Called
+ * after the refresh, so the rows exist. Returns whether it selected anything. */
+function selectLandedOps(ops) {
+  if (!ops || !ops.length || browserState.mode === 'search' || !browserState.path) return false;
+  const folder = fpNormalizePath(browserState.path);
+  const landed = ops
+    .filter(op => op && op.dest && ['copy', 'move', 'restore'].includes(op.op_type))
+    .map(op => String(op.dest))
+    .filter(p => fpNormalizePath(parentOfPath(p)) === folder)
+    .map(p => entryPath(browserState.entries.find(e => fpNormalizePath(entryPath(e)) === fpNormalizePath(p))))
+    .filter(Boolean);
+  if (!landed.length) return false;
+  browserState.selection = new Set(landed);
+  browserState.anchor = landed[0];
+  browserState.focus = landed[landed.length - 1];
+  applySelectionState();
+  findListRow(browserState.focus)?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  onSelectionChanged();
+  return true;
+}
+
 /** Clears the selection (anchor/focus included). */
 function clearSelection() {
   browserState.selection = new Set();
@@ -2430,17 +2555,54 @@ function startInlineRename(path) {
   input.addEventListener('click', e => e.stopPropagation());
 }
 
-// Selection → inspector debounce: arrow-key navigation and marquee drags can
-// change the selection many times a second, and each change would otherwise
-// fire a fresh GET /file + GET /preview + GET /files/history round-trip.
-// Wait for the selection to settle for 120ms before fetching; _inspectorSeq
-// (inspector.js) additionally guards against an in-flight fetch from an
-// already-superseded selection overwriting the DOM once it resolves.
+// Selection → inspector: what the panel shows must never name an item that
+// is not selected (Stage 2D §12 sweep). So the empty state is painted in the
+// same task the selection empties (navigation, delete, a click on nothing),
+// and a discrete change — a click, one key press — is shown at once
+// (leading edge). Only a burst (arrow-key repeat, a marquee drag) waits for
+// the selection to settle for 120ms before the next GET /file + /preview +
+// /files/history round-trip. A call that repeats the selection the armed
+// timer is already for (a refresh patch) never pushes the timer back, so a
+// stream of refreshes cannot starve the panel. _inspectorSeq (inspector.js)
+// additionally guards against an in-flight fetch from an already-superseded
+// selection overwriting the DOM once it resolves.
+const INSPECTOR_SETTLE_MS = 120;
 let _inspectorDebounceTimer = null;
+let _inspectorTimerKey = null;   // selection key the armed timer will show
+let _inspectorLastChange = -Infinity;
+let _inspectorShownKey = '';     // the last selection the panel was pointed at
+
+function inspectorSelectionKey() {
+  return [...browserState.selection].join('|');
+}
+
+/** Points the inspector at the current selection now. */
+function showInspectorForSelection() {
+  const n = browserState.selection.size;
+  if (n === 0) {
+    _inspectorSeq++; // invalidate any fetch still in flight from the prior selection
+    // updateInspector('none') renders the full empty state itself (including
+    // revoking any preview blob: URL) — no separate call needed.
+    updateInspector('none');
+  } else if (n === 1) {
+    showInspectorFor([...browserState.selection][0]);
+  } else {
+    showInspectorMulti(getSelectedPaths());
+  }
+}
+
+function cancelInspectorTimer() {
+  if (_inspectorDebounceTimer === null) return;
+  clearTimeout(_inspectorDebounceTimer);
+  _inspectorDebounceTimer = null;
+  _inspectorTimerKey = null;
+  window.__fpInspectorPending--;
+}
 
 /** Hook called whenever the selection changes: updates the status bar
- * immediately, and (debounced) the inspector panel via showInspectorFor /
- * showInspectorMulti / updateInspector('none'). */
+ * immediately, and the inspector panel via showInspectorFor /
+ * showInspectorMulti / updateInspector('none') — at once, or at the end of a
+ * burst (see above). */
 function onSelectionChanged() {
   // Drives the grid single-tile-only selection bar (styles.css, Task 11
   // playtest pass 1 §4.1) — a plain string attribute rather than a boolean
@@ -2452,28 +2614,32 @@ function onSelectionChanged() {
   // The Inspector's Open / Open with… / Reveal follow the selection at once,
   // not after the panel's debounce.
   if (typeof syncInspectorActions === 'function') syncInspectorActions();
+
+  const key = inspectorSelectionKey();
+  // Already on its way: leave the timer where it is.
+  if (_inspectorDebounceTimer !== null && key === _inspectorTimerKey) return;
+  // A burst is one item replacing another within the settle window. Emptying
+  // the selection is never part of one, and a repeat of the same selection
+  // (a refresh) does not start one.
+  const now = performance.now();
+  const burst = now - _inspectorLastChange < INSPECTOR_SETTLE_MS;
+  if (browserState.selection.size === 0) { _inspectorLastChange = -Infinity; _inspectorShownKey = ''; }
+  else if (key !== _inspectorShownKey) { _inspectorLastChange = now; _inspectorShownKey = key; }
+  if (browserState.selection.size === 0 || !burst) {
+    cancelInspectorTimer();
+    showInspectorForSelection();
+    return;
+  }
   // An armed debounce counts as inspector work still to come
   // (window.__fpInspectorPending, inspector.js — the tests' settle signal).
   if (_inspectorDebounceTimer === null) window.__fpInspectorPending++;
-  clearTimeout(_inspectorDebounceTimer);
+  else clearTimeout(_inspectorDebounceTimer);
+  _inspectorTimerKey = key;
   _inspectorDebounceTimer = setTimeout(() => {
     _inspectorDebounceTimer = null;
-    try {
-      const n = browserState.selection.size;
-      if (n === 0) {
-        _inspectorSeq++; // invalidate any fetch still in flight from the prior selection
-        // updateInspector('none') renders the full empty state itself now
-        // (including revoking any preview blob: URL) — no separate call needed.
-        updateInspector('none');
-      } else if (n === 1) {
-        showInspectorFor([...browserState.selection][0]);
-      } else {
-        showInspectorMulti(getSelectedPaths());
-      }
-    } finally {
-      window.__fpInspectorPending--;
-    }
-  }, 120);
+    _inspectorTimerKey = null;
+    try { showInspectorForSelection(); } finally { window.__fpInspectorPending--; }
+  }, INSPECTOR_SETTLE_MS);
 }
 
 /** Sums the size of selected files (folders/errored entries contribute 0). */
@@ -2530,6 +2696,13 @@ function syncClipboardStatus() {
  * clipboard count. */
 function updateStatusBar() {
   syncClipboardStatus();
+  if (!browserScreenActive()) { updateScreenStatus(); return; }
+  const countEl0 = document.getElementById('status-count');
+  const countSep = countEl0?.nextElementSibling;
+  if (countEl0) countEl0.hidden = false;
+  if (countSep && countSep.classList.contains('fp-statusbar__sep')) countSep.hidden = false;
+  const selEl0 = document.getElementById('status-selected');
+  if (selEl0) selEl0.hidden = false;
   if (thisPcActive()) { updateThisPcStatus(); return; }
   const countEl = document.getElementById('status-count');
   const selEl = document.getElementById('status-selected');
@@ -2541,6 +2714,24 @@ function updateStatusBar() {
     else if (n === 1) selEl.textContent = '1 selected';
     else selEl.textContent = `${n} selected · ${formatSize(selectionTotalSize())}`;
   }
+}
+
+/** The status bar off the Browser screen describes that screen, never the
+ * Browser listing hidden behind it (Home said "0 items" over a full Recent
+ * list — Stage 2D §12 sweep): Home counts the rows of its visible pane and
+ * its one selected row; a screen with no items (Settings) shows nothing. */
+function updateScreenStatus() {
+  const countEl = document.getElementById('status-count');
+  const selEl = document.getElementById('status-selected');
+  const home = document.getElementById('screen-home');
+  const onHome = !!(home && home.classList.contains('active'));
+  const pane = onHome ? [...home.querySelectorAll('.home-pane')].find(p => p.style.display !== 'none') : null;
+  const n = pane ? pane.querySelectorAll('.fp-row[data-path]').length : 0;
+  const sel = pane ? pane.querySelectorAll('.fp-row--selected').length : 0;
+  if (countEl) { countEl.textContent = onHome ? `${n} item${n === 1 ? '' : 's'}` : ''; countEl.hidden = !onHome; }
+  if (selEl) { selEl.textContent = onHome ? (sel ? `${sel} selected` : 'Nothing selected') : ''; selEl.hidden = !onHome; }
+  const sep = countEl && countEl.nextElementSibling;
+  if (sep && sep.classList.contains('fp-statusbar__sep')) sep.hidden = !onHome;
 }
 
 // ── Row click/dblclick + keyboard (Task 3) ────────────────────────────────────

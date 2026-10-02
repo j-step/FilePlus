@@ -137,6 +137,22 @@ def test_recent_and_favorites_carry_real_is_dir(client, sandbox):
     assert favs["a.txt"]["is_dir"] is False
 
 
+def test_recent_and_favorites_say_whether_the_item_still_exists(client, sandbox):
+    """Stage 2D §12 sweep: Home marks a row whose item was moved or deleted,
+    so clicking it never sends the inspector to GET /file for a gone path."""
+    kept = sandbox / "kept.txt"; kept.write_text("k")
+    gone = sandbox / "gone.txt"; gone.write_text("g")
+    for p in (kept, gone):
+        client.post("/recent", json={"path": str(p), "action": "opened"})
+        client.post("/favorites", json={"path": str(p)})
+    gone.unlink()
+    files = {x["name"]: x for x in client.get("/recent").json()["groups"][0]["files"]}
+    assert files["kept.txt"]["exists"] is True and files["gone.txt"]["exists"] is False
+    assert files["gone.txt"]["is_dir"] is False
+    favs = {x["name"]: x for x in client.get("/favorites").json()["files"]}
+    assert favs["kept.txt"]["exists"] is True and favs["gone.txt"]["exists"] is False
+
+
 def test_delete_recent_clears_the_list(client, sandbox):
     # Settings › Data › "Clear Recent" (Stage 2D Task 12a): only the list goes;
     # the files themselves are untouched and favorites are a separate store.
@@ -164,3 +180,39 @@ def test_delete_shell_icon_cache_empties_the_backend_icon_lru(client):
     assert r.status_code == 200 and r.json() == {"cleared": 2}
     assert len(winshell._icon_cache) == 0
     assert client.delete("/shell/icons/cache").json() == {"cleared": 0}
+
+
+def test_config_merge_adds_entries_and_prunes_the_oldest(client):
+    """Stage 2D §12 sweep: the window-close flush of ui.folder_views sends only
+    the pending entries (a keepalive body is capped at 64 KB); the backend
+    merges them into the saved map and keeps the newest max_keys."""
+    client.post("/config", json={"key": "ui.folder_views", "value": {
+        "c:/a": {"view": "list", "t": 1}, "c:/b": {"view": "details", "t": 2}}})
+    r = client.post("/config/merge", json={"key": "ui.folder_views",
+                                           "value": {"c:/c": {"view": "icons", "size": 96, "t": 3}},
+                                           "max_keys": 2})
+    assert r.status_code == 200 and r.json() == {"key": "ui.folder_views", "count": 2}
+    saved = client.get("/config").json()["ui.folder_views"]
+    assert saved == {"c:/b": {"view": "details", "t": 2}, "c:/c": {"view": "icons", "size": 96, "t": 3}}
+    # A key with no object yet (or a non-object) starts from empty.
+    client.post("/config/merge", json={"key": "ui.fresh_map", "value": {"x": {"t": 1}}})
+    assert client.get("/config").json()["ui.fresh_map"] == {"x": {"t": 1}}
+    assert client.post("/config/merge", json={"key": "k", "value": [1]}).status_code == 422
+
+
+def test_connection_reset_on_close_is_not_logged_as_an_error():
+    """Stage 2D §12 sweep: a client resetting its socket after its answer
+    (the window closing right after a keepalive flush) is not an ERROR."""
+    from backend.api import _quiet_connection_reset
+
+    class Loop:
+        def __init__(self): self.passed = []
+        def default_exception_handler(self, ctx): self.passed.append(ctx)
+
+    loop = Loop()
+    _quiet_connection_reset(loop, {"exception": ConnectionResetError(10054, "reset"),
+                                   "handle": "<Handle _ProactorBasePipeTransport._call_connection_lost()>"})
+    assert loop.passed == []
+    other = {"exception": RuntimeError("real"), "message": "boom"}
+    _quiet_connection_reset(loop, other)
+    assert loop.passed == [other]

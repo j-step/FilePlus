@@ -72,6 +72,8 @@
   /* Snackbars and toasts: above panels and the modal scrims (1000), below
      the drag badge (1200). */
   --z-notice: 1100;
+  /* Context menus; each flyout one above its parent menu. */
+  --z-menu: 600;
   /* Snackbar / toast stacks sit this far above the window's bottom edge
      (clear of the status bar). */
   --notice-bottom: 40px;
@@ -1288,9 +1290,11 @@ svg { flex-shrink: 0; }
   align-items: center;
   justify-content: space-between;
   padding: var(--s-6) var(--s-8) var(--s-4);
-  font: 500 var(--t-small) var(--font-ui);
+  /* The one section-header type (--t-section), as in the sidebar and the
+     Settings nav (Stage 2D §12 sweep). */
+  font: 600 var(--t-section) var(--font-ui);
   text-transform: uppercase;
-  letter-spacing: var(--track-caps);
+  letter-spacing: var(--track-section);
   color: var(--text-tertiary);
 }
 .fp-search-dd__section--history { border-top: 1px solid var(--border-hairline); margin-top: var(--s-4); }
@@ -1403,8 +1407,8 @@ svg { flex-shrink: 0; }
 .fp-palette__input::placeholder { color: var(--text-tertiary); }
 .fp-palette__results { padding: var(--s-4); overflow-y: auto; }
 .fp-palette__section {
-  font: 500 var(--t-micro) var(--font-ui);
-  letter-spacing: var(--track-caps);
+  font: 600 var(--t-section) var(--font-ui);
+  letter-spacing: var(--track-section);
   text-transform: uppercase;
   color: var(--text-tertiary);
   padding: var(--s-12) var(--s-12) var(--s-6);
@@ -2370,14 +2374,17 @@ svg { flex-shrink: 0; }
   background: transparent;
   cursor: pointer;
 }
+/* The track is drawn in the border tone: --bg-raised is the colour of the
+   Settings card the slider sits on, which made the track invisible (Stage 2D
+   §12 sweep). */
 .fp-slider::-webkit-slider-runnable-track {
   height: 4px;
-  background: var(--bg-raised);
+  background: var(--border-mid);
   border-radius: var(--r-pill);
 }
 .fp-slider::-moz-range-track {
   height: 4px;
-  background: var(--bg-raised);
+  background: var(--border-mid);
   border-radius: var(--r-pill);
 }
 .fp-slider::-webkit-slider-thumb {
@@ -2638,6 +2645,14 @@ svg { flex-shrink: 0; }
   gap: var(--s-12);
   color: var(--text-secondary);
   font: 400 var(--t-small) var(--font-ui);
+  /* One line at every width and zoom: a narrow window at 150% wrapped
+     "2 items", "Nothing selected" and "writes: sandbox" onto two lines that
+     the fixed bar height then cut in half (Stage 2D §12 sweep). The shortcut
+     hints go first (container query below), then the selection text
+     ellipsizes. */
+  white-space: nowrap;
+  overflow: hidden;
+  container: fp-status / inline-size;
 }
 .fp-statusbar .mono, .fp-statusbar code { color: var(--text-secondary); font-family: var(--font-data); }
 
@@ -3713,93 +3728,16 @@ body.is-dragging .fp-oscroll { pointer-events: none; }
 }
 
 /* Sidebar head */
-.sb-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 var(--s-10);
-  height: 44px;
-  flex-shrink: 0;
-  border-bottom: 1px solid var(--border-hairline);
-}
-.sb-head__brand { display: flex; align-items: center; gap: var(--s-8); min-width: 0; }
-.sb-head__text  { display: flex; flex-direction: column; min-width: 0; }
-.sb-head__title { font: 500 var(--t-body) var(--font-ui); color: var(--text-primary); white-space: nowrap; }
-.sb-head__sub   { font: 400 var(--t-small) var(--font-ui); color: var(--text-tertiary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.sb-head__collapse { flex-shrink: 0; }
-.sidebar-collapsed .sb-head__text,
-.sidebar-collapsed .sb-head__collapse { display: none; }
 
 /* Sidebar scroll area */
-.sb-scroll { flex: 1; overflow-y: auto; padding: var(--s-6) 0 var(--s-12); }
 
 /* Sidebar section */
-.sb-section { margin-bottom: var(--s-4); }
-.sb-section__label {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: var(--s-6) var(--s-12) var(--s-2);
-  font: 500 var(--t-small) var(--font-ui);
-  color: var(--text-tertiary);
-  text-transform: uppercase;
-  letter-spacing: var(--track-caps);
-}
-.sb-section__action {
-  width: 18px; height: 18px;
-  opacity: 0;
-  transition: opacity var(--dur-fast) var(--ease-snap);
-}
-.sb-section:hover .sb-section__action { opacity: 1; }
-.sidebar-collapsed .sb-section__label { display: none; }
 
 /* Sidebar item */
-.sb-item {
-  display: flex;
-  align-items: center;
-  gap: var(--s-8);
-  width: 100%;
-  height: var(--sidebar-item-h);
-  padding: 0 var(--s-12);
-  background: transparent;
-  border: none;
-  border-radius: 0;
-  color: var(--text-secondary);
-  font: 400 var(--t-body) var(--font-ui);
-  cursor: pointer;
-  text-align: left;
-  transition: background var(--dur-fast) var(--ease-snap), color var(--dur-fast) var(--ease-snap);
-}
-.sb-item:hover { background: var(--bg-raised); color: var(--text-primary); }
-.sb-item--active {
-  background: var(--accent-wash);
-  color: var(--accent);
-}
-.sb-item--active:hover { background: var(--accent-wash-strong); }
-.sb-item__icon { width: 14px; height: 14px; flex-shrink: 0; opacity: 0.7; }
-.sb-item--active .sb-item__icon { opacity: 1; }
-.sb-item__label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.sidebar-collapsed .sb-item__label,
-.sidebar-collapsed .sb-badge { display: none; }
 
 /* Sidebar badge */
-.sb-badge {
-  font: 500 var(--t-micro) var(--font-data);
-  font-variant-numeric: tabular-nums;
-  background: var(--bg-pressed);
-  color: var(--text-tertiary);
-  border-radius: var(--r-pill);
-  padding: 1px 5px;
-  flex-shrink: 0;
-}
-.sb-badge--accent {
-  background: var(--accent);
-  color: var(--text-on-accent);
-}
 
 /* Sidebar tree */
-.sb-tree { padding: 0 var(--s-12); }
-.sb-tree__empty { font: 400 var(--t-small) var(--font-ui); color: var(--text-tertiary); padding: var(--s-4) 0; }
 
 /* =============================================================================
    38. MAIN AREA
@@ -3996,386 +3934,6 @@ body.is-dragging .fp-oscroll { pointer-events: none; }
   display: flex;
   flex-direction: column;
   gap: var(--s-12);
-}
-
-/* Scan screen specifics */
-.scan-target-card .fp-card__label,
-.scan-progress-card .fp-card__label { font: 500 var(--t-small) var(--font-ui); color: var(--text-tertiary); text-transform: uppercase; letter-spacing: var(--track-caps); margin-bottom: var(--s-8); }
-.scan-target-card__path { display: flex; gap: var(--s-8); }
-.scan-progress-card__detail { font-size: 12px; color: var(--text-secondary); margin-top: var(--s-6); }
-.scan-actions { display: flex; gap: var(--s-8); }
-
-/* A.5 Scan Configuration — conversational + form modes */
-.scan-topbar {
-  padding: var(--s-16) var(--s-20);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--s-16);
-  flex-shrink: 0;
-  border-bottom: 1px solid var(--border-hairline);
-}
-
-.scan-conv {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  overflow: hidden;
-}
-
-.scan-chat-scroll {
-  flex: 1;
-  overflow-y: auto;
-  padding: var(--s-20) 0;
-}
-
-.scan-chat-messages {
-  max-width: 640px;
-  margin: 0 auto;
-  padding: 0 var(--s-20);
-  display: flex;
-  flex-direction: column;
-  gap: var(--s-12);
-}
-
-/* Chat message bubbles (A.5.1) */
-.scan-msg {
-  max-width: 480px;
-  padding: var(--s-12);
-  border-radius: var(--r-card);
-  font: 400 var(--t-body) var(--font-ui);
-  color: var(--text-primary);
-  line-height: 1.5;
-}
-.scan-msg--ai {
-  align-self: flex-start;
-  background: var(--bg-raised);
-  border: 1px solid var(--border-subtle);
-  box-shadow: var(--shadow-card);
-}
-.scan-msg--user {
-  align-self: flex-end;
-  background: var(--accent-wash);
-  border: 1px solid var(--accent-edge);
-}
-
-.scan-chat-input-bar {
-  flex-shrink: 0;
-  border-top: 1px solid var(--border-hairline);
-  padding: var(--s-12) var(--s-20);
-  background: var(--bg-content);
-}
-.scan-chat-input-inner {
-  max-width: 640px;
-  margin: 0 auto;
-  display: flex;
-  gap: var(--s-8);
-  align-items: flex-end;
-}
-.scan-chat-textarea {
-  flex: 1;
-  min-width: 0;
-  height: auto;
-  min-height: var(--h-input);
-  max-height: 96px;
-  padding: var(--s-8) var(--s-12);
-  resize: none;
-  line-height: 1.5;
-  overflow-y: auto;
-}
-
-/* =============================================================================
-   40b. REVIEW BIN  (A.8)
-   ============================================================================= */
-.rb-layout {
-  display: flex;
-  flex: 1;
-  min-height: 0;
-  overflow: hidden;
-}
-
-.rb-list {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  border-right: 1px solid var(--border-hairline);
-  overflow: hidden;
-}
-
-.rb-list__header {
-  padding: var(--s-16) var(--s-20);
-  flex-shrink: 0;
-  border-bottom: 1px solid var(--border-hairline);
-  display: flex;
-  align-items: center;
-}
-
-.rb-list__scroll {
-  flex: 1;
-  overflow-y: auto;
-  padding: var(--s-8) 0;
-}
-
-.rb-group {
-  margin-bottom: var(--s-4);
-}
-
-.rb-group__header {
-  height: 32px;
-  padding: 0 var(--s-16);
-  display: flex;
-  align-items: center;
-  gap: var(--s-8);
-  background: var(--bg-chrome);
-  border-top: 1px solid var(--border-hairline);
-  border-bottom: 1px solid var(--border-hairline);
-}
-
-.rb-group__actions {
-  display: flex;
-  align-items: center;
-  gap: var(--s-4);
-  flex-shrink: 0;
-}
-
-/* Danger ghost — `bad` text, hover `bad-wash` */
-.rb-btn-danger-ghost {
-  height: 24px;
-  padding: 0 var(--s-8);
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: var(--r-sm);
-  font: 500 var(--t-compact) var(--font-ui);
-  color: var(--bad);
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  transition: background var(--dur-fast) var(--ease-ui), border-color var(--dur-fast) var(--ease-ui);
-}
-.rb-btn-danger-ghost:hover {
-  background: var(--bad-wash);
-  border-color: var(--bad-edge);
-}
-.rb-btn-danger-ghost:active { transform: translateY(1px); }
-.rb-btn-danger-ghost:focus-visible {
-  outline: none;
-}
-
-.rb-row {
-  height: 26px;
-  padding: 0 var(--s-16);
-  display: flex;
-  align-items: center;
-  gap: var(--s-8);
-  cursor: pointer;
-  transition: background var(--dur-fast) var(--ease-ui);
-}
-.rb-row:hover { background: var(--bg-raised); }
-.rb-row--selected {
-  background: var(--accent-wash);
-  border-left: 2px solid var(--accent);
-}
-.rb-row--selected:hover { background: var(--accent-wash); }
-
-/* Confidence bar: 4px tall track with inset recess */
-.rb-conf-bar {
-  width: 52px;
-  height: 4px;
-  flex-shrink: 0;
-  border-radius: 999px;
-  background: var(--bg-pressed);
-  overflow: hidden;
-}
-.rb-conf-bar__fill {
-  height: 100%;
-  border-radius: 999px;
-  transition: width var(--dur-slide) var(--ease-ui);
-}
-
-/* Detail pane */
-.rb-detail {
-  width: 340px;
-  flex-shrink: 0;
-  display: flex;
-  flex-direction: column;
-  background: var(--bg-content);
-  overflow: hidden;
-}
-
-.rb-detail__body {
-  flex: 1;
-  overflow-y: auto;
-  padding: var(--s-20);
-  display: flex;
-  flex-direction: column;
-}
-
-.rb-detail__footer {
-  flex-shrink: 0;
-  border-top: 1px solid var(--border-hairline);
-  padding: var(--s-12) var(--s-16);
-  display: flex;
-  flex-direction: column;
-  gap: var(--s-8);
-  background: var(--bg-chrome);
-}
-
-.rb-detail__actions {
-  display: flex;
-  align-items: center;
-  gap: var(--s-8);
-}
-
-.rb-detail__kbd {
-  font: 500 var(--t-small) var(--font-data);
-  font-variant-numeric: tabular-nums;
-  color: var(--text-tertiary);
-  text-align: center;
-}
-
-/* =============================================================================
-   40c. EVERYTHING FOLDER  (A.9)
-   ============================================================================= */
-.ef-header {
-  padding: var(--s-12) var(--s-20);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--s-16);
-  flex-shrink: 0;
-  border-bottom: 1px solid var(--border-hairline);
-}
-
-.ef-header__left {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.ef-header__right {
-  display: flex;
-  align-items: center;
-  gap: var(--s-12);
-  flex-shrink: 0;
-}
-
-.ef-pause-toggle {
-  display: flex;
-  align-items: center;
-  gap: var(--s-8);
-  cursor: pointer;
-  user-select: none;
-}
-
-/* Column header */
-.ef-col-header {
-  height: 28px;
-  padding: 0 var(--s-16);
-  display: flex;
-  align-items: center;
-  gap: var(--s-8);
-  background: var(--bg-chrome);
-  border-bottom: 1px solid var(--border-hairline);
-  flex-shrink: 0;
-}
-
-.ef-col {
-  font: 400 var(--t-compact) var(--font-ui);
-  color: var(--text-tertiary);
-  background: transparent;
-  border: none;
-  padding: 0;
-  cursor: default;
-  text-align: left;
-  display: flex;
-  align-items: center;
-}
-
-.ef-col--sortable { cursor: pointer; }
-.ef-col--sortable:hover { color: var(--text-secondary); }
-.ef-col--sortable:focus-visible {
-  outline: none;
-  border-radius: var(--r-sm);
-}
-.ef-col--sorted-asc,
-.ef-col--sorted-desc { color: var(--text-primary); }
-
-.ef-col--name { flex: 1; min-width: 0; }
-.ef-col--landed { width: 90px; flex-shrink: 0; }
-.ef-col--state { width: 52px; flex-shrink: 0; }
-.ef-col--dest { width: 200px; flex-shrink: 0; }
-
-/* File list */
-.ef-list {
-  flex: 1;
-  overflow-y: auto;
-  min-height: 0;
-}
-
-.ef-row {
-  height: 26px;
-  padding: 0 var(--s-16);
-  display: flex;
-  align-items: center;
-  gap: var(--s-8);
-  cursor: pointer;
-  transition: background var(--dur-fast) var(--ease-ui);
-}
-.ef-row:hover { background: var(--bg-raised); }
-.ef-row--error .ef-row__name { color: var(--text-secondary); }
-
-.ef-row__icon { flex-shrink: 0; width: 16px; height: 16px; display: flex; align-items: center; }
-.ef-row__name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ef-row__landed { width: 90px; flex-shrink: 0; white-space: nowrap; }
-.ef-row__state { width: 52px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; position: relative; }
-.ef-row__dest { width: 200px; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
-/* State dot — 6px filled circle, semantic color */
-.ef-state-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 999px;
-  flex-shrink: 0;
-  display: inline-block;
-}
-
-/* Error tooltip: shown on dot hover */
-.ef-error-tooltip {
-  display: none;
-  position: absolute;
-  left: 50%;
-  transform: translateX(-50%);
-  bottom: calc(100% + 6px);
-  background: var(--bg-raised);
-  border: 1px solid var(--bad-edge);
-  border-radius: var(--r-sm);
-  box-shadow: var(--shadow-popover);
-  padding: 4px 8px;
-  font: 400 var(--t-small) var(--font-ui);
-  color: var(--bad);
-  white-space: nowrap;
-  z-index: 20;
-  pointer-events: none;
-}
-.ef-state-dot--hoverable:hover + .ef-error-tooltip,
-.ef-row__state:hover .ef-error-tooltip { display: block; }
-
-/* "Currently moving" card */
-.ef-moving-card {
-  flex-shrink: 0;
-  margin: var(--s-8) var(--s-16);
-  padding: var(--s-12) var(--s-16);
-  cursor: pointer;
-}
-
-.ef-moving-card__header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--s-8);
-  margin-bottom: 2px;
 }
 
 /* =============================================================================
@@ -5210,199 +4768,6 @@ body.is-dragging .fp-oscroll { pointer-events: none; }
 .fp-mono { font-family: var(--font-data); font-variant-numeric: tabular-nums; letter-spacing: var(--track-mono); }
 
 /* =============================================================================
-   48. TIME MACHINE SCREEN
-   ============================================================================= */
-.tm-wrap {
-  display: grid;
-  grid-template-columns: 260px 1fr;
-  flex: 1;
-  min-height: 0;
-  overflow: hidden;
-}
-.tm-rail {
-  background: var(--bg-chrome);
-  border-right: 1px solid var(--border-subtle);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-.tm-rail__head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: var(--s-12) var(--s-16) var(--s-8);
-  font: 600 var(--t-body) var(--font-ui);
-  color: var(--text-primary);
-  flex-shrink: 0;
-  border-bottom: 1px solid var(--border-hairline);
-}
-.tm-rail__title { font: 600 var(--t-body) var(--font-ui); color: var(--text-primary); }
-.tm-rail__empty {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: var(--s-10);
-  padding: var(--s-24);
-  color: var(--text-tertiary);
-  font: 400 var(--t-body) var(--font-ui);
-  text-align: center;
-}
-.tm-main {
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  overflow: hidden;
-  background: var(--bg-content);
-}
-
-/* =============================================================================
-   49. FILE TREE CANVAS SCREEN
-   ============================================================================= */
-.ftree-wrap {
-  display: grid;
-  grid-template-columns: 200px 1fr;
-  flex: 1;
-  min-height: 0;
-  overflow: hidden;
-}
-.ftree-rail {
-  background: var(--bg-chrome);
-  border-right: 1px solid var(--border-subtle);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-.ftree-rail__head {
-  padding: var(--s-10) var(--s-14) var(--s-6);
-  font: 500 var(--t-small) var(--font-ui);
-  color: var(--text-tertiary);
-  text-transform: uppercase;
-  letter-spacing: var(--track-caps);
-  flex-shrink: 0;
-}
-.ftree-rail__list { flex: 1; overflow-y: auto; padding: 0 var(--s-6) var(--s-10); }
-.ftree-rail__empty { font: 400 var(--t-body) var(--font-ui); color: var(--text-tertiary); padding: var(--s-16); }
-.ftree-stage {
-  position: relative;
-  overflow: hidden;
-  background:
-    radial-gradient(ellipse 60% 40% at 50% 0%, rgba(139, 147, 245, 0.05) 0%, transparent 60%),
-    var(--bg-content);
-}
-.ftree-stage::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background-image:
-    linear-gradient(rgba(255,255,255,.015) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255,255,255,.015) 1px, transparent 1px);
-  background-size: 48px 48px;
-}
-[data-theme="light"] .ftree-stage::before {
-  background-image:
-    linear-gradient(rgba(0,0,0,.025) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(0,0,0,.025) 1px, transparent 1px);
-}
-.ftree-canvas {
-  position: absolute;
-  inset: 0;
-  transform-origin: 0 0;
-  cursor: grab;
-  will-change: transform;
-}
-.ftree-canvas.dragging { cursor: grabbing; }
-.ftree-world { position: absolute; top: 40px; left: 50%; transform: translateX(-50%); min-width: max-content; width: 1400px; }
-
-/* ── Canvas nodes (A.4) ──────────────────────────────────────────────────────── */
-.ftree-node {
-  position: absolute;
-  display: inline-flex;
-  align-items: center;
-  gap: var(--s-6);
-  padding: var(--s-6) var(--s-10);
-  background: var(--bg-raised);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--r-card);
-  box-shadow: var(--shadow-card);
-  font: 500 var(--t-compact) var(--font-ui);
-  color: var(--text-primary);
-  white-space: nowrap;
-  cursor: default;
-  user-select: none;
-  transition: border-color var(--dur-fast), background var(--dur-fast);
-}
-.ftree-node:hover { background: var(--bg-pressed); }
-.ftree-node__name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.ftree-node__count { font-family: var(--font-data); font-variant-numeric: tabular-nums; color: var(--text-tertiary); font-size: calc(var(--t-small)); }
-.ftree-node__expand-badge {
-  background: var(--bg-chrome);
-  border: 1px solid var(--border-subtle);
-  border-radius: 999px;
-  color: var(--accent);
-  font: 500 var(--t-micro) var(--font-ui);
-  padding: 0 6px;
-  height: 16px;
-  cursor: pointer;
-  flex-shrink: 0;
-}
-.ftree-node__expand-badge:hover { background: var(--accent-wash); border-color: var(--accent-edge); }
-
-/* Node connection line (SVG) — uses border-subtle color, 1px */
-.ftree-edge { stroke: var(--border-subtle); stroke-width: 1; fill: none; }
-
-/* A.4 node state classes */
-/* AI-suggested addition (new folder proposal) */
-.ftree-node--ai-add {
-  border-color: var(--good-edge);
-  background: var(--good-wash);
-}
-/* AI-suggested removal */
-.ftree-node--ai-remove {
-  border-color: var(--bad-edge);
-  background: var(--bad-wash);
-  opacity: 0.75;
-}
-.ftree-node--ai-remove .ftree-node__name { text-decoration: line-through; color: var(--text-tertiary); }
-/* AI-suggested move */
-.ftree-node--ai-move {
-  border-color: var(--warn-edge);
-  background: var(--warn-wash);
-}
-/* User-approved proposal */
-.ftree-node--approved {
-  border-color: var(--good-edge);
-  background: var(--good-wash);
-  box-shadow: var(--shadow-card), 0 0 0 2px color-mix(in oklch, var(--good) 20%, transparent);
-}
-/* User-rejected proposal */
-.ftree-node--rejected {
-  border-color: var(--bad-edge);
-  opacity: 0.5;
-}
-.ftree-node--rejected .ftree-node__name { text-decoration: line-through; }
-/* Conflicting rename/move (two proposals clash) */
-.ftree-node--conflict {
-  border-color: var(--bad-edge);
-  background: var(--bad-wash);
-}
-.ftree-node--conflict::after {
-  content: "!";
-  position: absolute;
-  top: -6px; right: -6px;
-  width: 14px; height: 14px;
-  background: var(--bad);
-  color: #fff;
-  border-radius: 50%;
-  font: 700 10px var(--font-ui);
-  display: flex; align-items: center; justify-content: center;
-  line-height: 14px;
-  text-align: center;
-}
-
-/* =============================================================================
    A.1 REFINEMENT PASS — new and updated layout classes
    ============================================================================= */
 
@@ -5767,7 +5132,17 @@ body.is-dragging .fp-sidebar--collapsed .fp-oscroll__thumb { pointer-events: non
 }
 
 /* ── Statusbar subcomponents ─────────────────────────────────────────────── */
-.fp-statusbar__left  { display: flex; align-items: center; gap: var(--s-6); }
+.fp-statusbar__left  { display: flex; align-items: center; gap: var(--s-6); min-width: 0; }
+#status-selected { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* A screen with no items (Settings) hides the counts; the separators that
+   followed them would lead the bar ("· 150%"). */
+#status-selected[hidden] ~ #status-zoom-sep,
+#status-selected[hidden] ~ #status-clipboard-sep { display: none !important; }
+@container fp-status (max-width: 600px) {
+  /* The shortcut hints only — the "writes: sandbox" safety hint stays. */
+  .fp-statusbar__kbd-hints:not(#status-write-lock),
+  #status-lock-sep { display: none; }
+}
 
 /* Zoom percentage pill in the status bar (left section). app.js shows it on
    every zoom change and adds .is-faded 1.2 s after the last one (Stage 2D
@@ -5799,13 +5174,7 @@ body.is-dragging .fp-sidebar--collapsed .fp-oscroll__thumb { pointer-events: non
   border-color: var(--accent-edge);
   color: var(--accent);
 }
-.fp-statusbar__center {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.fp-statusbar__right { margin-left: auto; display: flex; align-items: center; gap: var(--s-8); }
+.fp-statusbar__right { margin-left: auto; display: flex; align-items: center; gap: var(--s-8); flex-shrink: 0; }
 .fp-statusbar__sep { color: var(--text-tertiary); }
 .fp-statusbar__kbd-hints { display: flex; align-items: center; gap: var(--s-6); }
 .fp-statusbar__backend-dot { background: var(--text-tertiary); box-shadow: none; transition: background var(--dur-slide) var(--ease-out); }
@@ -5820,15 +5189,7 @@ body.is-dragging .fp-sidebar--collapsed .fp-oscroll__thumb { pointer-events: non
 #status-backend { cursor: pointer; border-radius: var(--r-sm); }
 #status-backend:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
-/* A.1.5 — Live task indicator pulse */
-@keyframes fp-statusbar-pulse {
-  0%, 100% { opacity: 1; }
-  50%       { opacity: 0.45; }
-}
-.statusbar__task--active {
-  animation: fp-statusbar-pulse 1.4s ease-in-out infinite;
-}
-/* Review Bin pill (A.1.5) — accent-wash + accent-edge + accent text */
+/* Pill (A.1.5) — accent-wash + accent-edge + accent text */
 .fp-pill {
   display: inline-flex;
   align-items: center;
@@ -5883,7 +5244,7 @@ button.fp-pill:hover {
   border-radius: var(--r-card);
   box-shadow: var(--shadow-popover);
   padding: var(--s-4);
-  z-index: 600;
+  z-index: var(--z-menu);
   animation: fp-fade-in 80ms var(--ease-out);
 }
 /* The items' own scroller. A menu taller than the window (a folder menu at
@@ -5952,7 +5313,7 @@ button.fp-pill:hover {
 .fp-context-menu__item:hover svg { color: var(--text-primary); }
 /* Flyout parent row: trailing chevron (Stage 2D §6.3) */
 .fp-context-menu__item .fp-context-menu__chevron { margin-left: auto; width: 12px; height: 12px; color: var(--text-tertiary); }
-.fp-context-menu--flyout { z-index: 601; }
+.fp-context-menu--flyout { z-index: calc(var(--z-menu) + 1); }
 .fp-context-menu__item--danger { color: var(--bad); }
 .fp-context-menu__item--danger .fp-context-menu__item__icon,
 .fp-context-menu__item--danger svg { color: var(--bad); }
@@ -5992,22 +5353,6 @@ button.fp-pill:hover {
 }
 
 /* ── Snackbar / Toast — canonical definitions moved to Section 26 ─────────── */
-
-/* ── Mode banner (File Tree canvas, A.4) ──────────────────────────────────── */
-.fp-mode-banner {
-  height: 36px;
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  gap: var(--s-10);
-  padding: 0 var(--s-16);
-  border-bottom: 1px solid var(--border-hairline);
-}
-.fp-mode-banner--warn  { background: var(--warn-wash); border-bottom-color: var(--warn-edge); color: var(--warn); }
-.fp-mode-banner--accent { background: var(--accent-wash); border-bottom-color: var(--accent-edge); color: var(--accent); }
-.fp-mode-banner__icon { width: 14px; height: 14px; flex-shrink: 0; }
-.fp-mode-banner__label { font: 500 var(--t-body) var(--font-ui); flex: 1; }
-.fp-mode-banner__action { margin-left: auto; flex-shrink: 0; }
 
 /* === fp-state-dot === */
 .fp-state-dot {
@@ -6132,6 +5477,8 @@ button.fp-pill:hover {
   overflow: hidden;
 }
 .inspector--open { display: flex; }
+/* The last resort below 500px-at-150%: the panel scrolls as a whole. */
+.inspector { overflow-x: hidden; overflow-y: auto; }
 
 /* Inspector drag handle (left edge, 4px hit area) */
 .resizer {
@@ -6170,15 +5517,7 @@ button.fp-pill:hover {
 
 /* When inspector open: list compacts — size/modified/tags collapse into single mono line */
 /* This is done via JS adding .list-pane--compact class */
-.list-pane--compact .list-col--size,
-.list-pane--compact .list-col--modified,
-.list-pane--compact .list-col--tags { display: none; }
-.list-pane--compact .fp-row__size,
-.list-pane--compact .fp-row__modified,
-.list-pane--compact .fp-row__tags { display: none; }
 /* compact single-line for size+date shown instead */
-.fp-row__compact-meta { display: none; font: 400 var(--t-compact) var(--font-data); font-variant-numeric: tabular-nums; color: var(--text-secondary); text-align: right; white-space: nowrap; }
-.list-pane--compact .fp-row__compact-meta { display: block; }
 
 /* ── A.2 Home screen ──────────────────────────────────────────────────────── */
 .home-section {
@@ -6219,11 +5558,22 @@ button.fp-pill:hover {
 }
 /* Recent file rows have inline path + time + hover actions */
 .fp-row--recent {
-  display: grid;
-  grid-template-columns: 16px 1fr minmax(0, 160px) 120px auto;
   gap: var(--s-8);
   padding: 0 var(--s-14);
 }
+/* Space goes to the name first: it keeps at least min(45%, 240px) of the row,
+   the location (fixed 160px basis, the same in every row so the columns line
+   up) gives way first, and the time only after the location has. The old
+   grid filled the path's fixed 160px before the name got anything, so a
+   narrow Home (sidebar and inspector open at 1100px) showed the path and no
+   name at all (Stage 2D §12 sweep). */
+.home-pane:not([data-view="grid"]) .fp-row--recent > .fp-row__icon { flex: 0 0 auto; }
+.home-pane:not([data-view="grid"]) .fp-row--recent > .fp-row__name {
+  flex: 1 1 0;
+  min-width: min(45%, 240px);
+}
+.home-pane:not([data-view="grid"]) .fp-row--recent > .fp-row__recent-path { flex: 0 100 160px; min-width: 0; }
+.home-pane:not([data-view="grid"]) .fp-row--recent > .fp-row__recent-time { flex: 0 1 120px; min-width: 0; }
 .fp-row--recent:hover { background: var(--bg-raised); }
 .fp-row--recent:hover .fp-row__hover-actions { opacity: 1; pointer-events: all; }
 .fp-row--recent.fp-row--selected {
@@ -6243,22 +5593,32 @@ button.fp-pill:hover {
   color: var(--text-tertiary);
   font: 400 var(--t-compact) var(--font-data);
   font-variant-numeric: tabular-nums;
-  flex: 1;
+  /* Cut from the left, so the folder the item is in stays readable (the
+     .fp-row__location trick; home.js wraps the text in <bdi>). */
+  direction: rtl;
+  unicode-bidi: isolate;
+  text-align: left;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.fp-row--recent[data-missing] .fp-row__name { color: var(--text-tertiary); }
 .fp-row--recent .fp-row__recent-time {
   color: var(--text-secondary);
   font: 400 var(--t-compact) var(--font-data);
   font-variant-numeric: tabular-nums;
   flex-shrink: 0;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
+/* Only a favourite star lives here: the list's 120px tag-cell minimum
+   (.fp-row__tags) held 120px of a narrow row for one 12px glyph. */
 .fp-row--recent .fp-row__tags {
   display: flex;
   gap: var(--s-4);
   flex-shrink: 0;
+  min-width: 0;
 }
 .fp-row--recent .fp-row__hover-actions {
   display: flex;
@@ -6587,36 +5947,11 @@ button.fp-pill:hover {
 .settings-row__status:empty { display: none; }
 
 /* ── Custom file types table ── */
-.settings-filetypes-header,
-.settings-filetypes-row {
-  display: grid;
-  /* Columns may shrink (cells ellipsize) so a narrow pane never scrolls sideways. */
-  grid-template-columns: minmax(0, 80px) minmax(0, 80px) minmax(0, 1fr) minmax(0, 100px) 48px;
-  align-items: center;
-  height: 32px;
-  padding: 0 var(--s-8);
-  gap: var(--s-8);
-}
-.settings-filetypes-header {
-  font: 500 var(--t-micro) var(--font-ui);
-  letter-spacing: var(--track-heading);
-  text-transform: uppercase;
-  color: var(--text-tertiary);
-  border-bottom: 1px solid var(--border-hairline);
-}
-.settings-filetypes-row {
-  border-bottom: 1px solid var(--border-hairline);
-  font: var(--t-compact) var(--font-ui);
-  color: var(--text-primary);
-}
-.settings-filetypes-row:last-child { border-bottom: none; }
-.settings-filetypes-row:hover { background: var(--bg-raised); }
-
-.settings-filetypes-col { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* A narrow settings screen (the file area with the sidebar and inspector open
    at 800px, or at app zoom — Stage 2D §12): the nav moves above the content
    as a wrapping strip of its items, so the content keeps the full width. */
+.settings-nav__select { display: none; }
 @container fp-settings (max-width: 480px) {
   /* The whole layout scrolls (nav strip, then the content at its natural
      height), so the content is never squeezed to nothing by a tall strip. */
@@ -6633,18 +5968,10 @@ button.fp-pill:hover {
     gap: var(--s-2);
   }
   .settings-nav__section-label { display: none; }
-  .settings-nav__item {
-    display: block;
-    max-width: 100%;
-    margin: 0;
-    padding: 0 var(--s-10);
-    height: var(--h-button-sm);
-    line-height: var(--h-button-sm);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .settings-nav__item--active::before { left: var(--s-6); right: var(--s-6); top: auto; bottom: 0; width: auto; height: 2px; }
+  /* One picker instead of a list that wrapped into rows (settings.js
+     initSettingsNavSelect). */
+  .settings-nav__item { display: none; }
+  .settings-nav__select { display: block; width: 100%; }
   .settings-content { flex: none; overflow: hidden; padding: var(--s-16) var(--oscroll-clear) var(--s-16) var(--s-16); }
   /* Controls wrap or shrink to the pane instead of pushing it sideways. */
   .settings-content .fp-segmented { flex-wrap: wrap; height: auto; max-width: 100%; }
@@ -7066,9 +6393,9 @@ button.fp-pill:hover {
 
 /* Details tab: grouped name/value rows (GET /fs/properties/details) */
 #properties-details-content .properties__details-group {
-  font: 600 var(--t-small) var(--font-ui);
+  font: 600 var(--t-section) var(--font-ui);
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: var(--track-section);
   color: var(--text-tertiary);
   margin: var(--s-16) 0 var(--s-8);
 }
@@ -7098,7 +6425,17 @@ button.fp-pill:hover {
    preview and meta blocks' bounding boxes between the two states.
    ============================================================================= */
 .inspector__header { flex-shrink: 0; height: 56px; overflow: hidden; }
-.inspector__preview { width: 100%; aspect-ratio: 16 / 10; }
+/* A short window (the 500px minimum, or less room at app zoom) takes height
+   from the preview first, down to a strip: the body below keeps room for its
+   whole metadata table instead of being squeezed to nothing (Stage 2D §12
+   sweep). Only when even that does not fit does the panel itself scroll
+   (overlay scrollbar, app.js initOverlayScrollbars). */
+.inspector__preview { width: 100%; aspect-ratio: 16 / 10; flex: 0 1 auto; min-height: 56px; container: fp-preview / size; }
+/* A preview box shrunk that far keeps the type icon and drops its caption,
+   rather than clipping it in half. */
+@container fp-preview (max-height: 100px) {
+  .inspector__preview-note { display: none; }
+}
 /* [hidden]'s UA display:none loses to the inline display:flex the element
    carries in index.html (and to the one inspector.js rewrites on every
    render) — restate it, as .fp-drag-badge/.list-search-header do, so a
@@ -7108,7 +6445,8 @@ button.fp-pill:hover {
 /* The body reaches the panel's right edge (the panel's padding moves inside
    it) so its overlay scrollbar hugs that edge (Stage 2D §9.3). */
 .inspector__body {
-  min-height: 0; flex: 1; overflow: auto;
+  /* 12px top padding + the five 24px meta rows. */
+  min-height: 132px; flex: 1; overflow: auto;
   margin-right: calc(-1 * var(--s-16));
   padding-right: var(--s-16);
 }
@@ -7177,7 +6515,6 @@ button.fp-pill:hover {
     transition-duration: revert !important;
   }
 }
-
 
 /* -----------------------------------------------------------------------------
    SETTINGS › SCAN & INDEX (Task 14, design §8.7)

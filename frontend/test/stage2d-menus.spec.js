@@ -263,7 +263,9 @@ test('Tab closes the whole menu; a stationary pointer cannot yank a keyboard-ope
     // Keyboard-opened flyout: a pointerenter on a sibling at the SAME pointer
     // position (layout shift under a stationary pointer) does not close it;
     // one at a different position (the pointer really moved) does, after the
-    // 300 ms grace.
+    // 300 ms grace. The pointer's position starts unknown (as in a window no
+    // pointer event has reached yet).
+    await page.evaluate(() => { cmLastPointer = null; });
     await open();
     await page.keyboard.press('ArrowDown'); await page.keyboard.press('ArrowDown');
     await page.keyboard.press('ArrowRight');
@@ -271,16 +273,21 @@ test('Tab closes the whole menu; a stationary pointer cannot yank a keyboard-ope
     // Waited out deterministically: a timer of the same CM_FLYOUT_CLOSE_GRACE
     // registered right AFTER the pointerenter fires after any close timer the
     // handler armed, so if the flyout survives it, nothing was armed.
+    // No pointer event has happened in this window yet, so the menu does not
+    // know where the (stationary) pointer is: the first pointerenter teaches
+    // it and is not taken for movement (§12 sweep, Task 12b — an invented
+    // -1,-1 used to make exactly that first layout-shift enter close it).
     const survived = await page.evaluate(() => {
       const beta = document.querySelector('#context-menu [data-menu-label="Beta"]');
-      beta.dispatchEvent(new PointerEvent('pointerenter', { clientX: cmLastPointer.x, clientY: cmLastPointer.y }));
+      beta.dispatchEvent(new PointerEvent('pointerenter', { clientX: 410, clientY: 260 }));
+      beta.dispatchEvent(new PointerEvent('pointerenter', { clientX: 410, clientY: 260 }));
       return new Promise((r) => setTimeout(() => r(cmFlyouts.length > 0), CM_FLYOUT_CLOSE_GRACE));
     });
     expect(survived).toBe(true);
     await expect(fly).toBeVisible();
     await page.evaluate(() => {
       const beta = document.querySelector('#context-menu [data-menu-label="Beta"]');
-      beta.dispatchEvent(new PointerEvent('pointerenter', { clientX: cmLastPointer.x + 7, clientY: cmLastPointer.y + 7 }));
+      beta.dispatchEvent(new PointerEvent('pointerenter', { clientX: 417, clientY: 267 }));
     });
     await expect(fly).toHaveCount(0);
     await page.keyboard.press('Escape');

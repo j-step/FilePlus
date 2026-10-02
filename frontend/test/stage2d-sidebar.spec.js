@@ -542,9 +542,17 @@ test('sweep (§12): no permanent bars or sideways overflow in settings, search p
       await page.evaluate(() => setInspectorOpen(true, { persist: false }));
       await page.evaluate(() => switchScreen('settings'));
       await frames(page);
-      const navs = await page.locator('.settings-nav__item').count();
-      for (let i = 0; i < navs; i++) {
-        await page.locator('.settings-nav__item').nth(i).click();
+      const panes = await page.$$eval('.settings-nav__item', (els) => els.map((e) => e.dataset.pane));
+      for (let i = 0; i < panes.length; i++) {
+        // A narrow Settings swaps the nav list for one section picker (§12
+        // sweep, Task 12b): exactly one of the two is on screen.
+        const picker = page.locator('#settings-nav-select');
+        const item = page.locator(`.settings-nav__item[data-pane="${panes[i]}"]`);
+        const pickerShown = await picker.isVisible();
+        expect(pickerShown).toBe(!(await item.isVisible()));
+        if (pickerShown) await picker.selectOption(panes[i]);
+        else await item.click();
+        await expect(page.locator(`.settings-pane[data-pane="${panes[i]}"]`)).toBeVisible();
         await frames(page);
         for (const o of await xOverflow(page, '#screen-settings')) offenders.push(tag(`settings x: ${o}`));
         for (const o of await nativeBars(page, '#screen-settings')) offenders.push(tag(`settings bar: ${o}`));
@@ -554,10 +562,21 @@ test('sweep (§12): no permanent bars or sideways overflow in settings, search p
           const lay = document.querySelector('#screen-settings .settings-layout');
           const c = lay.querySelector('.settings-content');
           const scroller = lay.scrollHeight > lay.clientHeight + 1 ? lay : c;
-          return { h: c.getBoundingClientRect().height, reach: scroller.scrollHeight - scroller.clientHeight >= 0,
+          // Scrolled to the end, the pane's last control is inside the
+          // scroller's box: everything in the section can be reached.
+          const pane = [...c.querySelectorAll('.settings-pane')].find((p) => p.style.display !== 'none');
+          const last = pane && pane.lastElementChild;
+          scroller.scrollTop = scroller.scrollHeight;
+          const reach = !last || last.getBoundingClientRect().bottom <= scroller.getBoundingClientRect().bottom + 1;
+          scroller.scrollTop = 0;
+          return { h: c.getBoundingClientRect().height, reach,
             narrow: getComputedStyle(lay).flexDirection === 'column', lay: lay.scrollHeight, nav: lay.querySelector('.settings-nav').offsetHeight };
         });
         if (room.h < 200) offenders.push(tag(`settings content only ${Math.round(room.h)}px tall`));
+        if (!room.reach) offenders.push(tag('settings content cannot scroll'));
+        // The nav (a picker when narrow) never takes more than one row's worth
+        // of a narrow layout.
+        if (room.narrow && room.nav > 64) offenders.push(tag(`settings nav strip ${room.nav}px tall`));
         if (room.narrow && room.lay < room.nav + 200) offenders.push(tag('settings content unreachable'));
         if (i === 0) await windowShot(app, page, `sweep-settings-z${Math.round(z * 100)}`);
       }

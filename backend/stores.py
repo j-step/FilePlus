@@ -7,6 +7,7 @@ here runs directly against aiosqlite.
 from __future__ import annotations
 
 import json
+import stat
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -55,6 +56,30 @@ async def config_set(conn: aiosqlite.Connection, key: str, value: Any) -> None:
     )
     await conn.commit()
     await ol.mark_executed(conn, op_id)
+
+
+async def config_merge(conn: aiosqlite.Connection, key: str, patch: dict,
+                       max_keys: int | None = None) -> dict:
+    """Merges *patch* into the object stored at *key* (a missing or
+    non-object value starts empty) and saves it through config_set, so the
+    write is logged like any other config change. With *max_keys*, the
+    entries with the oldest numeric ``t`` go first until that many remain.
+
+    The renderer's window-close flush of ui.folder_views sends only the
+    entries still pending (Stage 2D §12 sweep): a keepalive request carries
+    at most 64 KB, and the whole 500-folder map can be bigger than that."""
+    current = await config_get(conn, key)
+    merged = dict(current) if isinstance(current, dict) else {}
+    merged.update(patch)
+    if max_keys is not None and len(merged) > max_keys:
+        def age(k: str) -> float:
+            v = merged[k]
+            t = v.get("t") if isinstance(v, dict) else None
+            return float(t) if isinstance(t, (int, float)) else 0.0
+        for k in sorted(merged, key=age)[: len(merged) - max_keys]:
+            del merged[k]
+    await config_set(conn, key, merged)
+    return merged
 
 
 async def config_delete(conn: aiosqlite.Connection, key: str) -> None:
@@ -184,14 +209,24 @@ def _file_entry(path: str, extra: dict) -> dict:
     #36): a folder called "my.folder" is a folder, not a ".folder" file, and
     a directory's ext is '' whatever its name -- the renderer keys its
     per-extension icon cache on ext, so a dotted folder must never share a
-    bucket with files. A path that no longer exists is not a directory."""
+    bucket with files. A path that no longer exists is not a directory.
+
+    ``exists`` (one stat, the same one is_dir needed) lets Home mark a Recent
+    or Favorites row whose item was moved or deleted since, so a click on it
+    never asks GET /file about a path that is gone (Stage 2D §12 sweep)."""
     p = Path(path)
-    is_dir = p.is_dir()
+    try:
+        is_dir = stat.S_ISDIR(p.stat().st_mode)
+        exists = True
+    except OSError:
+        is_dir = False
+        exists = False
     return {
         "path": path,
         "name": p.name,
         "ext": "" if is_dir else p.suffix.lower(),
         "is_dir": is_dir,
+        "exists": exists,
         **extra,
     }
 

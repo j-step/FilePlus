@@ -341,7 +341,7 @@
       <div class="screens" id="screens">
 
         <!-- ═══════════════════════════════════════════════════════════
-             A.2  HOME  (3 sub-tabs: Recent / Favorites / Shared)
+             A.2  HOME  (sub-tabs: Recent / Favorites)
         ════════════════════════════════════════════════════════════ -->
         <div class="screen screen--home active" id="screen-home">
 
@@ -847,7 +847,7 @@
                border:1px solid var(--border-hairline);
                border-radius:var(--r-card);
                display:flex;align-items:center;justify-content:center;
-               flex-shrink:0;overflow:hidden;
+               overflow:hidden;
              ">
           <!-- INTEGRATION: file preview rendered per type -->
           <!-- Preview fail state:
@@ -975,7 +975,7 @@
   <!-- ═══════════════════════════════════════════════════════════════════
        A.1.5  STATUS BAR  (24px)
        bg-chrome + 1px border-hairline top
-       Left: file count · selection | Center: background task | Right: Review Bin pill
+       Left: item count · selection · clipboard · zoom | Right: shortcut hints · write lock · backend
   ════════════════════════════════════════════════════════════════════════ -->
   <!-- A.16: AI / backend offline error banner (comment in when backend stops responding) -->
   <!-- Sits above the status bar, full-width -->
@@ -1017,25 +1017,7 @@
               data-action="zoom-reset" title="Click to reset zoom (Ctrl+0)"
               style="display:none">100%</button>
     </div>
-    <!-- INTEGRATION: show #status-task when GET /tasks/active returns a running task -->
-    <div class="fp-statusbar__center" id="status-task" style="display:none">
-      <!-- Active task state (inline) — JS sets display:flex when a task is running -->
-      <span class="fp-pill fp-pill--live" id="status-task-pill">
-        <span class="fp-pill__dot fp-pill__dot--accent statusbar__task--active"></span>
-        <span id="status-task-label">Indexing 12%</span>
-        <span class="mono" style="color:var(--text-tertiary)">· <span id="status-task-eta">8m</span></span>
-      </span>
-      <!-- IDLE state (no task): container is display:none, nothing shown -->
-    </div>
     <div class="fp-statusbar__right">
-      <!-- Review Bin count pill — shown when non-zero -->
-      <!-- INTEGRATION: count from GET /review-bin/count -->
-      <!-- Active:
-      <button class="fp-pill" id="status-review-bin-pill" data-action="open-review-bin" title="Open Review Bin">
-        <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M1 2h10M1 5h7M1 8h5" stroke="var(--accent)" stroke-width="1.2" stroke-linecap="round"/></svg>
-        <span style="color:var(--accent)">12 to review</span>
-      </button>
-      -->
       <!-- Keyboard hints (t-small Inter 400 text-tertiary per A.1.5) -->
       <span class="fp-statusbar__kbd-hints" aria-hidden="true">
         <kbd class="fp-kbd-pill">Ctrl+K</kbd>

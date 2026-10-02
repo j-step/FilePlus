@@ -144,6 +144,14 @@ function formatRecentTime(actionAt, bucketKey) {
 }
 
 // ── Row/section templates ──────────────────────────────────────────────────
+/** A Recent / Favorites item that was moved or deleted since (GET /recent's
+ * and /favorites' `exists`): the row says so, and a click shows that in the
+ * inspector instead of asking GET /file about a path that is gone (a 404 —
+ * a console error — and a panel of dashes; Stage 2D §12 sweep). */
+function homeMissingAttr(entry) {
+  return entry && entry.exists === false ? ' data-missing="" title="Moved or deleted"' : '';
+}
+
 function renderRecentRow(entry, bucketKey) {
   const timeLabel = formatRecentTime(entry.action_at, bucketKey);
   // parentOfPath() already ends a drive root in a separator ("C:\"), so
@@ -157,7 +165,7 @@ function renderRecentRow(entry, bucketKey) {
   const hideExt = !isDir && entry.ext !== '' && browserState.showExtensions === false;
   const displayName = hideExt ? stemOf(entry.name) : entry.name;
   const nameTitleAttr = hideExt ? ` title="${escapeHtml(entry.name)}"` : '';
-  const dirAttr = isDir ? ' data-dir=""' : '';
+  const dirAttr = (isDir ? ' data-dir=""' : '') + homeMissingAttr(entry);
   // Recent rows show the same favorite star as Browser rows (Task 11,
   // playtest pass 1 §4.3) — rendered into .fp-row__tags (already an empty,
   // flex-laid-out cell reserved for this row's own grid-template-columns)
@@ -173,7 +181,7 @@ function renderRecentRow(entry, bucketKey) {
        data-path="${escapeHtml(entry.path)}" data-ext="${escapeHtml(entry.ext)}"${dirAttr} data-action="open-recent-file">
     ${homeIconFor(entry)}
     <span class="fp-row__name" data-full="${escapeHtml(entry.name)}"${nameTitleAttr}>${escapeHtml(displayName)}</span>
-    <span class="fp-row__recent-path mono">${escapeHtml(parentDisplay)}</span>
+    <span class="fp-row__recent-path mono" title="${escapeHtml(parentDisplay)}"><bdi>${escapeHtml(parentDisplay)}</bdi></span>
     <span class="fp-row__recent-time mono">${escapeHtml(entry.action)} ${escapeHtml(timeLabel)}</span>
     <div class="fp-row__tags">${starHtml}</div>
     <div class="fp-row__hover-actions">
@@ -202,12 +210,12 @@ function renderFavoriteRow(entry) {
   const hideExt = !isDir && entry.ext !== '' && browserState.showExtensions === false;
   const displayName = hideExt ? stemOf(entry.name) : entry.name;
   const nameTitleAttr = hideExt ? ` title="${escapeHtml(entry.name)}"` : '';
-  const dirAttr = isDir ? ' data-dir=""' : '';
+  const dirAttr = (isDir ? ' data-dir=""' : '') + homeMissingAttr(entry);
   return `<div class="fp-row fp-row--recent" role="option" tabindex="-1" draggable="true"
        data-path="${escapeHtml(entry.path)}" data-ext="${escapeHtml(entry.ext)}"${dirAttr} data-action="open-recent-file">
     ${homeIconFor(entry)}
     <span class="fp-row__name" data-full="${escapeHtml(entry.name)}"${nameTitleAttr}>${escapeHtml(displayName)}</span>
-    <span class="fp-row__recent-path mono">${escapeHtml(parentDisplay)}</span>
+    <span class="fp-row__recent-path mono" title="${escapeHtml(parentDisplay)}"><bdi>${escapeHtml(parentDisplay)}</bdi></span>
     <span class="fp-row__recent-time mono">${escapeHtml(addedLabel)}</span>
     <button class="fp-icon-btn fp-icon-btn--sm fp-row__fav-star" tabindex="-1" data-action="unfavorite-file"
             data-path="${escapeHtml(entry.path)}" title="Remove from favorites">
@@ -271,6 +279,7 @@ async function loadRecent() {
   }
   const groups = (data && data.groups) || [];
   homeRerender(container, groups.length ? groups.map(renderRecentSection).join('') : HOME_RECENT_EMPTY_HTML);
+  updateStatusBar();
 }
 
 /** GET /favorites -> flat, manually-ordered row list. Refreshes favoritesSet
@@ -296,6 +305,7 @@ async function loadFavorites() {
     favoritesPathToId.set(norm, f.id);
   });
   homeRerender(container, files.length ? files.map(renderFavoriteRow).join('') : HOME_FAVORITES_EMPTY_HTML);
+  updateStatusBar();
   // Every other pane that draws a star reads favoritesSet at render time, so
   // whoever just changed it has to repaint them (pass 2 #52).
   syncFavoriteStars();
@@ -543,6 +553,7 @@ function initFavoritesDragDrop() {
  * screen the same way browser.js's clearSelection() covers Browser. */
 function homeClearSelection() {
   document.querySelectorAll('#screen-home .fp-row--selected').forEach(r => r.classList.remove('fp-row--selected'));
+  updateStatusBar();
   // The inspector belongs to the Browser screen: resetting it to "No file
   // selected" from here wiped a live Browser selection's panel even though
   // that selection had not changed. Hand it back to whatever the Browser has

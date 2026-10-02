@@ -32,6 +32,7 @@ const searchState = {
   results: null,
   truncated: false,
   inflight: null,       // AbortController for the request in flight
+  inflightQuery: null,  // {chips, text, scope} that request was for (failNavigation resumes it)
   historyKey: 'fp-search-history',
   root: null,           // what the last render searched ('*' for This PC)
   query: '',            // the q that produced searchState.results
@@ -438,6 +439,9 @@ async function runSearch({ pushHistory = true, preserveSelection = false } = {})
 
   const ctrl = new AbortController();
   searchState.inflight = ctrl;
+  searchState.inflightQuery = {
+    chips: searchState.chips.map(c => ({ ...c })), text: searchState.text, scope: searchState.scope,
+  };
   showSearchPending(query, usePc ? '*' : params.root);
 
   let payload;
@@ -1145,7 +1149,12 @@ function initSearch() {
     // flushed all ten real history slots with prefixes of one word (pass 2
     // #161). History is written by the deliberate commits instead: Enter, a
     // chip pick, the palette, re-running a history row.
-    _searchDebounceTimer = setTimeout(() => runSearch({ pushHistory: false }), SEARCH_DEBOUNCE_MS);
+    _searchDebounceTimer = setTimeout(() => {
+      // Fired: nothing is queued any more (cancelSearchDebounce and the tests
+      // read the handle as "a keystroke is still waiting").
+      _searchDebounceTimer = null;
+      runSearch({ pushHistory: false });
+    }, SEARCH_DEBOUNCE_MS);
   });
 
   input.addEventListener('keydown', e => {
