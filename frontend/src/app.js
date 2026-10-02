@@ -42,6 +42,7 @@ const STUB_SCREENS = {
 const tabs = { list: [], activeId: null };
 let _tabIdSeq = 1; // unique id generator (HTML seeds the first tab as tab-1)
 let _closedTabs = []; // stack of full tab records, most-recently-closed last
+const CLOSED_TABS_MAX = 20; // Ctrl+Shift+T depth
 
 function nextTabId() {
   _tabIdSeq += 1;
@@ -339,6 +340,14 @@ function activateTab(id) {
     updateSidebarActive(incoming.path);
     refreshNavButtons();
   } else if (incoming.screen === 'browser') {
+    const cached = cachedListingFor(incoming);
+    if (!cached) {
+      // Nothing of this tab's own to paint yet (a tab staged in the
+      // background): #list-scroll still holds another tab's rows, which must
+      // not be shown under this tab while its first fetch is in flight.
+      document.getElementById('list-scroll')?.replaceChildren();
+      browserState.listingTabId = null;
+    }
     showScreenDom('browser');
     if (typeof searchResetBar === 'function') searchResetBar();
     incoming.stale = false;
@@ -356,7 +365,7 @@ function activateTab(id) {
       // Stale-while-revalidate (Stage 2D §4.2): the tab's own last listing is
       // painted synchronously — rows, scroll and selection in this same task,
       // no empty frame — and the fetch only patches what changed.
-      cached: cachedListingFor(incoming),
+      cached,
     });
     // A search this tab had typed but not finished (its request was aborted
     // when it was switched away) re-runs once the folder listing underneath it
@@ -440,7 +449,8 @@ function switchScreen(id, labelOverride) {
     if (tab.path === null) {
       // This tab has never shown Browser before — load the sandbox root,
       // same fallback the old global navHistory-empty check used to give.
-      showScreenDom('browser');
+      // The Browser screen appears when that listing commits (commitListing),
+      // never before with rows left over from another tab.
       loadDirectory(null);
     } else if (browserState.mode === 'search' && tab.search && tab.search.results
                && typeof restoreSearchResultsForTab === 'function') {
@@ -462,8 +472,8 @@ function switchScreen(id, labelOverride) {
       // belong to ANOTHER tab (this tab was on Home while that one browsed) or
       // have been fetched with settings a Settings toggle has since changed
       // (browserState.listingStale, pass 2 #155). Re-fetch rather than reveal
-      // somebody else's listing.
-      showScreenDom('browser');
+      // somebody else's listing. commitListing() reveals the Browser screen
+      // together with the rows (at once when the tab has a cached listing).
       loadDirectory(tab.isRootTarget ? null : tab.path, {
         addToHistory: false,
         restore: {
@@ -494,6 +504,9 @@ function switchScreen(id, labelOverride) {
     }
     return;
   }
+  // A Browser navigation still in flight for this tab must not pull it back
+  // to the Browser once it lands.
+  if (typeof browserState !== 'undefined') browserState._loadSeq++;
   tab.label = labelOverride || getScreenLabel(id);
   updateTabElementAppearance(tab);
   showScreenDom(id);
@@ -520,7 +533,9 @@ function openBrowserAt(path, { tab } = {}) {
     updateTabElementAppearance(target);
     return Promise.resolve();
   }
-  showScreenDom('browser');
+  // The current screen (Home, Settings, …) stays up until the folder has
+  // loaded; commitListing() then switches screen, chrome and rows in one go,
+  // and a failure leaves the user where they were with an error toast.
   return loadDirectory(path);
 }
 
@@ -551,7 +566,10 @@ function closeTabById(id) {
 
   tabs.list.splice(idx, 1);
   el?.remove();
-  _closedTabs.push(record);
+  // The listing is dropped (a reopened tab revalidates from scratch anyway)
+  // and the stack is capped, so closed tabs never pin whole folder listings.
+  _closedTabs.push({ ...record, listing: null });
+  if (_closedTabs.length > CLOSED_TABS_MAX) _closedTabs.splice(0, _closedTabs.length - CLOSED_TABS_MAX);
 
   if (tabs.list.length === 0) {
     const fresh = createTab({ screen: 'home', label: 'Home' });
@@ -589,7 +607,6 @@ function reopenLastTab() {
   // tab at search:null, so it has to be carried across explicitly or Ctrl+W /
   // Ctrl+Shift+T silently drops the results (pass 2 #18).
   restored.search = record.search;
-  restored.listing = record.listing || null;
   activateTab(restored.id);
 }
 
@@ -1994,8 +2011,22 @@ function showToast(message, variant = '') {
 // One 360° spin of the toolbar icon and one quick opacity dip of the list.
 // Classes come off on a timer (not animationend), so they never stick when
 // reduced motion removes the animation.
-const REFRESH_SPIN_MS = 400;
-const REFRESH_DIP_MS = 160;
+// Durations come from the CSS tokens (--dur-refresh-spin / --dur-refresh-dip)
+// so the timers that take the classes off can never disagree with the
+// animations; read once, on first use.
+let _refreshFxMs = null;
+function refreshFxMs() {
+  if (_refreshFxMs) return _refreshFxMs;
+  const cs = getComputedStyle(document.documentElement);
+  const ms = (name, fallback) => {
+    const raw = cs.getPropertyValue(name).trim();
+    const n = parseFloat(raw);
+    if (!Number.isFinite(n)) return fallback;
+    return /ms$/.test(raw) ? n : (/s$/.test(raw) ? n * 1000 : n);
+  };
+  _refreshFxMs = { spin: ms('--dur-refresh-spin', 400), dip: ms('--dur-refresh-dip', 160) };
+  return _refreshFxMs;
+}
 const _refreshFxTimers = { spin: 0, dip: 0 };
 
 function restartClassAnimation(el, cls, ms, timerKey) {
@@ -2020,11 +2051,11 @@ async function refreshAll() {
   if (!tab) return;
   tabs.list.forEach(t => { if (t.id !== tab.id) t.stale = true; });
   const onBrowser = browserScreenActive();
-  restartClassAnimation(document.getElementById('btn-refresh'), 'is-spinning', REFRESH_SPIN_MS, 'spin');
+  restartClassAnimation(document.getElementById('btn-refresh'), 'is-spinning', refreshFxMs().spin, 'spin');
   if (onBrowser) {
     // This PC (Task 8) hooks in here; until then there is nothing to re-read.
     if (typeof tab.path === 'string' && tab.path.startsWith('thispc:')) return;
-    restartClassAnimation(document.getElementById('list-scroll'), 'is-refreshing', REFRESH_DIP_MS, 'dip');
+    restartClassAnimation(document.getElementById('list-scroll'), 'is-refreshing', refreshFxMs().dip, 'dip');
     await refreshDirectory();
   } else if (tab.screen === 'home') {
     await Promise.all([loadRecent(), loadFavorites()]);

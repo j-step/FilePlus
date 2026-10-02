@@ -9,7 +9,7 @@ const path = require('path');
 const { pathToFileURL } = require('url');
 const os   = require('os');
 const { spawn } = require('child_process');
-const { resolveApiPort, resolveApiToken } = require('./envToken');
+const { resolveApiPort, resolveApiToken, resolveAppEnv, devToolsAllowed } = require('./envToken');
 const { LruCache, iconCacheKey, isSafeLocalPath, normalizeWinPath, clampPx } = require('./iconCache');
 const { resolveLogDir, createFileLogger, consoleLevelName } = require('./logger');
 
@@ -67,6 +67,11 @@ function apiToken() {
 // inside the page and the app reports "Backend offline" for a healthy backend
 // with nothing anywhere saying why.
 const API_PORT = resolveApiPort(REPO_DIR, process.env);
+
+// FILEPLUS_ENV, read the way backend/config.py reads it. F12 opens DevTools
+// in dev and test only (Stage 2D §7.1); a prod build has no DevTools key.
+const APP_ENV = resolveAppEnv(REPO_DIR, process.env);
+const DEVTOOLS_ALLOWED = devToolsAllowed(APP_ENV);
 
 // Mica needs Windows 11 22H2 (build 22621). Elsewhere Electron ignores the option
 // and the renderer paints solid --bg-chrome.
@@ -177,7 +182,7 @@ function createWindow() {
   // focus, so registering F12 there took the key away from every other
   // application on the machine for as long as FilePlus was running.
   mainWindow.webContents.on('before-input-event', (_event, input) => {
-    if (input.type === 'keyDown' && input.key === 'F12'
+    if (DEVTOOLS_ALLOWED && input.type === 'keyDown' && input.key === 'F12'
         && !input.control && !input.alt && !input.shift && !input.meta) {
       mainWindow.webContents.toggleDevTools();
     }

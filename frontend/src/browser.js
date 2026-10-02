@@ -97,6 +97,8 @@ const browserState = {
   // only moves once the fetch succeeds (pass-2 #55), so a second Back pressed
   // before the first lands steps on from here instead of repeating it.
   _pendingHistory: null,
+  // The tab whose search results are on screen in 'search' mode.
+  searchTabId: null,
 };
 
 // Test hooks (Stage 2D §11): renders of the listing, and directory fetches
@@ -529,11 +531,20 @@ async function loadDirectory(absPath, opts = {}) {
   const reqTabId = tabs.activeId;
   const reqSeq = ++browserState._loadSeq;
   const superseded = () => tabs.activeId !== reqTabId || browserState._loadSeq !== reqSeq;
-  const wasSearch = browserState.mode === 'search';
   // Any real navigation ends a search — opening a result folder, Back, a
-  // sidebar click, a spring-loaded drop. Done here rather than at each call
-  // site so there is exactly one exit from search mode.
-  leaveSearchMode();
+  // sidebar click, a spring-loaded drop, the breadcrumb's ×. This tab's OWN
+  // search is only stopped here (no in-flight run may paint over the
+  // folder) and left on screen: commitListing() tears it down once the
+  // folder has really loaded, so a navigation that fails keeps the results
+  // (pass-2 #55). A search left over from another tab goes at once.
+  const ownSearch = browserState.mode === 'search' && browserState.searchTabId === reqTabId;
+  const searchWasInFlight = ownSearch && typeof searchState !== 'undefined' && !!(searchState && searchState.inflight);
+  if (ownSearch) {
+    if (typeof abortSearch === 'function') abortSearch();
+    if (typeof searchState !== 'undefined' && searchState) searchState._seq++;
+  } else {
+    leaveSearchMode();
+  }
   browserState.lastAttemptedPath = absPath;
 
   const cachedListing = (cached && Array.isArray(cached.entries) && cached.path) ? cached : null;
@@ -555,13 +566,15 @@ async function loadDirectory(absPath, opts = {}) {
       : await API.get('/fs/list/root', { show_hidden: browserState.showHidden });
   } catch (err) {
     if (superseded()) return;
+    // The Back/Forward this was (if any) went nowhere.
+    browserState._pendingHistory = null;
     if (cachedListing) {
       // The tab's own listing is on screen already: keep it and say why it
       // could not be brought up to date.
       showToast(loadErrorMessage(err, absPath), 'error');
       return;
     }
-    failNavigation(err, absPath, { reqTabId, wasSearch });
+    failNavigation(err, absPath, { reqTabId, ownSearch, searchWasInFlight });
     return;
   } finally {
     window.__fpLoadPending--;
@@ -624,6 +637,13 @@ function commitListing(data, { absPath, addToHistory = true, restore = null, pre
   const prevSelection = preserveSelection ? new Set(browserState.selection) : null;
   const prevAnchor    = preserveSelection ? browserState.anchor : null;
   const prevFocus     = preserveSelection ? browserState.focus : null;
+
+  // The navigation succeeded: only now does a search on screen end, and only
+  // now does a tab that was on Home (or any other screen) show the Browser —
+  // the screen, the chrome and the rows change in the same task, so the
+  // Browser never shows rows it held from before (Stage 2D fix round 1).
+  leaveSearchMode();
+  if (!browserScreenActive()) showScreenDom('browser');
 
   browserState.path = data.path;
   browserState.entries = data.entries;
@@ -708,21 +728,42 @@ function commitListing(data, { absPath, addToHistory = true, restore = null, pre
 
 /**
  * A navigation whose fetch failed. Nothing about it is committed (pass-2
- * #55): when this tab's own listing is on screen it stays, with the chrome
- * re-pointed at it, and an error toast says why. A tab that was on another
- * screen (a Home row, a sidebar link) goes back to that screen. Only a tab
- * with no listing of its own to fall back on shows the error banner (Go back
- * / Retry) for the folder it tried to open.
+ * #55), and the user keeps what they were looking at, with an error toast
+ * saying why:
+ * - a tab on another screen (Home, a sidebar link from Settings) stays there
+ *   — openBrowserAt() no longer switches screens before the fetch lands;
+ * - a tab showing its own search results keeps them (a run that was still in
+ *   flight is restarted, since this navigation aborted it);
+ * - a tab showing its own folder listing keeps it, chrome re-pointed at it.
+ * Only a tab with nothing of its own to fall back on shows the error banner
+ * (Go back / Retry) for the folder it tried to open.
  */
-function failNavigation(err, absPath, { reqTabId, wasSearch }) {
+function failNavigation(err, absPath, { reqTabId, ownSearch = false, searchWasInFlight = false }) {
   const tab = activeTab();
   const message = loadErrorMessage(err, absPath);
+  if (!browserScreenActive()) {
+    // The Browser was never revealed (it appears only when a listing
+    // commits): the user is still on the screen they started from, and the
+    // tab's record says so again (switchScreen() set it to 'browser' early).
+    const shown = document.querySelector('.screen.active')?.id?.replace(/^screen-/, '');
+    if (tab && shown) tab.screen = shown;
+    showToast(message, 'error');
+    return;
+  }
   if (tab && tab.screen !== 'browser') {
     showScreenDom(tab.screen);
     showToast(message, 'error');
     return;
   }
-  const ownListingShown = !wasSearch && browserState.path && browserState.listingTabId === reqTabId
+  if (ownSearch && browserState.mode === 'search') {
+    if (searchWasInFlight && typeof runSearch === 'function') {
+      runSearch({ pushHistory: false, preserveSelection: true });
+    }
+    refreshNavButtons();
+    showToast(message, 'error');
+    return;
+  }
+  const ownListingShown = browserState.path && browserState.listingTabId === reqTabId
     && document.querySelector('#list-scroll > .fp-row, #list-scroll > .fp-empty-state');
   if (ownListingShown) {
     onNavigated(tab && tab.isRootTarget ? null : browserState.path);
@@ -731,6 +772,7 @@ function failNavigation(err, absPath, { reqTabId, wasSearch }) {
     showToast(message, 'error');
     return;
   }
+  leaveSearchMode();
   onNavigated(absPath);
   handleLoadError(err, absPath);
 }
@@ -852,7 +894,15 @@ function patchDirectory(newEntries, data = null) {
 
   const scrollTop = listScroll.scrollTop;
   const active = document.activeElement;
-  const focusOnRow = !!(active && active !== listScroll && listScroll.contains(active) && active.closest('.fp-row'));
+  // DOM focus is put back only when it sat on a row itself. Focus inside a
+  // row (the inline-rename input) is never taken: blurring that input
+  // commits the rename (Stage 2D fix round 1).
+  const focusOnRow = !!(active && active !== listScroll && listScroll.contains(active)
+    && active.classList.contains('fp-row'));
+  // A row being renamed keeps its DOM node (and the input in it) as long as
+  // the entry still exists, whatever else changed.
+  const renaming = listScroll.querySelector('.fp-row__rename')?.closest('.fp-row[data-path]') || null;
+  const renamingPath = renaming ? renaming.dataset.path : null;
 
   const rows = [...listScroll.querySelectorAll(':scope > .fp-row[data-path]')];
   const nodeByPath = new Map(rows.map(r => [r.dataset.path, r]));
@@ -860,6 +910,7 @@ function patchDirectory(newEntries, data = null) {
   const newNames = new Set(newEntries.map(e => e.name));
   const changed = new Set();
   for (const e of newEntries) {
+    if (renamingPath && entryPath(e) === renamingPath) continue;
     const o = oldByName.get(e.name);
     if (!o || rowSignature(o) !== rowSignature(e)) { changed.add(e.name); continue; }
     // A favourite toggled since the row was drawn changes its star.
@@ -877,7 +928,9 @@ function patchDirectory(newEntries, data = null) {
     applySelectionState();
     updateStatusBar();
   } else if (!domMatches || !newEntries.length || truncatedBefore !== browserState.truncated
-             || changes > total * PATCH_FULL_RENDER_SHARE) {
+             || (changes > total * PATCH_FULL_RENDER_SHARE && !(renamingPath && valid.has(renamingPath)))) {
+    // (A full render would destroy an inline rename in progress; that one
+    // case always takes the row-by-row path below instead.)
     renderDirectory();
   } else {
     for (const o of removed) nodeByPath.get(entryPath(o))?.remove();
@@ -1241,6 +1294,7 @@ function showSearchPending(query, root) {
   browserState.searchRoot = root;
   // #list-scroll no longer holds a folder listing (see listingTabId).
   browserState.listingTabId = null;
+  browserState.searchTabId = tabs.activeId;
   if (listScroll) listScroll.dataset.mode = 'search';
   if (entering) {
     browserState.entries = [];
@@ -1276,6 +1330,7 @@ function renderSearchResults(payload, { query = '', root = '', preserveSelection
   browserState.mode = 'search';
   browserState.searchRoot = root;
   browserState.listingTabId = null;
+  browserState.searchTabId = tabs.activeId;
   browserState.truncated = false;
   browserState.entries = (payload.results || []).map(r => ({ ...r, location: parentOfPath(r.path) }));
   if (preserveSelection && prevSelection) {
@@ -1350,7 +1405,8 @@ function exitSearchResults() {
   if (browserState.mode !== 'search') return undefined;
   const tab = typeof activeTab === 'function' ? activeTab() : null;
   const target = tab && tab.path !== undefined ? tab.path : browserState.path;
-  leaveSearchMode();
+  // loadDirectory() ends this tab's search once the folder has loaded (and
+  // keeps the results if it cannot be).
   return loadDirectory(target, { addToHistory: false });
 }
 

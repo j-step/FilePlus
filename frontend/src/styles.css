@@ -123,8 +123,8 @@
   --dur-pulse:      400ms;
   --dur-info:       1500ms;
   /* Refresh feedback (Stage 2D §7.2): one 360° spin of the toolbar icon, one
-     quick opacity dip of the list. app.js's REFRESH_SPIN_MS / REFRESH_DIP_MS
-     take the classes off after exactly these — keep them equal. */
+     quick opacity dip of the list. app.js reads these two (refreshFxMs) to
+     time when the classes come off again. */
   --dur-refresh-spin: 400ms;
   --dur-refresh-dip:  160ms;
   --opacity-refresh-dip: 0.55;

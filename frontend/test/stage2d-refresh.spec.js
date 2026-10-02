@@ -11,14 +11,10 @@ const { launchApp, shot, rowByName, apiGet } = require('./harness/app');
 
 test.setTimeout(180_000);
 
-// Chromium reports a 404 fetch as a console error ("Failed to load resource")
-// even when the app catches it. The checks below provoke exactly two of those
-// on purpose (a refresh of a folder deleted on disk, a navigation to a folder
-// that does not exist); anything else is a real error.
 // Playwright's keyboard goes through the DevTools protocol, which never
-// reaches Electron's menu accelerators — so a Ctrl+R pressed that way could not
-// reload the page even with the default menu in place. sendInputEvent takes
-// the same route as a real key press, accelerators included.
+// reaches Electron's menu accelerators or Chromium's native edit commands — so
+// a Ctrl+R pressed that way could not reload the page even with the default
+// menu in place. sendInputEvent takes the same route as a real key press.
 async function nativeKey(app, keyCode, modifiers = []) {
   await app.evaluate(({ BrowserWindow }, a) => {
     const wc = BrowserWindow.getAllWindows()[0].webContents;
@@ -27,8 +23,47 @@ async function nativeKey(app, keyCode, modifiers = []) {
   }, { keyCode, modifiers });
 }
 
+// Counters in the main process for things that must NOT happen: a document
+// navigation (a reload), DevTools opening, a second window. Read after
+// settleKeys(), never after a sleep.
+async function installMainCounters(app) {
+  await app.evaluate(({ app: electronApp, BrowserWindow }) => {
+    const c = globalThis.__fpTestCounters = { navigations: 0, devtools: 0, windows: 0 };
+    const wc = BrowserWindow.getAllWindows()[0].webContents;
+    wc.on('did-start-navigation', (e, _url, isInPlace, isMainFrame) => {
+      const same = e && typeof e.isSameDocument === 'boolean' ? e.isSameDocument : isInPlace;
+      const main = e && typeof e.isMainFrame === 'boolean' ? e.isMainFrame : isMainFrame;
+      if (main && !same) c.navigations++;
+    });
+    wc.on('devtools-opened', () => { c.devtools++; });
+    electronApp.on('browser-window-created', () => { c.windows++; });
+  });
+}
+const mainCounters = (app) => app.evaluate(() => ({ ...globalThis.__fpTestCounters }));
+
+// A sentinel key the app ignores (F24), sent the same native way. Input
+// events are handled in order, so once the page has seen it, every key sent
+// before it has been fully handled — by the page and by the main process.
+// A reload in between would drop the listener and time this out.
+async function installSentinel(page) {
+  await page.evaluate(() => {
+    window.__fpSentinelKeys = 0;
+    document.addEventListener('keydown', (e) => { if (e.key === 'F24') window.__fpSentinelKeys++; }, true);
+  });
+}
+async function settleKeys(app, page) {
+  const n = await page.evaluate(() => window.__fpSentinelKeys || 0);
+  await nativeKey(app, 'F24');
+  await page.waitForFunction((k) => (window.__fpSentinelKeys || 0) > k, n);
+}
+
+// Chromium reports a 404 fetch as a console error ("Failed to load resource")
+// even when the app catches it. The checks below provoke a few of those on
+// purpose (folders deleted on disk, a folder that never existed); anything
+// else is a real error.
 function unexpectedErrors(errors) {
-  return errors.filter((e) => !(/status of 404/.test(e) && /\/fs\/list\?path=.*(Doomed|Nowhere-2d)/.test(e)));
+  return errors.filter((e) => !(/status of 404/.test(e)
+    && /\/fs\/list\?path=.*(Doomed|Nowhere-2d|GoneBack-2d|zz-search-gone-2d)/.test(e)));
 }
 
 test('refresh in place, one render per navigation, cached tab repaint, no default menu', async () => {
@@ -46,9 +81,12 @@ test('refresh in place, one render per navigation, cached tab repaint, no defaul
 
     // ── 1. Ctrl+R does not reload the page ─────────────────────────────────
     const origin0 = await page.evaluate(() => performance.timeOrigin);
+    await installMainCounters(app);
+    await installSentinel(page);
     await nativeKey(app, 'R', ['control']);
     await nativeKey(app, 'R', ['control', 'shift']); // Review Bin, never a hard reload
-    await page.waitForTimeout(800);                  // a reload would have started by now
+    await settleKeys(app, page);
+    expect(await mainCounters(app)).toEqual({ navigations: 0, devtools: 0, windows: 0 });
     expect(await page.evaluate(() => performance.timeOrigin)).toBe(origin0);
     expect(await app.evaluate(({ Menu }) => Menu.getApplicationMenu())).toBeNull();
 
@@ -197,6 +235,27 @@ test('refresh in place, one render per navigation, cached tab repaint, no defaul
     await page.waitForFunction(() => !window.__fpLoadPending);
     expect(await page.evaluate(() => window.__fpRenderCount) - n0).toBe(1);
 
+    // A Back whose folder has gone is not a navigation: nav.index stays, and a
+    // Forward right after it has nowhere to go (it used to step on from the
+    // failed Back's target and re-open the current folder).
+    const goneBack = `${root}\\GoneBack-2d`;
+    fs.mkdirSync(goneBack);
+    await page.evaluate((p) => openBrowserAt(p), goneBack);
+    await page.evaluate((p) => openBrowserAt(p), docsDir);
+    await expect(crumbCurrent).toHaveText('Documents');
+    fs.rmSync(goneBack, { recursive: true, force: true });
+    const histAtDocs = await page.evaluate(() => [nav.history.length, nav.index]);
+    await page.evaluate(() => navBack());
+    await expect(page.locator('#toast-container .fp-toast--error')).toHaveCount(1);
+    await expect(crumbCurrent).toHaveText('Documents');
+    expect(await page.evaluate(() => [nav.history.length, nav.index])).toEqual(histAtDocs);
+    expect(await page.evaluate(() => pendingHistoryIndex() === nav.index)).toBe(true);
+    await expect(page.locator('[data-action="nav-forward"]')).toBeDisabled();
+    n0 = await page.evaluate(() => window.__fpRenderCount);
+    expect(await page.evaluate(() => navForward() === undefined)).toBe(true);
+    expect(await page.evaluate(() => window.__fpRenderCount)).toBe(n0);
+    await page.locator('#toast-container .fp-toast--error button').click();
+
     // ── 6. refresh of a folder deleted on disk keeps the listing ────────────
     const doomed = `${root}\\Doomed`;
     fs.mkdirSync(doomed);
@@ -231,10 +290,11 @@ test('refresh in place, one render per navigation, cached tab repaint, no defaul
     // ── 8. no menu bar on Alt, no default devtools accelerator, no navigation ─
     await page.evaluate((p) => openBrowserAt(p), docsDir);
     await nativeKey(app, 'Alt');
-    await page.waitForTimeout(200);
+    await settleKeys(app, page);
     expect(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isMenuBarVisible())).toBe(false);
     await nativeKey(app, 'I', ['control', 'shift']);
-    await page.waitForTimeout(400);
+    await settleKeys(app, page);
+    expect((await mainCounters(app)).devtools).toBe(0);
     expect(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.isDevToolsOpened())).toBe(false);
     // A renderer-initiated navigation away from the app (what a file dropped
     // onto the window would do) is refused; the app's own page is not. Driven
@@ -251,9 +311,10 @@ test('refresh in place, one render per navigation, cached tab repaint, no defaul
       return { away: probe('file:///C:/Windows/win.ini'), self: probe(wc.getURL()) };
     });
     expect(verdicts).toEqual({ away: true, self: false });
-    // window.open never makes a second window.
-    await page.evaluate(() => window.open('https://example.com'));
-    await page.waitForTimeout(300);
+    // window.open never makes a second window (the denial is answered before
+    // window.open returns, so its null result is the settled answer).
+    expect(await page.evaluate(() => window.open('https://example.com') === null)).toBe(true);
+    expect((await mainCounters(app)).windows).toBe(0);
     expect(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length)).toBe(1);
 
     // ── Ctrl+R / F5 are ignored while a modal (here the palette) is open ────
@@ -278,20 +339,136 @@ test('refresh in place, one render per navigation, cached tab repaint, no defaul
     await page.keyboard.press('Escape');
     await expect(page.locator('#palette-scrim')).toBeHidden();
 
-    // ── Edit shortcuts still work in text inputs without the Edit menu ──────
+    // ── An inline rename in progress survives a refresh (fix round 1) ───────
+    // Blurring the rename input commits it, so a refresh must neither take
+    // focus from it nor rebuild its row — not on a small patch, not on a
+    // change big enough for a full render.
+    const renameZone = `${root}\\RenameZone`;
+    fs.mkdirSync(renameZone);
+    for (let i = 1; i <= 10; i++) fs.writeFileSync(path.join(renameZone, `rz-${String(i).padStart(2, '0')}.txt`), `rz ${i}`);
+    await page.evaluate((p) => openBrowserAt(p), renameZone);
+    await expect(crumbCurrent).toHaveText('RenameZone');
+    await page.evaluate((p) => startInlineRename(p), `${renameZone}\\rz-03.txt`);
+    const renameInput = page.locator('#list-scroll .fp-row__rename');
+    await expect(renameInput).toBeFocused();
+    await page.keyboard.type('half');                       // replaces the selected stem
+    await expect(renameInput).toHaveValue('half.txt');
+    fs.writeFileSync(path.join(renameZone, 'rz-00-new.txt'), 'n');
+    await page.evaluate(() => refreshDirectory());
+    await expect(rowByName(page, 'rz-00-new.txt')).toHaveCount(1);
+    await expect(renameInput).toBeFocused();
+    await expect(renameInput).toHaveValue('half.txt');
+    for (let i = 0; i < 8; i++) fs.writeFileSync(path.join(renameZone, `rz-50-bulk-${i}.txt`), 'b'); // > 30% changed
+    await page.evaluate(() => refreshAll());
+    await expect(rowByName(page, 'rz-50-bulk-7.txt')).toHaveCount(1);
+    await expect(renameInput).toBeFocused();
+    await expect(renameInput).toHaveValue('half.txt');
+    expect(fs.existsSync(path.join(renameZone, 'rz-03.txt'))).toBe(true);
+    expect(fs.existsSync(path.join(renameZone, 'half.txt'))).toBe(false);
+    await page.keyboard.press('Escape');                    // cancel: nothing renamed
+    await expect(renameInput).toHaveCount(0);
+    await expect(rowByName(page, 'rz-03.txt')).toHaveCount(1);
+    expect(fs.existsSync(path.join(renameZone, 'half.txt'))).toBe(false);
+
+    // ── A failed navigation out of search results keeps the results ─────────
+    await page.evaluate((p) => openBrowserAt(p), docsDir);
+    const searchGone = `${docsDir}\\zz-search-gone-2d`;
+    fs.mkdirSync(searchGone);
+    await page.evaluate(() => {
+      const input = document.getElementById('search-input');
+      input.value = 'zz-search-gone';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await expect(rowByName(page, 'zz-search-gone-2d')).toHaveCount(1, { timeout: 5000 });
+    await page.waitForFunction(() => browserState.mode === 'search' && !searchState.inflight);
+    fs.rmSync(searchGone, { recursive: true, force: true });
+    await page.evaluate((p) => loadDirectory(p), searchGone);  // what opening the result row does
+    await expect(page.locator('#toast-container .fp-toast--error')).toHaveCount(1);
+    expect(await page.evaluate(() => browserState.mode)).toBe('search');
+    await expect(rowByName(page, 'zz-search-gone-2d')).toHaveCount(1);
+    await expect(page.locator('#list-search-header')).toBeVisible();
+    await expect(page.locator('#list-scroll .fp-error-banner')).toHaveCount(0);
+    await page.locator('#toast-container .fp-toast--error button').click();
+    await page.evaluate(() => clearSearch());
+    await expect(crumbCurrent).toHaveText('Documents');
+    expect(await page.evaluate(() => browserState.mode)).toBe('browse');
+
+    // ── Opening a folder from Home keeps Home up until the listing lands ─────
+    // The fetch is held in the page until released, so "while in flight" is a
+    // state, not a race.
+    const tabCount = await page.locator('.fp-tab').count();
+    await page.keyboard.press('Control+t');
+    await expect(page.locator('.fp-tab')).toHaveCount(tabCount + 1);
+    await expect(page.locator('#screen-home')).toHaveClass(/active/);
+    await page.evaluate((pics) => {
+      window.__fpOrigGet = API.get;
+      API.get = function (route, params, ...rest) {
+        if (route === '/fs/list' && params && params.path === pics) {
+          return new Promise((res) => { window.__fpRelease = res; })
+            .then(() => window.__fpOrigGet.call(API, route, params, ...rest));
+        }
+        return window.__fpOrigGet.call(API, route, params, ...rest);
+      };
+      window.__fpHomeLoad = openBrowserAt(pics);
+    }, picsDir);
+    await page.waitForFunction(() => typeof window.__fpRelease === 'function');
+    await expect(page.locator('#screen-home')).toHaveClass(/active/);
+    await expect(page.locator('#screen-browser')).not.toHaveClass(/active/);
+    await expect(page.locator('.fp-tab.fp-tab--active .fp-tab__label')).toHaveText('Home');
+    const rendersHeld = await page.evaluate(() => window.__fpRenderCount);
+    await page.evaluate(async () => { window.__fpRelease(); await window.__fpHomeLoad; API.get = window.__fpOrigGet; });
+    await expect(page.locator('#screen-browser')).toHaveClass(/active/);
+    await expect(page.locator('#screen-home')).not.toHaveClass(/active/);
+    await expect(crumbCurrent).toHaveText('Pictures');
+    await expect(page.locator('.fp-tab.fp-tab--active .fp-tab__label')).toHaveText('Pictures');
+    expect(await page.evaluate(() => window.__fpRenderCount)).toBe(rendersHeld + 1);
+    // …and a folder that cannot be opened leaves Home on screen.
+    await page.keyboard.press('Control+t');
+    await expect(page.locator('#screen-home')).toHaveClass(/active/);
+    await page.evaluate((p) => openBrowserAt(p), `${root}\\Nowhere-2d`);
+    await expect(page.locator('#toast-container .fp-toast--error')).toHaveCount(1);
+    await expect(page.locator('#screen-home')).toHaveClass(/active/);
+    await expect(page.locator('#screen-browser')).not.toHaveClass(/active/);
+    await expect(page.locator('.fp-tab.fp-tab--active .fp-tab__label')).toHaveText('Home');
+    expect(await page.evaluate(() => activeTab().screen)).toBe('home');
+    await page.locator('#toast-container .fp-toast--error button').click();
+
+    // ── Closed tabs drop their listing; the reopen stack is capped ──────────
+    const closeId = await page.evaluate(() => {
+      const t = tabs.list.find((r) => r.listing && r.id !== tabs.activeId);
+      closeTabById(t.id);
+      return t.id;
+    });
+    expect(await page.evaluate((id) => {
+      const rec = _closedTabs[_closedTabs.length - 1];
+      return rec.id === id && rec.listing === null && !!rec.path;
+    }, closeId)).toBe(true);
+    expect(await page.evaluate(() => {
+      for (let i = 0; i < 25; i++) closeTabById(createTab({ screen: 'home', label: 'Home' }).id);
+      return _closedTabs.length;
+    })).toBe(20);
+
+    // ── Edit shortcuts work natively in text inputs without the Edit menu ───
+    // Sent through sendInputEvent, the route a real key press takes, so these
+    // pass only if Chromium's own editing handles them (no Edit-menu roles).
+    await page.evaluate((p) => openBrowserAt(p), docsDir);
     const input = page.locator('#search-input');
     await input.click();
     await page.keyboard.type('zqx-2d');
-    await page.keyboard.press('Control+a');
-    await page.keyboard.press('Control+x');
-    await expect(input).toHaveValue('');
-    await page.keyboard.press('Control+v');
     await expect(input).toHaveValue('zqx-2d');
-    await page.keyboard.press('Control+a');
-    await page.keyboard.press('Delete');
-    await expect(input).toHaveValue('');
+    await nativeKey(app, 'A', ['control']);
+    await nativeKey(app, 'X', ['control']);
+    await settleKeys(app, page);
+    expect(await input.inputValue()).toBe('');
+    await nativeKey(app, 'V', ['control']);
+    await settleKeys(app, page);
+    expect(await input.inputValue()).toBe('zqx-2d');
+    await nativeKey(app, 'Z', ['control']);                 // undo the paste
+    await settleKeys(app, page);
+    expect(await input.inputValue()).toBe('');
     await page.keyboard.press('Escape');
 
+    expect(await mainCounters(app)).toEqual({ navigations: 0, devtools: 0, windows: 0 });
     expect(await page.evaluate(() => performance.timeOrigin)).toBe(origin0);
     expect(unexpectedErrors(errors), errors.join('\n')).toEqual([]);
   } finally {
