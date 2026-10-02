@@ -671,7 +671,8 @@ test('refresh in place, one render per navigation, cached tab repaint, no defaul
     expect(await page.evaluate(() => performance.timeOrigin)).toBe(origin0);
   } finally {
     await app.close();
-    restoreFixture((await apiGet('/fs/list/root')).path);
+    // Its own try: a cleanup error must never replace the test's real failure.
+    try { restoreFixture((await apiGet('/fs/list/root')).path); } catch (e) { console.warn(`restoreFixture: ${e.message}`); }
   }
   expect(unexpectedErrors(errors), errors.join('\n')).toEqual([]);
 });

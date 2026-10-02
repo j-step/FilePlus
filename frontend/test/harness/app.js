@@ -97,7 +97,11 @@ async function launchApp({ args = [], keepZoom = false } = {}) {
     if (closed) return;
     closed = true;
     for (const entry of loggedRendererErrors(logFrom)) {
-      const i = reported.findIndex((t) => t && entry.includes(t));
+      // main.js appends " (source:line)" to the message; without it the entry
+      // is the message the page listener reported (a pageerror's carries
+      // Chromium's "Uncaught …:" prefix, so for those the message is its end).
+      const msg = entry.replace(/ \([^()]*:\d+\)$/, '');
+      const i = reported.findIndex((t) => t && (msg === t || msg.startsWith(`${t} `) || /^Uncaught /.test(msg) && msg.endsWith(t)));
       if (i >= 0) reported.splice(i, 1);
       else errors.push(`renderer.log: ${entry}`);
     }

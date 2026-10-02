@@ -84,8 +84,9 @@ April "one fix at a time" rule is retired (D10).
   including `icons.js`'s `FP_DYNAMIC_ICON_SYMBOLS` for names passed as variables — symbol/family
   counts, no raw `<svg>` outside the sprite) and a real parity gate for `filetypes.js` only (rebuilds
   to `artifacts/` and compares the text with line endings normalised, logged as
-  `check_filetypes_parity: ok`); `contrast_check.py` (stage 2/4) is a separate gate. `icons-sprite.js` has no parity gate — `verify.ps1` never runs
-  `build_icons.js`, so a hand edit that keeps references resolving still passes `check_icons.js`.
+  `check_filetypes_parity: ok`); `contrast_check.py` (stage 2/4) is a separate gate. `icons-sprite.js`
+  has no parity gate — `verify.ps1` never runs `build_icons.js`, so a hand edit that keeps references
+  resolving still passes `check_icons.js`.
 - Bridge methods added in Stage 2C live on `window.electronAPI` (`preload.js`):
   `fileIcon`, `thumbnail`, `showProperties`, `openWithDialog`, `apiPort` — `icons.js` calls the
   first two, `properties.js` the native-dialog pair, `api.js` reads the port so the renderer and

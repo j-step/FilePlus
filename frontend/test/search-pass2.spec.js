@@ -347,27 +347,32 @@ test('toolbar search: pass-2 regressions', async () => {
     // A new tab opens at This PC, whose search reads the index: index the
     // fixture first, so the results never depend on which earlier spec
     // happened to leave rows in the database (Task 11: this failed when the
-    // spec ran alone). Removed again below.
+    // spec ran alone). Removed again in the finally, even if a step fails.
     const indexHeaders = { ...headers, 'Content-Type': 'application/json' };
     expect((await fetch(`${API}/index`, { method: 'POST', headers: indexHeaders, body: JSON.stringify({ path: genDir }) })).status).toBe(200);
-    await expect.poll(async () => (await (await fetch(`${API}/index/status`, { headers })).json()).running,
-      { timeout: 30_000 }).toBe(false);
-    await page.evaluate((p) => openBrowserAt(p), docsDir);
-    await typeQuery('doc-0');
-    await expect(marks.first()).toBeVisible({ timeout: 4000 });
-    const searchTab = await page.evaluate(() => tabs.activeId);
-    await page.keyboard.press('Control+t');
-    await expect(searchInput).toHaveValue('');
-    expect(await page.evaluate(() => searchState.chips.length)).toBe(0);
-    expect(await page.evaluate(() => browserState.mode)).toBe('browse');
-    // The first query typed on the new tab must not supersede itself.
-    await typeQuery('doc-0');
-    await expect(marks.first()).toBeVisible({ timeout: 8000 });
-    await expect(searchHeader).toHaveText(/\d+ results/);
-    await page.evaluate(() => clearSearch());
-    await page.evaluate((id) => activateTab(id), searchTab);
-    await page.evaluate(() => clearSearch());
-    await fetch(`${API}/index?root=${encodeURIComponent(genDir)}`, { method: 'DELETE', headers });
+    let unindexStatus = null;
+    try {
+      await expect.poll(async () => (await (await fetch(`${API}/index/status`, { headers })).json()).running,
+        { timeout: 30_000 }).toBe(false);
+      await page.evaluate((p) => openBrowserAt(p), docsDir);
+      await typeQuery('doc-0');
+      await expect(marks.first()).toBeVisible({ timeout: 4000 });
+      const searchTab = await page.evaluate(() => tabs.activeId);
+      await page.keyboard.press('Control+t');
+      await expect(searchInput).toHaveValue('');
+      expect(await page.evaluate(() => searchState.chips.length)).toBe(0);
+      expect(await page.evaluate(() => browserState.mode)).toBe('browse');
+      // The first query typed on the new tab must not supersede itself.
+      await typeQuery('doc-0');
+      await expect(marks.first()).toBeVisible({ timeout: 8000 });
+      await expect(searchHeader).toHaveText(/\d+ results/);
+      await page.evaluate(() => clearSearch());
+      await page.evaluate((id) => activateTab(id), searchTab);
+      await page.evaluate(() => clearSearch());
+    } finally {
+      unindexStatus = (await fetch(`${API}/index?root=${encodeURIComponent(genDir)}`, { method: 'DELETE', headers })).status;
+    }
+    expect(unindexStatus).toBe(200);
 
     // -- #98  The debounce does not survive a tab switch ---------------------
     await page.evaluate((p) => openBrowserAt(p), docsDir);
@@ -431,6 +436,9 @@ test('typing right after clearing a search survives the folder re-list landing (
       input.value = 'readme';
       input.dispatchEvent(new Event('input', { bubbles: true }));
     });
+    // Its search is still only armed (the debounce) when the re-list lands —
+    // the exact window the race needs.
+    expect(await page.evaluate(() => _searchDebounceTimer !== null && window.__held.length === 1)).toBe(true);
     await page.evaluate(() => { API.get = window.__origGet; window.__held.splice(0).forEach((res) => res()); });
     // The typed text is still there and its debounced search runs and lands.
     await page.waitForFunction(() => searchState.query === 'readme' && !searchState.inflight && !window.__fpLoadPending,

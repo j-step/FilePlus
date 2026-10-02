@@ -229,7 +229,7 @@ test('path grows from the left; search shrinks then collapses BEFORE the path ca
     }
     expect(shrunkAt).not.toBeNull();
     expect(s.of).toBe(false);
-    await windowShot(app, page, 'toolbar-1400-longer-path');
+    await windowShot(app, page, 'toolbar-longer-path-search-shrunk');
     await setSize(app, page, 1400, 800);
 
     // The path changing (not the window) re-runs the layout: the deep path
@@ -526,7 +526,7 @@ test('Enter/Space on a focused toolbar button act on that button, not the focuse
     await page.waitForFunction((p) => activeTab().path === p && window.__fpLoadPending === 0, viewsDir);
     expect(await page.evaluate(() => document.activeElement?.closest('#toolbar, #tabbar, #sidebar') ? document.activeElement.id || 'chrome' : null)).toBeNull();
     const cursorAfterUp = await page.evaluate(() => browserState.focus);
-    // A navigation Enter starts begins its load synchronously in the key
+    // A navigation Enter starts its load synchronously in the key
     // handler, so once no load is pending it has landed (or none started).
     await page.keyboard.press('Enter');
     await page.waitForFunction(() => window.__fpLoadPending === 0);

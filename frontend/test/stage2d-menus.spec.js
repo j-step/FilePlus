@@ -268,14 +268,15 @@ test('Tab closes the whole menu; a stationary pointer cannot yank a keyboard-ope
     await page.keyboard.press('ArrowDown'); await page.keyboard.press('ArrowDown');
     await page.keyboard.press('ArrowRight');
     await expect(fly).toBeVisible();
-    await page.evaluate(() => {
+    // Waited out deterministically: a timer of the same CM_FLYOUT_CLOSE_GRACE
+    // registered right AFTER the pointerenter fires after any close timer the
+    // handler armed, so if the flyout survives it, nothing was armed.
+    const survived = await page.evaluate(() => {
       const beta = document.querySelector('#context-menu [data-menu-label="Beta"]');
       beta.dispatchEvent(new PointerEvent('pointerenter', { clientX: cmLastPointer.x, clientY: cmLastPointer.y }));
+      return new Promise((r) => setTimeout(() => r(cmFlyouts.length > 0), CM_FLYOUT_CLOSE_GRACE));
     });
-    // Ignored outright — the keyboard pointer mark is still set, i.e. the
-    // handler returned before arming the 300 ms close timer — rather than
-    // sleeping past the grace and hoping.
-    expect(await page.evaluate(() => cmKbdPointer !== null)).toBe(true);
+    expect(survived).toBe(true);
     await expect(fly).toBeVisible();
     await page.evaluate(() => {
       const beta = document.querySelector('#context-menu [data-menu-label="Beta"]');

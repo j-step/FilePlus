@@ -65,7 +65,7 @@ try {
   # mode for the same reason).
   $filetypesGen = ([IO.File]::ReadAllText($filetypesTmp)) -replace "`r`n", "`n"
   $filetypesCur = ([IO.File]::ReadAllText((Join-Path $root 'frontend/src/filetypes.js'))) -replace "`r`n", "`n"
-  if ($filetypesGen -ne $filetypesCur) {
+  if ($filetypesGen -cne $filetypesCur) {   # case-sensitive: -ne ignores case
     Write-Host 'frontend/src/filetypes.js is stale -- run: py -3 scripts/build_filetypes.py' -ForegroundColor Red
     exit 1
   }
