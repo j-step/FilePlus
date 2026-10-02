@@ -480,6 +480,15 @@ async def files_history(path: str = Query(..., description="Absolute path to loo
         return await ol.list_operations(conn, path=str(resolved))
 
 
+def _iso_to_epoch(value) -> Optional[float]:
+    """The index stores `created` as a naive local ISO string; listings and live
+    search carry epoch floats. /search normalises to the float (None if unparsable)."""
+    try:
+        return datetime.fromisoformat(value).timestamp()
+    except (TypeError, ValueError, OSError, OverflowError):
+        return None
+
+
 @app.get("/search")
 async def search_files(
     q: str = Query("", description="Substring to match against filename or path"),
@@ -616,6 +625,10 @@ async def search_files(
         rows = [r for r in rows if searcher.match_spans(r["filename"], words, True) is not None]
     truncated = scan_capped or len(rows) > limit
     results = rows[:limit]
+    for r in results:
+        r["created"] = _iso_to_epoch(r.get("created"))
+        if r["created"] is None:
+            del r["created"]  # unparsable/absent: omit rather than ship a string
     return {"results": results, "indexed_roots": indexed_roots, "truncated": truncated}
 
 
@@ -906,9 +919,9 @@ async def fs_search(
 # backend.winshell; consumed verbatim by the frontend Properties panel.
 # ---------------------------------------------------------------------------
 
-def _created_time(st) -> float:
-    """st_birthtime when the platform provides it (Python 3.12+ on Windows), else st_ctime."""
-    return getattr(st, "st_birthtime", None) or st.st_ctime
+# One definition (st_birthtime, falling back to st_ctime), shared with the live
+# searcher so a listing and a search result agree on "created".
+_created_time = searcher._created_time
 
 
 def _immediate_child_names(directory: Path) -> list[tuple[str, bool]]:
@@ -1166,20 +1179,38 @@ def _drive_kind(opts: str) -> str:
     return "fixed"
 
 
+# Seconds one drive may take to answer disk_usage + the volume-label call. A
+# disconnected network share can hang both for tens of seconds; the probes run
+# concurrently, so /drives answers within about this long regardless.
+_DRIVE_PROBE_TIMEOUT_S = 1.5
+
+
 @app.get("/drives")
 async def drives():
-    def scan():
-        out = []
-        for p in psutil.disk_partitions(all=True):
-            try:
-                u = psutil.disk_usage(p.mountpoint)
-            except OSError:
-                continue  # no media (empty card reader / optical drive) or denied
-            out.append({"letter": p.device.rstrip("\\"), "mount": p.mountpoint, "label": _volume_label(p.mountpoint),
-                        "kind": _drive_kind(p.opts), "fs": p.fstype or "",
-                        "total_bytes": u.total, "free_bytes": u.free, "used_bytes": u.used})
-        return out
-    return await asyncio.to_thread(scan)
+    def probe(p):
+        """Blocking work for one partition: (usage, label). OSError = no media / denied."""
+        return psutil.disk_usage(p.mountpoint), _volume_label(p.mountpoint)
+
+    async def one(p):
+        item = {"letter": p.device.rstrip("\\"), "mount": p.mountpoint, "label": "",
+                "kind": _drive_kind(p.opts), "fs": p.fstype or "",
+                "total_bytes": None, "free_bytes": None, "used_bytes": None}
+        try:
+            u, label = await asyncio.wait_for(asyncio.to_thread(probe, p), _DRIVE_PROBE_TIMEOUT_S)
+        except asyncio.TimeoutError:
+            # Unresponsive (typically a disconnected mapped network drive). Keep
+            # the drive the user can see in Explorer, with null sizes, rather than
+            # dropping it or stalling the whole response. The stuck worker thread
+            # cannot be killed; it ends when the OS call returns.
+            return item
+        except OSError:
+            return None  # no media (empty card reader / optical drive) or denied
+        item.update(label=label, total_bytes=u.total, free_bytes=u.free, used_bytes=u.used)
+        return item
+
+    parts = await asyncio.to_thread(psutil.disk_partitions, all=True)
+    results = await asyncio.gather(*(one(p) for p in parts))
+    return [r for r in results if r is not None]
 
 
 # ---------------------------------------------------------------------------

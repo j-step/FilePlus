@@ -60,3 +60,30 @@ def test_drives_permission_error_skipped(client, monkeypatch):
 
     monkeypatch.setattr(api_module.psutil, "disk_usage", usage)
     assert [d["letter"] for d in client.get("/drives").json()] == ["C:"]
+
+
+async def test_slow_drive_does_not_stall_the_route(monkeypatch):
+    """A hung network drive answers with null sizes within the probe timeout;
+    the healthy drive is unaffected and the route returns promptly."""
+    import time
+    from backend import api as api_module
+    monkeypatch.setattr(api_module, "_DRIVE_PROBE_TIMEOUT_S", 0.2)
+    monkeypatch.setattr(api_module, "_volume_label", lambda m: "")
+    monkeypatch.setattr(api_module.psutil, "disk_partitions",
+                        lambda all=False: [_parts()[0], _parts()[4]])
+
+    def usage(p):
+        if p.startswith("Z"):
+            time.sleep(1.5)
+        return NS(total=100, used=40, free=60, percent=40.0)
+
+    monkeypatch.setattr(api_module.psutil, "disk_usage", usage)
+    # Called directly (not through TestClient): the test client's per-request
+    # event loop waits for the stuck worker thread on teardown, which is a
+    # test artefact -- the real server's loop keeps running.
+    t0 = time.monotonic()
+    items = {d["letter"]: d for d in await api_module.drives()}
+    assert time.monotonic() - t0 < 1.0
+    assert items["C:"]["total_bytes"] == 100
+    assert items["Z:"]["kind"] == "network" and items["Z:"]["fs"] == "NTFS"
+    assert items["Z:"]["total_bytes"] is None and items["Z:"]["free_bytes"] is None

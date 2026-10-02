@@ -312,7 +312,9 @@ def test_list_entries_carry_created_and_accessed(client, sandbox):
     (sandbox / "folder").mkdir()
     for url in (f"/fs/list?path={sandbox}", "/fs/list/root"):
         entries = client.get(url).json()["entries"]
-        assert entries
+        assert {e["name"] for e in entries} >= {"when.txt", "folder"}
+        for e in entries:
+            assert isinstance(e["created"], float) and isinstance(e["accessed"], float)
     entries = client.get(f"/fs/list?path={sandbox}").json()["entries"]
     by_name = {e["name"]: e for e in entries}
     for name in ("when.txt", "folder"):

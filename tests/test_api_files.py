@@ -187,3 +187,24 @@ def test_tags_listing_carries_file_count(client, sandbox):
     # The q= (prefix search) branch is untouched — no count, same keys as before.
     hit = client.get("/tags", params={"q": "sha"}).json()
     assert [t["name"] for t in hit] == ["shared"] and "count" not in hit[0]
+
+
+def test_index_search_created_is_epoch_float(client, sandbox):
+    """Stage 2D: index-backed /search carries `created` as an epoch float like
+    /fs/list and live search (the index stores an ISO string); a bad value is omitted."""
+    import sqlite3, time
+    from backend import config
+    (sandbox / "epoch-me.txt").write_text("x")
+    client.post("/index", json={"path": str(sandbox)})
+    for _ in range(50):
+        if client.get("/index/status").json()["running"] is False:
+            break
+        time.sleep(0.1)
+    hit = client.get("/search", params={"q": "epoch-me"}).json()["results"][0]
+    assert isinstance(hit["created"], float)
+    assert abs(hit["created"] - (sandbox / "epoch-me.txt").stat().st_ctime) < 2
+    con = sqlite3.connect(config.FILEPLUS_DB_PATH)
+    con.execute("UPDATE files SET created = 'not a date' WHERE filename = 'epoch-me.txt'")
+    con.commit(); con.close()
+    hit = client.get("/search", params={"q": "epoch-me"}).json()["results"][0]
+    assert "created" not in hit
