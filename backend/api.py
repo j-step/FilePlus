@@ -679,6 +679,7 @@ def _scandir_entries(directory: Path, show_hidden: bool) -> tuple[list[dict], bo
             if is_hidden and not show_hidden:
                 continue
             entries.append({"name": de.name, "is_dir": False, "size": 0, "modified": 0.0,
+                            "created": 0.0, "accessed": 0.0,
                             "ext": "", "is_hidden": is_hidden, "error": "access denied"})
             continue
         is_dir = de.is_dir(follow_symlinks=False)
@@ -696,6 +697,8 @@ def _scandir_entries(directory: Path, show_hidden: bool) -> tuple[list[dict], bo
             "is_dir": is_dir,
             "size": stat.st_size,
             "modified": stat.st_mtime,
+            "created": _created_time(stat),
+            "accessed": stat.st_atime,
             "ext": ext,
             "is_hidden": is_hidden,
         })
@@ -1150,18 +1153,30 @@ def _volume_label(mount: str) -> str:
     return buf.value if ok else ""
 
 
+def _drive_kind(opts: str) -> str:
+    """psutil (Windows) puts the GetDriveType result in ``opts``: 'fixed',
+    'removable', 'cdrom' or 'remote' (a mapped network drive)."""
+    flags = {o.strip() for o in (opts or "").split(",")}
+    if "removable" in flags:
+        return "removable"
+    if "cdrom" in flags:
+        return "cdrom"
+    if "remote" in flags:
+        return "network"
+    return "fixed"
+
+
 @app.get("/drives")
 async def drives():
     def scan():
         out = []
-        for p in psutil.disk_partitions(all=False):
-            if "fixed" not in p.opts:
-                continue
+        for p in psutil.disk_partitions(all=True):
             try:
                 u = psutil.disk_usage(p.mountpoint)
             except OSError:
-                continue
+                continue  # no media (empty card reader / optical drive) or denied
             out.append({"letter": p.device.rstrip("\\"), "mount": p.mountpoint, "label": _volume_label(p.mountpoint),
+                        "kind": _drive_kind(p.opts), "fs": p.fstype or "",
                         "total_bytes": u.total, "free_bytes": u.free, "used_bytes": u.used})
         return out
     return await asyncio.to_thread(scan)
