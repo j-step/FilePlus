@@ -715,6 +715,9 @@ import io
 import threading
 
 SIIGBF_ICONONLY = 0x4
+_E_PENDING = 0x8000000A
+_E_PENDING_TRIES = 20         # x _E_PENDING_RETRY_S: well inside the batch route's 2.5 s
+_E_PENDING_RETRY_S = 0.025
 SIIGBF_SCALEUP = 0x100
 _IID_ISHELLITEMIMAGEFACTORY = "{BCC18B79-BA16-442F-80C4-8A59C30C463B}"
 ICON_PX_MIN, ICON_PX_MAX = 8, 512
@@ -874,7 +877,17 @@ def shell_image(path: Path, px: int, icon_only: bool = True) -> bytes | None:
     hbm = ctypes.c_void_p()
     try:
         flags = SIIGBF_SCALEUP | (SIIGBF_ICONONLY if icon_only else 0)
-        if get_image(ppv, _SIZE(px, px), flags, ctypes.byref(hbm)) != 0 or not hbm:
+        # E_PENDING is "not yet": the shell is still filling its icon cache
+        # on another thread (measured: the 2nd and 3rd of three concurrent
+        # first calls on a fresh STA pool). Retried briefly, never reported
+        # as "no image" -- the renderer would cache that null for the session.
+        for attempt in range(_E_PENDING_TRIES):
+            hr = get_image(ppv, _SIZE(px, px), flags, ctypes.byref(hbm)) & 0xFFFFFFFF
+            if hr != _E_PENDING:
+                break
+            if attempt + 1 < _E_PENDING_TRIES:
+                time.sleep(_E_PENDING_RETRY_S)
+        if hr != 0 or not hbm:
             return None
         return _hbitmap_to_png(hbm)
     except Exception:

@@ -115,11 +115,15 @@ function driveDisplayLabel(letter) {
 /** Tab element icon: home for the Home screen, a drive glyph for a browser
  * tab sitting at a drive root, a plain folder for every other browser tab,
  * and the screen's own icon (falling back to a generic file glyph) for
- * anything else. */
+ * anything else. In Windows-icon mode a browser tab shows the real shell
+ * icon of its folder or drive (Stage 2D §4.6), at 16 px — a shell bucket —
+ * where the chrome glyph keeps its 14. */
 function tabIconFor(record) {
   if (record.screen === 'browser') {
     const norm = String(record.path || '').replace(/[\\/]+$/, '');
-    return /^[A-Za-z]:$/.test(norm) ? icon('drive', 'fp-icon--14') : icon('folder', 'fp-icon--14');
+    const isDrive = /^[A-Za-z]:$/.test(norm);
+    const item = record.path ? { path: isDrive ? norm + '\\' : record.path, is_dir: true } : null;
+    return fpShellItemIcon(item, 16, isDrive ? 'drive' : 'folder', 'fp-tab__icon', 14);
   }
   return getScreenIcon(record.screen);
 }
@@ -131,8 +135,10 @@ function updateTabElementAppearance(record) {
   if (!el) return;
   const labelEl = el.querySelector('.fp-tab__label');
   if (labelEl) labelEl.textContent = record.label;
-  const firstSvg = el.querySelector(':scope > svg');
-  if (firstSvg) firstSvg.outerHTML = tabIconFor(record);
+  // The icon is the tab's first child: a chrome sprite glyph, or a shell image in
+  // Windows-icon mode.
+  const iconEl = el.querySelector(':scope > svg:first-child, :scope > img:first-child');
+  if (iconEl) iconEl.outerHTML = tabIconFor(record);
   el.setAttribute('title', record.label);
 }
 
@@ -2206,7 +2212,7 @@ function renderDriveItem(d) {
   return `<div class="fp-sidebar__drive-item">
     <button class="fp-sidebar__item" data-screen="browser" data-path="${escapeHtml(d.mount)}"
             data-action="navigate-path" title="${escapeHtml(labelText)}">
-      <svg class="fp-icon fp-icon--16 fp-sidebar__drive-icon" aria-hidden="true"><use href="#fp-drive"></use></svg>
+      ${fpShellItemIcon({ path: d.mount, is_dir: true }, 16, 'drive', 'fp-sidebar__drive-icon')}
       <span class="fp-sidebar__drive-letter" aria-hidden="true">${escapeHtml(letter)}</span>
       <span class="fp-sidebar__item__label">${escapeHtml(labelText)}</span>
     </button>
@@ -2233,7 +2239,7 @@ function renderPinItem(pin) {
   const label = pin.label || pathBaseName(pin.path) || pin.path;
   return `<button class="fp-sidebar__item" data-screen="browser" data-path="${escapeHtml(pin.path)}"
           data-pin-id="${pin.id}" data-action="navigate-path" title="${escapeHtml(pin.path)}">
-    <svg class="fp-icon fp-icon--16" aria-hidden="true"><use href="#fp-folder"></use></svg>
+    ${fpShellItemIcon({ path: pin.path, is_dir: true }, 16, 'folder')}
     <span class="fp-sidebar__item__label">${escapeHtml(label)}</span>
   </button>`;
 }
@@ -2325,7 +2331,7 @@ function renderQuickAccessItem(f) {
   const label = f.name || pathBaseName(f.path) || f.id;
   return `<button class="fp-sidebar__item" data-screen="browser" data-path="${escapeHtml(f.path)}"
           data-known-id="${escapeHtml(f.id)}" data-action="navigate-path" title="${escapeHtml(label)}">
-    ${icon(symbol, 'fp-icon--16')}
+    ${fpShellItemIcon({ path: f.path, is_dir: true }, 16, symbol)}
     <span class="fp-sidebar__item__label">${escapeHtml(label)}</span>
   </button>`;
 }
@@ -3873,6 +3879,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     await loadConfig();
     applySettingsFromConfig();
     restoreSettingsPane();
+    // Windows-icon mode: learn the generic folder icon before the first
+    // listing needs it (Stage 2D §4.2) — /health's own prewarm may have run
+    // before the saved icon source was known.
+    fpPrewarmIconSizes();
     // Before the first listing renders: iconFor() decides the special folder
     // icons (Desktop, Downloads, …) by matching a path against this map, and
     // falls back to guessing from the folder's name until it has loaded.

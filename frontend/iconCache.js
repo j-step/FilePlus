@@ -103,6 +103,23 @@ function clampPx(v) {
   return Number.isFinite(n) ? Math.min(512, Math.max(8, n)) : 16;
 }
 
+// Stage 2D §4.3: the physical px every shell icon / thumbnail request goes out
+// at. Snapping caps the number of distinct keys while the view size moves
+// (48..256 logical) and keeps keys stable at a fractional devicePixelRatio;
+// the <img> is CSS-sized to its logical box and the browser downsamples.
+// At <= 32 logical px the snap is at most one step up, so the shell still
+// picks its small, simplified resource (16/20/24/32) — §4.5.
+const ICON_BUCKETS = [16, 20, 24, 32, 40, 48, 64, 96, 128, 192, 256];
+
+/** Smallest bucket >= physPx, capped at 256; a value that does not parse
+ *  falls back to 16 (the list-row size, like clampPx). */
+function fpIconBucket(physPx) {
+  const n = Number(physPx);
+  if (!Number.isFinite(n)) return 16;
+  for (const b of ICON_BUCKETS) if (n <= b) return b;
+  return ICON_BUCKETS[ICON_BUCKETS.length - 1];
+}
+
 // Extensions whose Tier-B (Chromium app.getFileIcon) icon is content-specific
 // rather than one glyph shared by every file of that extension — measured
 // (scratchpad probe/out2b.json): .exe/.dll differ per path, but a .lnk or
@@ -179,6 +196,6 @@ function isSafeLocalPath(p) {
   return true;
 }
 
-const _exports = { LruCache, iconCacheKey, shellIconKey, isSafeLocalPath, normalizeWinPath, clampPx, PER_PATH_EXTS, PER_PATH_SHELL_EXTS };
+const _exports = { LruCache, iconCacheKey, shellIconKey, isSafeLocalPath, normalizeWinPath, clampPx, fpIconBucket, ICON_BUCKETS, PER_PATH_EXTS, PER_PATH_SHELL_EXTS };
 if (typeof module !== 'undefined' && module.exports) module.exports = _exports;
 else if (typeof window !== 'undefined') window.FpIconCache = _exports;

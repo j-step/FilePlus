@@ -170,11 +170,12 @@ function setListScale(v, { persist = true, invalidate = true } = {}) {
     // render, so every icon is requested at the right size already and there
     // is nothing on screen to re-resolve (Stage 2D §4.1 #1).
     if (!invalidate) { if (persist) saveSetting('ui.list_scale', scale); return; }
-    // Row/tile icons and thumbnails are sized in physical px from the CSS
-    // box (icon-design.md §2), so a --list-scale change makes the old
-    // bitmap the wrong size until it re-resolves. A timer, not rAF: an
-    // occluded window stops painting (icons.js:_fpQueueScan does the same).
-    if (typeof fpInvalidateLazyIcons === 'function') setTimeout(() => fpInvalidateLazyIcons(listScroll), 0);
+    // Row/tile icons and thumbnails are requested at the px bucket of their
+    // CSS box (Stage 2D §4.3), so a --list-scale change may move them into
+    // another bucket. The boxes resize with the custom property in this very
+    // frame; the sharper bitmaps swap in after decode, 120 ms after the last
+    // change (fpInvalidateLazyIcons debounces), into the same boxes.
+    if (typeof fpInvalidateLazyIcons === 'function') fpInvalidateLazyIcons(listScroll);
   }
   if (persist) saveSetting('ui.list_scale', scale);
 }
@@ -1213,6 +1214,7 @@ function stemOf(name) {
  * 16px thumbnail of the picture itself. */
 function renderFsIcon(entry) {
   const source = fpIconSource();
+  const size = fpListIconSize();
   if (browserState.view !== 'grid') {
     const wantsThumb = !entry.is_dir && !entry.error && source === 'fileplus'
       && typeof fpIsMedia === 'function' && fpIsMedia(entry.ext)
@@ -1221,13 +1223,21 @@ function renderFsIcon(entry) {
       ? fpThumbBox(entry, 16, 'fp-row__icon fp-row__icon--thumb')
       : iconFor(entry, 16, 'fp-row__icon');
   }
-  if (entry.error) return fpTileIcon(entry);
-  if (source === 'windows') return fpThumbBox(entry, 96, 'fp-tile__thumb');
+  if (entry.error) return fpTileIcon(entry, size);
+  if (source === 'windows') return fpThumbBox(entry, size, 'fp-tile__thumb');
   if (entry.is_dir) return fpFolderPeekBox(entry, 'fp-tile__thumb');
   if (typeof fpIsMedia === 'function' && fpIsMedia(entry.ext) && fpFamilyFor(entry.ext) !== 'svg') {
-    return fpThumbBox(entry, 96, 'fp-tile__thumb');
+    return fpThumbBox(entry, size, 'fp-tile__thumb');
   }
-  return fpTileIcon(entry);
+  return fpTileIcon(entry, size);
+}
+
+/** The listing's logical icon size in CSS px — what --icon-size on
+ * #list-scroll resolves to (styles.css): 96 x --list-scale for grid tiles,
+ * 16 for list/details rows. Row markup asks icons.js for this size, so its
+ * synchronous cache lookup uses the same px bucket the lazy path would. */
+function fpListIconSize() {
+  return browserState.view === 'grid' ? Math.round(96 * (browserState.listScale || 1)) : 16;
 }
 
 function renderFsRow(entry, parentPath) {
@@ -1505,7 +1515,12 @@ function updateBreadcrumb(path) {
     // button's own data-path stays the literal "D:\\" for navigation either way.
     const isDriveRoot = i === 0 && /^[A-Za-z]:$/.test(part);
     const label = isDriveRoot ? driveDisplayLabel(part) : part;
-    return `<button class="${cls}" data-action="navigate-crumb" data-path="${escapeHtml(cumulative)}">${escapeHtml(label)}</button>`;
+    // The drive crumb carries the drive's own icon — the real shell icon in
+    // Windows-icon mode (Stage 2D §4.6).
+    const iconHtml = isDriveRoot
+      ? fpShellItemIcon({ path: cumulative, is_dir: true }, 16, 'drive', 'fp-breadcrumb__icon')
+      : '';
+    return `<button class="${cls}" data-action="navigate-crumb" data-path="${escapeHtml(cumulative)}">${iconHtml}${escapeHtml(label)}</button>`;
   }).join('<span class="fp-breadcrumb__sep">·</span>');
   crumb.innerHTML = html;
 }

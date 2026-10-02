@@ -138,9 +138,16 @@ function _folderSymbol(entry) {
  * extension itself as a small badge next to the blank page icon — the pair
  * is ONE root element (.fp-icon-badged) so a centring container (a grid
  * tile's .fp-thumb-box) centres the icon, not the icon-plus-badge as a unit
- * (pass 2 #146). */
+ * (pass 2 #146).
+ *
+ * Small sizes (Stage 2D §4.5): at <= 32 logical px a FilePlus-mode icon is
+ * the compact variant (.fp-icon--compact — the family glyph alone; CSS hides
+ * the extension badge). In Windows mode the same simplification comes from
+ * asking the shell for the true physical px (fpDevicePx), which picks its
+ * own small, simplified resource. */
 function iconFor(entry, size = 16, cls = '') {
-  const cls16 = `fp-icon--${size}${cls ? ' ' + cls : ''}`;
+  const compact = size <= 32;
+  const cls16 = `fp-icon--${size}${compact ? ' fp-icon--compact' : ''}${cls ? ' ' + cls : ''}`;
   if (!entry) return icon('ft-generic', cls16);
   const source = fpIconSource();
   if (entry.is_dir) {
@@ -153,9 +160,28 @@ function iconFor(entry, size = 16, cls = '') {
   if (source === 'windows') return _winIcon(entry, size, 'ft-' + fam, cls);
   if (fam === 'generic' && entry.ext) {
     const label = String(entry.ext).replace(/^\./, '').slice(0, 3).toUpperCase();
-    return `<span class="fp-icon-badged">${icon('ft-generic', cls16)}<span class="fp-ext-badge">${_fpEsc(label)}</span></span>`;
+    return `<span class="fp-icon-badged${compact ? ' fp-icon-badged--compact' : ''}">${icon('ft-generic', cls16)}<span class="fp-ext-badge">${_fpEsc(label)}</span></span>`;
   }
   return icon('ft-' + fam, cls16);
+}
+
+/** The item's TYPE icon at `logicalPx`, never its thumbnail (Stage 2D §4.6):
+ * the shell icon for the extension (an `ext:` key) for an ordinary file, the
+ * per-path icon for a per-path kind (.exe, .lnk, …), the folder icon for a
+ * directory — or the family sprite in FilePlus mode. Properties' header uses
+ * it, and so does a thumbnail slot while its thumbnail is unresolved (an
+ * image's type icon is a truthful stand-in). */
+function fpTypeIconFor(entry, logicalPx, cls = '') {
+  return iconFor(entry, logicalPx, cls);
+}
+
+/** An ITEM icon at a site whose FilePlus-mode look is a chrome glyph (a tab,
+ * a sidebar folder or drive, the breadcrumb's drive crumb): the real Windows
+ * shell icon for `entry` in Windows mode (Stage 2D §4.6), the chrome symbol
+ * `chromeSym` otherwise (at `chromeSize`, which defaults to `size`). */
+function fpShellItemIcon(entry, size, chromeSym, cls = '', chromeSize = size) {
+  if (fpIconSource() === 'windows' && entry && entry.path) return _winIcon(entry, size, chromeSym, cls);
+  return icon(chromeSym, `fp-icon--${chromeSize}${cls ? ' ' + cls : ''}`);
 }
 
 // 1x1 transparent GIF: an <img> with no src renders the browser's broken-image
@@ -164,45 +190,136 @@ function iconFor(entry, size = 16, cls = '') {
 // thumbnail always arrives as data:image/png.
 const FP_BLANK_PX = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
 
-/** Windows-shell icon placeholder for `entry`, resolved lazily by
- * _fpResolveWinIcon below. `fallbackSymbol` is the sprite symbol rendered
- * instead if neither shell tier has an icon (or we are not running under
- * Electron at all). */
+/** Windows-shell icon for `entry` at `size` logical px (Stage 2D §4.2).
+ *
+ * Synchronous cache paint first: the renderer LRU is looked up with the
+ * exact key the lazy path would ask for (fpDevicePx(size) — the px bucket),
+ * and a hit is emitted already settled (src set, data-fp-lazy="done", never
+ * registered with an observer, no transition), so a revisited folder or tab
+ * paints its real icons in the same frame as its rows. A cached null (both
+ * tiers definitively had nothing) paints the sprite at once.
+ *
+ * On a miss, a per-path kind (a folder, .exe, .lnk, …) paints the shell's
+ * generic icon for that kind when one is known (data-generic="1"); the lazy
+ * per-path answer replaces it only if its bytes differ, so a plain folder
+ * never visibly changes. Anything else is an empty slot of its exact size
+ * (the 1x1 blank GIF), resolved lazily by _fpResolveWinIcon below, which
+ * fades the bitmap in. `fallbackSymbol` is the sprite symbol rendered only
+ * when neither shell tier has an icon (or we are not running under Electron
+ * at all). Sizing is CSS's job (the .fp-icon--N modifier, or the row/tile
+ * box from --icon-size); the bitmap is the px bucket and the browser
+ * downsamples (§4.3). */
 function _winIcon(entry, size, fallbackSymbol, cls = '') {
+  const compact = size <= 32 ? ' fp-icon--compact' : '';
   const cls16 = `fp-icon--${size}${cls ? ' ' + cls : ''}`;
   const p = entry && entry.path;
-  if (!p) return icon(fallbackSymbol, cls16);
+  if (!p) return icon(fallbackSymbol, cls16 + compact);
   const ext = String(entry.ext || '').replace(/^\./, '');
-  const dirAttr = entry.is_dir ? ' data-dir=""' : '';
-  return `<img class="fp-icon fp-icon--win ${cls16}" alt="" src="${FP_BLANK_PX}"`
-    + ` data-win-icon="${_fpEsc(p)}" data-ext="${_fpEsc(ext)}" data-size="${size}"${dirAttr}`
-    + ` data-fallback="${_fpEsc(fallbackSymbol)}">`;
+  const isDir = !!entry.is_dir;
+  const attrs = ` data-win-icon="${_fpEsc(p)}" data-ext="${_fpEsc(ext)}" data-size="${size}"${isDir ? ' data-dir=""' : ''}`
+    + ` data-fallback="${_fpEsc(fallbackSymbol)}"`;
+  const px = fpDevicePx(size);
+  const key = _IC.shellIconKey(p, ext, isDir, px);
+  const hit = _fpWinIconCache.get(key);
+  if (hit === null) return icon(fallbackSymbol, cls16 + compact);
+  if (hit && hit.url) {
+    return `<img class="fp-icon fp-icon--win ${cls16} is-settled" alt="" src="${_fpEsc(hit.url)}"${attrs}`
+      + ` data-key="${_fpEsc(key)}" data-px="${hit.px}" data-exact="${hit.exact ? '1' : ''}" data-fp-lazy="done">`;
+  }
+  const gk = fpGenericKey(entry, px);
+  const generic = gk ? _fpGenerics.get(gk) : null;
+  if (generic) {
+    return `<img class="fp-icon fp-icon--win ${cls16} is-settled" alt="" src="${_fpEsc(generic)}"${attrs} data-generic="1">`;
+  }
+  return `<img class="fp-icon fp-icon--win ${cls16}" alt="" src="${FP_BLANK_PX}"${attrs}>`;
 }
 
-/** Sprite icon + a shell thumbnail layered over it: the icon shows
- * immediately and the thumbnail fades in on top once the shell answers, so a
- * file whose content cannot be thumbnailed simply keeps its family icon
- * (.fp-thumb--failed hides the <img> again) instead of flashing a hole. */
+/** Same markup as a Windows-mode iconFor(), whatever ui.icon_source says —
+ * for the one place that always shows the shell's own icon (Properties'
+ * "Opens with" app). */
+function fpShellIconMarkup(entry, size, fallbackSymbol, cls = '') {
+  return _winIcon(entry, size, fallbackSymbol, cls);
+}
+
+/** Synchronous markup for a cached shell icon of `entry` at `logicalPx`, or
+ * null when the renderer cache has no bitmap for that exact key yet. */
+function fpCachedIconImg(entry, logicalPx, cls = '') {
+  if (!entry || !entry.path) return null;
+  const ext = String(entry.ext || '').replace(/^\./, '');
+  const hit = _fpWinIconCache.get(_IC.shellIconKey(entry.path, ext, !!entry.is_dir, fpDevicePx(logicalPx)));
+  if (!hit || !hit.url) return null;
+  return _winIcon(entry, logicalPx, entry.is_dir ? 'ft-folder' : 'ft-generic', cls);
+}
+
+/** The cache key of the shell's GENERIC icon for a per-path kind at `px`
+ * (Stage 2D §4.2): `dir:*:<px>` for a folder, `ext:.<ext>:<px>` for .exe,
+ * .lnk, .url, .ico and the other per-path extensions; null for an ordinary
+ * file, whose `ext:` key is already shared. Only the folder generic is ever
+ * filled (see _fpVoteGeneric): the shell draws an .exe / .lnk / .ico from
+ * the file itself, so no bitmap the renderer can obtain is that kind's true
+ * generic — those slots stay empty until the per-path answer arrives. */
+function fpGenericKey(entry, px) {
+  if (!entry) return null;
+  // A drive root is drawn as a drive, never as a folder: no generic for it.
+  if (entry.is_dir) return _fpIsDriveRoot(entry.path) ? null : `dir:*:${px}`;
+  const e = String(entry.ext || '').replace(/^\./, '').toLowerCase();
+  return _IC.PER_PATH_SHELL_EXTS.has(e) ? `ext:.${e}:${px}` : null;
+}
+
+/** Inline size for a resolved (non-mini) thumbnail: its own box, at the
+ * picture's aspect ratio, as a share of the s×s slot — so it scales with
+ * --icon-size in the same frame as its cell and never needs re-pinning. */
+function _fpThumbBoxSize(res) {
+  const m = Math.max(res.w, res.h) || 1;
+  return { width: `${(res.w / m) * 100}%`, height: `${(res.h / m) * 100}%` };
+}
+function _fpThumbBoxStyle(res) {
+  const s = _fpThumbBoxSize(res);
+  return `width:${s.width};height:${s.height}`;
+}
+
+/** Thumbnail slot (Stage 2D §4.4): the item's TYPE icon (the shell icon in
+ * Windows mode — cached, generic or an empty slot, never the FilePlus
+ * sprite; the family sprite in FilePlus mode, where it IS the type icon)
+ * with the shell thumbnail layered over it. The thumbnail crossfades in over
+ * the type icon once the shell answers; a file whose content cannot be
+ * thumbnailed keeps its type icon (.fp-thumb--failed hides the <img>).
+ *
+ * Cache paint: a cached thumbnail is emitted already settled, alone (no type
+ * icon under it); a cached "no thumbnail" emits the type icon alone. */
 function fpThumbBox(entry, size, cls = '') {
   const sym = entry.is_dir ? _folderSymbol(entry) : 'ft-' + fpFamilyFor(entry.ext);
   const ext = String(entry.ext || '').replace(/^\./, '');
   const mtime = Math.round(Number(entry.modified) || 0);
-  const iconSize = size >= 64 ? 48 : (size >= 32 ? 24 : 16);
   const dirAttr = entry.is_dir ? ' data-dir=""' : '';
-  return `<span class="fp-thumb-box${cls ? ' ' + cls : ''}">`
-    + icon(sym, `fp-icon--${iconSize}`)
-    + `<img class="fp-thumb" alt="" src="${FP_BLANK_PX}"`
-    + ` data-thumb="${_fpEsc(entry.path)}" data-ext="${_fpEsc(ext)}"`
-    + ` data-size="${size}" data-mtime="${mtime}"${dirAttr}>`
+  const boxCls = `fp-thumb-box${cls ? ' ' + cls : ''}`;
+  const thumbAttrs = ` data-thumb="${_fpEsc(entry.path)}" data-ext="${_fpEsc(ext)}"`
+    + ` data-size="${size}" data-mtime="${mtime}"${dirAttr}`;
+  const px = fpDevicePx(size);
+  const hit = entry.path ? _fpThumbCache.get(_fpThumbKey(entry.path, mtime, px)) : undefined;
+  if (hit && hit.url) {
+    return `<span class="${boxCls} fp-thumb-box--has-thumb">`
+      + `<img class="fp-thumb fp-thumb--ready is-settled" alt="" src="${_fpEsc(hit.url)}" style="${_fpThumbBoxStyle(hit)}"`
+      + `${thumbAttrs} data-px="${Math.max(hit.w, hit.h)}" data-fp-lazy="done">`
+      + '</span>';
+  }
+  const typeIcon = fpIconSource() === 'windows'
+    ? _winIcon(entry, size, sym, 'fp-thumb-box__type')
+    : icon(sym, `fp-icon--${size >= 64 ? 48 : (size >= 32 ? 24 : 16)} fp-thumb-box__type`);
+  if (hit === null) return `<span class="${boxCls}">${typeIcon}</span>`;
+  return `<span class="${boxCls}">${typeIcon}`
+    + `<img class="fp-thumb" alt="" src="${FP_BLANK_PX}"${thumbAttrs}>`
     + '</span>';
 }
 
 /** Grid tile visual for an entry with no thumbnail to show (a document, a
  * code file, an unreadable entry): the family/folder/shell icon centred in
  * the tile's thumbnail area, so every tile in the grid is the same size
- * whether or not the shell had a picture for it. */
-function fpTileIcon(entry) {
-  return `<span class="fp-thumb-box fp-tile__thumb">${iconFor(entry, 48)}</span>`;
+ * whether or not the shell had a picture for it. `size` is the tile's
+ * logical icon size (the --icon-size of the grid); a Windows shell icon
+ * fills the whole s×s box, as Explorer's own large icons do. */
+function fpTileIcon(entry, size = 96) {
+  return `<span class="fp-thumb-box fp-tile__thumb">${iconFor(entry, size)}</span>`;
 }
 
 /** Folder tile for grid view in 'fileplus' mode: the folder symbol, with
@@ -233,11 +350,16 @@ function fpFolderPeekBox(entry, cls = '') {
  * re-render (sort, theme switch, view toggle) repaints from memory with no
  * IPC/HTTP at all.
  *
- * Sizing contract (pass 2 — icon design §2): every request carries
- * px = clampPx(round(cssBox * devicePixelRatio)); the bitmap that comes back
- * is exactly px*px (thumbnails: longer edge == px); the <img> is pinned to
- * px/dpr CSS px so Chromium composites it 1:1 instead of stretching a
- * lower-resolution bitmap.
+ * Sizing contract (Stage 2D §4.3, refining pass 2's icon design §2): every
+ * request carries px = fpDevicePx(box) — round(box * devicePixelRatio)
+ * snapped up to a px bucket; the bitmap that comes back is exactly px*px
+ * (thumbnails: longer edge == px); the <img> is CSS-sized to its logical box
+ * and the browser downsamples, so a bitmap landing never changes a box.
+ *
+ * No flash (Stage 2D §4.2): markup is built from the cache first — a hit is
+ * painted settled with its row, a per-path miss paints the shell's generic
+ * for its kind, any other miss is an empty slot; the FilePlus sprite reaches
+ * an item in Windows mode only after both tiers failed for it.
  *
  * Two icon sources, one contract (design §0/§2):
  *   Tier A — POST /shell/icons (backend/winshell.shell_image,
@@ -270,6 +392,10 @@ const _fpPeekCache = new _IC.LruCache(300);
 const _fpThumbInFlight = new Map();
 const _fpIconInFlight = new Map();
 const _fpPeekInFlight = new Map();
+// Generic icons for per-path kinds (Stage 2D §4.2): generic key ->
+// data URL. Never evicted (one per px bucket). See _fpVoteGeneric.
+const _fpGenerics = new Map();
+const _fpGenericVotes = new Map(); // generic key -> Map<url, count>
 let _fpIconBatch = null; // { items: Map<key, {..., resolve, waiters}> } | null
 // 'unknown' | 'live' | 'absent' — see fpShellIconRoute.
 let _fpShellRoute = 'unknown';
@@ -280,20 +406,106 @@ const _FP_TIER_B_MAX_ITEMS = 64;    // per electronAPI.fileIcons invoke (main.js
 window.__fpIconStats = { requested: 0, keys: 0, batches: 0, tierA: 0, tierB: 0, dropped: 0 };
 let _fpLazySeq = 0;
 
-/** px for a CSS box: round(css * devicePixelRatio), clamped to 8..512.
- * devicePixelRatio already folds in Electron's own webContents zoom, so
- * zoom is covered for free — see main.js's ZOOM_STEPS / setZoomFactor. */
+/** The physical px every shell icon / thumbnail request for a `css`-px box
+ * goes out at (Stage 2D §4.3): round(css * devicePixelRatio) snapped UP to
+ * the next px bucket (fpIconBucket, iconCache.js), capped at 256. The <img>
+ * stays CSS-sized to its logical box and the browser downsamples; at <= 32
+ * logical px the snap is at most one step, so the shell still picks its own
+ * small, simplified resource. devicePixelRatio already folds in Electron's
+ * webContents zoom — see main.js's ZOOM_STEPS / setZoomFactor. */
 function fpDevicePx(css) {
-  return _IC.clampPx(Math.round(css * (window.devicePixelRatio || 1)));
+  return _IC.fpIconBucket(Math.round(css * (window.devicePixelRatio || 1)));
 }
 
-/** The CSS width of the box a bitmap will fill: the IntersectionObserver
+/** The logical size of the box a bitmap will fill: the IntersectionObserver
  * record's own boundingClientRect when available (free — no forced layout),
- * else a fresh getBoundingClientRect(), else `fallback` (the no-IO eager
- * path, or a rect measured as 0 before first layout). */
-function _fpCssBox(el, rect, fallback) {
+ * else a fresh getBoundingClientRect(), else `declared` (the element's own
+ * data-size: the no-IO eager path, or a rect measured as 0 before first
+ * layout). A measurement within 10% of `declared` IS the declared size — a
+ * transient transform (a drag target's scale(1.05)) or sub-pixel layout must
+ * not move a request into another bucket, and the markup's synchronous cache
+ * paint looked the key up at the declared size. */
+function _fpCssBox(el, rect, declared) {
   const r = rect || el.getBoundingClientRect();
-  return r && r.width > 0 ? r.width : fallback;
+  const w = r && r.width > 0 ? r.width : 0;
+  if (!w) return declared;
+  return declared && Math.abs(w - declared) <= declared * 0.1 ? declared : w;
+}
+
+function _fpThumbKey(path, mtime, px) {
+  return `${_IC.normalizeWinPath(path)}|${mtime}|${px}`;
+}
+
+function _fpIsDriveRoot(p) {
+  return /^[A-Za-z]:[\\/]?$/.test(String(p || ''));
+}
+
+/** Learns the shell's generic folder icon at `px` from the per-path answers
+ * themselves (Stage 2D §4.2). The shell draws every plain folder (no
+ * desktop.ini icon, not a known folder) byte-identically, empty or not
+ * (measured), so the most frequent bitmap among ordinary folders at a px IS
+ * the generic — a vote, so one custom-icon folder seen first cannot make
+ * every folder flash its icon. Known folders and drive roots never vote. */
+function _fpVoteGeneric(path, px, url) {
+  if (!url || _fpIsDriveRoot(path) || fpKnownFolderIdFor(path)) return;
+  const gk = `dir:*:${px}`;
+  let votes = _fpGenericVotes.get(gk);
+  if (!votes) { votes = new Map(); _fpGenericVotes.set(gk, votes); }
+  votes.set(url, (votes.get(url) || 0) + 1);
+  let best = null, n = 0;
+  for (const [u, c] of votes) if (c > n) { best = u; n = c; }
+  // Bounded: a folder of custom icons adds one single-vote entry each.
+  if (votes.size > 32) for (const [u, c] of [...votes]) if (c === 1 && u !== best) votes.delete(u);
+  _fpGenerics.set(gk, best);
+}
+
+// Sample folders for prewarming the generic folder icon before any listing
+// has been seen: the root listing's own sub-folders (GET /fs/list/root),
+// fetched once.
+let _fpGenericSampleDirs = null;
+function _fpGenericSamples() {
+  if (!_fpGenericSampleDirs) {
+    _fpGenericSampleDirs = API.get('/fs/list/root', null, apiTimeout())
+      .then((d) => {
+        const base = String((d && d.path) || '').replace(/[\\/]+$/, '');
+        return ((d && d.entries) || []).filter((e) => e.is_dir && !e.error).slice(0, 4)
+          .map((e) => `${base}\\${e.name}`);
+      })
+      .catch(() => { _fpGenericSampleDirs = null; return []; });
+  }
+  return _fpGenericSampleDirs;
+}
+
+/** Resolves the generic folder icon at the bucket of `logicalPx` once, ahead
+ * of the first listing that needs it (Stage 2D §4.2 "Prewarm"): at startup,
+ * when Windows mode is switched on, and on every icon-size bucket change.
+ * The open folder's own ordinary sub-folders are the samples when there are
+ * any, else the root listing's. No-op outside Windows mode, without Tier A
+ * (Tier B never renders a folder), or once the generic is known. */
+async function fpPrewarmGenerics(logicalPx) {
+  if (fpIconSource() !== 'windows' || _fpShellRoute === 'absent') return;
+  const px = fpDevicePx(logicalPx);
+  if (_fpGenerics.has(`dir:*:${px}`)) return;
+  let samples = [];
+  if (typeof browserState !== 'undefined' && browserState.path && Array.isArray(browserState.entries)) {
+    const base = String(browserState.path).replace(/[\\/]+$/, '');
+    samples = browserState.entries.filter((e) => e.is_dir && !e.error).slice(0, 4).map((e) => `${base}\\${e.name}`)
+      .filter((p) => !fpKnownFolderIdFor(p));
+  }
+  if (!samples.length) samples = await _fpGenericSamples();
+  for (const p of samples) {
+    const key = _IC.shellIconKey(p, '', true, px);
+    if (_fpWinIconCache.get(key) !== undefined) continue;
+    fpShellIconUrl(key, { path: p, ext: '', isDir: true, px });
+  }
+}
+
+/** Prewarms the generic folder icon for every size on screen: 16 px (rows,
+ * sidebar, tabs) and the Browser's current icon size (browser.js
+ * fpListIconSize — loaded later, so looked up at call time). */
+function fpPrewarmIconSizes() {
+  fpPrewarmGenerics(16);
+  if (typeof fpListIconSize === 'function') fpPrewarmGenerics(fpListIconSize());
 }
 
 /** Route state for POST /shell/icons (Tier A). 'absent' means this backend
@@ -314,6 +526,7 @@ function fpShellIconRoute(state) {
     _fpShellRoute = state;
     _fpWinIconCache.deleteWhere((v) => v === null);
     _fpThumbCache.deleteWhere((v) => v === null);
+    if (state === 'live') fpPrewarmIconSizes();
   }
   return _fpShellRoute;
 }
@@ -355,7 +568,9 @@ function _fpObserverFor(el) {
 }
 
 function _fpObserve(el) {
-  if (!el || el._fpObserved) return;
+  // A settled element (painted from cache with its markup, or resolved
+  // already) has nothing left to ask for until fpInvalidateLazyIcons resets it.
+  if (!el || el._fpObserved || el.dataset.fpLazy === 'done') return;
   el._fpObserved = true;
   const obs = _fpObserverFor(el);
   if (obs) { el._fpObs = obs; obs.observe(el); }
@@ -415,31 +630,77 @@ function _fpSettle(el, seq, ok) {
 }
 
 /** Replaces a failed Windows-shell <img> with the sprite symbol it recorded
- * as its fallback, in place, so the row never shows an empty box. */
+ * as its fallback, in place, so the row never shows an empty box. This is
+ * the ONLY way the FilePlus sprite reaches an item in Windows mode: after
+ * both shell tiers have failed for it (Stage 2D §4.2). */
 function _fpWinIconFallback(el) {
   const sym = el.dataset.fallback || 'ft-generic';
-  const keep = [...el.classList].filter(c => c !== 'fp-icon--win' && c !== 'fp-icon').join(' ');
-  el.outerHTML = icon(sym, keep);
+  const size = Number(el.dataset.size) || 16;
+  const keep = [...el.classList].filter(c => c !== 'fp-icon--win' && c !== 'fp-icon'
+    && c !== 'is-settled' && c !== 'fp-icon--fade-in');
+  if (size <= 32) keep.push('fp-icon--compact');
+  el.outerHTML = icon(sym, keep.join(' '));
+}
+
+/** True when `img` already shows a real bitmap (a generic, or the previous
+ * bucket's icon) rather than the blank placeholder. */
+function _fpHasBitmap(img) {
+  return !!img.getAttribute('src') && !img.getAttribute('src').startsWith('data:image/gif');
+}
+
+/** Assigns `url` to `img` only after it has decoded on a detached Image, so
+ * the swap shows no blank frame (Stage 2D §4.3) — the box is CSS-sized and
+ * never changes. `stillWanted()` is re-checked after the decode. */
+function _fpSwapAfterDecode(img, url, stillWanted, after) {
+  const pre = new Image();
+  pre.src = url;
+  const swap = () => {
+    if (!stillWanted()) return;
+    img.src = url;
+    if (after) after();
+  };
+  pre.decode().then(swap, swap);
 }
 
 // ── Windows-shell icons: Tier A (backend) then Tier B (Electron) ───────────
 
-/** Resolves one Windows-shell <img> at the sizing contract's px (design
- * §2): px = clampPx(round(css * dpr)), the bitmap that comes back is exactly
- * px*px, and the element is pinned to px/dpr CSS px so Chromium composites it
- * 1:1 instead of stretching a lower-resolution bitmap across a larger box. */
+/** Resolves one Windows-shell <img> at the px bucket of its logical box
+ * (Stage 2D §4.3; design §2): px = fpDevicePx(box). The <img> stays CSS-sized
+ * to its box (the browser downsamples the bucket's bitmap).
+ *
+ * How the answer lands depends on what the slot shows now:
+ *  - the same bitmap (a generic that turned out right, or a re-request that
+ *    hit the same key) — nothing moves;
+ *  - another real bitmap (a generic for a special folder, the previous
+ *    bucket after a size change) — swapped after decode(), no blank frame;
+ *  - the empty placeholder — painted with a 90 ms fade-in (none under
+ *    reduced motion).
+ * A null answer keeps a bitmap already on screen and otherwise falls back to
+ * the sprite. */
 function _fpResolveWinIcon(el, seq, rect) {
   const p = el.dataset.winIcon, ext = el.dataset.ext || '', isDir = el.dataset.dir !== undefined;
-  const dpr = window.devicePixelRatio || 1;
   const css = _fpCssBox(el, rect, Number(el.dataset.size) || 16);
   const px = fpDevicePx(css);
   const key = _IC.shellIconKey(p, ext, isDir, px);
   const paint = (res) => {
     if (!_fpSettle(el, seq, true)) return;
-    if (!res || !res.url) { _fpWinIconFallback(el); return; }
-    el.dataset.px = String(res.px); el.dataset.exact = res.exact ? '1' : '';
-    el.style.width = el.style.height = (res.px / dpr) + 'px'; // device box == bitmap, always
+    const showing = _fpHasBitmap(el);
+    if (!res || !res.url) {
+      if (showing) { delete el.dataset.generic; return; }
+      _fpWinIconFallback(el);
+      return;
+    }
+    el.dataset.key = key;
+    el.dataset.px = String(res.px);
+    el.dataset.exact = res.exact ? '1' : '';
+    if (el.getAttribute('src') === res.url) { delete el.dataset.generic; return; }
+    if (showing) {
+      _fpSwapAfterDecode(el, res.url, () => el.isConnected && el._fpSeq === seq,
+        () => { delete el.dataset.generic; });
+      return;
+    }
     el.src = res.url;
+    el.classList.add('fp-icon--fade-in');
   };
   const hit = _fpWinIconCache.get(key);
   if (hit !== undefined) { paint(hit); return; }
@@ -477,6 +738,7 @@ function fpShellIconUrl(key, item, el) {
     _fpIconBatch.items.set(key, { ...item, key, resolve, waiters: el ? [el] : [] });
   }).then((ans) => {                            // ans = {res, cache}
     if (ans.cache) _fpWinIconCache.set(key, ans.res);
+    if (ans.cache && ans.res && ans.res.url && item.isDir) _fpVoteGeneric(item.path, item.px, ans.res.url);
     _fpIconInFlight.delete(key);
     return ans.res;
   });
@@ -589,42 +851,27 @@ function fpRequestThumbnail(imgEl, path, size, mtime, seq, rect) {
     ? (imgEl.offsetWidth || size)
     : _fpCssBox(imgEl.parentElement || imgEl, null, size);
   const px = fpDevicePx(css);
-  const ext = imgEl.dataset.ext || '';
-  const isDir = imgEl.dataset.dir !== undefined;
-  const key = `${_IC.normalizeWinPath(path)}|${mtime}|${px}`;
+  const key = _fpThumbKey(path, mtime, px);
   const hit = _fpThumbCache.get(key);
   if (hit !== undefined) { _fpApplyThumb(imgEl, seq, hit); return; }
-  _fpFetchThumb(key, path, px, mtime, ext, isDir)
+  _fpFetchThumb(key, path, px, mtime)
     .then((res) => _fpApplyThumb(imgEl, seq, res));
 }
 
 /** One shell round trip per key, shared by every element waiting on it and
  * memoised in _fpThumbCache when it settles. Resolves to {url, w, h} or
- * null; never rejects. A null that came from the icon fallback while Tier A
- * was unavailable is not memoised (same rule as fpShellIconUrl). */
-function _fpFetchThumb(key, path, px, mtime, ext, isDir) {
+ * null; never rejects. No content thumbnail (a .txt, an unreadable image, an
+ * empty folder) is a definitive null: the slot's own type icon, already
+ * under the thumbnail <img>, is the answer in both icon modes (Stage 2D
+ * §4.4) — a bridge call that threw is not memoised. */
+function _fpFetchThumb(key, path, px, mtime) {
   const pending = _fpThumbInFlight.get(key);
   if (pending) return pending;
   const api = window.electronAPI;
   let cacheable = true;
   const request = (!api || typeof api.thumbnail !== 'function')
     ? Promise.resolve(null)
-    : Promise.resolve(api.thumbnail(path, px, mtime)).then((res) => {
-      if (res) return res;
-      // No content thumbnail (a .txt, an unreadable image, an empty folder,
-      // a non-image the shell can't picture) — in Windows mode the shell's
-      // per-type icon at the same px is still better than nothing; in
-      // FilePlus mode the family sprite already underneath is the type icon
-      // (spec §6.1), so this deliberately returns null rather than painting
-      // a shell PNG over it.
-      if (fpIconSource() !== 'windows') return null;
-      const ikey = _IC.shellIconKey(path, ext, isDir, px);
-      return fpShellIconUrl(ikey, { path, ext, isDir, px }).then((r) => {
-        if (r && r.url) return { url: r.url, w: r.px, h: r.px };
-        cacheable = _fpWinIconCache.get(ikey) === null; // the icon layer only memoises a definitive null
-        return null;
-      });
-    });
+    : Promise.resolve(api.thumbnail(path, px, mtime));
   const settled = request.catch(() => { cacheable = false; return null; }).then((res) => {
     if (res || cacheable) _fpThumbCache.set(key, res || null);
     _fpThumbInFlight.delete(key);
@@ -643,27 +890,57 @@ function _fpApplyThumb(imgEl, seq, res) {
   // failed at a different px — and the reverse: a tile that once had a
   // thumbnail and now resolves null must show its sprite again, not an
   // empty box (pass 2 #142).
-  imgEl.classList.remove('fp-thumb--failed');
   if (!res) {
+    imgEl.classList.remove('fp-thumb--failed');
     imgEl.classList.add('fp-thumb--failed');
     imgEl.classList.remove('fp-thumb--ready');
     imgEl.style.width = imgEl.style.height = '';
-    if (!isMini && imgEl.parentElement) imgEl.parentElement.classList.remove('fp-thumb-box--has-thumb');
+    if (!isMini && imgEl.parentElement) _fpRestoreTypeIcon(imgEl.parentElement);
     return;
   }
-  imgEl.src = res.url;
-  imgEl.classList.add('fp-thumb--ready');
-  imgEl.dataset.px = String(Math.max(res.w, res.h));
-  // A real thumbnail replaces the placeholder icon outright — but a folder
-  // preview's mini pictures are fanned OVER the folder icon, which has to
-  // stay put, so only the tile's own full-size thumbnail retires it, and
-  // only the full-size thumbnail is pinned (a mini keeps its CSS 40% size).
-  if (!isMini) {
-    const dpr = window.devicePixelRatio || 1;
-    imgEl.style.width = (res.w / dpr) + 'px';
-    imgEl.style.height = (res.h / dpr) + 'px';
-    if (imgEl.parentElement) imgEl.parentElement.classList.add('fp-thumb-box--has-thumb');
+  const apply = () => {
+    imgEl.classList.remove('fp-thumb--failed');
+    imgEl.src = res.url;
+    imgEl.classList.add('fp-thumb--ready');
+    imgEl.dataset.px = String(Math.max(res.w, res.h));
+    // A real thumbnail crossfades over the type icon and retires it — but a
+    // folder preview's mini pictures are fanned OVER the folder icon, which
+    // has to stay put, so only the tile's own full-size thumbnail retires
+    // it, and only the full-size thumbnail gets the freeform box (a mini
+    // keeps its CSS 40% size).
+    if (!isMini) {
+      const box = _fpThumbBoxSize(res);
+      imgEl.style.width = box.width;
+      imgEl.style.height = box.height;
+      if (imgEl.parentElement) imgEl.parentElement.classList.add('fp-thumb-box--has-thumb');
+    }
+  };
+  // A thumbnail already on screen (a size change re-requested it at another
+  // bucket) is swapped only once the new one has decoded — no blank frame.
+  if (imgEl.classList.contains('fp-thumb--ready') && _fpHasBitmap(imgEl) && imgEl.getAttribute('src') !== res.url) {
+    _fpSwapAfterDecode(imgEl, res.url, () => imgEl.isConnected && imgEl._fpSeq === seq, apply);
+    return;
   }
+  apply();
+}
+
+/** A thumbnail slot whose thumbnail turned out not to exist (any more): its
+ * type icon has to show. A slot painted from the thumbnail cache carries no
+ * type icon at all, so one is added — never the sprite in Windows mode. */
+function _fpRestoreTypeIcon(box) {
+  box.classList.remove('fp-thumb-box--has-thumb');
+  if (box.querySelector(':scope > .fp-thumb-box__type')) return;
+  const img = box.querySelector(':scope > img.fp-thumb');
+  if (!img) return;
+  const entry = {
+    path: img.dataset.thumb, ext: img.dataset.ext || '', is_dir: img.dataset.dir !== undefined,
+    name: String(img.dataset.thumb || '').split(/[\\/]/).pop(),
+  };
+  const size = Number(img.dataset.size) || 96;
+  const sym = entry.is_dir ? _folderSymbol(entry) : 'ft-' + fpFamilyFor(entry.ext);
+  box.insertAdjacentHTML('afterbegin', fpIconSource() === 'windows'
+    ? _winIcon(entry, size, sym, 'fp-thumb-box__type')
+    : icon(sym, `fp-icon--${size >= 64 ? 48 : (size >= 32 ? 24 : 16)} fp-thumb-box__type`));
 }
 
 // ── Folder peeks ───────────────────────────────────────────────────────────
@@ -740,30 +1017,69 @@ function _fpQueueScan(records) {
   }
   if (_fpScanQueued) return;
   _fpScanQueued = true;
-  setTimeout(() => {
+  // A microtask (Stage 2D §4.2 — it was a 16 ms timer): a miss is
+  // registered, and its request can start, in the same turn as its render.
+  // The MutationObserver callback is itself a microtask, so this still
+  // coalesces a whole render's mutations into one pass, and it still runs
+  // in an occluded window (no rAF).
+  queueMicrotask(() => {
     _fpScanQueued = false;
     const targets = [..._fpScanTargets];
     _fpScanTargets.clear();
     for (const t of targets) if (t.isConnected) fpScanLazyIcons(t);
-  }, 16);
+  });
 }
 
 /** Re-resolves every shell icon / thumbnail under `root` — settled AND still
- * pending — at its CURRENT box x devicePixelRatio. A pending one is
- * cancelled first (its in-flight answer would settle at the old px and pin
- * the stale box). The old bitmap stays on screen until the new one lands (no
- * flash); keys differ by px so this never refetches an already-seen size.
- * Called on zoom / monitor-DPI change (below) and by setListScale
- * (browser.js) when --list-scale changes the row/tile box. */
+ * pending — at its CURRENT box (Stage 2D §4.3). Debounced: it runs 120 ms
+ * after the LAST size change (a Ctrl+wheel run is one re-resolve, not one
+ * per step), and only rows in view (plus the observers' 200 px margin) ask
+ * for anything — everything else is re-registered and resolves when it
+ * scrolls in. Nothing is cleared: the old bitmap stays in its CSS-sized box
+ * and the new bucket's swaps in after decode() (_fpSwapAfterDecode), so a
+ * size change never blanks an icon or moves a box. Keys are per px bucket,
+ * so a re-request inside the same bucket is answered from cache and leaves
+ * the image untouched. Called on zoom / monitor-DPI change (below) and by
+ * setListScale (browser.js). Prewarms the generic folder icon for the new
+ * bucket too. */
+let _fpInvalidateTimer = 0;
+const _fpInvalidateRoots = new Set();
 function fpInvalidateLazyIcons(root) {
-  (root || document.body).querySelectorAll(
-    'img.fp-icon--win[data-fp-lazy="done"], img.fp-icon--win[data-fp-lazy="pending"], '
-    + 'img.fp-thumb[data-fp-lazy="done"], img.fp-thumb[data-fp-lazy="pending"]'
-  ).forEach((el) => {
-    el.dataset.fpLazy = ''; el._fpSeq = 0;
-    _fpUnobserve(el);
-    el.style.width = el.style.height = ''; // let CSS re-lay the box before it is measured again
-    _fpObserve(el);
+  _fpInvalidateRoots.add(root || document.body);
+  clearTimeout(_fpInvalidateTimer);
+  _fpInvalidateTimer = setTimeout(_fpRunInvalidate, 120);
+}
+
+function _fpRunInvalidate() {
+  const roots = [..._fpInvalidateRoots];
+  _fpInvalidateRoots.clear();
+  for (const root of roots) {
+    if (!root.isConnected) continue;
+    root.querySelectorAll(
+      'img.fp-icon--win[data-fp-lazy="done"], img.fp-icon--win[data-fp-lazy="pending"], '
+      + 'img.fp-thumb[data-fp-lazy="done"], img.fp-thumb[data-fp-lazy="pending"]'
+    ).forEach((el) => {
+      el.dataset.fpLazy = ''; el._fpSeq = 0;
+      _fpUnobserve(el);
+      _fpObserve(el);
+    });
+  }
+  fpPrewarmIconSizes();
+}
+
+/** Resolves every shell icon under `root` NOW, without waiting for an
+ * IntersectionObserver — for a surface the observer cannot be trusted with
+ * (Properties' header and "Opens with" row live in a dialog that is laid out
+ * after the markup goes in; an observer record taken before that reads "not
+ * intersecting" and cancels the request). Marked as observed first so the
+ * MutationObserver scan leaves them alone. */
+function fpResolveIconsNow(root) {
+  if (!root) return;
+  root.querySelectorAll('img[data-win-icon]').forEach((el) => {
+    if (el.dataset.fpLazy === 'done' || el.dataset.fpLazy === 'pending') return;
+    el._fpObserved = true;
+    el.dataset.fpLazy = 'pending';
+    _fpStartLazy(el);
   });
 }
 

@@ -35,6 +35,59 @@ function runPy(args, env) {
   return r.stdout;
 }
 
+// A solid-colour RGB PNG, built by hand (zlib + CRC32) so the fixture needs
+// no image library and is byte-identical on every run.
+function solidPng(width, height, rgb) {
+  const zlib = require('zlib');
+  const crcTable = Array.from({ length: 256 }, (_, n) => {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = (c & 1) ? (0xedb88320 ^ (c >>> 1)) : (c >>> 1);
+    return c >>> 0;
+  });
+  const crc32 = (buf) => {
+    let c = 0xffffffff;
+    for (const b of buf) c = crcTable[(c ^ b) & 0xff] ^ (c >>> 8);
+    return (c ^ 0xffffffff) >>> 0;
+  };
+  const chunk = (tag, data) => {
+    const len = Buffer.alloc(4); len.writeUInt32BE(data.length);
+    const body = Buffer.concat([Buffer.from(tag, 'ascii'), data]);
+    const crc = Buffer.alloc(4); crc.writeUInt32BE(crc32(body));
+    return Buffer.concat([len, body, crc]);
+  };
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0); ihdr.writeUInt32BE(height, 4);
+  ihdr[8] = 8; ihdr[9] = 2; // 8-bit RGB
+  const row = Buffer.concat([Buffer.from([0]), Buffer.from(Array.from({ length: width }, () => rgb).flat())]);
+  const raw = Buffer.concat(Array.from({ length: height }, () => row));
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk('IHDR', ihdr), chunk('IDAT', zlib.deflateSync(raw)), chunk('IEND', Buffer.alloc(0)),
+  ]);
+}
+
+// Stage 2D Task 4 (flash-free icons, spec §4): beside _gen, not inside it, so
+// _gen's own listings and counts are unchanged. Plain folders with no
+// desktop.ini (their shell icon is the generic folder), a folder of plain
+// sub-folders no test visits before it means to (Fresh), a corrupt image the
+// shell cannot thumbnail, and two non-square pictures for freeform thumbnails.
+function buildIconFixture(dir) {
+  fs.mkdirSync(dir);
+  for (const name of ['PlainA', 'PlainB', 'PlainC']) fs.mkdirSync(path.join(dir, name));
+  fs.writeFileSync(path.join(dir, 'PlainA', 'note.txt'), 'plain\n');
+  const fresh = path.join(dir, 'Fresh');
+  fs.mkdirSync(fresh);
+  for (const name of ['Sub1', 'Sub2', 'Sub3']) fs.mkdirSync(path.join(fresh, name));
+  fs.writeFileSync(path.join(fresh, 'readme.txt'), 'fresh\n');
+  // "Random" bytes from a fixed LCG: not a PNG at all past the extension.
+  let seed = 0x2d4;
+  const junk = Buffer.alloc(4096, 0).map(() => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed & 0xff; });
+  fs.writeFileSync(path.join(dir, 'broken.png'), junk);
+  fs.writeFileSync(path.join(dir, 'wide.png'), solidPng(240, 120, [70, 130, 180]));
+  fs.writeFileSync(path.join(dir, 'tall.png'), solidPng(100, 200, [250, 250, 250]));
+  fs.writeFileSync(path.join(dir, 'doc.txt'), 'icons fixture\n');
+}
+
 module.exports = async function globalSetup() {
   const port = process.env.FILEPLUS_PORT || '9877';
   if (await healthy(port)) {
@@ -77,6 +130,7 @@ module.exports = async function globalSetup() {
   for (let i = 1; i <= 240; i++) {
     fs.writeFileSync(path.join(bulk, `bulk-${String(i).padStart(3, '0')}.txt`), `bulk ${i}\n`);
   }
+  buildIconFixture(path.join(sandbox, 'Icons'));
 
   const backend = spawn(PY.cmd, [...PY.pre, '-m', 'backend.api'], {
     cwd: REPO, env, stdio: 'ignore', windowsHide: true, detached: false,

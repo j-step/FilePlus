@@ -433,6 +433,52 @@ def test_shell_image_on_sta_executor():
     assert png and png[:8] == b"\x89PNG\r\n\x1a\n"
 
 
+@nt_only
+def test_shell_image_retries_e_pending(monkeypatch, tmp_path):
+    """GetImage answers E_PENDING (0x8000000A) while another thread is
+    filling the shell's icon cache -- measured: the second and third of three
+    concurrent first calls on a fresh STA pool. That is "not yet", not "no
+    image": shell_image retries it, so a folder never ends up with a
+    definitive null (and the FilePlus sprite) for the whole session (Stage 2D
+    Task 4)."""
+    (tmp_path / "d").mkdir()
+    real = winshell._GETIMAGE
+    calls = {"n": 0}
+
+    def factory(ptr):
+        get_image = real(ptr)
+
+        def flaky(*args):
+            calls["n"] += 1
+            if calls["n"] <= 2:
+                return ctypes.c_long(0x8000000A - (1 << 32)).value  # E_PENDING as a signed HRESULT
+            return get_image(*args)
+        return flaky
+
+    monkeypatch.setattr(winshell, "_GETIMAGE", factory)
+    monkeypatch.setattr(winshell, "_E_PENDING_RETRY_S", 0.001)
+    png = winshell.shell_image(tmp_path / "d", 16)
+    assert png and png[:8] == b"\x89PNG\r\n\x1a\n"
+    assert calls["n"] == 3
+
+
+@nt_only
+def test_shell_image_gives_up_on_endless_e_pending(monkeypatch, tmp_path):
+    (tmp_path / "d").mkdir()
+    calls = {"n": 0}
+
+    def factory(_ptr):
+        def pending(*_args):
+            calls["n"] += 1
+            return ctypes.c_long(0x8000000A - (1 << 32)).value
+        return pending
+
+    monkeypatch.setattr(winshell, "_GETIMAGE", factory)
+    monkeypatch.setattr(winshell, "_E_PENDING_RETRY_S", 0.001)
+    assert winshell.shell_image(tmp_path / "d", 16) is None
+    assert calls["n"] == winshell._E_PENDING_TRIES
+
+
 def test_shell_image_is_none_off_windows(monkeypatch, tmp_path):
     monkeypatch.setattr(winshell.os, "name", "posix")
     assert winshell.shell_image(tmp_path, 16) is None

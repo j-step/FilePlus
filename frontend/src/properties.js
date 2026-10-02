@@ -89,7 +89,10 @@ function formatPropContains(contains) {
  * or the Inspector's "…" menu after navigating away). */
 function propsEntryFrom(props) {
   const existing = typeof entryForPath === 'function' ? entryForPath(props.path) : null;
-  if (existing) return existing;
+  // A /fs/list entry carries only its name: without the path a Windows-mode
+  // icon has nothing to ask the shell about and fell back to the FilePlus
+  // sprite (Stage 2D §4.6).
+  if (existing) return { ...existing, path: props.path };
   const dot = props.name.lastIndexOf('.');
   const ext = !props.is_dir && dot > 0 ? props.name.slice(dot) : '';
   return { name: props.name, path: props.path, is_dir: props.is_dir, ext };
@@ -185,10 +188,20 @@ function switchPropertiesTab(name) {
 // ── General tab ──────────────────────────────────────────────────────────────
 
 function renderPropertiesHeader() {
-  const iconEl = document.getElementById('properties-icon');
   const nameInput = document.getElementById('properties-name-input');
-  if (iconEl) iconEl.innerHTML = iconFor(_propsEntry, 24);
+  paintPropertiesIcon();
   if (nameInput) nameInput.value = _propsData.name;
+}
+
+/** The header icon: the item's TYPE icon at 32 px, never its thumbnail
+ * (Stage 2D §4.6) — a .png shows the PNG file-type icon. In Windows mode it
+ * is resolved at once (fpResolveIconsNow) rather than by the lazy observer,
+ * which cannot be trusted inside this dialog. */
+function paintPropertiesIcon() {
+  const iconEl = document.getElementById('properties-icon');
+  if (!iconEl) return;
+  iconEl.innerHTML = fpTypeIconFor(_propsEntry, 32);
+  fpResolveIconsNow(iconEl);
 }
 
 /** Repaints the header icon (and the "Opens with" icon) of an open panel
@@ -196,8 +209,7 @@ function renderPropertiesHeader() {
  * No-op when the panel is closed. */
 function propertiesRefreshIcon() {
   if (!_propsPath || !_propsEntry) return;
-  const iconEl = document.getElementById('properties-icon');
-  if (iconEl) iconEl.innerHTML = iconFor(_propsEntry, 24);
+  paintPropertiesIcon();
   if (_propsData && !_propsData.is_dir) loadOpensWithIcon(_propsData);
 }
 
@@ -226,33 +238,16 @@ function renderOpensWithCell(props) {
     `</div>`;
 }
 
-/** Fills in the "Opens with" app icon via the same shared Tier-B icon
- * pipeline as icons.js's lazy rows (fpTierBIconUrl) — separate from the
- * IntersectionObserver system there only because this is a single explicit
- * icon, not a scrolling list. Sized per the sizing contract (icon-design.md
- * §2): px = clampPx(round(16 * dpr)), the <img> pinned to px/dpr CSS px.
- * Guards against a since-closed or since-replaced modal before touching the
- * DOM. icons.js loads before properties.js, so
- * fpDevicePx/fpTierBIconUrl/FpIconCache are defined at call time. */
+/** Fills in the "Opens with" app icon: always the Windows shell icon of the
+ * associated .exe, through the same pipeline and cache as a row icon (Tier A,
+ * then the Electron bridge; the executable sprite only if both fail), at the
+ * 16-px box's px bucket. Resolved at once, like the header icon — the lazy
+ * observer cannot be trusted inside this dialog. */
 function loadOpensWithIcon(props) {
   const el = document.getElementById('properties-opens-with-icon');
   if (!el || !props.opens_with_exe) return;
-  // Same pipeline as a row icon (icons.js: Tier A, then the Electron bridge):
-  // a 16-CSS-px box at the current devicePixelRatio, pinned to px/dpr.
-  const px = fpDevicePx(16);
-  const key = window.FpIconCache.shellIconKey(props.opens_with_exe, 'exe', false, px);
-  fpShellIconUrl(key, { path: props.opens_with_exe, ext: 'exe', isDir: false, px }).then((res) => {
-    if (!res || !res.url || _propsPath !== props.path) return;
-    const el2 = document.getElementById('properties-opens-with-icon');
-    if (!el2) return;
-    el2.innerHTML = '';
-    const img = document.createElement('img');
-    img.src = res.url;
-    img.alt = '';
-    img.dataset.px = String(res.px);
-    img.style.width = img.style.height = (res.px / (window.devicePixelRatio || 1)) + 'px';
-    el2.appendChild(img);
-  }).catch(() => { /* best-effort */ });
+  el.innerHTML = fpShellIconMarkup({ path: props.opens_with_exe, ext: 'exe', is_dir: false }, 16, 'ft-executable');
+  fpResolveIconsNow(el);
 }
 
 function renderFolderTypeSelect(props) {

@@ -122,6 +122,9 @@
   --dur-spring:     250ms;
   --dur-pulse:      400ms;
   --dur-info:       1500ms;
+  /* Icons and thumbnails (Stage 2D §4.2/§4.4): an icon arriving into an
+     empty slot fades in, a thumbnail crossfades over its type icon. */
+  --dur-icon-in:    90ms;
   /* Refresh feedback (Stage 2D §7.2): one 360° spin of the toolbar icon, one
      quick opacity dip of the list. app.js reads these two (refreshFxMs) to
      time when the classes come off again. */
@@ -961,6 +964,13 @@ svg { flex-shrink: 0; }
   font: 500 var(--t-body) var(--font-ui);
   user-select: none;
 }
+/* The drive crumb leads with the drive's icon (Stage 2D §4.6). */
+.fp-breadcrumb__crumb:has(> .fp-breadcrumb__icon) {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-6);
+}
+.fp-breadcrumb__icon { flex: none; color: var(--text-secondary); }
 .fp-breadcrumb__crumb:hover {
   background: var(--bg-raised);
   color: var(--text-primary);
@@ -2600,8 +2610,8 @@ body.is-dragging { cursor: default; }
   color: var(--text-secondary);
 }
 .fp-row .fp-row__icon {
-  width: calc(16px * var(--list-scale, 1));
-  height: calc(16px * var(--list-scale, 1));
+  width: var(--icon-size, 16px);
+  height: var(--icon-size, 16px);
 }
 .fp-row__name {
   flex: 1;
@@ -4156,6 +4166,13 @@ body.is-dragging { cursor: default; }
 .fp-sortable.active { color: var(--text-secondary); }
 
 /* List scroll */
+/* --icon-size (Stage 2D §3.5/§4.3): the one logical icon size of the listing.
+   Every row icon and thumbnail box in #list-scroll is sized from it, so a
+   size change is one synchronous custom-property update and every icon
+   scales in the same frame as its cell. icons.js asks the shell for the px
+   bucket of this size (browser.js fpListIconSize mirrors it). */
+#list-scroll { --icon-size: 16px; }
+#list-scroll[data-view="grid"] { --icon-size: calc(96px * var(--list-scale, 1)); }
 .list-scroll {
   flex: 1;
   overflow-y: auto;
@@ -5907,6 +5924,7 @@ button.fp-pill:hover {
 .fp-icon--16 { width: 16px; height: 16px; }
 .fp-icon--20 { width: 20px; height: 20px; }
 .fp-icon--24 { width: 24px; height: 24px; }
+.fp-icon--32 { width: 32px; height: 32px; }
 .fp-icon--36 { width: 36px; height: 36px; }
 .fp-icon--40 { width: 40px; height: 40px; }
 .fp-icon--48 { width: 48px; height: 48px; }
@@ -5920,41 +5938,46 @@ button.fp-pill:hover {
    ============================================================================= */
 
 /* Windows shell icon (ui.icon_source = 'windows'): a real bitmap, sized by
-   the same .fp-icon--N modifier the sprite <use> would have carried (an
-   inline style from icons.js then pins the exact px/dpr box — see below).
-   object-fit: contain is a no-op guard for a square bitmap in a square box.
-   Invariant (pass 2 — icon-design.md §2): the bitmap is exactly
-   box x devicePixelRatio px and icons.js pins the box to px/dpr, so Chromium
-   composites it 1:1 (measured pixel-identical at DPR 1/1.25/1.5/2 —
-   scratchpad out/dpr2-*.json). Do NOT add image-rendering: pixelated (no
-   gain at 1:1; it jags .fp-row--drag-target .fp-row__icon's
-   transform: scale(1.05) and every resampled Tier-B bitmap) or srcset
-   (would make naturalWidth report CSS px and defeat the sharpness smoke
-   assertions, which compare naturalWidth against the physical px the
-   bridge/route actually rendered). */
+   CSS alone — the .fp-icon--N modifier, or the row/tile box from
+   --icon-size. icons.js asks the shell for the px BUCKET of that box
+   (fpDevicePx: round(box x devicePixelRatio) snapped up to 16/20/24/32/40/
+   48/64/96/128/192/256) and never pins an inline size, so the box never
+   changes when a bitmap lands or a sharper bucket swaps in (Stage 2D §4.3);
+   the browser downsamples. object-fit: contain is a no-op guard for a
+   square bitmap in a square box. Do NOT add image-rendering: pixelated (it
+   jags .fp-row--drag-target .fp-row__icon's transform: scale(1.05) and every
+   downsampled bucket) or srcset (naturalWidth would report CSS px and defeat
+   the tests that compare it with the requested bucket). */
 .fp-icon--win { object-fit: contain; }
+/* An icon arriving into an EMPTY slot fades in (a cache hit is painted with
+   its row, settled, and never animates). The reduced-motion block at the
+   end of this file makes it instant. */
+.fp-icon--win.fp-icon--fade-in { animation: fp-icon-in var(--dur-icon-in) var(--ease-out); }
+@keyframes fp-icon-in { from { opacity: 0; } to { opacity: 1; } }
 
 /* Unknown extension in FilePlus mode: the blank page icon carries the
    extension itself beside it rather than pretending to know the type. The
    pair is one root (.fp-icon-badged) so a centring container centres the
    ICON and the badge hangs off it, instead of the two being centred as a
    unit and shoving the icon off-axis (pass 2 #146); in a grid tile the badge
-   drops under the icon and scales with --list-scale. */
+   drops under the icon and scales with the tile. At <= 32 logical px the
+   icon is the compact variant (Stage 2D §4.5): the glyph alone, no badge. */
 .fp-icon-badged {
   display: inline-flex;
   align-items: center;
   gap: 3px;
   flex: none;
 }
+.fp-icon-badged--compact > .fp-ext-badge { display: none; }
 .fp-tile__thumb > .fp-icon-badged {
   flex-direction: column;
   gap: 2px;
 }
 .fp-tile__thumb > .fp-icon-badged > .fp-icon {
-  width: calc(96px * var(--list-scale, 1) * 0.58);
-  height: calc(96px * var(--list-scale, 1) * 0.58);
+  width: calc(var(--icon-size, 96px) * 0.58);
+  height: calc(var(--icon-size, 96px) * 0.58);
 }
-.fp-tile__thumb .fp-ext-badge { font-size: calc(9px * var(--list-scale, 1)); }
+.fp-tile__thumb .fp-ext-badge { font-size: calc(var(--icon-size, 96px) * 0.094); }
 .fp-ext-badge {
   flex: none;
   font: 500 9px/1 var(--font-data);
@@ -5966,9 +5989,12 @@ button.fp-pill:hover {
   padding: 2px 3px;
 }
 
-/* Sprite icon with a shell thumbnail layered over it: the icon paints
-   immediately, the thumbnail fades in on top once the shell answers, and a
-   file the shell cannot picture keeps its icon (.fp-thumb--failed). */
+/* Thumbnail slot (Stage 2D §4.4): the item's TYPE icon with the shell
+   thumbnail layered over it. The slot itself has no frame and no
+   background. The type icon is the real one — the shell icon in Windows
+   mode, the family sprite in FilePlus mode — and the thumbnail crossfades
+   over it; a file the shell cannot picture keeps its type icon
+   (.fp-thumb--failed). */
 .fp-thumb-box {
   position: relative;
   display: inline-flex;
@@ -5976,26 +6002,40 @@ button.fp-pill:hover {
   justify-content: center;
   flex: none;
 }
-/* icons.js sets an inline w/dpr x h/dpr size on a resolved (non-mini)
-   thumbnail so its device box matches the physical-pixel bitmap exactly
-   (icon-design.md §2); max-width/max-height here are guards only (e.g. for
-   the brief window before that inline size lands, or a mini, which stays
-   CSS-sized at 40% of the tile via the rule below). */
+/* Freeform thumbnail: its own box is the picture's aspect ratio inside the
+   s x s slot (icons.js sets width/height as percentages of the slot when it
+   lands, so it scales with --icon-size in the same frame as the cell),
+   bottom-aligned like Explorer. A 1px outline hugs the picture itself, not
+   the slot, so a white-edged screenshot still reads on a light background. A
+   folder's shell thumbnail is drawn with its own transparent shape and gets
+   no outline. */
 .fp-thumb {
   position: absolute;
-  inset: 0;
-  margin: auto;
-  max-width: 100%;
-  max-height: 100%;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  margin: 0 auto;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  outline: 1px solid var(--border-subtle);
   opacity: 0;
-  border-radius: var(--r-sm);
-  transition: opacity var(--dur-fast) var(--ease-out);
+  transition: opacity var(--dur-icon-in) var(--ease-out);
 }
+.fp-thumb[data-dir] { outline: none; }
 .fp-thumb--ready { opacity: 1; }
+.fp-thumb.is-settled { transition: none; }
 .fp-thumb--failed { display: none; }
-/* Thumbnail arrived: the placeholder icon has done its job. Hidden rather
-   than removed so a re-render doesn't have to rebuild the box. */
-.fp-thumb-box--has-thumb > .fp-icon { visibility: hidden; }
+/* Thumbnail arrived: the type icon has done its job and fades out under it.
+   Hidden rather than removed so a re-render doesn't have to rebuild it. */
+.fp-thumb-box > .fp-thumb-box__type {
+  transition: opacity var(--dur-icon-in) var(--ease-out), visibility 0s linear 0s;
+}
+.fp-thumb-box--has-thumb > .fp-icon {
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity var(--dur-icon-in) var(--ease-out), visibility 0s linear var(--dur-icon-in);
+}
 
 /* Folder preview: up to two of the folder's own pictures (GET /fs/peek)
    fanned out of the folder's mouth. The folder body is lifted above them so
@@ -6006,10 +6046,12 @@ button.fp-pill:hover {
   inset: auto;
   left: 50%;
   top: 13%;
+  margin: 0;
   width: 40%;
   height: 40%;
   z-index: 0;
   object-fit: cover;
+  outline: none;
   border: 1px solid var(--border-subtle);
   border-radius: 2px;
   background: var(--bg-content);
@@ -6017,16 +6059,19 @@ button.fp-pill:hover {
 .fp-thumb--mini-1 { transform: translate(-90%, 0) rotate(-9deg); }
 .fp-thumb--mini-2 { transform: translate(-10%, 0) rotate(9deg); }
 
-/* Grid tile thumbnail area. Task 10 introduces --list-scale as the grid's
-   size control; until then the fallback keeps every tile at 96px. */
+/* Grid tile thumbnail area: the s x s slot, s = --icon-size (96px x
+   --list-scale until Task 5's view ladder drives the variable). A FilePlus
+   sprite sits at 58% of it; a Windows shell icon fills it, as Explorer's own
+   large icons do (the shell's art carries its own margin). */
 .fp-tile__thumb {
-  width: calc(96px * var(--list-scale, 1));
-  height: calc(96px * var(--list-scale, 1));
+  width: var(--icon-size, 96px);
+  height: var(--icon-size, 96px);
 }
 .fp-tile__thumb > .fp-icon { width: 58%; height: 58%; }
+.fp-thumb-box > .fp-icon--win { width: 100%; height: 100%; }
 
 /* List row whose 16px icon is a thumbnail of the picture itself. */
-.fp-row__icon--thumb { overflow: hidden; border-radius: var(--r-sm); }
+.fp-row__icon--thumb { border-radius: var(--r-sm); }
 
 /* Command-palette result icons (iconFor at 14px). */
 .fp-palette__item-icon { flex: none; color: var(--text-secondary); }

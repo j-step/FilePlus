@@ -200,6 +200,16 @@ function applyPropertiesMode(mode) {
  * icon). Palette results need nothing — they are rebuilt per query. */
 function refreshIconSurfaces() {
   if (browserState.entries && browserState.entries.length) renderDirectory();
+  // Every ITEM icon site follows the source (Stage 2D §4.6): tabs, the
+  // sidebar's Quick Access / pinned folders / drives, the breadcrumb's
+  // drive crumb.
+  if (typeof tabs !== 'undefined') tabs.list.forEach(updateTabElementAppearance);
+  const drives = document.getElementById('sb-drives');
+  if (drives && Array.isArray(window.__fpDrives)) drives.innerHTML = window.__fpDrives.map(renderDriveItem).join('');
+  loadPins();
+  loadQuickAccess();
+  if (browserState.path) updateBreadcrumb(browserState.path);
+  if (typeof fpPrewarmIconSizes === 'function') fpPrewarmIconSizes();
   loadRecent();
   loadFavorites();
   // Only for a selection that is still in the current listing — re-fetching
