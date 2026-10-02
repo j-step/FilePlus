@@ -2685,6 +2685,16 @@ function browserKeydown(e) {
     if (browserState.path) fileops.pasteInto(browserState.path).catch(fileopsReported);
     return;
   }
+  // Ctrl+Shift+N — a new folder in the folder on screen, ready to rename
+  // (Explorer's key; Settings › Shortcuts lists it). Search results have no
+  // folder of their own to create it in, the same rule as Ctrl+V above.
+  if (ctrl && e.shiftKey && key.toLowerCase() === 'n') {
+    e.preventDefault();
+    if (e.repeat) return;
+    if (browserState.mode === 'search') { showToast('Leave search results to create here', 'error'); return; }
+    if (browserState.path) fileops.newFolder(browserState.path).catch(fileopsReported);
+    return;
+  }
   if (key === 'F2') { e.preventDefault(); if (canRenameSelection() && browserState.focus) startInlineRename(browserState.focus); return; }
   if (key === 'Delete') { e.preventDefault(); fileops.trashSelection().catch(fileopsReported); return; }
 

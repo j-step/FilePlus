@@ -8,10 +8,10 @@
 //     sprite itself). An <svg ...> tag is allowed only when its opening tag
 //     carries class="fp-icon" (the icon()/iconFor() <use> wrapper pattern,
 //     or hand-written static markup using the same pattern). A short,
-//     explicit id allowlist covers the two genuine non-icon inline SVGs
-//     (live data-viz canvases the sprite format can't represent: the Scan
-//     Progress sparkline and the Tag Canvas relationship graph) — anything
-//     else is a regression. index.html also carries ~20 commented-out
+//     explicit id allowlist covers the genuine non-icon inline SVG (a live
+//     data-viz canvas the sprite format can't represent: the Tag Canvas
+//     relationship graph; the Scan Progress sparkline left with its screen
+//     in Stage 2D Task 12a) — anything else is a regression. index.html also carries ~20 commented-out
 //     example/alternate-state blocks (<!-- ... -->) predating this gate;
 //     HTML comments are stripped before scanning so that reference markup
 //     doesn't have to be rewritten into sprite syntax to satisfy a gate that
@@ -43,7 +43,6 @@ const SRC = path.join(FRONTEND, 'src');
 // data, not a fixed glyph). Identified by id — add here, with a reason,
 // rather than loosening the class="fp-icon" rule.
 const ALLOWED_RAW_SVG_IDS = new Set([
-  'scan-sparkline', // Scan Progress throughput chart — live polyline points
   'tag-graph-canvas', // Tag Canvas relationship graph — live nodes/edges from GET /tags/graph
 ]);
 

@@ -9,10 +9,11 @@
 //     it has a `case`, or it is in IN_SCOPE_ACTIONS (a deliberate silent
 //     no-op, handled by a listener of its own). Anything else falls into the
 //     switch's default branch — the "not yet implemented" stub — which is how
-//     dead controls used to ship on a green verify (pass 2 #186/#187). The
-//     only exemptions are the placeholder controls listed below, on screens
-//     and Settings panes that are not built yet; they are counted in the
-//     output so the debt stays visible.
+//     dead controls used to ship on a green verify (pass 2 #186/#187). There
+//     are no exemptions: Stage 2D Task 12a took the unbuilt screens and
+//     Settings panes (and their 100 placeholder controls) out of the DOM, so
+//     a control that does nothing can no longer ship at all. A later stage
+//     that brings one back adds its `case` with it.
 //
 // Exits 1 and prints every disagreement.
 const fs = require('fs');
@@ -81,45 +82,13 @@ if (declared.size === 0 || inScope.size === 0) {
   process.exit(1);
 }
 
-// Placeholder controls on screens that carry a "Not built yet — planned for
-// Stage N" banner (File Tree, Scan, Review Bin, Everything Folder, the
-// palette's plan preview): the whole family, by prefix.
-const UNBUILT_SCREEN_PREFIXES = ['ftree-', 'scan-', 'rb-', 'ef-', 'ai-', 'palette-plan-'];
-// Placeholder controls on Settings panes whose backend is a later stage
-// (Everything Folder, Downloads, Organization Engine, AI Configuration,
-// Custom File Types, Privacy, Shortcuts rebinding, Data, About). Enumerated
-// one by one — a new Settings control is enforced unless it is added here,
-// on purpose. Wiring one means deleting it from this list.
-const KNOWN_PLACEHOLDER_ACTIONS = new Set([
-  'settings-set-ef-path', 'settings-browse-ef-path', 'settings-ef-confidence', 'settings-add-ef-exclusion',
-  'settings-ef-review-timeout', 'settings-set-ef-notify', 'settings-ef-stuck',
-  'settings-set-dl-path', 'settings-browse-dl-path', 'settings-set-purge-after', 'settings-set-purge-action',
-  'settings-add-dl-exclusion',
-  'settings-set-autonomy', 'settings-batch-size', 'settings-review-threshold',
-  'settings-set-ollama-model', 'settings-set-api-key', 'settings-toggle-api-key-visibility',
-  'settings-set-claude-model', 'settings-set-cost-cap', 'settings-set-token-cap', 'settings-temperature',
-  'settings-edit-filetype', 'settings-delete-filetype', 'settings-add-filetype',
-  'settings-set-encryption', 'settings-rebind',
-  'settings-cleanup-snapshots', 'settings-snap-daily-count', 'settings-snap-weekly-count',
-  'settings-snap-monthly-count', 'settings-snap-warn',
-  'settings-export-db', 'settings-import-db', 'settings-clear-ai-tags', 'settings-reset-organization',
-  'settings-reset-defaults', 'settings-export-diagnostics', 'settings-open-licenses',
-]);
-
-const isPlaceholder = (a) => KNOWN_PLACEHOLDER_ACTIONS.has(a) || UNBUILT_SCREEN_PREFIXES.some(p => a.startsWith(p));
 const handled = (a) => allCases.has(a) || inScope.has(a);
-const unhandled = [...declared.keys()].filter(a => !handled(a) && !isPlaceholder(a)).sort();
+const unhandled = [...declared.keys()].filter(a => !handled(a)).sort();
 if (unhandled.length) {
   fail('data-action(s) with no switch case and not in IN_SCOPE_ACTIONS (a click would hit the stub default branch):');
   for (const a of unhandled) console.error(`  ${a}  (${declared.get(a)})`);
   console.error('  add a `case` in app.js, or list it in IN_SCOPE_ACTIONS if its own listener handles it');
 }
-// A placeholder that has since been wired must leave the list, so the list
-// only ever names real debt.
-const staleKnown = [...KNOWN_PLACEHOLDER_ACTIONS].filter(a => handled(a) || !declared.has(a)).sort();
-if (staleKnown.length) fail('KNOWN_PLACEHOLDER_ACTIONS entries that are wired or gone — remove them:', staleKnown);
-
 if (failed) process.exit(1);
-const placeholders = [...declared.keys()].filter(a => !handled(a) && isPlaceholder(a)).length;
-console.log(`check_menu_cases: ok (${menuActions.size} cm-* actions with a case; ${declared.size} data-actions handled `
-  + `or placeholder — ${placeholders} placeholder controls on unbuilt screens/Settings panes)`);
+console.log(`check_menu_cases: ok (${menuActions.size} cm-* actions with a case; all ${declared.size} data-actions `
+  + 'handled — no placeholder controls)');

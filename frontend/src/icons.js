@@ -608,6 +608,25 @@ function fpShellIconRoute(state) {
   return _fpShellRoute;
 }
 
+/** Settings › Data › "Clear icon and thumbnail cache" (Stage 2D Task 12a):
+ * empties this renderer's shell-icon, thumbnail and folder-peek LRUs and
+ * returns how many entries went (settings.js clears the main process's and
+ * the backend's too). The learned generic folder bitmaps (_fpGenerics) stay:
+ * the shell draws them identically all session, and dropping them would
+ * bring back the folder flash §4.2 removed. Icons on screen re-resolve
+ * through fpInvalidateLazyIcons, which swaps only once a new bitmap has
+ * decoded — nothing blanks. */
+function fpClearIconCaches() {
+  const n = _fpWinIconCache.clear() + _fpThumbCache.clear() + _fpPeekCache.clear();
+  fpInvalidateLazyIcons(document.body);
+  return n;
+}
+
+/** Entry counts of the renderer's icon LRUs (diagnostics and tests). */
+function fpIconCacheSizes() {
+  return { icons: _fpWinIconCache.size, thumbnails: _fpThumbCache.size, peeks: _fpPeekCache.size };
+}
+
 // ── IntersectionObservers, one per scroll root ─────────────────────────────
 
 const _fpObserverByRoot = new Map(); // root element (or null = viewport) -> IntersectionObserver

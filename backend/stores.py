@@ -81,6 +81,17 @@ async def recent_add(conn: aiosqlite.Connection, path: str, action: str) -> None
     await conn.commit()
 
 
+async def recent_clear(conn: aiosqlite.Connection) -> int:
+    """Empties the Recent list (Settings > Data > Clear Recent). Returns how
+    many entries the user saw there -- distinct paths, not raw rows. Only the
+    history rows go; no file is touched."""
+    cur = await conn.execute("SELECT COUNT(DISTINCT path) FROM recent_actions")
+    (n,) = await cur.fetchone()
+    await conn.execute("DELETE FROM recent_actions")
+    await conn.commit()
+    return int(n or 0)
+
+
 def _bucket_for(ts: datetime, now: datetime) -> tuple[str, str]:
     """Classify a local-time timestamp against "now" (also local time).
 

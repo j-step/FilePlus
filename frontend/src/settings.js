@@ -223,15 +223,97 @@ function refreshIconSurfaces() {
   if (typeof propertiesRefreshIcon === 'function') propertiesRefreshIcon();
 }
 
+/** The write mode in words, from a /health answer. */
+function writesStatusText(health) {
+  return health.write_unlocked
+    ? 'Unlocked — real-drive writes enabled'
+    : 'Sandbox only — set FILEPLUS_ENV=prod and WRITE_UNLOCKED=true in .env to enable real-drive writes';
+}
+
 /** Updates the Data pane's read-only "Writes" line from the last /health
  * result (checkBackend(), in app.js, stores it on window.__fpHealth). No-op
  * until /health has answered at least once. */
 function updateWritesStatusLine() {
   const el = document.getElementById('settings-writes-status');
   if (!el || !window.__fpHealth) return;
-  el.textContent = window.__fpHealth.write_unlocked
-    ? 'Unlocked — real-drive writes enabled'
-    : 'Sandbox only — set FILEPLUS_ENV=prod and WRITE_UNLOCKED=true in .env to enable real-drive writes';
+  el.textContent = writesStatusText(window.__fpHealth);
+}
+
+// ── Settings › About and Data actions (Stage 2D Task 12a) ──────────────────
+// Real values only: versions from the running binaries (preload appInfo),
+// the backend's own /health answer, and the log folder the main process
+// writes to. Nothing here is typed into the markup by hand.
+
+/** Fills the About pane. Called whenever it is shown, and by checkBackend()
+ * after each /health answer so the backend lines follow a reconnect. */
+function renderAboutPane() {
+  const set = (id, text) => { const el = document.getElementById(id); if (el) el.textContent = text; };
+  const info = (window.electronAPI?.appInfo && window.electronAPI.appInfo()) || {};
+  set('about-app-version', info.version || '—');
+  set('about-electron-version', info.electron || '—');
+  set('about-chrome-version', info.chrome || '—');
+  set('about-node-version', info.node || '—');
+  set('about-log-dir', info.logDir || '—');
+  const h = window.__fpHealth;
+  set('about-backend-version', h ? `${h.version} · ${h.env}` : 'Not connected');
+  set('about-writes', h ? (h.write_unlocked ? 'Unlocked — real drives' : 'Sandbox only') : '—');
+}
+
+/** Shows `text` in a Settings row's own status line (polite live region).
+ * In place rather than a toast: toasts are off by default, and a button
+ * that answers nothing reads as a dead one. */
+function setSettingsRowStatus(id, text) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = text;
+}
+
+/** "Open logs folder" (About and Data): Explorer on the folder holding
+ * main.log, renderer.log and backend.log. */
+async function openLogsFolder() {
+  let err = 'not available';
+  try {
+    if (window.electronAPI?.openLogDir) err = await window.electronAPI.openLogDir();
+  } catch (e) {
+    err = (e && e.message) || String(e);
+  }
+  if (err) showToast(`Couldn’t open the logs folder: ${err}`, 'error');
+}
+
+/** "Clear icon and thumbnail cache": every layer that keeps a rendered icon
+ * or picture preview — this renderer, the main process, the backend's shell
+ * icon cache — drops it, so the next view asks Windows again (an app whose
+ * icon changed, a stale preview). Files and the index are untouched. The
+ * per-layer counts are kept on window.__fpLastCacheClear for diagnostics. */
+async function clearIconCachesEverywhere() {
+  const renderer = typeof fpClearIconCaches === 'function' ? fpClearIconCaches() : 0;
+  let main = { icons: 0, thumbnails: 0 };
+  let backend = 0;
+  try {
+    if (window.electronAPI?.clearIconCaches) main = (await window.electronAPI.clearIconCaches()) || main;
+    const res = await API.del('/shell/icons/cache');
+    backend = Number(res && res.cleared) || 0;
+  } catch (err) {
+    showToast(`Couldn’t clear every cache: ${formatApiError(err)}`, 'error');
+  }
+  window.__fpLastCacheClear = { renderer, main, backend };
+  const total = renderer + (main.icons || 0) + (main.thumbnails || 0) + backend;
+  setSettingsRowStatus('settings-cache-status',
+    total ? `Cleared ${total.toLocaleString()} cached image${total === 1 ? '' : 's'}` : 'Already empty');
+}
+
+/** "Clear Recent": empties Home › Recent (DELETE /recent). The files are
+ * not touched, and Favorites are a separate list. */
+async function clearRecentList() {
+  try {
+    const res = await API.del('/recent');
+    const n = Number(res && res.removed) || 0;
+    setSettingsRowStatus('settings-recent-status',
+      n ? `Cleared ${n.toLocaleString()} item${n === 1 ? '' : 's'}` : 'Already empty');
+  } catch (err) {
+    showToast(`Couldn’t clear Recent: ${formatApiError(err)}`, 'error');
+    return;
+  }
+  if (typeof loadRecent === 'function') loadRecent();
 }
 
 // ── Settings › Scan & Index (Task 14, design §8.7) ──────────────────────
@@ -391,6 +473,16 @@ function switchSettingsPane(pane) {
   document.querySelectorAll('.settings-pane').forEach(p => {
     p.style.display = p.dataset.pane === pane ? '' : 'none';
   });
+  // Panes that show live values refresh them on every visit, whichever way
+  // the pane was reached (a nav click or restoreSettingsPane).
+  if (pane === 'data') {
+    updateWritesStatusLine();
+    // A "Cleared …" answer belongs to the click that made it, not to a
+    // later visit.
+    setSettingsRowStatus('settings-recent-status', '');
+    setSettingsRowStatus('settings-cache-status', '');
+  }
+  if (pane === 'about') renderAboutPane();
   try { sessionStorage.setItem('fp-settings-pane', pane); } catch (_) { /* storage disabled */ }
 }
 

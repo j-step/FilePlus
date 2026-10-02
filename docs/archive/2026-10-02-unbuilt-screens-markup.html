@@ -1,0 +1,2142 @@
+<!doctype html>
+<!--
+  FilePlus — markup of unbuilt screens and Settings panes (design reference only)
+
+  Taken out of frontend/index.html by Stage 2D Task 12a (2026-10-02): the
+  controller's ruling is that no control may ship that does nothing when
+  clicked, and CLAUDE.md's "Placeholders are debt: a screen with fake data is
+  not built. Wire real data or hide the screen." Everything below is the
+  Stage 1/2 mock-up exactly as it stood, with its sample data. It is NOT
+  loaded by the app and is not kept in sync with styles.css or app.js.
+
+  The stage that builds each feature for real (roadmap: Stage 3 = AI layer,
+  Everything Folder, Review Bin; Stage 4 = scan pipeline, File Tree canvas,
+  snapshots, palette chat mode) takes the layout from here, wires it to real
+  data, puts it back in index.html with a switch case for every data-action
+  (scripts/check_menu_cases.js enforces that) and restores the entry points:
+  the sidebar items, the Settings nav rows, the palette commands, the
+  Ctrl+Shift+R shortcut (Review Bin) and the SCREEN_LABELS entries in app.js.
+-->
+<meta charset="utf-8">
+<title>FilePlus — unbuilt screens (reference)</title>
+
+<!-- ═══ Sidebar: Review Bin item (Stage 3) ═══ -->
+        <!-- Review Bin with accent badge when non-zero -->
+        <button class="fp-sidebar__item" id="nav-review-bin"
+                data-screen="review-bin" data-action="navigate-screen" title="Review Bin (Ctrl+Shift+R)">
+          <svg class="fp-icon fp-icon--16" aria-hidden="true"><use href="#fp-review-bin"></use></svg>
+          <span class="fp-sidebar__item__label">Review Bin</span>
+          <!-- INTEGRATION: count from GET /review-bin/count -->
+          <span class="fp-badge fp-badge--accent fp-sidebar__item__badge" id="sb-review-bin-count" style="display:none">0</span>
+          <!-- Shown when count > 0: -->
+          <!-- <span class="fp-badge fp-badge--accent fp-sidebar__item__badge" id="sb-review-bin-count">12</span> -->
+        </button>
+
+
+<!-- ═══ Sidebar: System section — File Tree and Scan (Stage 4) ═══ -->
+        <div class="fp-sidebar__divider" role="separator"></div>
+
+        <!-- ── SYSTEM ───────────────────────────────────────────── -->
+        <div class="fp-sidebar__section-label">System</div>
+
+        <button class="fp-sidebar__item" id="nav-ftree"
+                data-screen="ftree" data-action="navigate-screen" title="File Tree canvas">
+          <svg class="fp-icon fp-icon--16" aria-hidden="true"><use href="#fp-file-tree"></use></svg>
+          <span class="fp-sidebar__item__label">File Tree</span>
+        </button>
+
+        <button class="fp-sidebar__item" id="nav-scan"
+                data-screen="scan-config" data-action="navigate-screen" title="Scan &amp; Index">
+          <svg class="fp-icon fp-icon--16" aria-hidden="true"><use href="#fp-scan"></use></svg>
+          <span class="fp-sidebar__item__label">Scan</span>
+        </button>
+
+<!-- ═══ Sidebar: Everything Folder item (Stage 3) ═══ -->
+        <button class="fp-sidebar__item" id="nav-everything"
+                data-screen="everything" data-action="navigate-screen" title="Everything Folder">
+          <svg class="fp-icon fp-icon--16" aria-hidden="true"><use href="#fp-everything"></use></svg>
+          <span class="fp-sidebar__item__label">Everything Folder</span>
+          <!-- INTEGRATION: error count from GET /everything/errors -->
+          <!-- badge uses bad-wash bg + bad text + bad-edge border when errors exist -->
+          <!-- <span class="fp-badge" style="background:var(--bad-wash);border-color:var(--bad-edge);color:var(--bad)" id="sb-everything-errors">3</span> -->
+        </button>
+
+
+<!-- ═══ Home: Shared sub-tab (future version) ═══ -->
+            <!-- Shared: disabled, v2 tooltip -->
+            <button class="fp-tabs__item" data-tab="shared"
+                    data-action="switch-home-tab"
+                    disabled title="Cloud and network shared files coming in a future version">
+              Shared
+            </button>
+
+<!-- ═══ Home: Shared pane (future version) ═══ -->
+          <!-- ── Shared sub-tab (disabled) ───────────────────────── -->
+          <div class="home-pane" data-pane="shared" style="display:none">
+            <!-- Always shows disabled empty state; tab itself is disabled -->
+            <div class="fp-empty-state">
+              <svg class="fp-icon fp-icon--48 fp-empty-state__icon" aria-hidden="true"><use href="#fp-coming-soon"></use></svg>
+              <p class="fp-empty-state__title">Coming in a future version.</p>
+              <p class="fp-empty-state__desc">Cloud and network shared files will appear here.</p>
+            </div>
+          </div>
+
+        </div><!-- /#screen-home -->
+
+<!-- ═══ Screens: File Tree (Stage 4), Scan config/progress/results (Stage 4), Review Bin (Stage 3), Everything Folder (Stage 3) ═══ -->
+        <!-- ═══════════════════════════════════════════════════════════
+             A.4  FILE TREE CANVAS  (3 modes + snapshots rail)
+             Mode is set via data-mode attribute on .ftree-wrap
+        ════════════════════════════════════════════════════════════ -->
+        <div class="screen screen--ftree" id="screen-ftree">
+          <div class="fp-banner fp-banner--planned" role="status">Not built yet — planned for Stage 4.</div>
+          <div class="fp-planned-dim">
+          <div class="ftree-layout" data-mode="live">
+
+            <!-- Mode banners (only one shown based on data-mode) -->
+
+            <!-- Snapshot view mode banner (warn) — hidden in live mode -->
+            <div class="fp-mode-banner fp-mode-banner--warn ftree-banner ftree-banner--snapshot"
+                 id="ftree-banner-snapshot" style="display:none">
+              <svg class="fp-icon fp-icon--14 fp-mode-banner__icon" aria-hidden="true"><use href="#fp-history"></use></svg>
+              <span class="fp-mode-banner__label" id="ftree-snapshot-label">
+                Viewing snapshot from <strong>Apr 22, 2026</strong> · read-only
+              </span>
+              <button class="fp-btn fp-btn--secondary fp-btn--sm fp-mode-banner__action"
+                      data-action="ftree-return-live" id="btn-ftree-return-live">Return to live</button>
+            </div>
+
+            <!-- Proposal review mode banner (accent) — hidden in live mode -->
+            <div class="fp-mode-banner fp-mode-banner--accent ftree-banner ftree-banner--proposal"
+                 id="ftree-banner-proposal" style="display:none">
+              <!-- INTEGRATION: proposal generated by AI from POST /propose -->
+              <svg class="fp-icon fp-icon--14 fp-mode-banner__icon" aria-hidden="true"><use href="#fp-sparkle"></use></svg>
+              <span class="fp-mode-banner__label">Reviewing AI proposal · changes you make update it</span>
+              <button class="fp-btn fp-btn--primary fp-btn--sm fp-mode-banner__action"
+                      data-action="ftree-execute-proposal" id="btn-ftree-execute">Execute</button>
+            </div>
+
+            <!-- Canvas body (rail + stage + snapshots panel) -->
+            <div class="ftree-body">
+
+              <!-- Left rail: jump-to list -->
+              <div class="ftree-rail" id="ftree-jump-rail">
+                <div class="ftree-rail__head">Locations</div>
+                <div class="ftree-rail__list" id="ftree-jump-list">
+                  <!-- INTEGRATION: flat list of all visible nodes from canvas state -->
+                  <button class="fp-sidebar__item" data-path="C:\" data-action="ftree-jump" style="font-size:12px">
+                    <svg class="fp-icon fp-icon--14" aria-hidden="true"><use href="#fp-drive"></use></svg>
+                    <span class="fp-sidebar__item__label">C:\</span>
+                  </button>
+                  <button class="fp-sidebar__item" data-path="D:\" data-action="ftree-jump" style="font-size:12px">
+                    <svg class="fp-icon fp-icon--14" aria-hidden="true"><use href="#fp-drive"></use></svg>
+                    <span class="fp-sidebar__item__label">D:\</span>
+                  </button>
+                  <!--
+                  EMPTY STATE (no folders indexed):
+                  <p class="ftree-rail__empty">No folders indexed.</p>
+                  -->
+                </div>
+                <!-- Collapse rail button -->
+                <button class="fp-icon-btn fp-icon-btn--sm" data-action="ftree-toggle-left-rail"
+                        style="margin:4px auto;display:flex" title="Collapse jump list">
+                  <svg class="fp-icon fp-icon--12" aria-hidden="true"><use href="#fp-chevron-left"></use></svg>
+                </button>
+              </div>
+
+              <!-- Canvas stage (pan/zoom) -->
+              <div class="ftree-stage" id="ftree-stage">
+
+                <!-- Floating glass toolbar (top-center, convex pill chrome) -->
+                <!-- Per spec: same chrome as Approvals pill: highlight-top-strong + shadow-raised + bg-raised + border-subtle; backdrop-blur allowed as overlay on canvas -->
+                <div class="ftree-toolbar" id="ftree-toolbar">
+                  <!-- Changes toggle -->
+                  <button class="fp-icon-btn" data-action="ftree-toggle-changes"
+                          title="Toggle AI-proposed changes" id="btn-ftree-changes">
+                    <svg class="fp-icon fp-icon--16" aria-hidden="true"><use href="#fp-changes"></use></svg>
+                  </button>
+                  <div class="ftree-toolbar__sep"></div>
+                  <!-- Expand all / Collapse to depth-3 -->
+                  <button class="fp-icon-btn" data-action="ftree-expand-all" title="Expand all">
+                    <svg class="fp-icon fp-icon--16" aria-hidden="true"><use href="#fp-chevron-down"></use></svg>
+                  </button>
+                  <button class="fp-icon-btn" data-action="ftree-collapse-depth3" title="Collapse to depth 3">
+                    <svg class="fp-icon fp-icon--16" aria-hidden="true"><use href="#fp-chevron-up"></use></svg>
+                  </button>
+                  <div class="ftree-toolbar__sep"></div>
+                  <!-- Zoom controls -->
+                  <button class="fp-icon-btn" data-action="ftree-zoom-out" title="Zoom out">
+                    <svg class="fp-icon fp-icon--16" aria-hidden="true"><use href="#fp-zoom-out"></use></svg>
+                  </button>
+                  <span class="ftree-toolbar__zoom mono" id="ftree-zoom-pct"
+                        style="font:500 var(--t-small) var(--font-data);color:var(--text-secondary);min-width:36px;text-align:center">100%</span>
+                  <button class="fp-icon-btn" data-action="ftree-zoom-in" title="Zoom in">
+                    <svg class="fp-icon fp-icon--16" aria-hidden="true"><use href="#fp-zoom-in"></use></svg>
+                  </button>
+                  <button class="fp-icon-btn" data-action="ftree-fit-view" title="Fit to view">
+                    <svg class="fp-icon fp-icon--16" aria-hidden="true"><use href="#fp-fit-view"></use></svg>
+                  </button>
+                  <div class="ftree-toolbar__sep"></div>
+                  <!-- Add folder -->
+                  <button class="fp-icon-btn" data-action="ftree-add-folder" title="Add folder">
+                    <svg class="fp-icon fp-icon--16" aria-hidden="true"><use href="#fp-folder-add"></use></svg>
+                  </button>
+                  <!-- Delete (disabled state: 40% opacity) -->
+                  <button class="fp-icon-btn" data-action="ftree-delete-selected"
+                          title="Delete selected" disabled style="opacity:.4">
+                    <svg class="fp-icon fp-icon--16" aria-hidden="true"><use href="#fp-delete"></use></svg>
+                  </button>
+                  <div class="ftree-toolbar__sep"></div>
+                  <!-- View hidden files -->
+                  <button class="fp-icon-btn" data-action="ftree-toggle-hidden"
+                          title="Toggle hidden files" id="btn-ftree-hidden">
+                    <svg class="fp-icon fp-icon--16" aria-hidden="true"><use href="#fp-eye"></use></svg>
+                  </button>
+                  <!-- Fullscreen -->
+                  <button class="fp-icon-btn" data-action="ftree-fullscreen" title="Fullscreen (collapse both rails)">
+                    <svg class="fp-icon fp-icon--16" aria-hidden="true"><use href="#fp-fit-view"></use></svg>
+                  </button>
+                </div>
+
+                <!-- Canvas (pan/zoom world) -->
+                <div class="ftree-canvas" id="ftree-canvas">
+                  <div class="ftree-world" id="ftree-world">
+
+                    <!-- INTEGRATION: canvas nodes from GET /ftree -->
+                    <!-- Sample folder nodes showing 4 states -->
+
+                    <!-- Default folder node -->
+                    <div class="ftree-node" data-path="D:\" style="top:20px;left:20px">
+                      <svg class="fp-icon fp-icon--20" aria-hidden="true" style="color:var(--accent)"><use href="#fp-folder"></use></svg>
+                      <span class="ftree-node__name">D:\</span>
+                      <span class="ftree-node__count mono">2,841 files</span>
+                      <!-- Expand children badge -->
+                      <button class="ftree-node__expand-badge" data-action="ftree-expand-node"
+                              data-path="D:\">+14</button>
+                    </div>
+
+                    <!-- AI-suggested addition (inline — shows ftree-node--ai-add state) -->
+                    <div class="ftree-node ftree-node--ai-add" data-path="D:\Archive" style="top:20px;left:220px"
+                         data-action="ftree-select-node">
+                      <svg class="fp-icon fp-icon--20" aria-hidden="true" style="color:var(--good)"><use href="#fp-folder"></use></svg>
+                      <span class="ftree-node__name">Archive</span>
+                      <span class="ftree-node__count mono">0 files</span>
+                      <span class="fp-chip" style="font-size:10px;height:16px;padding:0 4px;background:var(--good-wash);border-color:var(--good-edge);color:var(--good)">new</span>
+                    </div>
+                    <!-- ftree-node--ai-remove state:
+                    <div class="ftree-node ftree-node--ai-remove" data-path="D:\Old Stuff" data-action="ftree-select-node">...</div>
+                    ftree-node--ai-move state:
+                    <div class="ftree-node ftree-node--ai-move" data-path="D:\Downloads" data-action="ftree-select-node">...</div>
+                    ftree-node--conflict state:
+                    <div class="ftree-node ftree-node--conflict" data-path="D:\Docs" data-action="ftree-select-node">...</div>
+                    ftree-node--approved state:
+                    <div class="ftree-node ftree-node--approved" data-path="D:\Work" data-action="ftree-select-node">...</div>
+                    ftree-node--rejected state:
+                    <div class="ftree-node ftree-node--rejected" data-path="D:\Temp" data-action="ftree-select-node">...</div>
+                    -->
+
+
+                    <!--
+                    EMPTY STATE (no nodes):
+                    <div class="fp-empty-state" style="position:absolute;inset:0;width:100%">
+                      <svg class="fp-empty-state__icon" viewBox="0 0 48 48" fill="none"><rect x="18" y="3" width="12" height="12" rx="2" stroke="currentColor" stroke-width="2"/><rect x="3" y="33" width="12" height="12" rx="2" stroke="currentColor" stroke-width="2"/><rect x="18" y="33" width="12" height="12" rx="2" stroke="currentColor" stroke-width="2"/><rect x="33" y="33" width="12" height="12" rx="2" stroke="currentColor" stroke-width="2"/><path d="M24 15v6M24 21H9v12M24 21h15v12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                      <p class="fp-empty-state__title">File Tree Canvas</p>
+                      <p class="fp-empty-state__desc">Scan a folder first to visualise its structure as a zoomable node graph.</p>
+                    </div>
+                    -->
+
+                  </div><!-- /.ftree-world -->
+                </div><!-- /.ftree-canvas -->
+              </div><!-- /.ftree-stage -->
+
+              <!-- Right rail: Snapshots panel -->
+              <div class="ftree-rail ftree-rail--right" id="ftree-snapshots-rail"
+                   style="border-left:1px solid var(--border-hairline);border-right:none">
+                <div class="ftree-rail__head" style="display:flex;align-items:center;justify-content:space-between">
+                  <span>Snapshots</span>
+                  <button class="fp-icon-btn fp-icon-btn--sm" data-action="ftree-new-snapshot"
+                          title="New snapshot">
+                    <svg class="fp-icon fp-icon--12" aria-hidden="true"><use href="#fp-add"></use></svg>
+                  </button>
+                </div>
+
+                <!-- INTEGRATION: snapshot list from GET /snapshots -->
+                <div class="ftree-rail__list" id="ftree-snapshot-list">
+
+                  <!-- "Now · Live state" — first row, 2px accent left bar, always active -->
+                  <div class="ftree-snapshot ftree-snapshot--active ftree-snapshot--live"
+                       data-action="ftree-view-snapshot" data-snapshot="live">
+                    <span class="ftree-snapshot__label">Now · Live state</span>
+                    <span class="ftree-snapshot__time mono">current</span>
+                  </div>
+
+                  <!-- User-bookmarked snapshot -->
+                  <div class="ftree-snapshot" data-action="ftree-view-snapshot" data-snapshot="2026-04-22T14:00">
+                    <svg class="fp-icon fp-icon--14" aria-hidden="true" style="color:var(--accent)"><use href="#fp-star-filled"></use></svg>
+                    <div style="flex:1;min-width:0">
+                      <span class="ftree-snapshot__label">Before big cleanup</span>
+                      <span class="ftree-snapshot__sub">Apr 22, 2026</span>
+                    </div>
+                  </div>
+
+                  <!-- Major scan snapshot -->
+                  <div class="ftree-snapshot" data-action="ftree-view-snapshot" data-snapshot="2026-04-20T02:00">
+                    <div style="flex:1;min-width:0">
+                      <div style="display:flex;align-items:center;gap:6px">
+                        <span class="ftree-snapshot__label">Scan baseline</span>
+                        <span class="fp-chip fp-chip--tinted" style="height:16px;font-size:10px;padding:0 4px">Scan</span>
+                      </div>
+                      <span class="ftree-snapshot__sub">Apr 20, 2026</span>
+                    </div>
+                  </div>
+
+                  <!-- AI-task snapshot (with expiry countdown) -->
+                  <div class="ftree-snapshot" data-action="ftree-view-snapshot" data-snapshot="2026-04-19T10:00">
+                    <div style="flex:1;min-width:0">
+                      <span class="ftree-snapshot__label">AI reorganization</span>
+                      <div style="display:flex;gap:8px;align-items:center">
+                        <span class="ftree-snapshot__sub">Apr 19, 2026</span>
+                        <!-- expires countdown -->
+                        <span class="mono" style="font:400 var(--t-small) var(--font-data);color:var(--warn)">expires 30d</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!--
+                  EMPTY STATE (no snapshots):
+                  <div class="ftree-rail__empty" style="text-align:center;padding:24px 16px">
+                    <p style="font:400 var(--t-body) var(--font-ui);color:var(--text-tertiary)">No snapshots yet.</p>
+                    <button class="fp-btn fp-btn--secondary fp-btn--sm" data-action="ftree-new-snapshot" style="margin-top:8px">Create first snapshot</button>
+                  </div>
+                  -->
+
+                </div>
+              </div><!-- /.ftree-snapshots-rail -->
+
+            </div><!-- /.ftree-body -->
+          </div><!-- /.ftree-layout -->
+          </div><!-- /.fp-planned-dim -->
+        </div><!-- /#screen-ftree -->
+
+        <!-- ═══════════════════════════════════════════════════════════════
+             A.5  SCAN CONFIGURATION
+             Two modes: Conversational (default) | Structured Form
+        ════════════════════════════════════════════════════════════════ -->
+        <div class="screen screen--scan-config" id="screen-scan-config">
+          <div class="fp-banner fp-banner--planned" role="status">Not built yet — planned for Stage 4.</div>
+          <div class="fp-planned-dim">
+
+          <!-- Top bar: brand mark (48×48) + mode controls -->
+          <div class="scan-topbar" id="scan-topbar">
+            <!-- 48×48 brand mark per spec A.5.1 -->
+            <div class="fp-brand fp-brand--48" aria-label="FilePlus" style="flex-shrink:0">
+              <svg class="fp-icon fp-icon--24" aria-hidden="true"><use href="#fp-brand"></use></svg>
+            </div>
+            <div style="display:flex;gap:8px;flex-shrink:0">
+              <!-- Always visible per spec A.5.1 -->
+              <button class="fp-btn fp-btn--secondary fp-btn--sm"
+                      data-action="scan-config-use-defaults" id="btn-scan-defaults">
+                Skip the rest, use defaults
+              </button>
+              <!-- Conversational mode: shows "Switch to structured form" -->
+              <button class="fp-btn fp-btn--ghost fp-btn--sm"
+                      data-action="scan-config-switch-mode"
+                      data-mode="form" id="btn-scan-switch"
+                      style="display:inline-flex">
+                Switch to structured form
+              </button>
+              <!--
+              FORM MODE: shows "Switch to conversational" instead:
+              <button class="fp-btn fp-btn--ghost fp-btn--sm"
+                      data-action="scan-config-switch-mode"
+                      data-mode="conversational">
+                Switch to conversational
+              </button>
+              -->
+            </div>
+          </div>
+
+          <!-- ── CONVERSATIONAL MODE (default) ───────────────────────────── -->
+          <div class="scan-conv" id="scan-conv">
+
+            <!-- Chat scroll area (max 640px centered) -->
+            <div class="scan-chat-scroll" id="scan-chat-scroll">
+              <div class="scan-chat-messages" id="scan-chat-messages">
+
+                <!-- INTEGRATION: chat history from POST /scan/chat (init session) -->
+
+                <!-- AI opening message -->
+                <div class="scan-msg scan-msg--ai">
+                  <p style="margin:0">What areas of your life are important to you? Work, music, school, photos, anything else?</p>
+                </div>
+
+                <!-- User message (example inline) -->
+                <div class="scan-msg scan-msg--user">
+                  <p style="margin:0">Work projects, code, photos, and downloads I keep forgetting about.</p>
+                </div>
+
+                <!-- AI follow-up with extension chips -->
+                <!-- INTEGRATION: response from POST /scan/chat -->
+                <div class="scan-msg scan-msg--ai">
+                  <p style="margin:0 0 10px">Got it. For work and code, should I track these file types? Tap to toggle.</p>
+                  <div style="display:flex;flex-wrap:wrap;gap:6px">
+                    <!-- fp-chip--tinted = selected; fp-chip = unselected -->
+                    <button class="fp-chip fp-chip--tinted" data-action="scan-toggle-ext" data-ext=".py">.py</button>
+                    <button class="fp-chip fp-chip--tinted" data-action="scan-toggle-ext" data-ext=".js">.js</button>
+                    <button class="fp-chip fp-chip--tinted" data-action="scan-toggle-ext" data-ext=".ts">.ts</button>
+                    <button class="fp-chip fp-chip--tinted" data-action="scan-toggle-ext" data-ext=".md">.md</button>
+                    <button class="fp-chip" data-action="scan-toggle-ext" data-ext=".json">.json</button>
+                    <button class="fp-chip" data-action="scan-toggle-ext" data-ext=".yaml">.yaml</button>
+                    <button class="fp-chip" data-action="scan-toggle-ext" data-ext=".toml">.toml</button>
+                    <button class="fp-chip" data-action="scan-toggle-ext" data-ext=".sh">.sh</button>
+                  </div>
+                </div>
+
+                <!--
+                EMPTY STATE (session just started, awaiting first AI message):
+                <div class="fp-empty" style="height:200px">
+                  <svg class="fp-empty__icon" viewBox="0 0 48 48" fill="none"><circle cx="24" cy="24" r="20" stroke="currentColor" stroke-width="2"/><path d="M16 18h16M16 24h12M16 30h8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+                  <p class="fp-empty__title">Starting conversation…</p>
+                  <p class="fp-empty__desc">FilePlus will ask you a few questions to configure the scan.</p>
+                </div>
+                -->
+
+              </div><!-- /.scan-chat-messages -->
+            </div><!-- /.scan-chat-scroll -->
+
+            <!-- Input bar (sticky bottom) -->
+            <div class="scan-chat-input-bar" id="scan-chat-input-bar">
+              <div class="scan-chat-input-inner">
+                <!-- Concave chrome textarea, autogrows to 4 lines (JS) -->
+                <textarea class="fp-input scan-chat-textarea"
+                          id="scan-chat-input"
+                          placeholder="Type your answer…"
+                          rows="1"
+                          data-action="scan-chat-input"
+                          aria-label="Your answer"></textarea>
+                <!-- "I'm done answering" inline per spec A.5.1 -->
+                <button class="fp-btn fp-btn--secondary fp-btn--sm"
+                        data-action="scan-chat-done" id="btn-scan-chat-done"
+                        style="flex-shrink:0;white-space:nowrap">
+                  I'm done answering
+                </button>
+              </div>
+              <!-- Pre-scan baseline confirmation CTA (A.5.3) — opens #modal-scrim -->
+              <div style="display:flex;justify-content:flex-end;padding-top:8px">
+                <button class="fp-btn fp-btn--primary fp-btn--sm"
+                        data-action="scan-baseline-confirm" id="btn-conv-start-scan">
+                  Create baseline &amp; scan
+                </button>
+              </div>
+            </div>
+
+          </div><!-- /.scan-conv -->
+
+          <!-- ── STRUCTURED FORM MODE (hidden by default) ─────────────────── -->
+          <div class="scan-form" id="scan-form" style="display:none;flex:1;overflow-y:auto;padding:24px 20px">
+            <div style="max-width:640px;margin:0 auto;display:flex;flex-direction:column;gap:16px">
+
+              <!-- Scope card -->
+              <div class="fp-card">
+                <div class="fp-card__header"><span class="fp-card__title">Which folders to scan</span></div>
+                <div style="display:flex;flex-direction:column;gap:12px">
+                  <!-- Specific folder paths (A.5.2 path picker rows) -->
+                  <div>
+                    <div style="font:500 var(--t-compact) var(--font-ui);color:var(--text-secondary);margin-bottom:6px">Specific folders</div>
+                    <div id="scan-form-paths" style="display:flex;flex-direction:column;gap:4px">
+                      <!-- Path picker row: folder path + remove button -->
+                      <div class="scan-form-path-row" style="display:flex;align-items:center;gap:8px">
+                        <span class="mono" style="font:400 var(--t-compact) var(--font-data);color:var(--text-primary);flex:1">D:\Projects</span>
+                        <button class="fp-icon-btn fp-icon-btn--sm" data-action="scan-form-remove-path" data-path="D:\Projects" title="Remove">
+                          <svg class="fp-icon fp-icon--10" aria-hidden="true"><use href="#fp-close"></use></svg>
+                        </button>
+                      </div>
+                      <div class="scan-form-path-row" style="display:flex;align-items:center;gap:8px">
+                        <span class="mono" style="font:400 var(--t-compact) var(--font-data);color:var(--text-primary);flex:1">C:\Users\Justin\Documents</span>
+                        <button class="fp-icon-btn fp-icon-btn--sm" data-action="scan-form-remove-path" data-path="C:\Users\Justin\Documents" title="Remove">
+                          <svg class="fp-icon fp-icon--10" aria-hidden="true"><use href="#fp-close"></use></svg>
+                        </button>
+                      </div>
+                    </div>
+                    <button class="fp-btn fp-btn--ghost fp-btn--sm" data-action="scan-form-add-path"
+                            style="margin-top:6px">+ Add folder</button>
+                  </div>
+                  <div>
+                    <!-- INTEGRATION: drives from GET /drives -->
+                    <div style="font:500 var(--t-compact) var(--font-ui);color:var(--text-secondary);margin-bottom:6px">Or scan entire drives</div>
+                    <label style="display:flex;align-items:center;gap:8px;height:28px;cursor:default">
+                      <span class="fp-checkbox fp-checkbox--checked" data-action="scan-form-toggle-drive" data-drive="C:\">
+                        <svg class="fp-icon fp-icon--12" aria-hidden="true"><use href="#fp-check"></use></svg>
+                      </span>
+                      <span class="mono" style="font:400 var(--t-body) var(--font-data)">C:\</span>
+                      <span class="mono" style="font:400 var(--t-small) var(--font-data);color:var(--text-tertiary)">127 GB used</span>
+                    </label>
+                    <label style="display:flex;align-items:center;gap:8px;height:28px;cursor:default">
+                      <span class="fp-checkbox fp-checkbox--checked" data-action="scan-form-toggle-drive" data-drive="D:\">
+                        <svg class="fp-icon fp-icon--12" aria-hidden="true"><use href="#fp-check"></use></svg>
+                      </span>
+                      <span class="mono" style="font:400 var(--t-body) var(--font-data)">D:\</span>
+                      <span class="mono" style="font:400 var(--t-small) var(--font-data);color:var(--text-tertiary)">843 GB used</span>
+                    </label>
+                  </div>
+                  <div>
+                    <div style="font:500 var(--t-compact) var(--font-ui);color:var(--text-secondary);margin-bottom:6px">Exclusion patterns</div>
+                    <div style="display:flex;flex-wrap:wrap;gap:6px" id="scan-form-exclusions">
+                      <span class="fp-chip">node_modules</span>
+                      <span class="fp-chip">.git</span>
+                      <span class="fp-chip">__pycache__</span>
+                      <button class="fp-chip fp-chip--add" data-action="scan-form-add-exclusion">+ Add</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Cleanup aggressiveness -->
+              <div class="fp-card">
+                <div class="fp-card__header"><span class="fp-card__title">Cleanup aggressiveness</span></div>
+                <div class="fp-segmented" style="width:100%" role="group" aria-label="Cleanup aggressiveness">
+                  <button class="fp-segmented__opt" data-action="scan-form-set-aggressiveness" data-value="conservative">Conservative</button>
+                  <button class="fp-segmented__opt active" data-action="scan-form-set-aggressiveness" data-value="moderate">Moderate</button>
+                  <button class="fp-segmented__opt" data-action="scan-form-set-aggressiveness" data-value="aggressive">Aggressive</button>
+                </div>
+              </div>
+
+              <!-- Tree complexity -->
+              <div class="fp-card">
+                <div class="fp-card__header"><span class="fp-card__title">Tree complexity</span></div>
+                <div class="fp-segmented" style="width:100%" role="group" aria-label="Tree complexity">
+                  <button class="fp-segmented__opt" data-action="scan-form-set-complexity" data-value="simple">Simple</button>
+                  <button class="fp-segmented__opt active" data-action="scan-form-set-complexity" data-value="balanced">Balanced</button>
+                  <button class="fp-segmented__opt" data-action="scan-form-set-complexity" data-value="detailed">Detailed</button>
+                </div>
+              </div>
+
+              <!-- Custom file type priorities -->
+              <div class="fp-card">
+                <div class="fp-card__header"><span class="fp-card__title">Custom file type priorities</span></div>
+                <div style="display:flex;flex-wrap:wrap;gap:6px" id="scan-form-priority-types">
+                  <button class="fp-chip fp-chip--tinted" data-action="scan-form-toggle-ext" data-ext=".py">.py</button>
+                  <button class="fp-chip fp-chip--tinted" data-action="scan-form-toggle-ext" data-ext=".md">.md</button>
+                  <button class="fp-chip" data-action="scan-form-toggle-ext" data-ext=".log">.log</button>
+                  <button class="fp-chip fp-chip--add" data-action="scan-form-add-priority">+ Add</button>
+                </div>
+              </div>
+
+              <!-- "Never touch" folders -->
+              <div class="fp-card">
+                <div class="fp-card__header">
+                  <svg class="fp-icon fp-icon--14" aria-hidden="true"><use href="#fp-error"></use></svg>
+                  <span class="fp-card__title">"Never touch" folders</span>
+                </div>
+                <p style="font:400 var(--t-compact) var(--font-ui);color:var(--text-secondary);margin:0 0 10px">The AI will never propose moving or modifying files in these folders.</p>
+                <div style="display:flex;flex-wrap:wrap;gap:6px" id="scan-form-never-touch">
+                  <button class="fp-chip fp-chip--add" data-action="scan-form-add-never-touch">+ Add folder</button>
+                </div>
+              </div>
+
+              <!-- Estimated scan time + CTA -->
+              <div class="fp-card" style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+                <div>
+                  <div style="font:500 var(--t-micro) var(--font-ui);letter-spacing:var(--track-caps);text-transform:uppercase;color:var(--text-tertiary);margin-bottom:4px">Estimated scan time</div>
+                  <!-- INTEGRATION: estimate from GET /scan/estimate -->
+                  <div style="font:500 var(--t-display-sm) var(--font-data);letter-spacing:var(--track-mono);color:var(--text-primary)">~12 min</div>
+                </div>
+                <div style="margin-left:auto">
+                  <!-- Opens pre-scan baseline confirmation modal -->
+                  <button class="fp-btn fp-btn--primary fp-btn--lg"
+                          data-action="scan-baseline-confirm" id="btn-form-start-scan">
+                    Create baseline &amp; scan
+                  </button>
+                </div>
+              </div>
+
+            </div>
+          </div><!-- /.scan-form -->
+
+          </div><!-- /.fp-planned-dim -->
+        </div><!-- /#screen-scan-config -->
+
+        <!-- ═══════════════════════════════════════════════════════════════
+             A.6  SCAN PROGRESS
+        ════════════════════════════════════════════════════════════════ -->
+        <div class="screen screen--scan-progress" id="screen-scan-progress">
+          <div class="fp-banner fp-banner--planned" role="status">Not built yet — planned for Stage 4.</div>
+          <div class="fp-planned-dim">
+          <div style="flex:1;overflow-y:auto;padding:32px;display:flex;flex-direction:column;gap:24px;max-width:640px;width:100%;margin:0 auto;box-sizing:border-box">
+
+            <!-- A.16: Scan interrupted / backend error (comment in when scan fails) -->
+            <!--
+            <div class="fp-error-banner">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="6" stroke="currentColor" stroke-width="1.2"/><path d="M7 4v4M7 10v.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+              Scan interrupted — backend process stopped unexpectedly.
+              <button class="fp-error-banner__action fp-btn fp-btn--ghost" data-action="restart-scan">Retry</button>
+              <button class="fp-error-banner__dismiss fp-icon-btn fp-icon-btn--sm" data-action="dismiss-error">✕</button>
+            </div>
+            -->
+
+            <!-- ── 5-Stage checklist ───────────────────────────────────── -->
+            <!-- INTEGRATION: stage + progress from GET /scan/status (SSE) -->
+            <div class="fp-stage-list">
+
+              <!-- Stage: Index — done (example) -->
+              <div class="fp-stage fp-stage--done">
+                <div class="fp-stage__icon">
+                  <svg class="fp-icon fp-icon--12" aria-hidden="true"><use href="#fp-check"></use></svg>
+                </div>
+                <span class="fp-stage__label">Index</span>
+                <span class="fp-stage__meta">214,823 files</span>
+              </div>
+
+              <!-- Stage: Deduplicate — current (active, with progress bar) -->
+              <div class="fp-stage fp-stage--current">
+                <div class="fp-stage__icon">
+                  <svg class="fp-icon fp-icon--12" aria-hidden="true"><use href="#fp-history"></use></svg>
+                </div>
+                <span class="fp-stage__label">Deduplicate</span>
+                <span class="fp-stage__meta">35%</span>
+                <!-- Progress bar row (grid-column 2/4) -->
+                <div class="fp-stage__progress">
+                  <div class="fp-progress">
+                    <div class="fp-progress__fill" id="scan-progress-fill" style="width:35%"></div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Stages: pending -->
+              <div class="fp-stage">
+                <div class="fp-stage__icon">3</div>
+                <span class="fp-stage__label">Classify</span>
+                <span class="fp-stage__meta"></span>
+              </div>
+              <div class="fp-stage">
+                <div class="fp-stage__icon">4</div>
+                <span class="fp-stage__label">Propose</span>
+                <span class="fp-stage__meta"></span>
+              </div>
+              <div class="fp-stage">
+                <div class="fp-stage__icon">5</div>
+                <span class="fp-stage__label">Review</span>
+                <span class="fp-stage__meta"></span>
+              </div>
+
+            </div><!-- /.fp-stage-list -->
+
+            <!-- ── Now working on ─────────────────────────────────────── -->
+            <!-- INTEGRATION: current file from GET /scan/status -->
+            <div class="fp-card" style="padding:14px 16px">
+              <div style="font:500 var(--t-micro) var(--font-ui);letter-spacing:var(--track-caps);text-transform:uppercase;color:var(--text-tertiary);margin-bottom:6px">Now working on</div>
+              <div class="mono" id="scan-current-file"
+                   style="font:400 var(--t-body) var(--font-data);color:var(--text-primary);word-break:break-all;line-height:1.4">
+                D:\Photos\vacation_2024\IMG_4821.jpg
+              </div>
+            </div>
+
+            <!-- ── Stats grid (4 stat cards) ──────────────────────────── -->
+            <!-- INTEGRATION: stats from GET /scan/status -->
+            <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px">
+
+              <div class="fp-stat-card">
+                <div class="fp-stat-card__label">Rate</div>
+                <div class="fp-stat-card__value">
+                  847<span class="fp-stat-card__unit">files/s</span>
+                </div>
+              </div>
+
+              <div class="fp-stat-card">
+                <div class="fp-stat-card__label">Classified</div>
+                <div class="fp-stat-card__value" id="scan-stat-classified">
+                  74,211
+                </div>
+              </div>
+
+              <div class="fp-stat-card">
+                <div class="fp-stat-card__label">Remaining</div>
+                <div class="fp-stat-card__value" id="scan-stat-remaining">
+                  140,612
+                </div>
+              </div>
+
+              <div class="fp-stat-card">
+                <div class="fp-stat-card__label">ETA</div>
+                <div class="fp-stat-card__value" id="scan-stat-eta">
+                  8<span class="fp-stat-card__unit">min</span>
+                </div>
+              </div>
+
+            </div><!-- /stats grid -->
+
+            <!-- ── Throughput sparkline ────────────────────────────────── -->
+            <!-- INTEGRATION: sparkline data from GET /scan/sparkline (SSE) — animates continuously -->
+            <div class="fp-card" style="padding:12px 14px">
+              <div style="font:500 var(--t-micro) var(--font-ui);letter-spacing:var(--track-caps);text-transform:uppercase;color:var(--text-tertiary);margin-bottom:10px">Throughput (last 5 min)</div>
+              <svg id="scan-sparkline" width="100%" height="40" viewBox="0 0 580 40" preserveAspectRatio="none"
+                   style="display:block" aria-label="Throughput sparkline">
+                <!-- 2px accent stroke placeholder line — replaced by live data -->
+                <polyline
+                  points="0,32 40,28 80,24 120,20 160,26 200,18 240,14 280,20 320,22 360,16 400,12 440,18 480,10 520,14 560,8 580,12"
+                  fill="none"
+                  stroke="var(--accent)"
+                  stroke-width="2"
+                  stroke-linejoin="round"
+                  stroke-linecap="round"
+                />
+              </svg>
+            </div>
+
+            <!-- ── Reassurance banner ──────────────────────────────────── -->
+            <div style="
+              background:var(--good-wash);
+              border:1px solid var(--good-edge);
+              border-radius:var(--r-button);
+              padding:10px 14px;
+              display:flex;align-items:center;gap:10px
+            ">
+              <svg class="fp-icon fp-icon--14" aria-hidden="true" style="flex-shrink:0;color:var(--good)"><use href="#fp-lock"></use></svg>
+              <span style="font:400 var(--t-body) var(--font-ui);color:var(--text-primary)">Nothing is being moved. Continues in background if you close this window.</span>
+            </div>
+
+            <!-- ── Footer actions ─────────────────────────────────────── -->
+            <div style="display:flex;gap:8px;flex-shrink:0">
+              <button class="fp-btn fp-btn--secondary" data-action="scan-pause" id="btn-scan-pause">Pause</button>
+              <button class="fp-btn fp-btn--secondary" data-action="scan-minimize-tray">Minimize to tray</button>
+              <div style="margin-left:auto">
+                <!-- Danger: opens confirmation modal (stub) -->
+                <button class="fp-btn fp-btn--danger" data-action="scan-stop-confirm" id="btn-scan-stop">Stop scan</button>
+              </div>
+            </div>
+
+          </div>
+          </div><!-- /.fp-planned-dim -->
+        </div><!-- /#screen-scan-progress -->
+
+        <!-- ═══════════════════════════════════════════════════════════════
+             A.7  SCAN RESULTS  (3 tabs: Duplicates / Cleanup / Reorganization)
+        ════════════════════════════════════════════════════════════════ -->
+        <div class="screen screen--scan-results" id="screen-scan-results">
+          <div class="fp-banner fp-banner--planned" role="status">Not built yet — planned for Stage 4.</div>
+          <div class="fp-planned-dim">
+
+          <!-- A.16: Scan results load error (comment in when /scan/results fails) -->
+          <!--
+          <div class="fp-error-banner">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="6" stroke="currentColor" stroke-width="1.2"/><path d="M7 4v4M7 10v.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+            Scan results could not be loaded. The backend may have stopped.
+            <button class="fp-error-banner__action fp-btn fp-btn--ghost" data-action="navigate-screen" data-screen="scan-config">New scan</button>
+            <button class="fp-error-banner__dismiss fp-icon-btn fp-icon-btn--sm" data-action="dismiss-error">✕</button>
+          </div>
+          -->
+
+          <!-- Underline tab bar -->
+          <div class="fp-tabs" id="scan-results-tabs" style="padding:0 16px;flex-shrink:0">
+            <button class="fp-tabs__item fp-tabs__item--active"
+                    data-tab="duplicates" data-action="switch-scan-results-tab">Duplicates</button>
+            <button class="fp-tabs__item"
+                    data-tab="cleanup" data-action="switch-scan-results-tab">Cleanup</button>
+            <button class="fp-tabs__item"
+                    data-tab="reorg" data-action="switch-scan-results-tab">Reorganization</button>
+            <div class="fp-tabs__indicator"></div>
+          </div>
+
+          <!-- ── Duplicates tab (default active) ─────────────────────── -->
+          <div class="scan-results-pane" data-pane="duplicates" style="flex:1;overflow-y:auto;min-height:0">
+            <div style="padding:0 0 16px">
+
+              <!-- "Select all AI suggestions" toggle bar -->
+              <div style="display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid var(--border-hairline)">
+                <div style="display:flex;align-items:center;gap:8px;cursor:default">
+                  <!-- INTEGRATION: AI duplicate selections from GET /scan/duplicates -->
+                  <label class="fp-toggle" id="toggle-dupes-ai">
+                    <input type="checkbox" checked data-action="scan-dupes-select-all" />
+                    <span class="fp-toggle__track"></span>
+                    <span class="fp-toggle__thumb"></span>
+                  </label>
+                  <span style="font:500 var(--t-body) var(--font-ui);color:var(--text-secondary)">Select all AI suggestions</span>
+                </div>
+                <div style="margin-left:auto">
+                  <div style="display:flex;align-items:center;gap:8px;cursor:default">
+                    <span style="font:400 var(--t-compact) var(--font-ui);color:var(--text-tertiary)">Hardlink instead of delete</span>
+                    <label class="fp-toggle" id="toggle-dupes-hardlink">
+                      <input type="checkbox" data-action="scan-dupes-hardlink" />
+                      <span class="fp-toggle__track"></span>
+                      <span class="fp-toggle__thumb"></span>
+                    </label>
+                  </div>
+                </div>
+              </div>
+
+              <!-- INTEGRATION: duplicate groups from GET /scan/duplicates -->
+
+              <!-- Duplicate group — expanded (example) -->
+              <div class="scan-dupe-group" data-group-id="dupe-1">
+                <!-- Group row (36px, bg-raised on hover) -->
+                <div class="scan-dupe-group__header" data-action="scan-toggle-dupe-group" data-group="dupe-1">
+                  <svg class="fp-icon fp-icon--14" aria-hidden="true" style="color:var(--text-tertiary)"><use href="#fp-compare"></use></svg>
+                  <span class="fp-row__name" style="flex:1">IMG_4821.jpg</span>
+                  <span class="fp-chip fp-chip--tinted" style="font-size:10px;height:18px;padding:0 6px">3 copies</span>
+                  <span style="font:400 var(--t-compact) var(--font-data);color:var(--good);margin-left:8px">+4.2 MB</span>
+                  <svg class="fp-icon fp-icon--12" aria-hidden="true" style="color:var(--text-tertiary);margin-left:4px"><use href="#fp-chevron-down"></use></svg>
+                </div>
+
+                <!-- Per-copy rows (nested) -->
+                <div class="scan-dupe-group__children" id="scan-dupe-1-children">
+                  <!-- Copy 1: AI's "keep" choice (radio checked) -->
+                  <div class="scan-dupe-copy">
+                    <span class="fp-radio fp-radio--checked" data-action="scan-dupe-keep" data-file="D:\Photos\vacation_2024\IMG_4821.jpg"></span>
+                    <span class="mono" style="font:400 var(--t-small) var(--font-data);color:var(--text-primary);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">D:\Photos\vacation_2024\IMG_4821.jpg</span>
+                    <span class="mono" style="font:400 var(--t-small) var(--font-data);color:var(--text-tertiary);flex-shrink:0">Apr 22</span>
+                    <span style="font:400 var(--t-small) var(--font-ui);color:var(--good);font-size:10px;flex-shrink:0">AI choice</span>
+                  </div>
+                  <!-- Copy 2 -->
+                  <div class="scan-dupe-copy">
+                    <span class="fp-radio" data-action="scan-dupe-keep" data-file="D:\Downloads\IMG_4821.jpg"></span>
+                    <span class="mono" style="font:400 var(--t-small) var(--font-data);color:var(--text-secondary);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">D:\Downloads\IMG_4821.jpg</span>
+                    <span class="mono" style="font:400 var(--t-small) var(--font-data);color:var(--text-tertiary);flex-shrink:0">Jan 12</span>
+                  </div>
+                  <!-- Copy 3 -->
+                  <div class="scan-dupe-copy">
+                    <span class="fp-radio" data-action="scan-dupe-keep" data-file="C:\Users\Justin\Desktop\IMG_4821.jpg"></span>
+                    <span class="mono" style="font:400 var(--t-small) var(--font-data);color:var(--text-secondary);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">C:\Users\Justin\Desktop\IMG_4821.jpg</span>
+                    <span class="mono" style="font:400 var(--t-small) var(--font-data);color:var(--text-tertiary);flex-shrink:0">Mar 5</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Duplicate group — collapsed (example) -->
+              <!-- INTEGRATION: more groups from API -->
+              <div class="scan-dupe-group" data-group-id="dupe-2">
+                <div class="scan-dupe-group__header" data-action="scan-toggle-dupe-group" data-group="dupe-2">
+                  <svg class="fp-icon fp-icon--14" aria-hidden="true" style="color:var(--text-tertiary)"><use href="#fp-copy"></use></svg>
+                  <span class="fp-row__name" style="flex:1">report_Q1_2026.pdf</span>
+                  <span class="fp-chip fp-chip--tinted" style="font-size:10px;height:18px;padding:0 6px">2 copies</span>
+                  <span style="font:400 var(--t-compact) var(--font-data);color:var(--good);margin-left:8px">+38.7 MB</span>
+                  <svg class="fp-icon fp-icon--12" aria-hidden="true" style="color:var(--text-tertiary);margin-left:4px"><use href="#fp-chevron-right"></use></svg>
+                </div>
+                <!-- Children hidden (collapsed) -->
+                <div class="scan-dupe-group__children" id="scan-dupe-2-children" style="display:none"></div>
+              </div>
+
+              <!--
+              EMPTY STATE (no duplicates found):
+              <div class="fp-empty" style="height:200px">
+                <svg class="fp-empty__icon" viewBox="0 0 48 48" fill="none"><circle cx="24" cy="24" r="20" stroke="currentColor" stroke-width="2"/><path d="M16 24l6 6 10-12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                <p class="fp-empty__title">No duplicates found.</p>
+                <p class="fp-empty__desc">Your files are all unique.</p>
+              </div>
+              -->
+
+            </div>
+
+            <!-- Footer bar (sticky bottom) -->
+            <div style="
+              position:sticky;bottom:0;
+              background:var(--bg-content);
+              border-top:1px solid var(--border-hairline);
+              padding:10px 16px;
+              display:flex;align-items:center;gap:12px
+            ">
+              <!-- INTEGRATION: reclaimable from GET /scan/duplicates/summary -->
+              <span>Reclaimable: </span>
+              <span style="font:500 var(--t-body) var(--font-data);color:var(--good)" id="dupes-reclaimable">42.9 GB</span>
+              <div style="margin-left:auto">
+                <button class="fp-btn fp-btn--primary" data-action="scan-dedup-confirm" id="btn-execute-dedup">
+                  Execute deduplication
+                </button>
+              </div>
+            </div>
+          </div><!-- /duplicates pane -->
+
+          <!-- ── Cleanup tab (hidden) ──────────────────────────────────── -->
+          <div class="scan-results-pane" data-pane="cleanup" style="display:none;flex:1;flex-direction:column;min-height:0">
+            <!-- Total selected banner -->
+            <div style="padding:12px 16px;border-bottom:1px solid var(--border-hairline);flex-shrink:0">
+              <!-- INTEGRATION: total selected from client-side checkbox state -->
+              <span style="font:700 var(--t-display) var(--font-data);letter-spacing:var(--track-mono);color:var(--text-primary)" id="cleanup-total">3.8 GB</span>
+              <span style="font:400 var(--t-body) var(--font-ui);color:var(--text-secondary);margin-left:8px">selected for cleanup</span>
+            </div>
+
+            <!-- Category cards -->
+            <div style="flex:1;overflow-y:auto;padding:12px 16px;display:flex;flex-direction:column;gap:8px">
+
+              <!-- Category: Temporary files (expanded example) -->
+              <div class="fp-card" style="padding:0;overflow:hidden">
+                <div class="scan-cleanup-cat-header" data-action="scan-toggle-cleanup-cat" data-cat="temp">
+                  <label style="display:flex;align-items:center;gap:8px;flex:1;cursor:default">
+                    <span class="fp-checkbox fp-checkbox--checked" data-action="scan-cleanup-select-all" data-cat="temp">
+                      <svg class="fp-icon fp-icon--12" aria-hidden="true"><use href="#fp-check"></use></svg>
+                    </span>
+                    <span style="font:600 var(--t-body) var(--font-ui);color:var(--text-primary)">Temporary files</span>
+                  </label>
+                  <span style="font:400 var(--t-compact) var(--font-data);color:var(--good)">1.4 GB</span>
+                  <svg class="fp-icon fp-icon--12" aria-hidden="true" style="color:var(--text-tertiary)"><use href="#fp-chevron-down"></use></svg>
+                </div>
+                <!-- Expanded file list -->
+                <div class="scan-cleanup-cat-files" id="scan-cleanup-temp">
+                  <div style="display:flex;justify-content:space-between;padding:6px 16px;border-top:1px solid var(--border-hairline)">
+                    <button class="fp-btn fp-btn--ghost fp-btn--sm" data-action="scan-cleanup-select-all" data-cat="temp">Select all</button>
+                    <button class="fp-btn fp-btn--ghost fp-btn--sm" data-action="scan-cleanup-reject-all" data-cat="temp">Reject all</button>
+                  </div>
+                  <!-- INTEGRATION: files from GET /scan/cleanup/temp -->
+                  <div style="padding:0 16px 8px;display:flex;flex-direction:column;gap:4px">
+                    <label style="display:flex;align-items:center;gap:10px;height:26px;cursor:default">
+                      <span class="fp-checkbox fp-checkbox--checked" data-action="scan-cleanup-toggle-file" data-file="C:\Windows\Temp\setup.tmp"><svg class="fp-icon fp-icon--12" aria-hidden="true"><use href="#fp-check"></use></svg></span>
+                      <span class="mono" style="font:400 var(--t-small) var(--font-data);color:var(--text-secondary);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">C:\Windows\Temp\setup.tmp</span>
+                      <span class="mono" style="font:400 var(--t-small) var(--font-data);color:var(--text-tertiary);flex-shrink:0">824 KB</span>
+                    </label>
+                    <label style="display:flex;align-items:center;gap:10px;height:26px;cursor:default">
+                      <span class="fp-checkbox fp-checkbox--checked" data-action="scan-cleanup-toggle-file" data-file="C:\Windows\Temp\etilqs_6B4.tmp"><svg class="fp-icon fp-icon--12" aria-hidden="true"><use href="#fp-check"></use></svg></span>
+                      <span class="mono" style="font:400 var(--t-small) var(--font-data);color:var(--text-secondary);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">C:\Windows\Temp\etilqs_6B4.tmp</span>
+                      <span class="mono" style="font:400 var(--t-small) var(--font-data);color:var(--text-tertiary);flex-shrink:0">1.2 MB</span>
+                    </label>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Category: Empty folders (collapsed) -->
+              <div class="fp-card" style="padding:0;overflow:hidden">
+                <div class="scan-cleanup-cat-header" data-action="scan-toggle-cleanup-cat" data-cat="empty-folders">
+                  <label style="display:flex;align-items:center;gap:8px;flex:1;cursor:default">
+                    <span class="fp-checkbox fp-checkbox--checked" data-action="scan-cleanup-select-all" data-cat="empty-folders"><svg class="fp-icon fp-icon--12" aria-hidden="true"><use href="#fp-check"></use></svg></span>
+                    <span style="font:600 var(--t-body) var(--font-ui);color:var(--text-primary)">Empty folders</span>
+                  </label>
+                  <span style="font:400 var(--t-compact) var(--font-data);color:var(--text-secondary)">23 folders</span>
+                  <svg class="fp-icon fp-icon--12" aria-hidden="true" style="color:var(--text-tertiary)"><use href="#fp-chevron-right"></use></svg>
+                </div>
+                <div class="scan-cleanup-cat-files" style="display:none" id="scan-cleanup-empty-folders"></div>
+              </div>
+
+              <!-- Category: Old downloads (collapsed) -->
+              <div class="fp-card" style="padding:0;overflow:hidden">
+                <div class="scan-cleanup-cat-header" data-action="scan-toggle-cleanup-cat" data-cat="old-downloads">
+                  <label style="display:flex;align-items:center;gap:8px;flex:1;cursor:default">
+                    <span class="fp-checkbox fp-checkbox--checked" data-action="scan-cleanup-select-all" data-cat="old-downloads"><svg class="fp-icon fp-icon--12" aria-hidden="true"><use href="#fp-check"></use></svg></span>
+                    <span style="font:600 var(--t-body) var(--font-ui);color:var(--text-primary)">Old downloads</span>
+                  </label>
+                  <div style="display:flex;align-items:center;gap:10px">
+                    <label style="display:flex;align-items:center;gap:6px;cursor:default">
+                      <span style="font:400 var(--t-compact) var(--font-ui);color:var(--text-tertiary)">Older than</span>
+                      <input type="range" class="fp-slider" min="7" max="365" value="90" style="width:80px" data-action="scan-cleanup-age-threshold">
+                      <span class="mono" style="font:400 var(--t-compact) var(--font-data);color:var(--text-secondary);min-width:30px">90d</span>
+                    </label>
+                    <span style="font:400 var(--t-compact) var(--font-data);color:var(--good)">2.4 GB</span>
+                  </div>
+                  <svg class="fp-icon fp-icon--12" aria-hidden="true" style="color:var(--text-tertiary)"><use href="#fp-chevron-right"></use></svg>
+                </div>
+                <div class="scan-cleanup-cat-files" style="display:none" id="scan-cleanup-old-downloads"></div>
+              </div>
+
+              <!-- Category: Large unused files (collapsed) -->
+              <div class="fp-card" style="padding:0;overflow:hidden">
+                <div class="scan-cleanup-cat-header" data-action="scan-toggle-cleanup-cat" data-cat="large-unused">
+                  <label style="display:flex;align-items:center;gap:8px;flex:1;cursor:default">
+                    <span class="fp-checkbox" data-action="scan-cleanup-select-all" data-cat="large-unused"></span>
+                    <span style="font:600 var(--t-body) var(--font-ui);color:var(--text-primary)">Large unused files</span>
+                  </label>
+                  <span style="font:400 var(--t-compact) var(--font-data);color:var(--text-secondary)">12 files</span>
+                  <svg class="fp-icon fp-icon--12" aria-hidden="true" style="color:var(--text-tertiary)"><use href="#fp-chevron-right"></use></svg>
+                </div>
+                <div class="scan-cleanup-cat-files" style="display:none" id="scan-cleanup-large-unused"></div>
+              </div>
+
+            </div><!-- /category cards -->
+
+            <!-- Footer bar -->
+            <div style="border-top:1px solid var(--border-hairline);padding:10px 16px;display:flex;align-items:center;gap:12px;flex-shrink:0;background:var(--bg-content)">
+              <div style="margin-left:auto">
+                <button class="fp-btn fp-btn--primary" data-action="scan-cleanup-confirm" id="btn-execute-cleanup">
+                  Execute cleanup
+                </button>
+              </div>
+            </div>
+          </div><!-- /cleanup pane -->
+
+          <!-- ── Reorganization tab (hidden) ───────────────────────────── -->
+          <div class="scan-results-pane" data-pane="reorg" style="display:none;flex:1;align-items:center;justify-content:center">
+            <div style="text-align:center;padding:40px;max-width:400px">
+              <p style="font:400 var(--t-body) var(--font-ui);color:var(--text-secondary);margin:0 0 20px;line-height:1.5">
+                The AI has proposed a reorganization of your file tree. Review and approve it before anything is moved.
+              </p>
+              <!-- Opens File Tree canvas in proposal review mode -->
+              <button class="fp-btn fp-btn--primary fp-btn--lg"
+                      data-action="scan-open-reorg-canvas" id="btn-open-reorg">
+                Open File Tree to review proposed reorganization
+              </button>
+            </div>
+          </div><!-- /reorg pane -->
+
+          </div><!-- /.fp-planned-dim -->
+        </div><!-- /#screen-scan-results -->
+
+        <!-- ═══════════════════════════════════════════════════════════════
+             A.8  REVIEW BIN  (filter on Everything Folder — "needs review" state)
+             Reached via: sidebar badge, Ctrl+Shift+R
+        ═══════════════════════════════════════════════════════════════ -->
+        <div class="screen screen--review-bin" id="screen-review-bin">
+          <div class="fp-banner fp-banner--planned" role="status">Not built yet — planned for Stage 3.</div>
+          <div class="fp-planned-dim">
+
+          <!-- A.16: Review Bin load error (comment in when /review-bin fails) -->
+          <!--
+          <div class="fp-error-banner">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="6" stroke="currentColor" stroke-width="1.2"/><path d="M7 4v4M7 10v.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+            Could not load review queue. Backend may be unavailable.
+            <button class="fp-error-banner__action fp-btn fp-btn--ghost" data-action="retry-review-bin">Retry</button>
+            <button class="fp-error-banner__dismiss fp-icon-btn fp-icon-btn--sm" data-action="dismiss-error">✕</button>
+          </div>
+          -->
+
+          <!-- Two-pane: list left, detail right (340px) -->
+          <div class="rb-layout">
+
+            <!-- ── List pane ─────────────────────────────────────────── -->
+            <div class="rb-list">
+
+              <!-- Header: A.8.2 -->
+              <div class="rb-list__header">
+                <h1 class="rb-list__title" style="font:600 var(--t-title) var(--font-ui);color:var(--text-primary);margin:0">
+                  Review Bin
+                  <!-- INTEGRATION: live count from GET /review-bin/count -->
+                  <span class="fp-mono" style="font:600 var(--t-title) var(--font-data);color:var(--text-primary)">14</span>
+                  <span style="font:500 var(--t-title) var(--font-ui);color:var(--text-secondary)">files need a decision</span>
+                </h1>
+              </div>
+
+              <!-- Scrollable group list -->
+              <div class="rb-list__scroll">
+                <!-- INTEGRATION: groups from GET /review-bin?grouped=true -->
+
+                <!-- ─── Destination group: high confidence ─── -->
+                <div class="rb-group" data-group="album-mix-2024">
+                  <div class="rb-group__header">
+                    <!-- 16×16 folder icon in text-secondary -->
+                    <svg class="fp-icon fp-icon--16" aria-hidden="true" style="flex-shrink:0;color:var(--text-secondary)"><use href="#fp-folder"></use></svg>
+                    <span class="rb-group__dest" style="font:500 var(--t-body) var(--font-ui);color:var(--text-primary);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">→ /album-mix-2024</span>
+                    <span class="fp-mono rb-group__meta" style="font:400 var(--t-compact) var(--font-data);color:var(--text-tertiary);flex-shrink:0;white-space:nowrap">3 files · avg 82%</span>
+                    <div class="rb-group__actions">
+                      <button class="fp-btn fp-btn--ghost fp-btn--sm" data-action="rb-group-review" data-group="album-mix-2024">Review each</button>
+                      <button class="fp-btn fp-btn--secondary fp-btn--sm" data-action="rb-group-approve-all" data-group="album-mix-2024">Approve all</button>
+                      <button class="rb-btn-danger-ghost" data-action="rb-group-reject-all" data-group="album-mix-2024">Reject all</button>
+                    </div>
+                  </div>
+
+                  <!-- File rows (26px each) — A.8.2 -->
+                  <!-- Active row (selected state) -->
+                  <div class="rb-row rb-row--selected" data-action="rb-select-file" data-file-id="f001" role="button" tabindex="0">
+                    <span class="rb-row__name" style="font:500 var(--t-body) var(--font-ui);color:var(--text-primary);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">beach_holiday_2024.jpg</span>
+                    <span class="rb-row__route fp-mono" style="font:400 11px var(--font-data);color:var(--text-tertiary);flex-shrink:0">
+                      <span style="color:var(--bad);text-decoration:line-through">…\Downloads\beach_holiday…</span>
+                      <span style="margin:0 4px;color:var(--text-tertiary)">→</span>
+                      <span style="color:var(--good)">…\album-mix-2024\beach…</span>
+                    </span>
+                    <span class="fp-chip fp-chip--tinted" style="background:var(--accent-wash);border-color:var(--accent-edge);color:var(--accent);flex-shrink:0">move</span>
+                    <!-- Confidence bar: 4px, fill colored by score (82% = good) -->
+                    <div class="rb-conf-bar" title="82% confidence">
+                      <div class="rb-conf-bar__fill" style="width:82%;background:var(--good)"></div>
+                    </div>
+                    <button class="fp-icon-btn fp-icon-btn--sm" data-action="rb-row-overflow" data-file-id="f001" title="More options" style="flex-shrink:0">
+                      <svg class="fp-icon fp-icon--14" aria-hidden="true"><use href="#fp-more"></use></svg>
+                    </button>
+                  </div>
+
+                  <div class="rb-row" data-action="rb-select-file" data-file-id="f002" role="button" tabindex="0">
+                    <span class="rb-row__name" style="font:500 var(--t-body) var(--font-ui);color:var(--text-primary);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">sunset_costa_rica.raw</span>
+                    <span class="rb-row__route fp-mono" style="font:400 11px var(--font-data);color:var(--text-tertiary);flex-shrink:0">
+                      <span style="color:var(--bad);text-decoration:line-through">…\Camera\sunset_costa…</span>
+                      <span style="margin:0 4px;color:var(--text-tertiary)">→</span>
+                      <span style="color:var(--good)">…\album-mix-2024\sunset…</span>
+                    </span>
+                    <span class="fp-chip fp-chip--tinted" style="background:var(--accent-wash);border-color:var(--accent-edge);color:var(--accent);flex-shrink:0">move</span>
+                    <div class="rb-conf-bar" title="79% confidence">
+                      <div class="rb-conf-bar__fill" style="width:79%;background:var(--good)"></div>
+                    </div>
+                    <button class="fp-icon-btn fp-icon-btn--sm" data-action="rb-row-overflow" data-file-id="f002" title="More options" style="flex-shrink:0">
+                      <svg class="fp-icon fp-icon--14" aria-hidden="true"><use href="#fp-more"></use></svg>
+                    </button>
+                  </div>
+
+                  <div class="rb-row" data-action="rb-select-file" data-file-id="f003" role="button" tabindex="0">
+                    <span class="rb-row__name" style="font:500 var(--t-body) var(--font-ui);color:var(--text-primary);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">weekend_trip_jan.mp4</span>
+                    <span class="rb-row__route fp-mono" style="font:400 11px var(--font-data);color:var(--text-tertiary);flex-shrink:0">
+                      <span style="color:var(--bad);text-decoration:line-through">…\Videos\weekend…</span>
+                      <span style="margin:0 4px;color:var(--text-tertiary)">→</span>
+                      <span style="color:var(--good)">…\album-mix-2024\weekend…</span>
+                    </span>
+                    <span class="fp-chip fp-chip--tinted" style="background:var(--accent-wash);border-color:var(--accent-edge);color:var(--accent);flex-shrink:0">move</span>
+                    <div class="rb-conf-bar" title="85% confidence">
+                      <div class="rb-conf-bar__fill" style="width:85%;background:var(--good)"></div>
+                    </div>
+                    <button class="fp-icon-btn fp-icon-btn--sm" data-action="rb-row-overflow" data-file-id="f003" title="More options" style="flex-shrink:0">
+                      <svg class="fp-icon fp-icon--14" aria-hidden="true"><use href="#fp-more"></use></svg>
+                    </button>
+                  </div>
+                </div><!-- /.rb-group -->
+
+                <!-- ─── Destination group: medium confidence ─── -->
+                <div class="rb-group" data-group="work-invoices-2025">
+                  <div class="rb-group__header">
+                    <svg class="fp-icon fp-icon--16" aria-hidden="true" style="flex-shrink:0;color:var(--text-secondary)"><use href="#fp-folder"></use></svg>
+                    <span class="rb-group__dest" style="font:500 var(--t-body) var(--font-ui);color:var(--text-primary);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">→ /work-invoices-2025</span>
+                    <span class="fp-mono rb-group__meta" style="font:400 var(--t-compact) var(--font-data);color:var(--text-tertiary);flex-shrink:0;white-space:nowrap">5 files · avg 63%</span>
+                    <div class="rb-group__actions">
+                      <button class="fp-btn fp-btn--ghost fp-btn--sm" data-action="rb-group-review" data-group="work-invoices-2025">Review each</button>
+                      <button class="fp-btn fp-btn--secondary fp-btn--sm" data-action="rb-group-approve-all" data-group="work-invoices-2025">Approve all</button>
+                      <button class="rb-btn-danger-ghost" data-action="rb-group-reject-all" data-group="work-invoices-2025">Reject all</button>
+                    </div>
+                  </div>
+
+                  <div class="rb-row" data-action="rb-select-file" data-file-id="f004" role="button" tabindex="0">
+                    <span class="rb-row__name" style="font:500 var(--t-body) var(--font-ui);color:var(--text-primary);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">invoice_webflow_jan2025.pdf</span>
+                    <span class="rb-row__route fp-mono" style="font:400 11px var(--font-data);color:var(--text-tertiary);flex-shrink:0">
+                      <span style="color:var(--bad);text-decoration:line-through">…\Desktop\invoice_webflow…</span>
+                      <span style="margin:0 4px;color:var(--text-tertiary)">→</span>
+                      <span style="color:var(--good)">…\work-invoices-2025\jan…</span>
+                    </span>
+                    <span class="fp-chip fp-chip--tinted" style="background:var(--accent-wash);border-color:var(--accent-edge);color:var(--accent);flex-shrink:0">move</span>
+                    <div class="rb-conf-bar" title="67% confidence">
+                      <div class="rb-conf-bar__fill" style="width:67%;background:var(--warn)"></div>
+                    </div>
+                    <button class="fp-icon-btn fp-icon-btn--sm" data-action="rb-row-overflow" data-file-id="f004" title="More options" style="flex-shrink:0">
+                      <svg class="fp-icon fp-icon--14" aria-hidden="true"><use href="#fp-more"></use></svg>
+                    </button>
+                  </div>
+
+                  <!-- Rename action variant -->
+                  <div class="rb-row" data-action="rb-select-file" data-file-id="f005" role="button" tabindex="0">
+                    <span class="rb-row__name" style="font:500 var(--t-body) var(--font-ui);color:var(--text-primary);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">scan0047.pdf</span>
+                    <span class="rb-row__route fp-mono" style="font:400 11px var(--font-data);color:var(--text-tertiary);flex-shrink:0">
+                      <span style="color:var(--bad);text-decoration:line-through">scan0047.pdf</span>
+                      <span style="margin:0 4px;color:var(--text-tertiary)">→</span>
+                      <span style="color:var(--good)">invoice_vercel_feb2025.pdf</span>
+                    </span>
+                    <!-- rename chip variant -->
+                    <span class="fp-chip fp-chip--tinted" style="background:var(--good-wash);border-color:var(--good-edge);color:var(--good);flex-shrink:0">rename</span>
+                    <div class="rb-conf-bar" title="58% confidence">
+                      <div class="rb-conf-bar__fill" style="width:58%;background:var(--warn)"></div>
+                    </div>
+                    <button class="fp-icon-btn fp-icon-btn--sm" data-action="rb-row-overflow" data-file-id="f005" title="More options" style="flex-shrink:0">
+                      <svg class="fp-icon fp-icon--14" aria-hidden="true"><use href="#fp-more"></use></svg>
+                    </button>
+                  </div>
+                </div><!-- /.rb-group -->
+
+                <!-- ─── Uncertain group (confidence < 0.5) — A.8.2 special group ─── -->
+                <div class="rb-group rb-group--uncertain" data-group="uncertain">
+                  <div class="rb-group__header" style="background:var(--warn-wash);border:1px solid var(--warn-edge);border-radius:var(--r-card) var(--r-card) 0 0;margin:0 -1px">
+                    <!-- 14×14 alert-triangle in warn -->
+                    <svg class="fp-icon fp-icon--14" aria-hidden="true" style="flex-shrink:0;color:var(--warn)"><use href="#fp-warning"></use></svg>
+                    <span class="rb-group__dest" style="font:500 var(--t-body) var(--font-ui);color:var(--text-primary);flex:1;min-width:0">Uncertain — individual review</span>
+                    <span class="fp-mono rb-group__meta" style="font:400 var(--t-compact) var(--font-data);color:var(--text-tertiary);flex-shrink:0;white-space:nowrap">6 files · avg 38%</span>
+                    <div class="rb-group__actions">
+                      <button class="fp-btn fp-btn--ghost fp-btn--sm" data-action="rb-group-review" data-group="uncertain">Review each</button>
+                      <button class="rb-btn-danger-ghost" data-action="rb-group-reject-all" data-group="uncertain">Reject all</button>
+                    </div>
+                  </div>
+
+                  <!-- flag action variant -->
+                  <div class="rb-row" data-action="rb-select-file" data-file-id="f010" role="button" tabindex="0">
+                    <span class="rb-row__name" style="font:500 var(--t-body) var(--font-ui);color:var(--text-primary);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">doc_untitled_final_v3.docx</span>
+                    <span class="rb-row__route fp-mono" style="font:400 11px var(--font-data);color:var(--text-tertiary);flex-shrink:0">
+                      <span style="color:var(--bad);text-decoration:line-through">…\Desktop\doc_untitled…</span>
+                      <span style="margin:0 4px;color:var(--text-tertiary)">→</span>
+                      <span style="color:var(--good)">…\work-docs\contracts\…</span>
+                    </span>
+                    <!-- flag chip variant -->
+                    <span class="fp-chip fp-chip--tinted" style="background:var(--warn-wash);border-color:var(--warn-edge);color:var(--warn);flex-shrink:0">flag</span>
+                    <div class="rb-conf-bar" title="38% confidence">
+                      <div class="rb-conf-bar__fill" style="width:38%;background:var(--bad)"></div>
+                    </div>
+                    <button class="fp-icon-btn fp-icon-btn--sm" data-action="rb-row-overflow" data-file-id="f010" title="More options" style="flex-shrink:0">
+                      <svg class="fp-icon fp-icon--14" aria-hidden="true"><use href="#fp-more"></use></svg>
+                    </button>
+                  </div>
+
+                  <div class="rb-row" data-action="rb-select-file" data-file-id="f011" role="button" tabindex="0">
+                    <span class="rb-row__name" style="font:500 var(--t-body) var(--font-ui);color:var(--text-primary);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">screenshot_2024-11-07.png</span>
+                    <span class="rb-row__route fp-mono" style="font:400 11px var(--font-data);color:var(--text-tertiary);flex-shrink:0">
+                      <span style="color:var(--bad);text-decoration:line-through">…\Screenshots\screenshot…</span>
+                      <span style="margin:0 4px;color:var(--text-tertiary)">→</span>
+                      <span style="color:var(--good)">…\archive\screenshots\…</span>
+                    </span>
+                    <span class="fp-chip fp-chip--tinted" style="background:var(--accent-wash);border-color:var(--accent-edge);color:var(--accent);flex-shrink:0">move</span>
+                    <div class="rb-conf-bar" title="41% confidence">
+                      <div class="rb-conf-bar__fill" style="width:41%;background:var(--bad)"></div>
+                    </div>
+                    <button class="fp-icon-btn fp-icon-btn--sm" data-action="rb-row-overflow" data-file-id="f011" title="More options" style="flex-shrink:0">
+                      <svg class="fp-icon fp-icon--14" aria-hidden="true"><use href="#fp-more"></use></svg>
+                    </button>
+                  </div>
+                </div><!-- /.rb-group rb-group--uncertain -->
+
+                <!-- Empty state (A.8.4) — shown when no files in queue -->
+                <!--
+                <div class="fp-empty" style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:60px 24px">
+                  <svg width="48" height="48" viewBox="0 0 48 48" fill="none" style="color:var(--good)"><circle cx="24" cy="24" r="20" stroke="currentColor" stroke-width="2"/><path d="M16 24l6 6 10-12" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  <h2 style="font:600 var(--t-title-sm) var(--font-ui);color:var(--text-primary);margin:0">Nothing to review.</h2>
+                  <p style="font:400 var(--t-body) var(--font-ui);color:var(--text-secondary);text-align:center;max-width:360px;margin:0">The AI is handling everything within your confidence threshold.</p>
+                </div>
+                -->
+
+              </div><!-- /.rb-list__scroll -->
+            </div><!-- /.rb-list -->
+
+            <!-- ── Detail pane (340px) — A.8.3 ───────────────────────── -->
+            <!-- INTEGRATION: populated when rb-select-file fires, data from GET /review-bin/file/:id -->
+            <div class="rb-detail" id="rb-detail-pane">
+
+              <div class="rb-detail__body">
+
+                <!-- Header -->
+                <div style="margin-bottom:var(--s-16)">
+                  <div style="font:400 var(--t-micro) var(--font-ui);color:var(--text-tertiary);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px">Proposed move</div>
+                  <h2 style="font:600 var(--t-title-sm) var(--font-ui);color:var(--text-primary);margin:0;word-break:break-all">beach_holiday_2024.jpg</h2>
+                </div>
+
+                <!-- Proposed route: − bad strikethrough / + good -->
+                <div class="rb-detail__route" style="display:flex;flex-direction:column;gap:6px;margin-bottom:var(--s-20);padding:var(--s-12);background:var(--bg-content);border:1px solid var(--border-subtle);border-radius:var(--r-card)">
+                  <div style="display:flex;align-items:baseline;gap:8px">
+                    <span style="font:600 13px var(--font-data);color:var(--bad);flex-shrink:0;width:12px">−</span>
+                    <span class="fp-mono" style="font:400 11px var(--font-data);color:var(--bad);text-decoration:line-through;word-break:break-all;line-height:1.5">C:\Downloads\beach_holiday_2024.jpg</span>
+                  </div>
+                  <div style="display:flex;align-items:baseline;gap:8px">
+                    <span style="font:600 13px var(--font-data);color:var(--good);flex-shrink:0;width:12px">+</span>
+                    <span class="fp-mono" style="font:400 11px var(--font-data);color:var(--good);word-break:break-all;line-height:1.5">D:\Photos\album-mix-2024\beach_holiday_2024.jpg</span>
+                  </div>
+                </div>
+
+                <!-- Why section -->
+                <div style="margin-bottom:var(--s-20)">
+                  <h3 style="font:600 var(--t-title-sm) var(--font-ui);color:var(--text-primary);margin:0 0 8px">Why</h3>
+                  <!-- INTEGRATION: AI rationale from file classification result -->
+                  <p style="font:400 var(--t-body) var(--font-ui);color:var(--text-secondary);margin:0;line-height:1.6">EXIF data places this photo in Costa Rica, January 2024 — same trip as 18 other files already in <code class="fp-mono" style="font-size:11px">album-mix-2024</code>. Filename pattern and camera model match the batch.</p>
+                </div>
+
+                <!-- Confidence + tags -->
+                <div style="display:flex;align-items:center;gap:var(--s-12);margin-bottom:var(--s-20);flex-wrap:wrap">
+                  <span class="fp-mono" style="font:600 var(--t-body) var(--font-data);color:var(--good)">82%</span>
+                  <span style="font:400 var(--t-small) var(--font-ui);color:var(--text-tertiary)">confidence</span>
+                  <div style="display:flex;gap:6px;flex-wrap:wrap">
+                    <span class="fp-chip">photography</span>
+                    <span class="fp-chip">vacation</span>
+                    <span class="fp-chip">2024</span>
+                  </div>
+                </div>
+
+                <!-- Similar past decisions -->
+                <div>
+                  <h3 style="font:600 var(--t-title-sm) var(--font-ui);color:var(--text-primary);margin:0 0 10px">Similar past decisions</h3>
+                  <!-- INTEGRATION: from GET /review-bin/similar/:file-id -->
+                  <div style="display:flex;flex-direction:column;gap:6px">
+
+                    <div style="display:flex;align-items:center;gap:8px;height:26px">
+                      <svg class="fp-icon fp-icon--14" aria-hidden="true" style="flex-shrink:0;color:var(--good)"><use href="#fp-check"></use></svg>
+                      <span style="font:400 var(--t-body) var(--font-ui);color:var(--text-primary);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">costa_rica_2024_01.jpg → album-mix-2024</span>
+                      <span class="fp-mono" style="font:400 var(--t-small) var(--font-data);color:var(--text-tertiary);flex-shrink:0">2 days ago</span>
+                    </div>
+
+                    <div style="display:flex;align-items:center;gap:8px;height:26px">
+                      <svg class="fp-icon fp-icon--14" aria-hidden="true" style="flex-shrink:0;color:var(--good)"><use href="#fp-check"></use></svg>
+                      <span style="font:400 var(--t-body) var(--font-ui);color:var(--text-primary);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">trip_jan_photos_bulk.zip → album-mix-2024</span>
+                      <span class="fp-mono" style="font:400 var(--t-small) var(--font-data);color:var(--text-tertiary);flex-shrink:0">5 days ago</span>
+                    </div>
+
+                    <div style="display:flex;align-items:center;gap:8px;height:26px">
+                      <!-- Rejected past decision -->
+                      <svg class="fp-icon fp-icon--14" aria-hidden="true" style="flex-shrink:0;color:var(--bad)"><use href="#fp-close"></use></svg>
+                      <span style="font:400 var(--t-body) var(--font-ui);color:var(--text-secondary);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">scan0022.jpg → album-mix-2024 (rejected)</span>
+                      <span class="fp-mono" style="font:400 var(--t-small) var(--font-data);color:var(--text-tertiary);flex-shrink:0">1 wk ago</span>
+                    </div>
+
+                  </div>
+                </div>
+
+              </div><!-- /.rb-detail__body -->
+
+              <!-- Sticky footer: actions + keyboard hints — A.8.3 -->
+              <div class="rb-detail__footer">
+                <div class="rb-detail__actions">
+                  <button class="fp-btn fp-btn--danger fp-btn--sm" data-action="rb-reject" title="Reject this proposal">Reject</button>
+                  <button class="fp-btn fp-btn--secondary fp-btn--sm" data-action="rb-modify-path" title="Edit the proposed destination">Modify path…</button>
+                  <button class="fp-btn fp-btn--secondary fp-btn--sm" data-action="rb-snooze" title="Snooze for 7 days">Snooze 7d</button>
+                  <button class="fp-btn fp-btn--primary fp-btn--sm" data-action="rb-approve" title="Approve and queue move">Approve →</button>
+                </div>
+                <div class="rb-detail__kbd fp-mono">
+                  <span>←</span> reject
+                  <span style="margin:0 8px">·</span>
+                  <span>m</span> modify
+                  <span style="margin:0 8px">·</span>
+                  <span>→</span> approve
+                </div>
+              </div>
+
+            </div><!-- /.rb-detail -->
+
+          </div><!-- /.rb-layout -->
+
+          </div><!-- /.fp-planned-dim -->
+        </div><!-- /#screen-review-bin -->
+
+        <!-- ═══════════════════════════════════════════════════════════════
+             A.9  EVERYTHING FOLDER  (sidebar bottom-anchor screen)
+        ═══════════════════════════════════════════════════════════════ -->
+        <div class="screen screen--everything" id="screen-everything">
+          <div class="fp-banner fp-banner--planned" role="status">Not built yet — planned for Stage 3.</div>
+          <div class="fp-planned-dim">
+
+          <!-- A.16: Everything Folder watch error (comment in when filesystem watcher fails) -->
+          <!--
+          <div class="fp-error-banner">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="6" stroke="currentColor" stroke-width="1.2"/><path d="M7 4v4M7 10v.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+            Filesystem watcher stopped — new files won't appear automatically.
+            <button class="fp-error-banner__action fp-btn fp-btn--ghost" data-action="restart-watcher">Restart watcher</button>
+            <button class="fp-error-banner__dismiss fp-icon-btn fp-icon-btn--sm" data-action="dismiss-error">✕</button>
+          </div>
+          -->
+
+          <!-- Header — A.9.1 -->
+          <div class="ef-header">
+            <div class="ef-header__left">
+              <h1 style="font:600 var(--t-title) var(--font-ui);color:var(--text-primary);margin:0">Everything Folder</h1>
+              <!-- INTEGRATION: actual path from GET /settings/everything-folder -->
+              <span class="fp-mono" style="font:400 var(--t-compact) var(--font-data);color:var(--text-tertiary)">C:\EverythingFolder</span>
+            </div>
+            <div class="ef-header__right">
+              <!-- Pause AI toggle: 32×18 track, inset-recess off, accent on, 14×14 thumb -->
+              <div class="ef-pause-toggle" title="Pause AI processing">
+                <label class="fp-toggle" id="ef-pause-toggle-track">
+                  <input type="checkbox" id="ef-pause-ai" data-action="ef-toggle-pause-ai" />
+                  <span class="fp-toggle__track"></span>
+                  <span class="fp-toggle__thumb"></span>
+                </label>
+                <span style="font:400 var(--t-body) var(--font-ui);color:var(--text-secondary)">Pause AI</span>
+              </div>
+              <!-- Filter chips: segmented control A / U / R / M / E -->
+              <div class="fp-segmented" id="ef-filter-bar" role="group" aria-label="Filter by state">
+                <button class="fp-segmented__opt active" data-action="ef-filter" data-filter="all">All</button>
+                <button class="fp-segmented__opt" data-action="ef-filter" data-filter="unprocessed">Unprocessed</button>
+                <button class="fp-segmented__opt" data-action="ef-filter" data-filter="needs-review">Needs Review</button>
+                <button class="fp-segmented__opt" data-action="ef-filter" data-filter="moving">Moving</button>
+                <button class="fp-segmented__opt" data-action="ef-filter" data-filter="errors">Errors</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Column header / sort controls — per v2 Section 24 / Browser pattern -->
+          <div class="ef-col-header">
+            <button class="ef-col ef-col--name ef-col--sortable ef-col--sorted-asc" data-action="ef-sort" data-col="name">
+              Name
+              <svg class="fp-icon fp-icon--10" aria-hidden="true" style="margin-left:4px;opacity:.6"><use href="#fp-sort"></use></svg>
+            </button>
+            <button class="ef-col ef-col--landed ef-col--sortable" data-action="ef-sort" data-col="landed">
+              Landed
+            </button>
+            <div class="ef-col ef-col--state">State</div>
+            <button class="ef-col ef-col--dest ef-col--sortable" data-action="ef-sort" data-col="destination">
+              Proposed destination
+            </button>
+          </div>
+
+          <!-- Main file list — A.9.2 -->
+          <!-- INTEGRATION: rows from GET /everything-folder?filter=all&sort=name -->
+          <div class="ef-list" id="ef-file-list" role="list">
+
+            <!-- Row state: settled (no dot) -->
+            <div class="ef-row" data-action="ef-select-file" data-file-id="ef001" role="listitem" tabindex="0">
+              <div class="ef-row__icon">
+                <svg class="fp-icon fp-icon--16" aria-hidden="true"><use href="#fp-file"></use></svg>
+              </div>
+              <span class="ef-row__name" style="font:500 var(--t-body) var(--font-ui);color:var(--text-primary)">project_proposal_final.pdf</span>
+              <span class="ef-row__landed fp-mono" style="font:400 var(--t-compact) var(--font-data);color:var(--text-secondary)">3 hr ago</span>
+              <!-- Settled: no dot -->
+              <span class="ef-row__state"></span>
+              <span class="ef-row__dest fp-mono" style="font:400 var(--t-compact) var(--font-data);color:var(--text-tertiary)">—</span>
+            </div>
+
+            <!-- Row state: unprocessed (grey dot) -->
+            <div class="ef-row" data-action="ef-select-file" data-file-id="ef002" role="listitem" tabindex="0">
+              <div class="ef-row__icon">
+                <svg class="fp-icon fp-icon--16" aria-hidden="true"><use href="#fp-image"></use></svg>
+              </div>
+              <span class="ef-row__name" style="font:500 var(--t-body) var(--font-ui);color:var(--text-primary)">screenshot_2026-04-24.png</span>
+              <span class="ef-row__landed fp-mono" style="font:400 var(--t-compact) var(--font-data);color:var(--text-secondary)">12 min ago</span>
+              <!-- Unprocessed: text-tertiary grey dot -->
+              <span class="ef-row__state">
+                <span class="ef-state-dot" style="background:var(--text-tertiary)" title="Unprocessed — queued for AI classification"></span>
+              </span>
+              <span class="ef-row__dest fp-mono" style="font:400 var(--t-compact) var(--font-data);color:var(--text-tertiary)">Pending</span>
+            </div>
+
+            <!-- Row state: needs review (warn dot) -->
+            <div class="ef-row" data-action="ef-select-file" data-file-id="ef003" role="listitem" tabindex="0">
+              <div class="ef-row__icon">
+                <svg class="fp-icon fp-icon--16" aria-hidden="true"><use href="#fp-file"></use></svg>
+              </div>
+              <span class="ef-row__name" style="font:500 var(--t-body) var(--font-ui);color:var(--text-primary)">doc_untitled_final_v3.docx</span>
+              <span class="ef-row__landed fp-mono" style="font:400 var(--t-compact) var(--font-data);color:var(--text-secondary)">Yesterday</span>
+              <!-- Needs review: warn dot -->
+              <span class="ef-row__state">
+                <span class="ef-state-dot" style="background:var(--warn)" title="Needs review — low confidence classification"></span>
+              </span>
+              <span class="ef-row__dest fp-mono" style="font:400 var(--t-compact) var(--font-data);color:var(--text-tertiary)">\work-docs\contracts</span>
+            </div>
+
+            <!-- Row state: moving / in progress (accent dot) -->
+            <div class="ef-row" data-action="ef-select-file" data-file-id="ef004" role="listitem" tabindex="0">
+              <div class="ef-row__icon">
+                <svg class="fp-icon fp-icon--16" aria-hidden="true"><use href="#fp-image"></use></svg>
+              </div>
+              <span class="ef-row__name" style="font:500 var(--t-body) var(--font-ui);color:var(--text-primary)">beach_holiday_2024.jpg</span>
+              <span class="ef-row__landed fp-mono" style="font:400 var(--t-compact) var(--font-data);color:var(--text-secondary)">2 days ago</span>
+              <!-- Moving: accent dot -->
+              <span class="ef-row__state">
+                <span class="ef-state-dot" style="background:var(--accent)" title="Moving — transfer in progress"></span>
+              </span>
+              <span class="ef-row__dest fp-mono" style="font:400 var(--t-compact) var(--font-data);color:var(--text-tertiary)">\Photos\album-mix-2024</span>
+            </div>
+
+            <!-- Row state: error (bad dot) + hover tooltip placeholder -->
+            <div class="ef-row ef-row--error" data-action="ef-select-file" data-file-id="ef005" role="listitem" tabindex="0">
+              <div class="ef-row__icon">
+                <svg class="fp-icon fp-icon--16" aria-hidden="true"><use href="#fp-file"></use></svg>
+              </div>
+              <span class="ef-row__name" style="font:500 var(--t-body) var(--font-ui);color:var(--text-primary)">budget_final_LOCKED.xlsx</span>
+              <span class="ef-row__landed fp-mono" style="font:400 var(--t-compact) var(--font-data);color:var(--text-secondary)">3 days ago</span>
+              <!-- Error: bad dot — hover for tooltip (A.9.4) -->
+              <span class="ef-row__state" style="position:relative">
+                <!-- INTEGRATION: tooltip text from error log entry -->
+                <span class="ef-state-dot ef-state-dot--hoverable" style="background:var(--bad)" title="Error: file locked by another process. Retry or skip."></span>
+                <!-- Tooltip shell (shown on dot hover via JS or CSS :hover) -->
+                <div class="ef-error-tooltip" role="tooltip">File locked by another process</div>
+              </span>
+              <span class="ef-row__dest fp-mono" style="font:400 var(--t-compact) var(--font-data);color:var(--text-tertiary)">\Finance\2025</span>
+            </div>
+
+            <div class="ef-row" data-action="ef-select-file" data-file-id="ef006" role="listitem" tabindex="0">
+              <div class="ef-row__icon">
+                <svg class="fp-icon fp-icon--16" aria-hidden="true"><use href="#fp-file"></use></svg>
+              </div>
+              <span class="ef-row__name" style="font:500 var(--t-body) var(--font-ui);color:var(--text-primary)">invoice_stripe_march.pdf</span>
+              <span class="ef-row__landed fp-mono" style="font:400 var(--t-compact) var(--font-data);color:var(--text-secondary)">1 hr ago</span>
+              <span class="ef-row__state">
+                <span class="ef-state-dot" style="background:var(--text-tertiary)" title="Unprocessed"></span>
+              </span>
+              <span class="ef-row__dest fp-mono" style="font:400 var(--t-compact) var(--font-data);color:var(--text-tertiary)">Pending</span>
+            </div>
+
+            <!-- Empty state (A.9) — shown when folder is empty or filter returns zero rows -->
+            <!--
+            <div class="fp-empty" style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:60px 24px">
+              <svg width="48" height="48" viewBox="0 0 48 48" fill="none" style="color:var(--text-tertiary)"><rect x="4" y="8" width="40" height="32" rx="4" stroke="currentColor" stroke-width="2"/><path d="M4 18h40" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="13" r="2" fill="currentColor"/></svg>
+              <h2 style="font:600 var(--t-title-sm) var(--font-ui);color:var(--text-primary);margin:0">Everything Folder is empty.</h2>
+              <p style="font:400 var(--t-body) var(--font-ui);color:var(--text-secondary);text-align:center;max-width:360px;margin:0">Files will appear here as they arrive. Run a scan or drop files to get started.</p>
+            </div>
+            -->
+
+          </div><!-- /.ef-list -->
+
+          <!-- "Currently moving" card — A.9.3 -->
+          <!-- Default expanded when 1-3 active; collapsed if 4+ (handled by JS) -->
+          <div class="ef-moving-card fp-card" id="ef-moving-card" data-action="ef-toggle-moving-card">
+            <div class="ef-moving-card__header">
+              <span style="font:600 var(--t-title-sm) var(--font-ui);color:var(--text-primary)">
+                Moving
+                <!-- INTEGRATION: live counter from file mover queue -->
+                <span class="fp-mono" style="font:600 var(--t-title-sm) var(--font-data)">1</span>
+                of
+                <span class="fp-mono" style="font:600 var(--t-title-sm) var(--font-data)">3</span>
+                files
+              </span>
+              <button class="fp-icon-btn fp-icon-btn--sm" data-action="ef-toggle-moving-card" title="Collapse">
+                <svg class="fp-icon fp-icon--12" aria-hidden="true" style="color:var(--text-tertiary)"><use href="#fp-chevron-down"></use></svg>
+              </button>
+            </div>
+            <!-- 4px progress bar: accent fill on inset-recess track -->
+            <div class="fp-progress fp-progress--sm" style="margin:var(--s-8) 0">
+              <!-- INTEGRATION: width from current file transfer progress 0-100% -->
+              <div class="fp-progress__fill" style="width:62%"></div>
+            </div>
+            <!-- Current filename in t-compact JetBrains Mono -->
+            <!-- INTEGRATION: current file being transferred -->
+            <span class="fp-mono" style="font:400 var(--t-compact) var(--font-data);color:var(--text-primary);display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">beach_holiday_2024.jpg → D:\Photos\album-mix-2024\</span>
+          </div><!-- /.ef-moving-card -->
+
+          <!-- Collapsed state of the moving card (swap via JS) -->
+          <!--
+          <div class="ef-moving-card-collapsed" data-action="ef-toggle-moving-card" style="height:28px;display:flex;align-items:center;padding:0 var(--s-16);gap:var(--s-8);border-top:1px solid var(--border-hairline);cursor:pointer;background:var(--bg-chrome)">
+            <span class="ef-state-dot" style="background:var(--accent)"></span>
+            <span style="font:400 var(--t-compact) var(--font-ui);color:var(--text-secondary)">Moving 1 of 3 files</span>
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="none" style="margin-left:auto;transform:rotate(-90deg)"><path d="M2 4l3 3 3-3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </div>
+          -->
+
+          </div><!-- /.fp-planned-dim -->
+        </div><!-- /#screen-everything -->
+
+
+<!-- ═══ Settings panes: Everything Folder, Downloads Folder, Organization Engine, AI Configuration, Custom File Types (Stage 3), Privacy (Stage 3) ═══ -->
+              <!-- ────────────────────────────────────────────────────────
+                   A.12.3  EVERYTHING FOLDER
+              ──────────────────────────────────────────────────────────── -->
+              <div class="settings-pane" id="settings-pane-everything-folder" data-pane="everything-folder" style="display:none">
+                <h2 class="settings-pane__title">Everything Folder</h2>
+
+                <div class="fp-card settings-card">
+                  <div class="settings-row">
+                    <div class="settings-row__label">Watched folder path</div>
+                    <div style="display:flex;flex-wrap:wrap;align-items:center;gap:var(--s-8)">
+                      <input type="text" class="fp-input" value="C:\EverythingFolder" data-action="settings-set-ef-path" style="width:220px" />
+                      <button class="fp-btn fp-btn--secondary fp-btn--sm" data-action="settings-browse-ef-path">Browse…</button>
+                    </div>
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row">
+                    <div class="settings-row__label">
+                      Auto-sort confidence threshold
+                      <span class="fp-mono settings-slider-value" id="val-ef-confidence">80%</span>
+                    </div>
+                    <input type="range" class="fp-slider" id="slider-ef-confidence"
+                           min="0" max="100" value="80" step="5"
+                           data-action="settings-ef-confidence"
+                           style="width:180px" />
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row settings-row--col">
+                    <div class="settings-row__label">Excluded file types</div>
+                    <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:var(--s-8)">
+                      <span class="fp-chip">.lnk</span>
+                      <span class="fp-chip">.url</span>
+                      <button class="fp-chip" data-action="settings-add-ef-exclusion" style="background:transparent;border-style:dashed">+ Add type</button>
+                    </div>
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row">
+                    <div class="settings-row__label">
+                      Max time before forcing review prompt
+                      <span class="fp-mono settings-slider-value" id="val-ef-review-timeout">7d</span>
+                    </div>
+                    <input type="range" class="fp-slider" id="slider-ef-review-timeout"
+                           min="1" max="30" value="7" step="1"
+                           data-action="settings-ef-review-timeout"
+                           style="width:180px" />
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row settings-row--col">
+                    <div class="settings-row__label">Browser download redirect</div>
+                    <div style="display:flex;flex-direction:column;gap:6px;margin-top:var(--s-8)">
+                      <div class="settings-row" style="padding:0">
+                        <span style="display:flex;align-items:center;gap:var(--s-8);font:400 var(--t-body) var(--font-ui);color:var(--text-primary)">
+                          <svg class="fp-icon fp-icon--16" aria-hidden="true"><use href="#fp-globe"></use></svg>
+                          Chrome
+                        </span>
+                        <label class="fp-toggle">
+                          <input type="checkbox" checked disabled title="Planned for Stage 3" data-action="settings-toggle" data-setting="redirect-chrome" />
+                          <span class="fp-toggle__track"></span>
+                          <span class="fp-toggle__thumb"></span>
+                        </label>
+                      </div>
+                      <div class="settings-row" style="padding:0">
+                        <span style="font:400 var(--t-body) var(--font-ui);color:var(--text-primary)">Firefox</span>
+                        <label class="fp-toggle">
+                          <input type="checkbox" disabled title="Planned for Stage 3" data-action="settings-toggle" data-setting="redirect-firefox" />
+                          <span class="fp-toggle__track"></span>
+                          <span class="fp-toggle__thumb"></span>
+                        </label>
+                      </div>
+                      <div class="settings-row" style="padding:0">
+                        <span style="font:400 var(--t-body) var(--font-ui);color:var(--text-primary)">Edge</span>
+                        <label class="fp-toggle">
+                          <input type="checkbox" checked disabled title="Planned for Stage 3" data-action="settings-toggle" data-setting="redirect-edge" />
+                          <span class="fp-toggle__track"></span>
+                          <span class="fp-toggle__thumb"></span>
+                        </label>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row">
+                    <div class="settings-row__label">Notifications</div>
+                    <div class="fp-segmented">
+                      <button class="fp-segmented__opt" data-action="settings-set-ef-notify" data-val="off">Off</button>
+                      <button class="fp-segmented__opt active" data-action="settings-set-ef-notify" data-val="uncertain">Only uncertain</button>
+                      <button class="fp-segmented__opt" data-action="settings-set-ef-notify" data-val="all">Every sort</button>
+                    </div>
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row">
+                    <div class="settings-row__label">
+                      Stuck-detection threshold
+                      <span class="fp-mono settings-slider-value" id="val-ef-stuck">24h</span>
+                    </div>
+                    <input type="range" class="fp-slider" id="slider-ef-stuck"
+                           min="1" max="72" value="24" step="1"
+                           data-action="settings-ef-stuck"
+                           style="width:180px" />
+                  </div>
+                </div>
+              </div><!-- /#settings-pane-everything-folder -->
+
+              <!-- ────────────────────────────────────────────────────────
+                   A.12.4  DOWNLOADS FOLDER
+              ──────────────────────────────────────────────────────────── -->
+              <div class="settings-pane" id="settings-pane-downloads" data-pane="downloads" style="display:none">
+                <h2 class="settings-pane__title">Downloads Folder</h2>
+                <div class="fp-card settings-card">
+                  <div class="settings-row">
+                    <div class="settings-row__label">Path</div>
+                    <div style="display:flex;flex-wrap:wrap;align-items:center;gap:var(--s-8)">
+                      <input type="text" class="fp-input" value="C:\Users\justi\Downloads" data-action="settings-set-dl-path" style="width:220px" />
+                      <button class="fp-btn fp-btn--secondary fp-btn--sm" data-action="settings-browse-dl-path">Browse…</button>
+                    </div>
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row">
+                    <div class="settings-row__label">Auto-purge after</div>
+                    <div class="fp-segmented">
+                      <button class="fp-segmented__opt" data-action="settings-set-purge-after" data-val="7d">7d</button>
+                      <button class="fp-segmented__opt active" data-action="settings-set-purge-after" data-val="30d">30d</button>
+                      <button class="fp-segmented__opt" data-action="settings-set-purge-after" data-val="60d">60d</button>
+                      <button class="fp-segmented__opt" data-action="settings-set-purge-after" data-val="never">Never</button>
+                    </div>
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row settings-row--col">
+                    <div class="settings-row__label">Purge action</div>
+                    <div style="display:flex;flex-direction:column;gap:var(--s-8);margin-top:var(--s-8)">
+                      <label class="settings-radio-row">
+                        <input type="radio" name="purge-action" value="recycle" checked data-action="settings-set-purge-action" />
+                        <span>Move to Recycle Bin (recommended)</span>
+                      </label>
+                      <label class="settings-radio-row" style="color:var(--bad)">
+                        <input type="radio" name="purge-action" value="hard-delete" data-action="settings-set-purge-action" />
+                        <span>Hard delete <span style="font:400 var(--t-compact) var(--font-ui);color:var(--text-tertiary)">— cannot be undone</span></span>
+                      </label>
+                    </div>
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row settings-row--col">
+                    <div class="settings-row__label">Excluded file types</div>
+                    <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:var(--s-8)">
+                      <span class="fp-chip">.iso</span>
+                      <span class="fp-chip">.dmg</span>
+                      <button class="fp-chip" data-action="settings-add-dl-exclusion" style="background:transparent;border-style:dashed">+ Add type</button>
+                    </div>
+                  </div>
+                </div>
+              </div><!-- /#settings-pane-downloads -->
+
+              <!-- ────────────────────────────────────────────────────────
+                   A.12.5  ORGANIZATION ENGINE
+              ──────────────────────────────────────────────────────────── -->
+              <div class="settings-pane" id="settings-pane-organization" data-pane="organization" style="display:none">
+                <h2 class="settings-pane__title">Organization Engine</h2>
+                <div class="fp-card settings-card">
+                  <div class="settings-row">
+                    <div class="settings-row__label">Autonomy level</div>
+                    <div class="fp-segmented">
+                      <button class="fp-segmented__opt" data-action="settings-set-autonomy" data-val="passive">Passive</button>
+                      <button class="fp-segmented__opt active" data-action="settings-set-autonomy" data-val="suggest">Suggest</button>
+                      <button class="fp-segmented__opt" data-action="settings-set-autonomy" data-val="proactive">Proactive</button>
+                    </div>
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row">
+                    <div class="settings-row__label">
+                      Suggestion batch size
+                      <span class="fp-mono settings-slider-value" id="val-batch-size">100</span>
+                    </div>
+                    <input type="range" class="fp-slider" id="slider-batch-size"
+                           min="10" max="500" value="100" step="10"
+                           data-action="settings-batch-size"
+                           style="width:180px" />
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row">
+                    <div class="settings-row__label">
+                      Review Bin confidence threshold
+                      <span class="fp-mono settings-slider-value" id="val-review-threshold">75%</span>
+                    </div>
+                    <input type="range" class="fp-slider" id="slider-review-threshold"
+                           min="0" max="100" value="75" step="5"
+                           data-action="settings-review-threshold"
+                           style="width:180px" />
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row">
+                    <div class="settings-row__label">Propose rename of files</div>
+                    <label class="fp-toggle">
+                      <input type="checkbox" checked disabled title="Planned for Stage 3" data-action="settings-toggle" data-setting="propose-rename" />
+                      <span class="fp-toggle__track"></span>
+                      <span class="fp-toggle__thumb"></span>
+                    </label>
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row">
+                    <div class="settings-row__label">Propose deletion of duplicates</div>
+                    <label class="fp-toggle">
+                      <input type="checkbox" disabled title="Planned for Stage 3" data-action="settings-toggle" data-setting="propose-delete-dupes" />
+                      <span class="fp-toggle__track"></span>
+                      <span class="fp-toggle__thumb"></span>
+                    </label>
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row">
+                    <div class="settings-row__label">Time Machine retention</div>
+                    <button class="fp-btn fp-btn--ghost fp-btn--sm" data-action="settings-nav" data-pane="data">View in Data settings →</button>
+                  </div>
+                </div>
+              </div><!-- /#settings-pane-organization -->
+
+              <!-- ────────────────────────────────────────────────────────
+                   A.12.6  AI CONFIGURATION
+              ──────────────────────────────────────────────────────────── -->
+              <div class="settings-pane" id="settings-pane-ai-config" data-pane="ai-config" style="display:none">
+                <h2 class="settings-pane__title">AI Configuration</h2>
+
+                <!-- Local LLM card -->
+                <div class="fp-card settings-card" style="margin-bottom:var(--s-12)">
+                  <div class="fp-card__header"><span class="fp-card__title">Local LLM</span></div>
+                  <div class="settings-row">
+                    <!-- INTEGRATION: live Ollama status from GET /health/ollama -->
+                    <div style="display:flex;flex-wrap:wrap;align-items:center;gap:var(--s-8)">
+                      <span class="ef-state-dot" style="background:var(--good)"></span>
+                      <span style="font:400 var(--t-body) var(--font-ui);color:var(--text-secondary)">Ollama detected — llama3.1:8b</span>
+                    </div>
+                    <button class="fp-btn fp-btn--secondary fp-btn--sm" data-action="ai-test-classification">Test classification</button>
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row">
+                    <div class="settings-row__label">Model</div>
+                    <select class="fp-input" data-action="settings-set-ollama-model" style="width:200px">
+                      <option value="llama3.1:8b" selected>llama3.1:8b</option>
+                      <option value="llama3.1:70b">llama3.1:70b</option>
+                      <option value="mistral:7b">mistral:7b</option>
+                    </select>
+                  </div>
+                </div>
+
+                <!-- Cloud (Claude API) card -->
+                <div class="fp-card settings-card" style="margin-bottom:var(--s-12)">
+                  <div class="fp-card__header"><span class="fp-card__title">Cloud (Claude API)</span></div>
+                  <div class="settings-row">
+                    <div class="settings-row__label">Cloud inference</div>
+                    <label class="fp-toggle">
+                      <input type="checkbox" checked disabled title="Planned for Stage 3" data-action="settings-toggle" data-setting="cloud-inference" />
+                      <span class="fp-toggle__track"></span>
+                      <span class="fp-toggle__thumb"></span>
+                    </label>
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row">
+                    <div class="settings-row__label">API key</div>
+                    <div style="position:relative;width:240px">
+                      <input type="password" id="settings-api-key" class="fp-input" placeholder="sk-ant-…" data-action="settings-set-api-key" style="width:100%;padding-right:36px" />
+                      <button class="fp-icon-btn fp-icon-btn--sm" id="btn-toggle-api-key" data-action="settings-toggle-api-key-visibility"
+                              style="position:absolute;right:4px;top:50%;transform:translateY(-50%)">
+                        <svg class="fp-icon fp-icon--13" aria-hidden="true"><use href="#fp-eye"></use></svg>
+                      </button>
+                    </div>
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row">
+                    <div class="settings-row__label">Default model</div>
+                    <div style="display:flex;flex-direction:column;gap:var(--s-8)">
+                      <label class="settings-radio-row">
+                        <input type="radio" name="claude-model" value="sonnet" checked data-action="settings-set-claude-model" />
+                        <span>claude-sonnet-4-6 (recommended)</span>
+                      </label>
+                      <label class="settings-radio-row">
+                        <input type="radio" name="claude-model" value="haiku" data-action="settings-set-claude-model" />
+                        <span>claude-haiku-4-5 (faster, cheaper)</span>
+                      </label>
+                    </div>
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row">
+                    <div class="settings-row__label">Monthly cost cap</div>
+                    <div style="position:relative">
+                      <span style="position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--text-tertiary);font:400 var(--t-body) var(--font-ui)">$</span>
+                      <input type="number" class="fp-input" value="10" min="0" max="999" data-action="settings-set-cost-cap" style="width:100px;padding-left:22px" />
+                    </div>
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row">
+                    <div class="settings-row__label">Monthly token cap</div>
+                    <input type="number" class="fp-input" value="1000000" data-action="settings-set-token-cap" style="width:120px" />
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row">
+                    <div class="settings-row__label">
+                      Temperature
+                      <span class="fp-mono settings-slider-value" id="val-temp">0.3</span>
+                    </div>
+                    <input type="range" class="fp-slider" id="slider-temp"
+                           min="0" max="10" value="3" step="1"
+                           data-action="settings-temperature"
+                           style="width:180px" />
+                  </div>
+                </div>
+
+                <!-- Usage stats card -->
+                <div class="fp-card settings-card">
+                  <div class="fp-card__header"><span class="fp-card__title">Usage this month</span></div>
+                  <!-- INTEGRATION: from GET /ai/usage -->
+                  <div style="display:flex;flex-wrap:wrap;gap:var(--s-8) var(--s-24);margin-bottom:var(--s-12)">
+                    <div>
+                      <div style="font:400 var(--t-micro) var(--font-ui);color:var(--text-tertiary);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px">Tokens used</div>
+                      <div class="fp-mono" style="font:600 var(--t-display-sm) var(--font-data);color:var(--text-primary)">247,312</div>
+                    </div>
+                    <div>
+                      <div style="font:400 var(--t-micro) var(--font-ui);color:var(--text-tertiary);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px">Est. cost</div>
+                      <div class="fp-mono" style="font:600 var(--t-display-sm) var(--font-data);color:var(--text-primary)">$0.74</div>
+                    </div>
+                  </div>
+                  <!-- Local vs cloud stacked bar -->
+                  <div style="margin-bottom:var(--s-8)">
+                    <div style="display:flex;justify-content:space-between;font:400 var(--t-compact) var(--font-ui);color:var(--text-tertiary);margin-bottom:4px">
+                      <span>Local: 89%</span><span>Cloud: 11%</span>
+                    </div>
+                    <div class="fp-progress fp-progress--sm">
+                      <div class="fp-progress__fill" style="width:89%"></div>
+                    </div>
+                  </div>
+                  <button class="fp-btn fp-btn--ghost fp-btn--sm" data-action="ai-reset-stats">Reset stats</button>
+                </div>
+              </div><!-- /#settings-pane-ai-config -->
+
+              <!-- ────────────────────────────────────────────────────────
+                   A.12.7  CUSTOM FILE TYPES
+              ──────────────────────────────────────────────────────────── -->
+              <div class="settings-pane" id="settings-pane-custom-types" data-pane="custom-types" style="display:none">
+                <h2 class="settings-pane__title">Custom File Types</h2>
+                <div class="fp-card settings-card" style="padding:0;overflow:hidden">
+                  <!-- Table header -->
+                  <div class="settings-filetypes-row settings-filetypes-row--header">
+                    <span class="settings-filetypes-col settings-filetypes-col--ext">Extension</span>
+                    <span class="settings-filetypes-col settings-filetypes-col--cat">Category</span>
+                    <span class="settings-filetypes-col settings-filetypes-col--tags">Default tags</span>
+                    <span class="settings-filetypes-col settings-filetypes-col--desc">Description</span>
+                    <span class="settings-filetypes-col settings-filetypes-col--act"></span>
+                  </div>
+                  <!-- INTEGRATION: rows from GET /custom-file-types -->
+                  <div class="settings-filetypes-row">
+                    <span class="settings-filetypes-col settings-filetypes-col--ext fp-mono">.sketch</span>
+                    <span class="settings-filetypes-col settings-filetypes-col--cat">Design</span>
+                    <span class="settings-filetypes-col settings-filetypes-col--tags">
+                      <span class="fp-chip" style="padding:1px 6px;font-size:10px">design</span>
+                      <span class="fp-chip" style="padding:1px 6px;font-size:10px">figma</span>
+                    </span>
+                    <span class="settings-filetypes-col settings-filetypes-col--desc" style="color:var(--text-secondary)">Sketch design files</span>
+                    <span class="settings-filetypes-col settings-filetypes-col--act">
+                      <button class="fp-icon-btn fp-icon-btn--sm" data-action="settings-edit-filetype"><svg class="fp-icon fp-icon--12" aria-hidden="true"><use href="#fp-edit"></use></svg></button>
+                      <button class="fp-icon-btn fp-icon-btn--sm" data-action="settings-delete-filetype"><svg class="fp-icon fp-icon--12" aria-hidden="true"><use href="#fp-delete"></use></svg></button>
+                    </span>
+                  </div>
+                  <div class="settings-filetypes-row">
+                    <span class="settings-filetypes-col settings-filetypes-col--ext fp-mono">.fig</span>
+                    <span class="settings-filetypes-col settings-filetypes-col--cat">Design</span>
+                    <span class="settings-filetypes-col settings-filetypes-col--tags">
+                      <span class="fp-chip" style="padding:1px 6px;font-size:10px">design</span>
+                    </span>
+                    <span class="settings-filetypes-col settings-filetypes-col--desc" style="color:var(--text-secondary)">Figma local files</span>
+                    <span class="settings-filetypes-col settings-filetypes-col--act">
+                      <button class="fp-icon-btn fp-icon-btn--sm" data-action="settings-edit-filetype"><svg class="fp-icon fp-icon--12" aria-hidden="true"><use href="#fp-edit"></use></svg></button>
+                      <button class="fp-icon-btn fp-icon-btn--sm" data-action="settings-delete-filetype"><svg class="fp-icon fp-icon--12" aria-hidden="true"><use href="#fp-delete"></use></svg></button>
+                    </span>
+                  </div>
+                </div>
+                <div style="display:flex;flex-wrap:wrap;gap:var(--s-8);margin-top:var(--s-12)">
+                  <button class="fp-btn fp-btn--primary fp-btn--sm" data-action="settings-add-filetype">Add file type</button>
+                  <button class="fp-btn fp-btn--secondary fp-btn--sm" data-action="navigate-screen" data-screen="scan-config">Re-run setup conversation</button>
+                </div>
+              </div><!-- /#settings-pane-custom-types -->
+
+              <!-- ────────────────────────────────────────────────────────
+                   A.12.8  PRIVACY
+              ──────────────────────────────────────────────────────────── -->
+              <div class="settings-pane" id="settings-pane-privacy" data-pane="privacy" style="display:none">
+                <h2 class="settings-pane__title">Privacy</h2>
+                <div class="fp-card settings-card">
+                  <div class="settings-row">
+                    <div class="settings-row__label">Cloud inference (mirrors AI Config)</div>
+                    <label class="fp-toggle">
+                      <input type="checkbox" checked disabled title="Planned for Stage 3" data-action="settings-toggle" data-setting="cloud-inference" />
+                      <span class="fp-toggle__track"></span>
+                      <span class="fp-toggle__thumb"></span>
+                    </label>
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row">
+                    <div class="settings-row__label">Analytics</div>
+                    <label class="fp-toggle">
+                      <input type="checkbox" disabled title="Planned for Stage 3" data-action="settings-toggle" data-setting="analytics" />
+                      <span class="fp-toggle__track"></span>
+                      <span class="fp-toggle__thumb"></span>
+                    </label>
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row">
+                    <div class="settings-row__label">Redact file contents from logs</div>
+                    <label class="fp-toggle">
+                      <input type="checkbox" checked disabled title="Planned for Stage 3" data-action="settings-toggle" data-setting="redact-logs" />
+                      <span class="fp-toggle__track"></span>
+                      <span class="fp-toggle__thumb"></span>
+                    </label>
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row">
+                    <div class="settings-row__label">Index encryption</div>
+                    <div class="fp-segmented">
+                      <button class="fp-segmented__opt active" data-action="settings-set-encryption" data-val="off">Off</button>
+                      <button class="fp-segmented__opt" data-action="settings-set-encryption" data-val="aes256">On (AES-256)</button>
+                    </div>
+                  </div>
+                </div>
+              </div><!-- /#settings-pane-privacy -->
+
+
+<!-- ═══ Settings pane: Shortcuts (old mock-up with rebinding rows and Mac/Stage 3 keys) ═══ -->
+              <!-- ────────────────────────────────────────────────────────
+                   A.12.9  SHORTCUTS
+              ──────────────────────────────────────────────────────────── -->
+              <div class="settings-pane" id="settings-pane-shortcuts" data-pane="shortcuts" style="display:none">
+                <h2 class="settings-pane__title">Shortcuts</h2>
+                <div class="fp-card settings-card" style="padding:0;overflow:hidden">
+                  <!-- INTEGRATION: editable shortcuts from config; click row to rebind -->
+                  <div class="settings-kbd-row" data-action="settings-rebind" data-binding="palette">
+                    <span class="settings-kbd-action">Open command palette</span>
+                    <span class="settings-kbd-pill fp-mono">⌘K</span>
+                  </div>
+                  <div class="settings-kbd-row" data-action="settings-rebind" data-binding="review-bin">
+                    <span class="settings-kbd-action">Open Review Bin</span>
+                    <span class="settings-kbd-pill fp-mono">⌘⇧R</span>
+                  </div>
+                  <div class="settings-kbd-row" data-action="settings-rebind" data-binding="focus-search">
+                    <span class="settings-kbd-action">Focus search</span>
+                    <span class="settings-kbd-pill fp-mono">/</span>
+                  </div>
+                  <div class="settings-kbd-row" data-action="settings-rebind" data-binding="go-home">
+                    <span class="settings-kbd-action">Switch to Home</span>
+                    <span class="settings-kbd-pill fp-mono">⌘1</span>
+                  </div>
+                  <div class="settings-kbd-row" data-action="settings-rebind" data-binding="go-browser">
+                    <span class="settings-kbd-action">Switch to Browser</span>
+                    <span class="settings-kbd-pill fp-mono">⌘2</span>
+                  </div>
+                  <div class="settings-kbd-row" data-action="settings-rebind" data-binding="file-tree">
+                    <span class="settings-kbd-action">Open File Tree</span>
+                    <span class="settings-kbd-pill fp-mono">⌘T</span>
+                  </div>
+                  <div class="settings-kbd-row" data-action="settings-rebind" data-binding="toggle-inspector">
+                    <span class="settings-kbd-action">Toggle inspector</span>
+                    <span class="settings-kbd-pill fp-mono">⌘I</span>
+                  </div>
+                  <div class="settings-kbd-row" data-action="settings-rebind" data-binding="new-folder">
+                    <span class="settings-kbd-action">New folder</span>
+                    <span class="settings-kbd-pill fp-mono">⌘⇧N</span>
+                  </div>
+                  <div class="settings-kbd-row" data-action="settings-rebind" data-binding="rename">
+                    <span class="settings-kbd-action">Rename</span>
+                    <span class="settings-kbd-pill fp-mono">F2</span>
+                  </div>
+                  <div class="settings-kbd-row" data-action="settings-rebind" data-binding="delete">
+                    <span class="settings-kbd-action">Delete</span>
+                    <span class="settings-kbd-pill fp-mono">Del</span>
+                  </div>
+                  <div class="settings-kbd-row" data-action="settings-rebind" data-binding="undo">
+                    <span class="settings-kbd-action">Undo</span>
+                    <span class="settings-kbd-pill fp-mono">⌘Z</span>
+                  </div>
+                  <div class="settings-kbd-row" data-action="settings-rebind" data-binding="summon">
+                    <span class="settings-kbd-action">Summon FilePlus</span>
+                    <span class="settings-kbd-pill fp-mono">⊞⇧F</span>
+                  </div>
+                  <div class="settings-kbd-row" data-action="settings-rebind" data-binding="last-download">
+                    <span class="settings-kbd-action">Open last download</span>
+                    <span class="settings-kbd-pill fp-mono">⊞⇧D</span>
+                  </div>
+                  <!-- Rebinding active state variant (uncomment when editing):
+                  <div class="settings-kbd-row settings-kbd-row--rebinding" ...>
+                    <span class="settings-kbd-action">Summon FilePlus</span>
+                    <span class="settings-kbd-pill fp-mono" style="border-color:var(--accent-edge);color:var(--accent)">Press new keys…</span>
+                  </div>
+                  -->
+                </div>
+              </div><!-- /#settings-pane-shortcuts -->
+
+
+<!-- ═══ Settings pane: Data (old mock-up — fake sizes, snapshots, backup/import, AI tags) ═══ -->
+              <!-- ────────────────────────────────────────────────────────
+                   A.12.10  DATA
+              ──────────────────────────────────────────────────────────── -->
+              <div class="settings-pane" id="settings-pane-data" data-pane="data" style="display:none">
+                <h2 class="settings-pane__title">Data</h2>
+                <div class="fp-card settings-card" style="margin-bottom:var(--s-12)">
+                  <div class="settings-row">
+                    <div class="settings-row__label">FilePlus trash</div>
+                    <button class="fp-btn fp-btn--danger fp-btn--sm" data-action="settings-empty-trash">Empty FilePlus trash…</button>
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row">
+                    <div class="settings-row__label">Writes</div>
+                    <span class="fp-mono" id="settings-writes-status" style="font:400 var(--t-compact) var(--font-data);color:var(--text-secondary)">—</span>
+                  </div>
+                  <div class="settings-sep"></div>
+                  <!-- INTEGRATION: sizes from GET /data/stats -->
+                  <div class="settings-row">
+                    <div class="settings-row__label">Index size</div>
+                    <span class="fp-mono" style="font:600 var(--t-display-sm) var(--font-data);color:var(--text-primary)">142 MB</span>
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row">
+                    <div class="settings-row__label">Snapshot storage</div>
+                    <div style="display:flex;flex-wrap:wrap;align-items:center;gap:var(--s-8)">
+                      <span class="fp-mono" style="font:600 var(--t-display-sm) var(--font-data);color:var(--text-primary)">2.4 GB</span>
+                      <button class="fp-btn fp-btn--secondary fp-btn--sm" data-action="settings-cleanup-snapshots">Cleanup snapshots</button>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="fp-card settings-card" style="margin-bottom:var(--s-12)">
+                  <div class="fp-card__header"><span class="fp-card__title">Snapshot retention rules</span></div>
+                  <div class="settings-row">
+                    <label class="settings-radio-row" style="gap:var(--s-8)">
+                      <input type="checkbox" disabled title="Planned for Stage 4" data-action="settings-toggle" data-setting="snap-daily" />
+                      Daily
+                    </label>
+                    <div style="display:flex;align-items:center;gap:6px;font:400 var(--t-body) var(--font-ui);color:var(--text-secondary)">
+                      keep last <input type="number" value="7" style="width:44px" class="fp-input fp-input--sm" data-action="settings-snap-daily-count" />
+                    </div>
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row">
+                    <label class="settings-radio-row" style="gap:var(--s-8)">
+                      <input type="checkbox" checked disabled title="Planned for Stage 4" data-action="settings-toggle" data-setting="snap-weekly" />
+                      Weekly
+                    </label>
+                    <div style="display:flex;align-items:center;gap:6px;font:400 var(--t-body) var(--font-ui);color:var(--text-secondary)">
+                      keep last <input type="number" value="4" style="width:44px" class="fp-input fp-input--sm" data-action="settings-snap-weekly-count" />
+                    </div>
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row">
+                    <label class="settings-radio-row" style="gap:var(--s-8)">
+                      <input type="checkbox" checked disabled title="Planned for Stage 4" data-action="settings-toggle" data-setting="snap-monthly" />
+                      Monthly
+                    </label>
+                    <div style="display:flex;align-items:center;gap:6px;font:400 var(--t-body) var(--font-ui);color:var(--text-secondary)">
+                      keep last <input type="number" value="12" style="width:44px" class="fp-input fp-input--sm" data-action="settings-snap-monthly-count" />
+                    </div>
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row">
+                    <span style="font:400 var(--t-body) var(--font-ui);color:var(--text-tertiary)">AI-task snapshots</span>
+                    <span style="font:400 var(--t-compact) var(--font-ui);color:var(--text-tertiary)">Kept 30d automatically</span>
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row">
+                    <span style="font:400 var(--t-body) var(--font-ui);color:var(--text-tertiary)">User-bookmarked</span>
+                    <span style="font:400 var(--t-compact) var(--font-ui);color:var(--text-tertiary)">Kept forever</span>
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row">
+                    <span style="font:400 var(--t-body) var(--font-ui);color:var(--text-tertiary)">Major scan</span>
+                    <span style="font:400 var(--t-compact) var(--font-ui);color:var(--text-tertiary)">Kept forever</span>
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row">
+                    <div class="settings-row__label">
+                      Warn when snapshot storage exceeds
+                      <span class="fp-mono settings-slider-value" id="val-snap-warn">10 GB</span>
+                    </div>
+                    <input type="range" class="fp-slider" id="slider-snap-warn" min="1" max="50" value="10" step="1" data-action="settings-snap-warn" style="width:180px" />
+                  </div>
+                </div>
+
+                <div class="fp-card settings-card">
+                  <div class="fp-card__header"><span class="fp-card__title">Database</span></div>
+                  <div class="settings-row">
+                    <button class="fp-btn fp-btn--secondary fp-btn--sm" data-action="settings-export-db">Export backup (.zip)</button>
+                    <button class="fp-btn fp-btn--secondary fp-btn--sm" data-action="settings-import-db">Import backup</button>
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row" style="flex-direction:column;align-items:flex-start;gap:var(--s-8)">
+                    <button class="fp-btn fp-btn--danger fp-btn--sm" data-action="settings-clear-ai-tags">Clear all AI tags</button>
+                    <button class="fp-btn fp-btn--danger fp-btn--sm" data-action="settings-reset-organization">Reset all organization</button>
+                    <button class="fp-btn fp-btn--secondary fp-btn--sm" data-action="settings-reset-defaults">Reset settings to defaults</button>
+                  </div>
+                </div>
+              </div><!-- /#settings-pane-data -->
+
+
+<!-- ═══ Settings pane: About (old mock-up — fake build, index size, file count, LLM) ═══ -->
+              <!-- ────────────────────────────────────────────────────────
+                   A.12.11  ABOUT
+              ──────────────────────────────────────────────────────────── -->
+              <div class="settings-pane" id="settings-pane-about" data-pane="about" style="display:none">
+                <h2 class="settings-pane__title">About</h2>
+                <div class="fp-card settings-card">
+                  <!-- INTEGRATION: version from app manifest, file count from DB -->
+                  <div class="settings-row">
+                    <span style="font:400 var(--t-body) var(--font-ui);color:var(--text-secondary)">Version</span>
+                    <span class="fp-mono" style="font:400 var(--t-compact) var(--font-data);color:var(--text-primary)">0.1.0-dev</span>
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row">
+                    <span style="font:400 var(--t-body) var(--font-ui);color:var(--text-secondary)">Build</span>
+                    <span class="fp-mono" style="font:400 var(--t-compact) var(--font-data);color:var(--text-primary)">2026-04-24 · main@77b006d</span>
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row">
+                    <span style="font:400 var(--t-body) var(--font-ui);color:var(--text-secondary)">Index size</span>
+                    <span class="fp-mono" style="font:400 var(--t-compact) var(--font-data);color:var(--text-primary)">142 MB</span>
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row">
+                    <span style="font:400 var(--t-body) var(--font-ui);color:var(--text-secondary)">Files indexed</span>
+                    <span class="fp-mono" style="font:400 var(--t-compact) var(--font-data);color:var(--text-primary)">214,823</span>
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row">
+                    <span style="font:400 var(--t-body) var(--font-ui);color:var(--text-secondary)">Local LLM</span>
+                    <span class="fp-mono" style="font:400 var(--t-compact) var(--font-data);color:var(--text-primary)">llama3.1:8b · Ollama 0.6.3</span>
+                  </div>
+                  <div class="settings-sep"></div>
+                  <div class="settings-row" style="flex-wrap:wrap;gap:var(--s-8)">
+                    <button class="fp-btn fp-btn--ghost fp-btn--sm" data-action="settings-export-diagnostics">Export diagnostics</button>
+                    <button class="fp-btn fp-btn--ghost fp-btn--sm" data-action="settings-open-licenses">Open source licenses</button>
+                    <button class="fp-btn fp-btn--danger fp-btn--sm" data-action="settings-reset-defaults">Reset to defaults</button>
+                  </div>
+                </div>
+              </div><!-- /#settings-pane-about -->
+
+<!-- ═══ Palette: Search/Chat mode toggle (Stage 3) ═══ -->
+      <!-- Search/Chat mode toggle — A.11.1 -->
+      <div class="fp-segmented fp-palette__mode-toggle" id="palette-mode-toggle" style="flex-shrink:0;margin-right:var(--s-12)">
+        <button class="fp-segmented__opt active" data-action="palette-set-mode" data-mode="search">Search</button>
+        <button class="fp-segmented__opt" data-action="palette-set-mode" data-mode="chat">Chat</button>
+      </div>
+
+<!-- ═══ Palette: Chat pane with plan actions (Stage 4) ═══ -->
+      <!-- ── Chat mode (hidden by default) ── -->
+      <div class="fp-palette__chat-pane" id="palette-chat-pane" style="display:none">
+        <div class="fp-palette__chat-messages" id="palette-chat-messages">
+          <!-- INTEGRATION: Claude API responses streamed here -->
+          <div class="fp-palette__chat-plan" style="background:var(--bg-content);border:1px solid var(--border-subtle);border-radius:var(--r-card);padding:var(--s-16);margin:var(--s-12)">
+            <p style="font:400 var(--t-body) var(--font-ui);color:var(--text-secondary);margin:0 0 var(--s-12)">Proposed plan will appear here once you describe what you'd like to do.</p>
+            <div style="display:flex;gap:var(--s-8)">
+              <button class="fp-btn fp-btn--secondary fp-btn--sm" data-action="palette-plan-review-bin">Send to Review Bin</button>
+              <button class="fp-btn fp-btn--primary fp-btn--sm" data-action="palette-plan-approve-all">Approve all</button>
+              <button class="fp-btn fp-btn--ghost fp-btn--sm" data-action="palette-plan-preview">Show me what would change</button>
+            </div>
+          </div>
+        </div>
+      </div><!-- /#palette-chat-pane -->
+
+<!-- ═══ Palette: Open Review Bin command (Stage 3) ═══ -->
+            <button class="fp-palette__item" role="option" data-action="navigate-screen" data-screen="review-bin">
+              <span>Open Review Bin</span>
+              <span class="fp-palette__kbd fp-mono">⌘⇧R</span>
+            </button>
+
+<!-- ═══ Palette: Start new scan command (Stage 4) ═══ -->
+            <button class="fp-palette__item" role="option" data-action="navigate-screen" data-screen="scan-config">
+              <span>Start new scan</span>
+            </button>

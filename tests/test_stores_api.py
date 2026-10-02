@@ -135,3 +135,32 @@ def test_recent_and_favorites_carry_real_is_dir(client, sandbox):
     favs = {x["name"]: x for x in client.get("/favorites").json()["files"]}
     assert favs["my.folder"]["is_dir"] is True and favs["my.folder"]["ext"] == ""
     assert favs["a.txt"]["is_dir"] is False
+
+
+def test_delete_recent_clears_the_list(client, sandbox):
+    # Settings › Data › "Clear Recent" (Stage 2D Task 12a): only the list goes;
+    # the files themselves are untouched and favorites are a separate store.
+    a = sandbox / "a.txt"; b = sandbox / "b.txt"; a.write_text("a"); b.write_text("b")
+    client.post("/recent", json={"path": str(a), "action": "opened"})
+    client.post("/recent", json={"path": str(b), "action": "opened"})
+    client.post("/favorites", json={"path": str(a)})
+    r = client.delete("/recent")
+    assert r.status_code == 200 and r.json() == {"status": "cleared", "removed": 2}
+    assert client.get("/recent").json()["groups"] == []
+    assert a.exists() and b.exists()
+    assert [f["name"] for f in client.get("/favorites").json()["files"]] == ["a.txt"]
+    assert client.delete("/recent").json() == {"status": "cleared", "removed": 0}
+
+
+def test_delete_shell_icon_cache_empties_the_backend_icon_lru(client):
+    # Settings › Data › "Clear icon and thumbnail cache": the backend's shell
+    # icon LRU is one of the three layers (renderer, main process, backend).
+    from backend import winshell
+    with winshell._icon_cache_lock:
+        winshell._icon_cache.clear()
+        winshell._icon_cache[("ext", "txt", 16)] = b"png-a"
+        winshell._icon_cache[("ext", "pdf", 16)] = b"png-b"
+    r = client.delete("/shell/icons/cache")
+    assert r.status_code == 200 and r.json() == {"cleared": 2}
+    assert len(winshell._icon_cache) == 0
+    assert client.delete("/shell/icons/cache").json() == {"cleared": 0}

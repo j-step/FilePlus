@@ -1094,6 +1094,15 @@ async def shell_icon(
     return Response(content=png, media_type="image/png", headers=_shell_icon_png_headers())
 
 
+@app.delete("/shell/icons/cache")
+async def shell_icons_cache_clear():
+    """Empties the shell-icon LRU (Settings > Data > Clear icon and thumbnail
+    cache): an app's icon that changed (a new default program for .pdf, say)
+    is fetched from the shell again instead of served for the rest of the
+    session. Index/DB state is untouched."""
+    return {"cleared": winshell.clear_icon_cache()}
+
+
 @app.post("/shell/icons")
 async def shell_icons(req: ShellIconsRequest):
     """Batch form of GET /shell/icon for a viewport of rows: one HTTP round
@@ -1662,6 +1671,14 @@ async def post_recent(body: RecentAdd):
     async with _db() as conn:
         await stores.recent_add(conn, body.path, body.action)
     return {"status": "ok"}
+
+
+@app.delete("/recent")
+async def delete_recent():
+    """Clears Home > Recent (Settings > Data). History rows only, no files."""
+    async with _db() as conn:
+        removed = await stores.recent_clear(conn)
+    return {"status": "cleared", "removed": removed}
 
 
 @app.get("/favorites")

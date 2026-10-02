@@ -84,6 +84,16 @@ class LruCache {
     return removed;
   }
 
+  /** Drops every entry; returns how many there were (Settings › Data ›
+   *  "Clear icon and thumbnail cache", which empties the renderer's and the
+   *  main process's LRUs alike). */
+  clear() {
+    const n = this._map.size;
+    this._map.clear();
+    this._bytes = 0;
+    return n;
+  }
+
   get size() {
     return this._map.size;
   }

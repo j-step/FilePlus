@@ -5,6 +5,7 @@
  * and wires up the dev-tools shortcut.
  */
 const { app, BrowserWindow, Menu, ipcMain, nativeTheme, nativeImage, shell, dialog, clipboard } = require('electron');
+const fs   = require('fs');
 const path = require('path');
 const { pathToFileURL } = require('url');
 const os   = require('os');
@@ -286,6 +287,24 @@ app.whenReady().then(() => {
   });
 
   ipcMain.on('mica-available', (event) => { event.returnValue = MICA_AVAILABLE; });
+
+  // Settings › About / Data (Stage 2D Task 12a). The app version comes from
+  // package.json through app.getVersion(); the log folder is the one this
+  // process writes main.log/renderer.log to (FILEPLUS_LOG_DIR, else <repo>/logs
+  // — logger.js resolveLogDir), so "Open logs folder" always opens the files
+  // a bug report needs, never a hardcoded path.
+  ipcMain.on('get-app-info', (event) => {
+    event.returnValue = { version: app.getVersion(), logDir: LOG_DIR };
+  });
+  ipcMain.handle('open-log-dir', async () => {
+    try { fs.mkdirSync(LOG_DIR, { recursive: true }); } catch (_) { /* openPath reports it */ }
+    const err = await shell.openPath(LOG_DIR);
+    if (err) mainLog.warn(`open logs folder failed: ${err}`);
+    return err;
+  });
+  // Empties both main-process LRUs ("Clear icon and thumbnail cache"); the
+  // renderer clears its own and the backend's. Counts are what was dropped.
+  ipcMain.handle('clear-icon-caches', () => ({ icons: iconCache.clear(), thumbnails: thumbnailCache.clear() }));
 
   ipcMain.on('set-theme-source', (_e, mode) => {
     nativeTheme.themeSource = ['dark', 'light'].includes(mode) ? mode : 'system';

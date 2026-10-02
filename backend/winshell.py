@@ -840,6 +840,15 @@ _icon_cache_lock = threading.Lock()
 _ICON_CACHE_MAX = 2048
 
 
+def clear_icon_cache() -> int:
+    """Drops every cached shell image; returns how many there were. An icon
+    being rendered right now still lands afterwards -- it is a fresh answer."""
+    with _icon_cache_lock:
+        n = len(_icon_cache)
+        _icon_cache.clear()
+    return n
+
+
 def shell_icon_key(path: Path, is_dir: bool, px: int) -> tuple:
     """Cache identity for a shell image: every directory per path (desktop.ini
     custom icons, known-folder glyphs), PER_PATH_ICON_EXTS per path, any other

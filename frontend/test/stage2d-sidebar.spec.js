@@ -112,8 +112,11 @@ test('sidebar: 11px headers, hairline dividers, 28px items, overlay scrollbar wi
     const sizes = await page.$$eval('.fp-sidebar__section-label', (els) => [...new Set(els.map((e) => getComputedStyle(e).fontSize))]);
     expect(sizes).toEqual(['11px']);
 
-    // Hairline dividers between the sections, inset 12px from the panel.
-    expect(await page.locator('.fp-sidebar__divider').count()).toBeGreaterThanOrEqual(3);
+    // Hairline dividers between the sections, inset 12px from the panel:
+    // Quick Access | This PC, and the Tags one (shown with the Tags section).
+    // The divider above the old System section (File Tree, Scan) left with
+    // it in Stage 2D Task 12a.
+    expect(await page.locator('.fp-sidebar__divider').count()).toBeGreaterThanOrEqual(2);
     const dividers = await page.evaluate(() => {
       const side = document.getElementById('sidebar').getBoundingClientRect();
       const probe = document.createElement('span');
@@ -128,7 +131,7 @@ test('sidebar: 11px headers, hairline dividers, 28px items, overlay scrollbar wi
           mt: cs.marginTop, mb: cs.marginBottom, role: d.getAttribute('role') };
       });
     });
-    expect(dividers.length).toBeGreaterThanOrEqual(2);
+    expect(dividers.length).toBeGreaterThanOrEqual(1);
     for (const d of dividers) {
       expect(d.h).toBe(1);
       expect(d.bg).toBe(d.subtle);

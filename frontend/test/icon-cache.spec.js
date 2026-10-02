@@ -15,6 +15,17 @@ test.describe('LruCache', () => {
     expect(cache.size).toBe(1);
   });
 
+  test('clear() empties the cache, resets the byte charge and returns the count (Settings › Data)', () => {
+    const cache = new LruCache(10, 1000);
+    cache.set('a', { url: 'xxxx' });
+    cache.set('b', null);
+    expect(cache.clear()).toBe(2);
+    expect(cache.size).toBe(0);
+    expect(cache.bytes).toBe(0);
+    expect(cache.get('a')).toBeUndefined();
+    expect(cache.clear()).toBe(0);
+  });
+
   test('get on a missing key returns undefined', () => {
     const cache = new LruCache(2);
     expect(cache.get('missing')).toBeUndefined();

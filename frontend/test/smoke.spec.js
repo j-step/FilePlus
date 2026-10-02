@@ -9,10 +9,10 @@ const { launchApp, resetToDefaults } = require('./harness/app');
 const FRONTEND = path.join(__dirname, '..');
 const SHOTS = path.join(FRONTEND, '..', 'artifacts', 'screenshots');
 const API = `http://127.0.0.1:${process.env.FILEPLUS_PORT || 9876}`;
-const SCREENS = [
-  'home', 'browser', 'ftree', 'scan-config', 'scan-progress',
-  'scan-results', 'review-bin', 'everything', 'settings',
-];
+// The screens that exist: the Stage 3/4 mock-ups (File Tree, Scan, Review
+// Bin, Everything Folder) left the DOM in Stage 2D Task 12a — see
+// stage2d-placeholders.spec.js.
+const SCREENS = ['home', 'browser', 'settings'];
 
 test('backend /health is reachable', async () => {
   const r = await fetch(`${API}/health`);

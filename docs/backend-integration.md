@@ -199,7 +199,8 @@ static demo markup the author flagged as "tags not implemented" was this list, n
 sync by every mutation) and the context-menu label flips Add/Remove (Task 11, spec §4.3).
 
 ### A.2.3 Shared
-v2 only. Tab is permanently `disabled`. No backend integration in v1.
+v2 only. **Removed in Stage 2D Task 12a (2026-10-02):** the permanently disabled tab and its empty pane are
+gone (markup in `docs/archive/2026-10-02-unbuilt-screens-markup.html`). No backend integration in v1.
 
 ---
 
@@ -395,6 +396,8 @@ zoom, monitor-DPI and `--list-scale` changes re-resolve every icon (`fpInvalidat
 
 ## A.4 File Tree canvas
 
+**Hidden in Stage 2D Task 12a (2026-10-02).** The screen, its sidebar entry and its palette command are out of the DOM (no control may ship that does nothing); the mock-up markup is kept as reference in `docs/archive/2026-10-02-unbuilt-screens-markup.html`. The items below still describe what its stage must wire.
+
 ### 1. Live tree (`GET /tree/live`)
 **What.** Canvas placeholder; `#ftree-canvas` shows nothing real.
 
@@ -484,6 +487,8 @@ zoom, monitor-DPI and `--list-scale` changes re-resolve every icon (`fpInvalidat
 ---
 
 ## A.5 Scan
+
+**Hidden in Stage 2D Task 12a (2026-10-02).** The screen, its sidebar entry and its palette command are out of the DOM (no control may ship that does nothing); the mock-up markup is kept as reference in `docs/archive/2026-10-02-unbuilt-screens-markup.html`. The items below still describe what its stage must wire.
 
 ### A.5.1 Scan Config
 
@@ -597,6 +602,8 @@ zoom, monitor-DPI and `--list-scale` changes re-resolve every icon (`fpInvalidat
 
 ## A.6 Review Bin
 
+**Hidden in Stage 2D Task 12a (2026-10-02).** The screen, its sidebar entry and its palette command are out of the DOM (no control may ship that does nothing); the mock-up markup is kept as reference in `docs/archive/2026-10-02-unbuilt-screens-markup.html`. The items below still describe what its stage must wire.
+
 ### 1. Listing (`GET /review-bin`)
 **What.** Two-pane queue grouped by destination, with confidence bars.
 
@@ -637,6 +644,8 @@ zoom, monitor-DPI and `--list-scale` changes re-resolve every icon (`fpInvalidat
 ---
 
 ## A.7 Everything Folder
+
+**Hidden in Stage 2D Task 12a (2026-10-02).** The screen, its sidebar entry and its palette command are out of the DOM (no control may ship that does nothing); the mock-up markup is kept as reference in `docs/archive/2026-10-02-unbuilt-screens-markup.html`. The items below still describe what its stage must wire.
 
 ### 1. File list (`GET /ef/files`)
 **What.** Filter (All/Unprocessed/Needs Review/Moving/Errors), sort, status dot per row, "currently moving" card.
@@ -784,6 +793,19 @@ No backend. Pure UI.
 
 ## A.12 Settings
 
+**Stage 2D Task 12a (2026-10-02).** Settings shows only panes that do something today: Personalization,
+Scan & Index, Shortcuts, Data, About. The Everything Folder, Downloads Folder, Organization Engine, AI
+Configuration, Custom File Types and Privacy panes (§3–§8 below) are out of the DOM — markup in
+`docs/archive/2026-10-02-unbuilt-screens-markup.html` — and come back with the stage that wires them.
+Shortcuts is a read-only list of the real keys (rebinding, §9, is not built). Data has Empty FilePlus
+trash, the write mode, **Clear Recent** (`DELETE /recent` → `{status, removed}`), **Clear icon and
+thumbnail cache** (renderer LRUs `fpClearIconCaches`, main-process LRUs `electronAPI.clearIconCaches`,
+backend shell-icon LRU `DELETE /shell/icons/cache` → `{cleared}`) and **Open logs folder**
+(`electronAPI.openLogDir` → `shell.openPath(FILEPLUS_LOG_DIR or <repo>/logs)`); the §10 stats/export/
+import/reset items are not built. About shows real values: `electronAPI.appInfo()` (app version from
+package.json, Electron/Chromium/Node versions, log folder) and `/health` (backend version, env, write
+mode); §11's `GET /version` was not needed.
+
 ### 0. Generic config endpoints (foundation)
 **Done (Stage 2A/2B, 2026-09-11).** `config` table + `GET/GET-by-key/POST/DELETE /config`, `window.__fpConfig` cache, `config-change` op-log audit trail; `secure.*` encryption-at-rest not built (no AI settings pane yet).
 
@@ -930,6 +952,9 @@ count. The pane also shows `GET /index/status`'s `error` when the last backgroun
 search code path instead of two (Task 14, spec §8.5). Command/tag palette modes are unaffected.
 
 ### 2. Chat mode (`POST /palette/chat`)
+**Hidden in Stage 2D Task 12a (2026-10-02):** the Search/Chat toggle and the chat pane (with its three
+plan buttons) are out of the DOM until this is built; markup in the archive file named under A.4.
+
 **What.** "Plan something with the AI."
 
 **How.**

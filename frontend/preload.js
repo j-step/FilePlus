@@ -101,4 +101,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
   thumbnail:         (path, px, mtime) => ipcRenderer.invoke('get-thumbnail', path, px, mtime),
   showProperties:    (path) => ipcRenderer.invoke('show-properties', path),
   openWithDialog:    (path) => ipcRenderer.invoke('open-with-dialog', path),
+  // Settings › About / Data (Stage 2D Task 12a). appInfo -> {version, logDir,
+  // electron, chrome, node}: the app version and log folder from the main
+  // process, the runtime versions from this process (same binary).
+  // openLogDir resolves '' on success, else Electron's error text.
+  // clearIconCaches empties the main-process icon/thumbnail LRUs and
+  // resolves {icons, thumbnails}, the counts dropped.
+  appInfo: () => ({
+    ...ipcRenderer.sendSync('get-app-info'),
+    electron: process.versions.electron,
+    chrome: process.versions.chrome,
+    node: process.versions.node,
+  }),
+  openLogDir:        () => ipcRenderer.invoke('open-log-dir'),
+  clearIconCaches:   () => ipcRenderer.invoke('clear-icon-caches'),
 });

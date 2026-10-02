@@ -6,9 +6,12 @@ const paletteScrim       = document.getElementById('palette-scrim');
 const paletteInput       = document.getElementById('palette-input');
 
 // ── Screen switching ────────────────────────────────────────────────────────
-// Screens whose backend wiring is not yet complete carry their own static
-// "Not built yet — planned for Stage N" banner in index.html; entering one
-// fires no toast.
+// Only screens that work today are in index.html (Home, Browser, Settings).
+// The Stage 3/4 mock-ups (File Tree, Scan, Review Bin, Everything Folder)
+// were taken out of the DOM in Stage 2D Task 12a — no control may ship that
+// does nothing — and live as design reference in
+// docs/archive/2026-10-02-unbuilt-screens-markup.html until their stage
+// builds them for real.
 
 // Per-tab UI state model (Stage 2C Task 7)
 // ─────────────────────────────────────────
@@ -54,12 +57,6 @@ function tabRecordFor(id) {
 const SCREEN_LABELS = {
   home:            'Home',
   browser:         'Files',
-  ftree:           'File Tree',
-  'scan-config':   'Scan',
-  'scan-progress': 'Scan',
-  'scan-results':  'Scan',
-  'review-bin':    'Review Bin',
-  everything:      'Everything Folder',
   settings:        'Settings',
 };
 
@@ -448,6 +445,10 @@ function switchScreen(id, labelOverride) {
   // Mutate the ACTIVE tab's screen state — never switch tabs from here.
   const tab = activeTab();
   if (!tab) return;
+  // A screen that is not in the DOM (one of the unbuilt Stage 3/4 screens
+  // taken out in Task 12a, named by a stale caller) would leave the tab
+  // showing nothing at all: stay where we are instead.
+  if (!document.getElementById(`screen-${id}`)) return;
   tab.screen = id;
   if (id === 'browser') {
     if (tab.path === null) {
@@ -1171,23 +1172,6 @@ function handlePaletteAction(btn) {
   if (action === 'toggle-sidebar') toggleSidebar();
   if (action === 'toggle-inspector') toggleInspector();
   closePalette();
-}
-
-// Palette Search/Chat mode switch (A.11.1)
-function setPaletteMode(mode) {
-  const searchPane = document.getElementById('palette-search-pane');
-  const chatPane   = document.getElementById('palette-chat-pane');
-  const toggle     = document.getElementById('palette-mode-toggle');
-  if (searchPane) searchPane.style.display = mode === 'search' ? '' : 'none';
-  if (chatPane)   chatPane.style.display   = mode === 'chat' ? '' : 'none';
-  toggle?.querySelectorAll('.fp-segmented__opt').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.mode === mode);
-  });
-  if (paletteInput) {
-    paletteInput.placeholder = mode === 'search'
-      ? 'Type a command, path, or question…'
-      : 'Ask Claude anything about your files…';
-  }
 }
 
 // ── Tag canvas (A.11.2) ───────────────────────────────────────────────────────
@@ -2497,17 +2481,6 @@ async function refreshAll() {
   }
 }
 
-async function triggerScan(path) {
-  showToast('Scanning…', 'default');
-  try {
-    const data = await API.post('/scan', path ? { path } : {}, { signal: AbortSignal.timeout(60000) });
-    showSnackbar(`Scan complete — ${data.count} file${data.count !== 1 ? 's' : ''} indexed`);
-    await openBrowserAt(data.path);
-  } catch (err) {
-    showToast(`Scan failed: ${formatApiError(err)}`, 'error');
-  }
-}
-
 // ── Backend health ─────────────────────��──────────────────────���───────────────
 // Last state the pill was painted with. checkBackend() is polled every 30s,
 // and an offline/error -> ok transition is the only signal the renderer gets
@@ -2530,7 +2503,8 @@ async function checkBackend() {
   };
   try {
     const data = await API.get('/health', null, { signal: AbortSignal.timeout(2000) });
-    window.__fpHealth = data; // read by settings.js's Data-pane "Writes" line
+    window.__fpHealth = data; // read by settings.js's Data-pane "Writes" line and About pane
+    if (document.getElementById('settings-pane-about')?.offsetParent) renderAboutPane();
     // /health is the ONE route the backend's token middleware exempts, so a
     // 200 here does not prove our X-FilePlus-Token is the one it wants. It
     // does report whether auth is on; when it is and the bridge handed us no
@@ -2963,7 +2937,7 @@ function initUnderlineTabs(container) {
 // ── data-action global delegation ─────────────────────────────────────────────
 // In-scope actions are handled here; out-of-scope show "not implemented" stub.
 const IN_SCOPE_ACTIONS = new Set([
-  'navigate-screen', 'navigate-path', 'switch-tab', 'close-tab', 'new-tab', 'scan',
+  'navigate-screen', 'navigate-path', 'switch-tab', 'close-tab', 'new-tab',
   'toggle-sidebar', 'toggle-inspector', 'toggle-theme', 'retry-backend-connect',
   'focus-search', 'filter-by-tag', 'open-tag-canvas', 'close-tag-canvas',
   'tag-canvas-select',
@@ -2971,25 +2945,22 @@ const IN_SCOPE_ACTIONS = new Set([
   'ask-open', 'ask-close', 'ask-example',
   'nav-back', 'nav-forward', 'nav-up', 'navigate-crumb', 'nav-retry',
   // 'sort-by' is handled by initColumnSort()'s own listener (browser.js);
-  // 'select-file' only appears on the static placeholder rows in index.html,
-  // superseded by browser.js's delegated row click handler. Both are listed
-  // here purely so the data-action bubble to the global switch is a silent
-  // no-op instead of a "not yet implemented" toast.
-  'sort-by', 'select-file',
-  // Handled by their own listeners (the titlebar buttons by id, the Home /
-  // Scan Results sub-tabs by initUnderlineTabs, the Settings theme segmented
-  // control by its settings-set-theme buttons) — silent here, not a stub
-  // toast on every click (pass 2 #186).
+  // listed here purely so the data-action bubble to the global switch is a
+  // silent no-op instead of a "not yet implemented" toast.
+  'sort-by',
+  // Handled by their own listeners (the titlebar buttons by id, the Home
+  // sub-tabs by initUnderlineTabs, the Settings theme segmented control by
+  // its settings-set-theme buttons) — silent here, not a stub toast on every
+  // click (pass 2 #186).
   'window-minimize', 'window-maximize', 'window-close',
-  'switch-home-tab', 'switch-scan-results-tab', 'settings-theme',
+  'switch-home-tab', 'settings-theme',
   'cm-open-new-tab', 'cm-unpin-sidebar', 'cm-rename-sidebar-item',
-  'open-review-bin',
   'switch-inspector-tab',
   'inspector-open', 'inspector-reveal', 'inspector-remove-tag', 'inspector-undo-op',
   'unfavorite-file', 'open-recent-file',
   'open-file', 'reveal-file', 'copy-path', 'home-toggle-favorite',
   'palette-open-file', 'palette-open-folder', 'palette-search-files',
-  'open-palette', 'close-palette', 'palette-set-mode',
+  'open-palette', 'close-palette',
   // Toolbar search (Task 14)
   'search-clear', 'search-clear-inline', 'search-remove-chip', 'search-expand-filter', 'search-pick-filter',
   'search-more-filters', 'search-more-apply', 'search-more-cancel',
@@ -2997,14 +2968,13 @@ const IN_SCOPE_ACTIONS = new Set([
   // Settings › Scan & Index (Task 14)
   'settings-index-add', 'settings-index-reindex', 'settings-index-remove',
   'modal-cancel', 'modal-confirm', 'modal-confirm-type',
-  'ef-filter', 'ef-sort', 'ef-toggle-pause-ai', 'ef-toggle-moving-card',
-  'scan-config-switch-mode', 'scan-baseline-confirm',
   'settings-nav', 'settings-set-theme', 'settings-set-density', 'settings-set-accent',
   'settings-set-accent-hex', 'settings-reset-accent',
   'settings-set-show-notifications', 'settings-toggle', 'settings-set-click-mode',
   'settings-set-icon-source', 'settings-quick-access-toggle', 'settings-set-backspace-deletes',
   'settings-empty-trash',
-  'settings-reset-shortcuts',
+  // Settings › About / Data (Task 12a)
+  'settings-open-logs', 'settings-clear-icon-cache', 'settings-clear-recent',
   // Handled by the 'input'/'change' listeners at the bottom of this file, not
   // by a click case — listed so a click on the slider is a silent no-op.
   'settings-inspector-width',
@@ -3156,9 +3126,6 @@ document.addEventListener('click', e => {
     case 'zoom-reset':
       zoomReset();
       break;
-    case 'scan':
-      triggerScan(btn.dataset.path || null);
-      break;
     case 'toggle-sidebar':
       toggleSidebar();
       break;
@@ -3282,9 +3249,6 @@ document.addEventListener('click', e => {
       }
       break;
     }
-    case 'palette-set-mode':
-      setPaletteMode(btn.dataset.mode || 'search');
-      break;
     case 'modal-cancel':
       closeModal();
       break;
@@ -3298,55 +3262,19 @@ document.addEventListener('click', e => {
       // stays in IN_SCOPE_ACTIONS so this case is a deliberate silent no-op,
       // not a missing handler.
       break;
-    case 'scan-config-switch-mode': {
-      const conv = document.querySelector('.scan-conv');
-      const form = document.querySelector('.scan-form');
-      const switchBtn = document.getElementById('btn-scan-switch');
-      if (!conv || !form) break;
-      const goingToForm = btn.dataset.mode === 'form';
-      conv.style.display = goingToForm ? 'none' : '';
-      form.style.display = goingToForm ? '' : 'none';
-      if (switchBtn) {
-        switchBtn.textContent = goingToForm ? 'Switch to conversational' : 'Switch to structured form';
-        switchBtn.dataset.mode = goingToForm ? 'conversational' : 'form';
-      }
-      break;
-    }
-    case 'ef-filter': {
-      // Update segmented filter chips active state
-      const bar = document.getElementById('ef-filter-bar');
-      bar?.querySelectorAll('.fp-segmented__opt').forEach(opt => {
-        opt.classList.toggle('active', opt.dataset.filter === btn.dataset.filter);
-      });
-      // INTEGRATION: filter file list by state
-      break;
-    }
-    case 'scan-baseline-confirm':
-      openModal('warn', {
-        title: 'Create baseline snapshot',
-        body: 'FilePlus will take a snapshot of your current folder structure before scanning. This lets you restore to the current state at any time. The snapshot runs in the background and takes about 30 seconds.',
-        confirmLabel: 'Create baseline & scan',
-        // INTEGRATION: onConfirm → POST /scan/start (after POST /snapshots/baseline)
-      });
-      break;
-    case 'ef-sort':
-      // INTEGRATION: sort file list by column
-      break;
-    case 'ef-toggle-pause-ai':
-      // INTEGRATION: toggle AI processing pause
-      break;
-    case 'ef-toggle-moving-card': {
-      const card = document.getElementById('ef-moving-card');
-      if (card) card.style.display = card.style.display === 'none' ? '' : 'none';
-      break;
-    }
-    case 'open-review-bin':
-      switchScreen('review-bin');
-      break;
     case 'settings-nav':
       switchSettingsPane(btn.dataset.pane);
-      if (btn.dataset.pane === 'data') updateWritesStatusLine();
       if (btn.dataset.pane === 'scan-index') loadIndexStatus();
+      break;
+    // Settings › About / Data (Stage 2D Task 12a) — settings.js.
+    case 'settings-open-logs':
+      openLogsFolder();
+      break;
+    case 'settings-clear-icon-cache':
+      clearIconCachesEverywhere();
+      break;
+    case 'settings-clear-recent':
+      clearRecentList();
       break;
     case 'settings-set-theme':
       applyTheme(btn.dataset.theme || btn.dataset.val);
@@ -3401,9 +3329,6 @@ document.addEventListener('click', e => {
           }).catch(err => showToast(`Failed to empty trash: ${formatApiError(err)}`, 'error'));
         },
       });
-      break;
-    case 'settings-reset-shortcuts':
-      // INTEGRATION: reset to default keybindings
       break;
     case 'switch-inspector-tab':
       switchInspectorTab(btn.dataset.tab);
@@ -3896,7 +3821,11 @@ document.addEventListener('click', e => {
 
     default:
       if (!IN_SCOPE_ACTIONS.has(action)) {
-        // Stub: log and show toast for out-of-scope actions
+        // Unreachable from any shipped control: scripts/check_menu_cases.js
+        // fails verify on a data-action with no case, and
+        // stage2d-placeholders.spec.js clicks every visible control and
+        // asserts this counter stays 0 (Stage 2D Task 12a).
+        window.__fpStubHits = (window.__fpStubHits || 0) + 1;
         console.log(`[FilePlus] data-action stub: ${action}`, btn.dataset);
         showToast(`Action "${action}" — not yet implemented`, 'action');
       }
@@ -4152,8 +4081,12 @@ document.addEventListener('keydown', e => {
   if ((e.metaKey || e.ctrlKey) && (e.key === '-' || e.key === '_')) { e.preventDefault(); zoomOut(); }
   // Ctrl+0 — reset zoom
   if ((e.metaKey || e.ctrlKey) && e.key === '0') { e.preventDefault(); zoomReset(); }
-  // Ctrl+Shift+R — Review Bin
-  if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'R') { e.preventDefault(); switchScreen('review-bin'); }
+  // Ctrl+, — Settings (the sidebar's Settings tooltip and the status bar
+  // both advertise it). Not behind a dialog.
+  if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key === ',') {
+    e.preventDefault();
+    if (!(typeof anyScrimOpen === 'function' && anyScrimOpen())) switchScreen('settings');
+  }
   // Ctrl+T — new tab
   if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key === 't') { e.preventDefault(); openNewTab(); }
   // Ctrl+W — close current tab
