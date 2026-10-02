@@ -386,6 +386,7 @@ async def test_renaming_a_drive_root_is_refused_not_a_value_error(conn, sandbox,
     api.py has no handler for it -- so it escaped as a 500 with a non-JSON
     body and a meaningless 'Internal Server Error' toast."""
     monkeypatch.setattr(_config, "WRITE_UNLOCKED", True)
+    monkeypatch.setattr(_config, "FILEPLUS_ENV", "prod")
     root = Path(os.path.splitdrive(str(sandbox))[0] + os.sep)
 
     with pytest.raises(mover.RefusedError):
@@ -394,6 +395,7 @@ async def test_renaming_a_drive_root_is_refused_not_a_value_error(conn, sandbox,
 
 def test_rename_route_answers_409_for_a_drive_root(client, sandbox, monkeypatch):
     monkeypatch.setattr(_config, "WRITE_UNLOCKED", True)
+    monkeypatch.setattr(_config, "FILEPLUS_ENV", "prod")
     root = os.path.splitdrive(str(sandbox))[0] + os.sep
     res = client.post("/fs/rename", json={"path": root, "new_name": "NewName"})
     assert res.status_code == 409

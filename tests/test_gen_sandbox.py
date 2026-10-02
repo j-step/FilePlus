@@ -89,3 +89,26 @@ def test_refuses_to_remove_unmarked_nonempty_dir(tmp_path):
     with pytest.raises(RuntimeError):
         build(precious)
     assert guarded.exists()
+
+
+def test_messy_classes_for_the_dev_harness(tmp_path):
+    """Dev harness phase 3: screenshots, an MSI, files with no extension, a
+    very long name, and large dummy files are all present by default."""
+    from scripts.gen_sandbox import LONG_NAME, DUMMY_BIG_BYTES
+    root = tmp_path / "gen"
+    build(root)
+    shots = sorted(p.name for p in (root / "Screenshots").iterdir())
+    assert len(shots) == 3 and all(n.startswith("Screenshot 2026-") and n.endswith(".png") for n in shots)
+    assert (root / "Downloads" / "FilePlusSetup-1.2.0.msi").read_bytes()[:8] == b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
+    no_ext = [p for p in root.rglob("*") if p.is_file() and p.suffix == "" and not p.name.startswith(".")]
+    assert {p.name for p in no_ext} >= {"LICENSE", "Makefile"}
+    long_file = root / "Downloads" / LONG_NAME
+    assert long_file.exists() and len(LONG_NAME) >= 100
+    for name in ("disk-image.iso", "raw-footage.mp4"):
+        assert (root / "Downloads" / name).stat().st_size == DUMMY_BIG_BYTES
+    assert (root / "Empty").is_dir() and not any((root / "Empty").iterdir())
+
+
+def test_fixture_tree_fixture_is_fresh_and_inside_the_sandbox(fixture_tree, sandbox):
+    assert fixture_tree.parent == sandbox
+    assert len(_listing(fixture_tree)) == EXPECTED_FILES

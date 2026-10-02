@@ -10,8 +10,32 @@ const os   = require('os');
 const { spawn } = require('child_process');
 const { resolveApiPort, resolveApiToken } = require('./envToken');
 const { LruCache, iconCacheKey, isSafeLocalPath, normalizeWinPath, clampPx } = require('./iconCache');
+const { resolveLogDir, createFileLogger, consoleLevelName } = require('./logger');
 
 let mainWindow;
+
+// ── Profile override (dev harness) ───────────────────────────────────────
+// FILEPLUS_USER_DATA_DIR moves Electron's profile (localStorage,
+// sessionStorage, caches) out of %APPDATA%\fileplus. The test harness sets it
+// to a throwaway folder per run: sharing the real profile let every test run
+// clear the user's own localStorage settings, and while the user's FilePlus
+// window was open each test instance waited ~6 s on its storage lock, long
+// enough for the startup /health check to time out and paint "Backend
+// offline". Must run before 'ready'.
+if (process.env.FILEPLUS_USER_DATA_DIR) app.setPath('userData', process.env.FILEPLUS_USER_DATA_DIR);
+
+// ── File logs (dev harness) ──────────────────────────────────────────────
+// main.log for this process, renderer.log for the page's console — see
+// logger.js. Installed before anything else can throw.
+const LOG_DIR = resolveLogDir(path.join(__dirname, '..'), process.env);
+const mainLog = createFileLogger(LOG_DIR, 'main.log');
+const rendererLog = createFileLogger(LOG_DIR, 'renderer.log');
+mainLog.info(`main starting: electron ${process.versions.electron}, pid ${process.pid}, logs ${LOG_DIR}`);
+// Logged, not swallowed silently: Electron's default for an uncaught main-
+// process exception is a modal error dialog and a half-dead app, which is
+// worse than logging and carrying on.
+process.on('uncaughtException', (err) => mainLog.error('uncaughtException:', err));
+process.on('unhandledRejection', (reason) => mainLog.error('unhandledRejection:', reason));
 
 // ── API token ────────────────────────────────────────────────────────────
 // Three sources, in order: FILEPLUS_API_TOKEN from our own process
@@ -131,6 +155,38 @@ function createWindow() {
       mainWindow.webContents.toggleDevTools();
     }
   });
+
+  // Renderer console -> renderer.log. Uncaught page errors and unhandled
+  // rejections arrive here too: Chromium reports them as console errors.
+  // Electron 41 passes one event object ({level, message, lineNumber,
+  // sourceId}); the positional (level, message, line, sourceId) form older
+  // builds used is accepted as a fallback.
+  mainWindow.webContents.on('console-message', (event, legacyLevel, legacyMessage, legacyLine, legacySource) => {
+    const level = consoleLevelName(event && event.level !== undefined ? event.level : legacyLevel);
+    const message = event && event.message !== undefined ? event.message : legacyMessage;
+    const line = event && event.lineNumber !== undefined ? event.lineNumber : legacyLine;
+    const source = event && event.sourceId !== undefined ? event.sourceId : legacySource;
+    const where = source ? ` (${String(source).replace(/^file:\/\/\/?/, '')}:${line})` : '';
+    rendererLog.write(level, `${message}${where}`);
+  });
+  mainWindow.webContents.on('render-process-gone', (_e, details) => {
+    mainLog.error('renderer process gone:', details);
+    rendererLog.error('renderer process gone:', details);
+  });
+  mainWindow.webContents.on('preload-error', (_e, preloadPath, err) => mainLog.error(`preload error in ${preloadPath}:`, err));
+  // -3 (ERR_ABORTED) is a load superseded by another (a reload) -- normal,
+  // not an error; anything else is a real failure to show the UI.
+  mainWindow.webContents.on('did-fail-load', (_e, code, desc, url) => {
+    (code === -3 ? mainLog.info : mainLog.error)(`did-fail-load ${code} ${desc} ${url}`);
+  });
+  mainWindow.webContents.on('did-finish-load', () => {
+    mainLog.info('window loaded');
+    // One marker line per page load, so renderer.log always shows where each
+    // session's console output starts (and exists even when the page is quiet).
+    rendererLog.info(`--- page loaded: ${mainWindow.webContents.getURL().replace(/^file:\/\/\/?/, '')}`);
+  });
+  mainWindow.on('unresponsive', () => mainLog.warn('window unresponsive'));
+  mainWindow.on('closed', () => mainLog.info('window closed'));
 
   mainWindow.loadFile(path.join(__dirname, 'index.html'));
 
@@ -261,7 +317,8 @@ app.whenReady().then(() => {
         const res = await renderShellIcon(p, px);
         iconCache.set(key, res || null);
         return res;
-      } catch (_err) {
+      } catch (err) {
+        mainLog.warn(`file icon failed for ${p} @${px}px:`, err);
         return null;
       }
     });
@@ -362,6 +419,8 @@ app.whenReady().then(() => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
 });
+
+app.on('will-quit', () => mainLog.info('main quitting'));
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();

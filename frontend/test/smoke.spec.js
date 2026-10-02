@@ -92,8 +92,8 @@ test('every screen renders with no renderer errors', async () => {
     // --- Explorer e2e in the generated sandbox ---
     // Navigate via the API rather than a page global: GET /fs/list/root's
     // `path` is the sandbox root, and scripts/gen_sandbox.py always builds
-    // <root>\_gen\Documents\doc-00.txt (see scripts/gen_sandbox.py, run by
-    // verify.ps1's fixtures stage before this test runs).
+    // <root>\_gen\Documents\doc-00.txt (see scripts/gen_sandbox.py, run into
+    // a fresh temp root by frontend/test/harness/global-setup.js).
     const apiToken = process.env.FILEPLUS_API_TOKEN;
     const apiHeaders = apiToken ? { 'X-FilePlus-Token': apiToken } : {};
     const root = (await (await fetch(`${API}/fs/list/root`, { headers: apiHeaders })).json()).path;

@@ -56,8 +56,15 @@ npm start
 ### Test
 
 ```bash
-py -3 -m pytest -q
+py -3 -m pytest -q                       # backend
+cd frontend && npm run test:smoke        # fast Electron launch check
+cd frontend && npm run test:e2e          # every Electron test
+powershell -ExecutionPolicy Bypass -File scripts/verify.ps1   # the full gate
 ```
+
+The Electron tests start their own backend on port 9877 against a fresh temp copy of the
+fixtures (`frontend/test/harness/`); logs land in `artifacts/logs/`. See `WORKFLOW.md` and
+the "Development workflow" section of `CLAUDE.md`.
 
 ### Fixtures
 

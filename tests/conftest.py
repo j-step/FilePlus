@@ -10,7 +10,7 @@ from backend.database import init_db
 def sandbox(tmp_path, monkeypatch):
     """Temporary sandbox directory wired into config.
 
-    Patches FILEPLUS_SANDBOX_PATH, FILEPLUS_DB_PATH, WRITE_UNLOCKED,
+    Patches FILEPLUS_SANDBOX_PATH, FILEPLUS_DB_PATH, WRITE_UNLOCKED, FILEPLUS_ENV,
     PROTECTED_WRITE_ROOTS, SYSTEM_WRITE_ROOTS, and FILEPLUS_API_TOKEN (cleared
     to "") so every test runs in isolation with a real (but throwaway)
     filesystem and database, and without auth gating unrelated requests. Both
@@ -28,6 +28,10 @@ def sandbox(tmp_path, monkeypatch):
     monkeypatch.setattr(_config, "FILEPLUS_SANDBOX_PATH", sandbox_dir)
     monkeypatch.setattr(_config, "FILEPLUS_DB_PATH", db_path)
     monkeypatch.setattr(_config, "WRITE_UNLOCKED", False)
+    # Dev harness phase 2: every test runs in the test environment, where the
+    # guard refuses any write outside the root whatever WRITE_UNLOCKED says.
+    # A test that exercises the unlocked path sets FILEPLUS_ENV="prod" too.
+    monkeypatch.setattr(_config, "FILEPLUS_ENV", "test")
     monkeypatch.setattr(_config, "PROTECTED_WRITE_ROOTS", [])
     monkeypatch.setattr(_config, "SYSTEM_WRITE_ROOTS", [])
     # Never let a real FILEPLUS_API_TOKEN in the dev's environment (e.g. left
@@ -52,3 +56,15 @@ async def db(sandbox, tmp_path):
     db_path = tmp_path / "test.db"
     await init_db(db_path)
     return db_path
+
+
+@pytest.fixture
+def fixture_tree(sandbox):
+    """A fresh copy of the deterministic messy tree (scripts/gen_sandbox.py)
+    at <sandbox>/_gen, rebuilt for every test that asks for it -- never a
+    shared folder. Lives inside the sandbox, so the write guard allows the
+    test to move/rename/trash inside it."""
+    from scripts.gen_sandbox import build
+    root = sandbox / "_gen"
+    build(root)
+    return root

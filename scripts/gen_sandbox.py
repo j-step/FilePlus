@@ -1,9 +1,16 @@
 """Deterministic sandbox fixture generator for FilePlus.
 
-Creates a small, varied file tree that exercises every indexer/tagger path:
-text, markdown, code, PNG images, a PDF header, duplicates by content,
-Windows-hidden files, a partial download, unicode names, deep nesting and
-(optionally) a 101 MB sparse file for the large-file rule.
+Creates a small, realistic, messy file tree that exercises every indexer/tagger
+path: text, markdown, code, PNG images, screenshots, a PDF header, installers
+(.exe, .msi), a zip, a partial download, duplicates by content under different
+names, files with no extension, a very long name, unicode names, Windows-hidden
+files, empty folders, deep nesting, two 8 MB dummy files, and (optionally) a
+101 MB sparse file for the large-file rule. Everything comes from a fixed seed,
+so two builds are byte-identical.
+
+Tests never use a shared copy: pytest builds one into its own tmp_path
+(tests/conftest.py `fixture_tree`), and the Playwright harness builds one into
+a fresh temp folder per run (frontend/test/harness/global-setup.js).
 
 Usage:
     py -3 scripts/gen_sandbox.py [--out DIR] [--large]
@@ -27,9 +34,14 @@ import zlib
 from pathlib import Path
 
 SEED = 20260910
-EXPECTED_FILES = 43
+EXPECTED_FILES = 51
 EXPECTED_FILES_LARGE = EXPECTED_FILES + 1
 LARGE_BYTES = 101 * 1024 * 1024
+DUMMY_BIG_BYTES = 8 * 1024 * 1024
+# Long enough to stress truncation/ellipsis in every list, short enough that
+# <pytest tmp_path>\gen\Downloads\<name> stays under Windows' 260-char MAX_PATH.
+LONG_NAME = ("Quarterly budget review - final final v3 (approved by finance, do not edit) "
+             "- copy for the shared drive.pdf")
 FILE_ATTRIBUTE_HIDDEN = 0x2
 MARKER = ".fileplus-gen"
 
@@ -126,6 +138,22 @@ def build(out: Path, large: bool = False) -> dict:
     _write(out / "Downloads" / "setup-tool.exe", b"MZ" + bytes(rng.randrange(256) for _ in range(512))); files += 1
     _write(out / "Downloads" / "presets.zip", b"PK\x03\x04" + bytes(rng.randrange(256) for _ in range(256))); files += 1
     _write(out / "Downloads" / "movie.mkv.crdownload", bytes(rng.randrange(256) for _ in range(1024))); files += 1
+
+    # Screenshots: Windows' own naming, as they pile up  (3)
+    for i, stamp in enumerate(("2026-09-14 101530", "2026-09-14 101544", "2026-09-15 083002")):
+        rgb = (40 + i * 60, 90, 160)
+        _write(out / "Screenshots" / f"Screenshot {stamp}.png", _png(64, 40, rgb)); files += 1
+
+    # More Downloads mess: an MSI installer, a file with no extension, a very
+    # long name, and two 8 MB dummy files (zero-filled via truncate)  (5)
+    _write(out / "Downloads" / "FilePlusSetup-1.2.0.msi",
+           b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1" + bytes(rng.randrange(256) for _ in range(504))); files += 1
+    _write(out / "Downloads" / "LICENSE", "MIT License\n\n" + _text(rng, 80)); files += 1
+    _write(out / "Downloads" / LONG_NAME, b"%PDF-1.4\n%long name fixture\n" + _text(rng, 30).encode()); files += 1
+    for name in ("disk-image.iso", "raw-footage.mp4"):
+        with open(out / "Downloads" / name, "wb") as fh:
+            fh.truncate(DUMMY_BIG_BYTES)
+        files += 1
 
     # Hidden: dotfile + thumbs.db, both with the Windows hidden attribute  (2)
     _write(out / ".hidden-config", "hidden=1\n"); _hide(out / ".hidden-config"); files += 1

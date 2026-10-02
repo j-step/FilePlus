@@ -332,7 +332,7 @@ async def _perform(conn, op_type, src, dest, batch_id, reason, fn, undo_of=None)
         raise
     await ol.mark_executed(conn, op_id)
     await _reconcile_index(conn, op_type, src, dest)
-    logger.info("%s: %s -> %s", op_type, src, dest)
+    logger.info("op #%s %s done: %s -> %s", op_id, op_type, src, dest)
     return _result(op_id, op_type, "done", src, dest, batch_id)
 
 

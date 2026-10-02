@@ -61,6 +61,7 @@ def test_path_guard_blocks_write_outside_sandbox(sandbox, tmp_path):
 
 def test_path_guard_write_allowed_outside_sandbox_when_unlocked(sandbox, tmp_path, monkeypatch):
     monkeypatch.setattr(_config, "WRITE_UNLOCKED", True)
+    monkeypatch.setattr(_config, "FILEPLUS_ENV", "prod")
     outside = tmp_path / "elsewhere"
     # Should not raise
     result = _config.path_guard(outside, "write")

@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "py -3 \"$CLAUDE_PROJECT_DIR/scripts/verify.py\"",
+            "timeout": 600,
+            "statusMessage": "Verifying: backend tests + Electron smoke"
+          }
+        ]
+      }
+    ]
+  }
+}

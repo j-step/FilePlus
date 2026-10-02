@@ -17,7 +17,8 @@ Frontend Electron 41, plain HTML/CSS/JS, no framework, no build step. Tests: pyt
 - Nothing moves, renames or deletes without explicit user approval.
 - Every file operation is written to `operations_log` BEFORE it executes.
 - `path_guard(path, mode)` gates every filesystem touch: reads anywhere; writes inside
-  `FILEPLUS_SANDBOX_PATH` until `WRITE_UNLOCKED=true` in `.env`; Windows system roots are never
+  `FILEPLUS_SANDBOX_PATH` (alias `FILEPLUS_ROOT`) unless `FILEPLUS_ENV=prod` *and*
+  `WRITE_UNLOCKED=true` (`dev` is the default; `dev`/`test` never write outside the root); Windows system roots are never
   writable; the app directory is never writable except the sandbox inside it (`ProtectedPathError`).
   Mutations take their operand from `guard_operand(path, mode)`: same containment decisions on the
   resolved path, but a junction/symlink is acted on as the link, never as its target.
@@ -33,9 +34,16 @@ Frontend Electron 41, plain HTML/CSS/JS, no framework, no build step. Tests: pyt
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/verify.ps1
 ```
-Runs pytest, starts the backend, runs the Electron smoke test (every screen, zero console errors,
-screenshots to `artifacts/screenshots/`), stops the backend. Red means stop and fix; never commit on red.
-Fixtures: `py -3 scripts/gen_sandbox.py` rebuilds `FilePlusTestSandbox/_gen`.
+Runs pytest, the contrast and frontend gates, then every Electron test (every screen, zero console
+errors, screenshots to `artifacts/screenshots/`). Red means stop and fix; never commit on red.
+The Electron tests are self-contained (`frontend/test/harness/`): global setup builds a fresh fixture
+copy in a temp folder, starts the backend on 9877 with `FILEPLUS_ENV=test` and `FILEPLUS_ROOT` pointing
+at it, gives Electron a throwaway profile (`FILEPLUS_USER_DATA_DIR`) and writes logs to
+`artifacts/logs/`; teardown stops the backend and deletes the folder. Single commands:
+`py -3 -m pytest -q`, `cd frontend && npm run test:smoke` (fast) / `npm run test:e2e` (everything).
+`py -3 scripts/gen_sandbox.py` rebuilds the dev app's own `FilePlusTestSandbox/_gen` (tests never read it).
+A Stop hook (`.claude/settings.json` → `scripts/verify.py`) runs pytest + the smoke whenever code
+files are uncommitted and blocks the turn on failure.
 
 ## Working protocol (spec §6)
 
@@ -111,4 +119,29 @@ ledger), `docs/fileplus-feature-list.md` (backlog). Everything else is under `do
 
 The sandbox default is `FILEPLUS_APP_DIR/FilePlusTestSandbox` (`backend/config.py`), so each git
 worktree gets its own empty sandbox with no cross-worktree collisions; `.env` can override it via
-`FILEPLUS_SANDBOX_PATH`.
+`FILEPLUS_ROOT` (or its older name `FILEPLUS_SANDBOX_PATH` -- one setting, two names; setting both to
+different folders stops the backend from starting).
+
+## Development workflow
+
+JJ (the owner) is not a programmer. The harness tests, reviews and verifies the work; JJ only
+approves acceptance criteria and does the final feel check. `/feature <description>` and
+`/bug <description>` (`.claude/skills/`) run the whole loop; `WORKFLOW.md` is JJ's cheat sheet.
+
+- Every change must leave all tests passing. The Stop hook (`scripts/verify.py`) enforces this for
+  pytest + the Electron smoke; `scripts/verify.ps1` is the full gate before every commit.
+- New behaviour requires a test. A bug fix starts with a failing test that reproduces the bug.
+- Never hardcode filesystem paths (they come from `backend/config.py` / `FILEPLUS_*` env vars). All
+  file operations go through the safety guard (`backend/mover.py` → `config.path_guard` /
+  `guard_operand`); `FILEPLUS_ENV` is `dev` by default and only `prod` can ever write outside
+  `FILEPLUS_ROOT`.
+- Check the logs before guessing at a cause: `logs/` for dev runs, `artifacts/logs/` for test runs
+  (`backend.log`, `main.log`, `renderer.log`). `py -3 scripts/clear_logs.py` empties them.
+- For UI work, take Playwright screenshots (`shot()` in `frontend/test/harness/app.js`) and look at
+  them before saying the work is done. The `qa` subagent does this for the whole suite; the
+  `reviewer` subagent checks the diff against this file, the specs and the design tokens.
+- Work in thin slices: one small, testable behaviour at a time, committed before the next.
+- Commit after every working state. Branch per feature (`feature/<slug>`, `fix/<slug>`).
+- Three failed attempts on the same approach means revert to the last commit and rethink, not
+  patch again — write the diagnosis down and propose a different approach first.
+- Explain things to JJ in plain English. He is not a programmer.
