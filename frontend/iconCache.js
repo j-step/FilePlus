@@ -31,6 +31,9 @@ class LruCache {
 
   static _sizeOf(value) {
     if (value == null) return 0;
+    // An explicit charge wins: icons.js stores a plain folder's entry by
+    // reference to the shared generic string and charges it 0.
+    if (typeof value.bytes === 'number') return value.bytes;
     if (typeof value === 'string') return value.length;
     if (typeof value.url === 'string') return value.url.length;
     return 0;
@@ -83,6 +86,21 @@ class LruCache {
 
   get size() {
     return this._map.size;
+  }
+
+  /** Snapshot of [key, value] pairs, least- to most-recently used. Reading
+   *  it does not refresh recency. */
+  entries() {
+    return [...this._map];
+  }
+
+  /** Replaces the value of an existing key in place — same recency, bytes
+   *  re-charged. Returns false (and does nothing) for a missing key. */
+  replace(key, value) {
+    if (!this._map.has(key)) return false;
+    this._bytes += LruCache._sizeOf(value) - LruCache._sizeOf(this._map.get(key));
+    this._map.set(key, value);
+    return true;
   }
 }
 

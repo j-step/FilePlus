@@ -3879,14 +3879,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     await loadConfig();
     applySettingsFromConfig();
     restoreSettingsPane();
-    // Windows-icon mode: learn the generic folder icon before the first
-    // listing needs it (Stage 2D §4.2) — /health's own prewarm may have run
-    // before the saved icon source was known.
-    fpPrewarmIconSizes();
     // Before the first listing renders: iconFor() decides the special folder
     // icons (Desktop, Downloads, …) by matching a path against this map, and
     // falls back to guessing from the folder's name until it has loaded.
     await fpLoadKnownFolders();
+    // Windows-icon mode: learn the generic folder icon before the first
+    // listing needs it (Stage 2D §4.2). Its votes wait for the known-folder
+    // map above, and /health's own prewarm may have run before the saved
+    // icon source or that map was known.
+    fpPrewarmIconSizes();
     await Promise.allSettled([loadDrives(), loadPins(), loadSidebarTags()]);
     loadQuickAccess();
     await checkCrashRecovery();

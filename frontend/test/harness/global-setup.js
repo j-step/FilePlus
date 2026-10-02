@@ -88,6 +88,21 @@ function buildIconFixture(dir) {
   fs.writeFileSync(path.join(dir, 'doc.txt'), 'icons fixture\n');
 }
 
+// Stage 2D Task 4 fix round: the generic-folder vote. ACustom sorts first and
+// carries a desktop.ini custom icon (honoured by the shell because the folder
+// is read-only and the ini is system+hidden); BPlain and CPlain are ordinary.
+// Beside _gen and Icons so neither listing changes.
+function buildVoteFixture(dir) {
+  fs.mkdirSync(dir);
+  for (const name of ['ACustom', 'BPlain', 'CPlain']) fs.mkdirSync(path.join(dir, name));
+  const ini = path.join(dir, 'ACustom', 'desktop.ini');
+  fs.writeFileSync(ini, '[.ShellClassInfo]\r\nIconResource=C:\\Windows\\System32\\shell32.dll,12\r\n');
+  if (process.platform === 'win32') {
+    spawnSync('attrib', ['+s', '+h', ini], { windowsHide: true });
+    spawnSync('attrib', ['+r', path.join(dir, 'ACustom')], { windowsHide: true });
+  }
+}
+
 module.exports = async function globalSetup() {
   const port = process.env.FILEPLUS_PORT || '9877';
   if (await healthy(port)) {
@@ -131,6 +146,7 @@ module.exports = async function globalSetup() {
     fs.writeFileSync(path.join(bulk, `bulk-${String(i).padStart(3, '0')}.txt`), `bulk ${i}\n`);
   }
   buildIconFixture(path.join(sandbox, 'Icons'));
+  buildVoteFixture(path.join(sandbox, 'Votes'));
 
   const backend = spawn(PY.cmd, [...PY.pre, '-m', 'backend.api'], {
     cwd: REPO, env, stdio: 'ignore', windowsHide: true, detached: false,

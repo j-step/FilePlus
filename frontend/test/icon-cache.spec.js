@@ -112,6 +112,25 @@ test.describe('LruCache', () => {
     expect(cache.deleteWhere(() => false)).toBe(0);
   });
 
+  test('an explicit .bytes charge wins over the .url length (a shared generic costs 0)', () => {
+    const cache = new LruCache(10, 100);
+    cache.set('a', { url: 'x'.repeat(90) });
+    cache.set('b', { url: 'x'.repeat(90), bytes: 0 });
+    expect(cache.bytes).toBe(90);
+    expect(cache.get('a')).toBeDefined();
+  });
+
+  test('replace re-charges in place without touching recency; a missing key is refused', () => {
+    const cache = new LruCache(2, 1000);
+    cache.set('a', { url: 'x'.repeat(50) });
+    cache.set('b', { url: 'y'.repeat(10) });
+    expect(cache.replace('a', { url: 'x'.repeat(50), bytes: 0 })).toBe(true);
+    expect(cache.bytes).toBe(10);
+    expect(cache.entries().map(([k]) => k)).toEqual(['a', 'b']); // 'a' is still the oldest
+    expect(cache.replace('zz', { url: 'q' })).toBe(false);
+    expect(cache.size).toBe(2);
+  });
+
   test('default maxBytes is unbounded (count-only, Stage 2C Task 4 shape)', () => {
     const cache = new LruCache(2);
     cache.set('a', 'x'.repeat(10_000));

@@ -265,6 +265,162 @@ test('Windows-icon mode paints without flashing (Stage 2D §4)', async () => {
     await expect(page.locator('#home-recent img[data-win-icon]').first()).toHaveAttribute('src', /^data:image\/png/, { timeout: 5000 });
     await shot(page, 'stage2d-icons-home-windows');
     expect(await page.locator('#home-recent .fp-row svg.fp-row__icon').count()).toBe(0);
+
+    // Pinned folders in the sidebar.
+    const pin = await apiPost('/pins', { path: `${iconsDir}\\PlainA`, label: 'PlainA' });
+    try {
+      await page.evaluate(() => loadPins());
+      await expect(page.locator('#sb-pinned-folders img[data-win-icon]').first())
+        .toHaveAttribute('src', /^data:image\/png/, { timeout: 5000 });
+      expect(await page.locator('#sb-pinned-folders svg.fp-icon').count()).toBe(0);
+    } finally {
+      if (pin && pin.id != null) await fetch(`${API}/pins/${pin.id}`, { method: 'DELETE', headers: apiHeaders() }).catch(() => {});
+      await page.evaluate(() => loadPins());
+    }
+
+    // The drag ghost: a real pointer drag of a .txt row.
+    await page.evaluate((p) => openBrowserAt(p), docsDir);
+    await iconsSettled(page);
+    const dragRow = rowByName(page, 'doc-00.txt');
+    const box = await dragRow.boundingBox();
+    await page.mouse.move(box.x + 40, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + 70, box.y + box.height / 2 + 30, { steps: 4 });
+    await expect(page.locator('#drag-badge img[data-win-icon]')).toHaveAttribute('src', /^data:image\/png/, { timeout: 5000 });
+    expect(await page.locator('#drag-badge svg.fp-icon').count()).toBe(0);
+    await page.keyboard.press('Escape');
+    await page.mouse.up();
+    await expect(page.locator('#drag-badge')).toBeHidden();
+    await expect(rowByName(page, 'doc-00.txt')).toHaveCount(1); // nothing moved
+
+    // Properties' "Opens with" row — .txt always has an association (Notepad).
+    await page.evaluate((p) => openProperties(p), `${docsDir}\\doc-00.txt`);
+    await expect(page.locator('#properties-modal')).toBeVisible();
+    await expect(page.locator('#properties-opens-with-icon img[data-win-icon]'))
+      .toHaveAttribute('src', /^data:image\/png/, { timeout: 5000 });
+    await expect(page.locator('#properties-icon img[data-win-icon]')).toHaveAttribute('data-key', new RegExp(`^ext:txt:`));
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#properties-modal')).toBeHidden();
+  } finally {
+    await fetch(`${API}/config/ui.icon_source`, { method: 'DELETE', headers: apiHeaders() }).catch(() => {});
+    await app.close();
+  }
+  expect(errors, errors.join('\n')).toEqual([]);
+});
+
+test('generic folder icon: two agreeing folders, never a custom icon; cached nulls keep it; shared bytes (Stage 2D §4.2)', async () => {
+  const { app, page, errors } = await launchApp();
+  try {
+    const root = (await apiGet('/fs/list/root')).path;
+    const votesDir = `${root}\\Votes`;
+    const freshDir = `${root}\\Icons\\Fresh`;
+    await page.evaluate(() => switchScreen('settings'));
+    await page.locator('[data-action="settings-set-icon-source"][data-val="windows"]').click();
+    // Let the switch's own prewarm (the root's sub-folders) finish first.
+    await page.waitForFunction(() => _fpGenerics.has(`dir:*:${fpDevicePx(16)}`), null, { timeout: 8000 });
+
+    // -- Votes: the first folder asked about has a desktop.ini custom icon --
+    const vote = await page.evaluate(async (dir) => {
+      const px = fpDevicePx(16);
+      const gk = `dir:*:${px}`;
+      const key = (n) => FpIconCache.shellIconKey(`${dir}\\${n}`, '', true, px);
+      _fpGenerics.clear(); _fpGenericVotes.clear(); _fpGenericVoters.clear();
+      const ask = (n) => fpShellIconUrl(key(n), { path: `${dir}\\${n}`, ext: '', isDir: true, px });
+      const custom = await ask('ACustom');
+      const afterCustom = _fpGenerics.get(gk) || null;
+      const b = await ask('BPlain');
+      const afterB = _fpGenerics.get(gk) || null;
+      const again = await fpShellIconUrl(key('ACustom'), { path: `${dir}\\ACustom`, ext: '', isDir: true, px });
+      _fpVoteGeneric(`${dir}\\ACustom`, px, custom.url); // a second answer for the same folder is no second vote
+      const afterRepeat = _fpGenerics.get(gk) || null;
+      const c = await ask('CPlain');
+      const generic = _fpGenerics.get(gk) || null;
+      return {
+        custom: custom.url, again: again.url, b: b.url, c: c.url, afterCustom, afterB, afterRepeat, generic,
+        bBytes: _fpWinIconCache.get(key('BPlain')).bytes, cBytes: _fpWinIconCache.get(key('CPlain')).bytes,
+        bShared: _fpWinIconCache.get(key('BPlain')).url === generic,
+        customBytes: _fpWinIconCache.get(key('ACustom')).bytes,
+      };
+    }, votesDir);
+    expect(vote.custom).toMatch(/^data:image\/png/);
+    expect(vote.b).toBe(vote.c);
+    expect(vote.custom).not.toBe(vote.b); // the desktop.ini icon really is different
+    expect(vote.afterCustom).toBeNull();
+    expect(vote.afterB).toBeNull(); // one vote each: nothing adopted yet
+    expect(vote.afterRepeat).toBeNull();
+    expect(vote.generic).toBe(vote.b);
+    // Plain folders share the generic's bytes: charged 0, the same string.
+    expect(vote.bBytes).toBe(0);
+    expect(vote.cBytes).toBe(0);
+    expect(vote.bShared).toBe(true);
+    expect(vote.customBytes).toBeUndefined();
+
+    // Nothing votes before GET /known-folders has answered.
+    const early = await page.evaluate((dir) => {
+      const px = fpDevicePx(16);
+      const saved = window.__fpKnownFolders;
+      delete window.__fpKnownFolders;
+      _fpGenerics.clear(); _fpGenericVotes.clear(); _fpGenericVoters.clear();
+      const url = _fpWinIconCache.get(FpIconCache.shellIconKey(`${dir}\\BPlain`, '', true, px)).url;
+      _fpVoteGeneric(`${dir}\\BPlain`, px, url);
+      _fpVoteGeneric(`${dir}\\CPlain`, px, url);
+      const out = _fpGenerics.get(`dir:*:${px}`) || null;
+      window.__fpKnownFolders = saved;
+      _fpVoteGeneric(`${dir}\\BPlain`, px, url);
+      _fpVoteGeneric(`${dir}\\CPlain`, px, url);
+      return { before: out, after: _fpGenerics.get(`dir:*:${px}`) === url };
+    }, votesDir);
+    expect(early.before).toBeNull();
+    expect(early.after).toBe(true);
+
+    // The prewarm asks for nothing while the route is not known to be live.
+    const quiet = await page.evaluate(async () => {
+      const px40 = fpDevicePx(40);
+      const known = _fpGenerics.has(`dir:*:${px40}`);
+      fpShellIconRoute('unknown');
+      const before = window.__fpIconStats.batches;
+      await fpPrewarmGenerics(40);
+      await new Promise((r) => setTimeout(r, 300));
+      const after = window.__fpIconStats.batches;
+      fpShellIconRoute('live');
+      return { known, requested: after - before };
+    });
+    expect(quiet.known).toBe(false);
+    expect(quiet.requested).toBe(0);
+
+    // -- Tier A absent: a folder whose answer is a definitive null keeps the
+    // generic it was painted with, on that render and on every later one --
+    await page.evaluate(() => fpShellIconRoute('absent'));
+    await page.evaluate((p) => openBrowserAt(p), freshDir);
+    const subState = () => page.evaluate(() => [...document.querySelectorAll('#list-scroll .fp-row')]
+      .filter((r) => /^Sub\d$/.test(r.querySelector('.fp-row__name').textContent))
+      .map((r) => ({ src: r.querySelector('img[data-win-icon]')?.getAttribute('src') || null, sprite: !!r.querySelector('svg.fp-icon') })));
+    await page.waitForFunction(() => !document.querySelector('#list-scroll img[data-win-icon][data-fp-lazy="pending"]')
+      && __fpLoadPending === 0, null, { timeout: 8000 });
+    await page.waitForTimeout(300);
+    const generic16 = await page.evaluate(() => _fpGenerics.get(`dir:*:${fpDevicePx(16)}`));
+    const firstRender = await subState();
+    await page.evaluate(() => renderDirectory());
+    const secondRender = await subState();
+    for (const s of [...firstRender, ...secondRender]) {
+      expect(s.sprite).toBe(false);
+      expect(s.src).toBe(generic16);
+    }
+    expect(firstRender).toHaveLength(3);
+    expect(secondRender).toHaveLength(3);
+    await page.evaluate(() => fpShellIconRoute('live'));
+
+    // -- Budget: a 300-item folder of distinct 256-px icons (85 KB data URLs,
+    // the measured worst case) fits, so it revisits from cache --
+    const kept = await page.evaluate(() => {
+      const big = 'data:image/png;base64,' + 'A'.repeat(85 * 1024);
+      for (let i = 0; i < 300; i++) _fpWinIconCache.set(`path:c:\\budget\\${i}.exe:256`, { url: big + i, px: 256, exact: true });
+      let n = 0;
+      for (let i = 0; i < 300; i++) if (_fpWinIconCache.get(`path:c:\\budget\\${i}.exe:256`)) n++;
+      for (let i = 0; i < 300; i++) _fpWinIconCache.delete(`path:c:\\budget\\${i}.exe:256`);
+      return n;
+    });
+    expect(kept).toBe(300);
   } finally {
     await fetch(`${API}/config/ui.icon_source`, { method: 'DELETE', headers: apiHeaders() }).catch(() => {});
     await app.close();
