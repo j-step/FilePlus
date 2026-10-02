@@ -31,6 +31,21 @@ async function nativeKey(app, keyCode, modifiers = []) {
 
 const twoFrames = (page) => page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
 
+/** Every native input event sent before this call has been handled by the
+ * page: a sentinel key the app ignores (F24) is sent the same native way, and
+ * input is delivered in order (as stage2d-refresh.spec.js's settleKeys). */
+async function inputSettled(app, page) {
+  const n = await page.evaluate(() => {
+    if (window.__fpSentinelKeys === undefined) {
+      window.__fpSentinelKeys = 0;
+      document.addEventListener('keydown', (e) => { if (e.key === 'F24') window.__fpSentinelKeys++; }, true);
+    }
+    return window.__fpSentinelKeys;
+  });
+  await nativeKey(app, 'F24');
+  await page.waitForFunction((k) => window.__fpSentinelKeys > k, n);
+}
+
 /** Waits until the page zoom AND the published --app-zoom are both `z`, and
  * no eased step is still running. Once settled the renderer's factor is the
  * main process's EXACTLY (the Ctrl+wheel ladder multiplies deltas by it, and
@@ -135,6 +150,11 @@ test('zoom keys step the app zoom; sidebar, inspector and rail keep their screen
     // Renderer keys: three steps up from 100% are the main process's own steps.
     const steps = await page.evaluate(() => window.electronAPI.zoomSteps());
     expect(steps).toEqual([0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.33, 1.5, 1.75, 2.0]);
+    // When the pill was last told about a change (for the fade check below).
+    await page.evaluate(() => {
+      const orig = window.updateZoomPill;
+      window.updateZoomPill = function (...a) { window.__fpPillAt = performance.now(); return orig.apply(this, a); };
+    });
     for (const want of [1.1, 1.2, 1.33]) {
       await page.keyboard.press('Control+=');
       await settled(page, want);
@@ -150,8 +170,11 @@ test('zoom keys step the app zoom; sidebar, inspector and rail keep their screen
       return { text: p.textContent, shown: !!p.getClientRects().length, opacity: getComputedStyle(p).opacity };
     });
     expect(await pill()).toEqual({ text: '133%', shown: true, opacity: '1' });
-    await page.waitForTimeout(1500);
-    expect((await pill()).opacity).toBe('0');
+    // It fades, and not before 1.2 s after the last change — measured from
+    // that change, so a slow machine can only make it look later.
+    await page.waitForFunction(() => getComputedStyle(document.getElementById('status-zoom-pill')).opacity === '0',
+      null, { timeout: 5000 });
+    expect(await page.evaluate(() => performance.now() - window.__fpPillAt)).toBeGreaterThanOrEqual(1150);
 
     // Native keys (sendInputEvent): every zoom shortcut, numpad included,
     // reaches the renderer's handler; the ladder clamps at 200%.
@@ -283,9 +306,9 @@ test('resize handles store screen px; both panel widths survive a restart; the i
     expect(Math.abs((await screenW(page, '#sidebar')) - 300)).toBeLessThanOrEqual(1);
     await expect.poll(async () => (await apiGet('/config'))['ui.sidebar_w']).toBe(300);
 
-    allErrors.push(...errors);
     await app.close();
-    ({ app, page, errors } = await launchApp());
+    allErrors.push(...errors);   // after close: renderer.log errors are collected then
+    ({ app, page, errors } = await launchApp({ keepZoom: true }));
     // Electron restores the page zoom; the renderer publishes it at startup.
     await settled(page, 1.5);
     await page.waitForFunction(() => document.getElementById('inspector').classList.contains('inspector--open'));
@@ -397,7 +420,9 @@ test('one Ctrl+wheel notch is exactly one ladder step at every app zoom; resizes
       const before = await page.evaluate(() => currentViewStep());
       await notch(z);
       await expect.poll(() => page.evaluate(() => currentViewStep()), { message: `notch @${z}` }).toBe(before + 1);
-      await page.waitForTimeout(150);
+      // Native input is handled in order: once a sentinel key sent after the
+      // notch has reached the page, everything the notch produced has too.
+      await inputSettled(app, page);
       expect(await page.evaluate(() => currentViewStep()), `notch @${z} stepped once`).toBe(before + 1);
       await page.evaluate(() => setView('details', null, { manual: false }));
     }
@@ -409,7 +434,10 @@ test('one Ctrl+wheel notch is exactly one ladder step at every app zoom; resizes
     });
     for (const [w, h] of [[1100, 760], [1000, 700], [1200, 800]]) {
       await app.evaluate(({ BrowserWindow }, a) => BrowserWindow.getAllWindows()[0].setSize(a.w, a.h), { w, h });
-      await page.waitForTimeout(150);
+      // The renderer has the new size and its resize handlers have run.
+      // (appZoom.current, not electronAPI.getZoom(): that IS the IPC counted.)
+      await page.waitForFunction((cw) => Math.abs(window.innerWidth * appZoom.current - cw) <= 2, w, { timeout: 5000 });
+      await twoFrames(page);
     }
     expect(await app.evaluate(() => globalThis.__fpZoomGets)).toBe(0);
 

@@ -41,8 +41,9 @@ if (Test-Path frontend/src/actions.js) {
 }
 $stubCalls = Select-String -Path frontend/src/*.js -Pattern 'stub(' -SimpleMatch
 if ($stubCalls) { Write-Host 'stub( call left in frontend/src' -ForegroundColor Red; exit 1 }
-$stubScreens = (Select-String -Path frontend/src/app.js -Pattern 'showToast\(STUB_SCREENS' -SimpleMatch).Count
-if ($stubScreens -ne 0) { Write-Host 'showToast(STUB_SCREENS still referenced in app.js' -ForegroundColor Red; exit 1 }
+# check_menu_cases: every cm-* menu action has a switch case, and every
+# data-action in index.html / src templates reaches a case or IN_SCOPE_ACTIONS
+# -- nothing clickable falls into the "not yet implemented" stub branch.
 node scripts/check_menu_cases.js
 if ($LASTEXITCODE -ne 0) { Write-Host 'check_menu_cases failed' -ForegroundColor Red; exit 1 }
 node scripts/check_icons.js

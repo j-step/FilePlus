@@ -209,15 +209,28 @@ test('path grows from the left; search shrinks then collapses BEFORE the path ca
     s = await state(page);
     expect(s.sw.w).toBeCloseTo(SEARCH_PREFERRED, 0);
 
-    // Same width, a longer path (the sandbox root: the %TEMP% prefix, ~640 px
-    // of crumbs): step 1 — the search gives up width, the path stays whole.
+    // A longer path (the sandbox root: the %TEMP% prefix, ~640 px of
+    // crumbs): step 1 — the search gives up width, the path stays whole.
+    // The root's crumbs are not a fixed width — the run's temp folder has a
+    // random name (os.mkdtemp), and proportional glyphs make it a few px
+    // wider or narrower each run — so the window width where this stage
+    // shows is found by stepping down from one where the bar is surely at its
+    // preferred width, not assumed to be 1400 (Task 11: 1400 was sometimes
+    // already past it, collapsed).
     await open(page, root);
-    s = await state(page);
-    expect(invariants(s, '1400 root')).toEqual([]);
-    expect(s.search).toBe('full');
-    expect(s.sw.w).toBeLessThan(SEARCH_PREFERRED);
+    let shrunkAt = null;
+    for (let w = 1700; w >= 1100 && shrunkAt === null; w -= 10) {
+      await setSize(app, page, w);
+      s = await state(page);
+      expect(invariants(s, `root ${w}`)).toEqual([]);
+      if (w === 1700) expect(s.sw.w).toBeCloseTo(SEARCH_PREFERRED, 0);   // the start is above the band
+      if (s.search === 'full' && s.sw.w < SEARCH_PREFERRED - 0.5) shrunkAt = w;
+      else expect(s.search, `root ${w}: collapsed before shrinking`).toBe('full');
+    }
+    expect(shrunkAt).not.toBeNull();
     expect(s.of).toBe(false);
     await windowShot(app, page, 'toolbar-1400-longer-path');
+    await setSize(app, page, 1400, 800);
 
     // The path changing (not the window) re-runs the layout: the deep path
     // collapses the search first, then caves in.
@@ -228,11 +241,12 @@ test('path grows from the left; search shrinks then collapses BEFORE the path ca
     expect(s.of).toBe(true);
 
     // Sweep the window down and back up on the sandbox root, which passes
-    // through every stage: the invariants hold at every width.
+    // through every stage: the invariants hold at every width. (From 1700:
+    // the root's width varies a little per run, see above.)
     await open(page, root);
     const offenders = [];
     const seen = new Set();
-    for (const w of [1400, 1380, 1360, 1340, 1320, 1300, 1280, 1240, 1200, 1180, 1160, 1120, 1080, 1040, 980, 920, 860, 800]) {
+    for (const w of [1700, 1600, 1500, 1400, 1380, 1360, 1340, 1320, 1300, 1280, 1240, 1200, 1180, 1160, 1120, 1080, 1040, 980, 920, 860, 800]) {
       await setSize(app, page, w);
       s = await state(page);
       offenders.push(...invariants(s, `down ${w}`));
@@ -240,7 +254,7 @@ test('path grows from the left; search shrinks then collapses BEFORE the path ca
     }
     // Up past 1400: the This PC root crumb (Stage 2D §8) leaves the fixture's
     // root path less than the 24px hysteresis short of re-expanding at 1400.
-    for (const w of [840, 920, 1000, 1080, 1160, 1200, 1240, 1280, 1320, 1360, 1400, 1440, 1480]) {
+    for (const w of [840, 920, 1000, 1080, 1160, 1200, 1240, 1280, 1320, 1360, 1400, 1440, 1480, 1600, 1700]) {
       await setSize(app, page, w);
       s = await state(page);
       offenders.push(...invariants(s, `up ${w}`));
@@ -418,6 +432,44 @@ test('every zoom step, inspector closed and open: search is never partially visi
   expect(errors).toEqual([]);
 });
 
+test('a screen-name crumb (Settings) that has to ellipsize settles: no layout loop, ellipsis + title (Task 11 flake hunt, §6.2)', async () => {
+  // Found by the renderer.log error gate (pass 2 #106): at 800 px and 150 %
+  // with the inspector open, Settings' plain-text crumb had no label span, so
+  // layoutToolbar() could not see what the ellipsis hid — it flipped
+  // .is-tight on and off every frame ("ResizeObserver loop completed with
+  // undelivered notifications", hundreds a second).
+  const { page, app, errors } = await launchApp();
+  try {
+    await setSize(app, page, 800, 600);
+    await setZoom(app, page, 1.5);
+    await page.evaluate(() => setInspectorOpen(true, { persist: false }));
+    await page.evaluate(() => switchScreen('settings'));
+    await twoFrames(page);
+    const idle = await page.evaluate(async () => {
+      let runs = 0;
+      let loops = 0;
+      const orig = window.layoutToolbar;
+      window.layoutToolbar = function (...a) { runs++; return orig.apply(this, a); };
+      const onErr = (e) => { if (/ResizeObserver loop/.test(e.message)) loops++; };
+      window.addEventListener('error', onErr);
+      for (let i = 0; i < 12; i++) await new Promise((r) => requestAnimationFrame(r));
+      window.layoutToolbar = orig;
+      window.removeEventListener('error', onErr);
+      return { runs, loops };
+    });
+    expect(idle).toEqual({ runs: 0, loops: 0 });
+    const s = await state(page);
+    expect(invariants(s, 'settings 800 @1.5')).toEqual([]);
+    expect(s.curTruncated).toBe(true);   // the case under test: the crumb is cut…
+    expect(s.curEllipsis).toBe(true);    // …with an ellipsis…
+    expect(s.curTitle).toBe('Settings'); // …and the full name as its tooltip
+  } finally {
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.setZoomFactor(1)).catch(() => {});
+    await app.close();
+  }
+  expect(errors).toEqual([]);
+});
+
 test('Enter/Space on a focused toolbar button act on that button, not the focused file row (Task 2 leftover)', async () => {
   const { page, app, errors } = await launchApp();
   try {
@@ -474,8 +526,9 @@ test('Enter/Space on a focused toolbar button act on that button, not the focuse
     await page.waitForFunction((p) => activeTab().path === p && window.__fpLoadPending === 0, viewsDir);
     expect(await page.evaluate(() => document.activeElement?.closest('#toolbar, #tabbar, #sidebar') ? document.activeElement.id || 'chrome' : null)).toBeNull();
     const cursorAfterUp = await page.evaluate(() => browserState.focus);
+    // A navigation Enter starts begins its load synchronously in the key
+    // handler, so once no load is pending it has landed (or none started).
     await page.keyboard.press('Enter');
-    await page.waitForTimeout(300);
     await page.waitForFunction(() => window.__fpLoadPending === 0);
     const afterEnter = await page.evaluate(() => activeTab().path);
     expect(afterEnter).not.toBe(root);                          // Up did not fire again

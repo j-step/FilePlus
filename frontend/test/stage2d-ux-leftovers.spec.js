@@ -87,8 +87,8 @@ test('#58 disabled buttons keep their tooltip and the not-allowed cursor', async
     await page.hover('#ask-send');
     expect(await sendBg()).toBe(restBg);
     await page.keyboard.press('Escape');
-    expect(errors).toEqual([]);
   } finally { await app.close(); }
+  expect(errors).toEqual([]);
 });
 
 test('#59 Escape on the device-name rename restores the CURRENT name', async () => {
@@ -108,8 +108,8 @@ test('#59 Escape on the device-name rename restores the CURRENT name', async () 
     await expect(name).toHaveText('Workstation');
     expect(await page.evaluate(() => localStorage.getItem('fp-device-name'))).toBe('Workstation');
     await page.evaluate(() => localStorage.removeItem('fp-device-name'));
-    expect(errors).toEqual([]);
   } finally { await app.close(); }
+  expect(errors).toEqual([]);
 });
 
 test('#62/#63 snackbars stack; error toasts are opaque, above panels, capped at 3 and leave after 8 s', async () => {
@@ -195,8 +195,8 @@ test('#62/#63 snackbars stack; error toasts are opaque, above panels, capped at 
     const tLeave = Date.now();
     await expect(toasts).toHaveCount(0, { timeout: 10_000 });
     expect(Date.now() - tLeave).toBeGreaterThanOrEqual(1_000);
-    expect(errors).toEqual([]);
   } finally { await app.close(); }
+  expect(errors).toEqual([]);
 });
 
 test('#60/#170 Home rows: truncation tooltips, one tab stop per pane, arrow keys move between rows', async () => {
@@ -263,8 +263,8 @@ test('#60/#170 Home rows: truncation tooltips, one tab stop per pane, arrow keys
     await pathCell.hover();
     await expect(pathCell).toHaveAttribute('title', /Views\\$/);
     await page.evaluate(() => document.getElementById('test-narrow-path').remove());
-    expect(errors).toEqual([]);
   } finally { await app.close(); }
+  expect(errors).toEqual([]);
 });
 
 test('#171 F12 is window-local (never an OS-wide global shortcut)', async () => {
@@ -282,7 +282,14 @@ test('#172 cut and copied items stay visible in every view, across refreshes, un
     await expect(rowByName(page, 'clip-a.txt')).toBeVisible();
     await page.evaluate(() => setView('details', null, { manual: false }));
 
-    await frames(page);
+    // Nothing left that could re-render the rows between a click's mousedown
+    // and mouseup (that dropped a Ctrl+click once — a late render replaced
+    // the row node): no load in flight, and the row count stable over a few
+    // frames. (launchApp has already waited out startup, __fpInitDone.)
+    await page.waitForFunction(() => !window.__fpLoadPending);
+    const renders = await page.evaluate(() => window.__fpRenderCount);
+    await frames(page, 3);
+    expect(await page.evaluate(() => window.__fpRenderCount)).toBe(renders);
     const selected = () => page.evaluate(() => [...browserState.selection].map((p) => p.split(/[\\/]/).pop()).sort());
     await rowByName(page, 'clip-a.txt').click();
     await expect.poll(selected).toEqual(['clip-a.txt']);
@@ -391,8 +398,8 @@ test('#172 cut and copied items stay visible in every view, across refreshes, un
     await page.evaluate(() => { fileops.setClipboard(null, []); return fileops.undoLast(); });
     await expect(rowByName(page, 'clip-b.txt')).toBeVisible();
     await page.evaluate(() => { document.getElementById('toast-container').innerHTML = ''; });
-    expect(errors).toEqual([]);
   } finally { await app.close(); }
+  expect(errors).toEqual([]);
 });
 
 test('#174 the maximize button turns into Restore while maximized', async () => {
@@ -417,8 +424,8 @@ test('#174 the maximize button turns into Restore while maximized', async () => 
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].unmaximize());
     await expect(btn).toHaveAttribute('aria-label', 'Maximize');
     await expect(btn.locator('use')).toHaveAttribute('href', '#fp-window-maximize');
-    expect(errors).toEqual([]);
   } finally { await app.close(); }
+  expect(errors).toEqual([]);
 });
 
 test('#175/#61 menus close on resize and on scroll; a tall menu fits the window', async () => {
@@ -514,8 +521,8 @@ test('#175/#61 menus close on resize and on scroll; a tall menu fits the window'
     await page.waitForFunction(() => window.innerHeight > 400);
     await shot(page, 'ux-leftovers-menu-short-window');
     await page.keyboard.press('Escape');
-    expect(errors).toEqual([]);
   } finally { await app.close(); }
+  expect(errors).toEqual([]);
 });
 
 test('#177 Details: no sideways overflow in a narrow pane; when rows do scroll sideways the header follows', async () => {
@@ -557,6 +564,6 @@ test('#177 Details: no sideways overflow in a narrow pane; when rows do scroll s
     await expect.poll(async () => { const c = await colX(); return Math.abs(c.head - c.cell); }).toBeLessThanOrEqual(1);
     await shot(page, 'ux-leftovers-details-hscroll');
     await page.evaluate(() => { document.getElementById('list-scroll').scrollLeft = 0; document.getElementById('test-wide-rows').remove(); });
-    expect(errors).toEqual([]);
   } finally { await app.close(); }
+  expect(errors).toEqual([]);
 });

@@ -252,7 +252,7 @@ The index is the SQLite `files` table that Stage 2A's indexer fills for a folder
 
 - pytest: every new route (`/fs/search` incl. budget/cap/tag/type filters and protected-root skipping, `/fs/properties`, `/fs/properties/details` (503 path and a real file), `/fs/attributes` + inverse, `/fs/folder-type` + inverse, `/fs/peek`, `/known-folders`, `/filetypes`, `/index/status`), mover inverses, filetypes generation parity (the JS file equals the Python source of truth).
 - Smoke (Playwright, zero console errors): open a second tab → navigate → switch back → path restored; search "doc-0" in `_gen` → results with `<mark>` → clear; chips add/remove; properties modal opens with the item icon, General fields populated, Close only; Ask File+ popout opens and closes; deselect by clicking sidebar blank space; favorite star appears and the menu label flips; View and Sort menus; pointer-drag of one file onto a folder shows the badge and moves the file (then undo); inspector switch: off → click a row → still closed; on → deselect → "No file selected" with identical block geometry to the file state; Ctrl+wheel changes `--list-scale` and not the zoom factor.
-- Gates: no inline `<svg` outside the sprite; every `filetypes.js` family has a sprite symbol; every `data-icon` referenced exists in the sprite; `check_menu_cases`; contrast check on new tokens; CLAUDE.md ≤ 100 lines.
+- Gates: no inline `<svg` outside the sprite; every `filetypes.js` family has a sprite symbol; every `data-icon` referenced exists in the sprite; `check_menu_cases`; contrast check on new tokens. (The CLAUDE.md ≤ 100 lines item was dropped in Stage 2D, pass 2 #190: CLAUDE.md is longer by design and no gate enforces a line count.)
 
 ## 12. Out of scope
 

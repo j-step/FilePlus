@@ -15,7 +15,8 @@ a fresh temp folder per run (frontend/test/harness/global-setup.js).
 Usage:
     py -3 scripts/gen_sandbox.py [--out DIR] [--large]
 
-Default output: <repo>/FilePlusTestSandbox/_gen  (gitignored via FilePlusTestSandbox/).
+Default output: <sandbox>/_gen, where <sandbox> is backend/config.py's FILEPLUS_SANDBOX_PATH
+(<repo>/FilePlusTestSandbox unless .env sets FILEPLUS_ROOT; gitignored).
 Re-running is idempotent: a tree previously built by this script (identified by the
 .fileplus-gen marker file) is removed and rebuilt from a fixed seed. An empty directory
 is reused in place. A non-empty directory without the marker is left untouched and
@@ -29,7 +30,9 @@ import ctypes
 import os
 import random
 import shutil
+import stat
 import struct
+import sys
 import zlib
 from pathlib import Path
 
@@ -80,12 +83,29 @@ def _write(path: Path, data: bytes | str) -> None:
         path.write_bytes(data)
 
 
+def default_out() -> Path:
+    """<sandbox>/_gen, the sandbox coming from backend/config.py (never
+    recomputed here), so a .env FILEPLUS_ROOT override moves it too."""
+    repo = str(Path(__file__).resolve().parents[1])
+    if repo not in sys.path:
+        sys.path.insert(0, repo)
+    from backend import config
+    return Path(config.FILEPLUS_SANDBOX_PATH) / "_gen"
+
+
+def _clear_read_only(func, path, _exc) -> None:
+    """rmtree onexc: a file left read-only (e.g. by a test that died between
+    setting and clearing the attribute) is made writable and removed again."""
+    os.chmod(path, stat.S_IWRITE)
+    func(path)
+
+
 def build(out: Path, large: bool = False) -> dict:
     """Rebuild the fixture tree at *out* and return counts."""
     out = Path(out)
     if out.exists():
         if out.is_dir() and (out / MARKER).is_file():
-            shutil.rmtree(out)
+            shutil.rmtree(out, onexc=_clear_read_only)
             out.mkdir(parents=True)
         elif out.is_dir() and not any(out.iterdir()):
             pass  # empty directory: safe to reuse in place, nothing to remove
@@ -175,11 +195,12 @@ def build(out: Path, large: bool = False) -> dict:
 
 
 def main() -> None:
-    repo = Path(__file__).resolve().parents[1]
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--out", type=Path, default=repo / "FilePlusTestSandbox" / "_gen")
+    ap.add_argument("--out", type=Path, default=None, help="default: <FILEPLUS_SANDBOX_PATH>/_gen")
     ap.add_argument("--large", action="store_true", help="also create a 101 MB sparse file")
     args = ap.parse_args()
+    if args.out is None:
+        args.out = default_out()
     stats = build(args.out, large=args.large)
     print(f"built {stats['files']} files in {stats['dirs']} dirs at {args.out}")
 

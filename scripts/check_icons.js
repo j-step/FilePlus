@@ -19,12 +19,18 @@
 //  2. Every #fp-<name> href and icon('<name>') / icon("<name>") call
 //     resolves to a symbol actually present in the generated sprite
 //     (frontend/src/icons-sprite.js).
+//     Names that reach icon() through a variable (a data table or a lookup)
+//     are checked through FP_DYNAMIC_ICON_SYMBOLS, the list icons.js declares
+//     for exactly that: each must resolve, and every value of the tables this
+//     gate can see — `icon: '<name>'` properties (search.js's filter rows) and
+//     app.js's QUICK_ACCESS_ICON — must be on that list (pass 2 #104).
 //  3. Every family in frontend/src/filetypes.js's FP_FILETYPES.families has
 //     a matching fp-ft-<family> sprite symbol, plus the folder symbols
-//     iconFor()/_folderSymbol() resolve to. Enforced (Task 6): adding a
-//     family to backend/filetypes.py without authoring
-//     frontend/assets/icons/filetypes/<family>.svg fails the gate rather
-//     than silently rendering a blank <use> in every row.
+//     iconFor()/_folderSymbol() resolve to (ft-folder, ft-folder-open and
+//     every value of icons.js's FP_FOLDER_SPECIALS — derived, not restated).
+//     Enforced (Task 6): adding a family to backend/filetypes.py without
+//     authoring frontend/assets/icons/filetypes/<family>.svg fails the gate
+//     rather than silently rendering a blank <use> in every row.
 'use strict';
 const fs = require('fs');
 const path = require('path');
@@ -123,6 +129,48 @@ for (const file of listSourceFiles()) {
     addRef(`fp-${m[1]}`, rel, text.slice(0, m.index).split('\n').length);
   }
 }
+// Non-literal references: icons.js's declared list, cross-checked against
+// the data tables that feed icon() / fpShellItemIcon() a variable.
+const iconsJsPath = path.join(SRC, 'icons.js');
+const iconsSrc = fs.readFileSync(iconsJsPath, 'utf8');
+function declaredStrings(src, re, what) {
+  const m = src.match(re);
+  if (!m) {
+    console.error(`check_icons: could not find ${what} (file reshaped?)`);
+    process.exit(1);
+  }
+  const names = [...m[1].replace(/\/\/[^\n]*/g, '').matchAll(/'([\w-]+)'/g)].map(x => x[1]);
+  if (names.length === 0) {
+    console.error(`check_icons: parsed 0 names out of ${what} — regex or source broke`);
+    process.exit(1);
+  }
+  return names;
+}
+const dynamicSymbols = new Set(declaredStrings(iconsSrc,
+  /const FP_DYNAMIC_ICON_SYMBOLS = Object\.freeze\(\[([\s\S]*?)\]\)/, 'FP_DYNAMIC_ICON_SYMBOLS in icons.js'));
+for (const name of dynamicSymbols) addRef(`fp-${name}`, 'frontend/src/icons.js', 'FP_DYNAMIC_ICON_SYMBOLS');
+const tableValues = []; // {name, site}
+for (const file of listSourceFiles()) {
+  if (!file.endsWith('.js')) continue;
+  const text = fs.readFileSync(file, 'utf8');
+  const rel = path.relative(ROOT, file);
+  for (const m of text.matchAll(/\bicon:\s*'([\w-]+)'/g)) {
+    tableValues.push({ name: m[1], site: `${rel}:${text.slice(0, m.index).split('\n').length}` });
+  }
+}
+const appSrc = fs.readFileSync(path.join(SRC, 'app.js'), 'utf8');
+const qaMatch = appSrc.match(/const QUICK_ACCESS_ICON = \{([^}]*)\}/);
+if (!qaMatch) {
+  console.error('check_icons: could not find QUICK_ACCESS_ICON in app.js (file reshaped?)');
+  process.exit(1);
+}
+for (const m of qaMatch[1].matchAll(/:\s*'([\w-]+)'/g)) tableValues.push({ name: m[1], site: 'frontend/src/app.js QUICK_ACCESS_ICON' });
+if (tableValues.length === 0) {
+  console.error('check_icons: found 0 icon-table values — regex or source broke');
+  process.exit(1);
+}
+const undeclaredTableValues = tableValues.filter(v => !dynamicSymbols.has(v.name));
+
 const unresolvedRefs = [];
 for (const [name, sites] of referencedNames) {
   if (!symbolIds.has(name)) {
@@ -134,10 +182,13 @@ for (const [name, sites] of referencedNames) {
 // The folder symbols are not families in filetypes.js (a directory has no
 // extension) but iconFor()/_folderSymbol() in frontend/src/icons.js resolve to
 // them the same way, so they are required here too.
-const REQUIRED_FOLDER_SYMBOLS = [
-  'folder', 'folder-open', 'folder-desktop', 'folder-downloads', 'folder-documents',
-  'folder-pictures', 'folder-videos', 'folder-music', 'folder-screenshots',
-];
+const folderSpecials = declaredStrings(iconsSrc, /const FP_FOLDER_SPECIALS = \{([^}]*)\}/, 'FP_FOLDER_SPECIALS in icons.js')
+  .filter(v => v.startsWith('ft-')); // the values; the keys are unquoted ids
+if (folderSpecials.length === 0) {
+  console.error('check_icons: FP_FOLDER_SPECIALS has no ft-* values — regex or source broke');
+  process.exit(1);
+}
+const REQUIRED_FOLDER_SYMBOLS = ['folder', 'folder-open', ...folderSpecials.map(v => v.replace(/^ft-/, ''))];
 const filetypesPath = path.join(SRC, 'filetypes.js');
 let missingFamilies = [];
 if (!fs.existsSync(filetypesPath)) {
@@ -176,6 +227,12 @@ if (unresolvedRefs.length) {
   for (const r of unresolvedRefs) console.error(`  ${r}`);
 }
 
+if (undeclaredTableValues.length) {
+  failed = true;
+  console.error('check_icons: icon-table value(s) not declared in icons.js FP_DYNAMIC_ICON_SYMBOLS:');
+  for (const v of undeclaredTableValues) console.error(`  ${v.site} -> ${v.name}`);
+}
+
 if (missingFamilies.length) {
   failed = true;
   console.error(`check_icons: ${missingFamilies.length} file-type family/folder symbol(s) have no fp-ft-<name> sprite symbol —`);
@@ -185,4 +242,5 @@ if (missingFamilies.length) {
 
 if (failed) process.exit(1);
 console.log(`check_icons: ok (${symbolIds.size} sprite symbols, ${referencedNames.size} distinct references resolved, ` +
+  `${dynamicSymbols.size} dynamic symbols declared (${tableValues.length} table values), ` +
   `${families.length} file-type families + ${REQUIRED_FOLDER_SYMBOLS.length} folder variants covered, 0 raw <svg> outside the sprite)`);

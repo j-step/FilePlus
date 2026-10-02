@@ -6,18 +6,9 @@ const paletteScrim       = document.getElementById('palette-scrim');
 const paletteInput       = document.getElementById('palette-input');
 
 // ── Screen switching ────────────────────────────────────────────────────────
-// Screens whose backend wiring is not yet complete. Each screen's HTML carries
-// its own static "Not built yet — planned for Stage N" banner (see index.html)
-// — this map is now just the stage-number reference for those banners; entry
-// no longer fires a stub toast (showScreenDom below).
-const STUB_SCREENS = {
-  'review-bin':     3,
-  everything:       3,
-  ftree:            4,
-  'scan-config':    4,
-  'scan-progress':  4,
-  'scan-results':   4,
-};
+// Screens whose backend wiring is not yet complete carry their own static
+// "Not built yet — planned for Stage N" banner in index.html; entering one
+// fires no toast.
 
 // Per-tab UI state model (Stage 2C Task 7)
 // ─────────────────────────────────────────
@@ -441,10 +432,13 @@ function resetToolbarForNonBrowser(screenId) {
   const crumb = document.getElementById('breadcrumb');
   if (crumb) {
     // A plain (non-interactive) label, not a data-action="navigate-crumb"
-    // button: there is no path here to navigate to.
+    // button: there is no path here to navigate to. The text sits in its own
+    // .fp-breadcrumb__label like a folder crumb's, so a too-narrow bar
+    // ellipsizes it and layoutToolbar() can measure what the ellipsis hides —
+    // without it the layout flipped .is-tight every frame (Task 11).
     const label = typeof getScreenLabel === 'function' ? getScreenLabel(screenId) : '';
     crumb.innerHTML = label
-      ? `<span class="fp-breadcrumb__crumb fp-breadcrumb__crumb--current">${escapeHtml(label)}</span>`
+      ? `<span class="fp-breadcrumb__crumb fp-breadcrumb__crumb--current"><span class="fp-breadcrumb__label">${escapeHtml(label)}</span></span>`
       : '';
   }
   if (typeof refreshNavButtons === 'function') refreshNavButtons();
@@ -1020,7 +1014,9 @@ function layoutToolbar() {
   // The path's natural width — with back whatever an ellipsized current
   // crumb (.is-tight below) is hiding, so that cap never feeds back here.
   const current = crumbs.querySelector('.fp-breadcrumb__crumb--current');
-  const label = current ? current.querySelector('.fp-breadcrumb__label') : null;
+  // A crumb with no label span (none is built that way today) is measured
+  // itself, so a capped crumb can never read as "fits" and flip back.
+  const label = current ? (current.querySelector('.fp-breadcrumb__label') || current) : null;
   const hidden = label ? Math.max(0, label.scrollWidth - label.clientWidth) : 0;
   const crumbNatural = Math.max(crumbs.scrollWidth, crumbs.getBoundingClientRect().width) + hidden;
 
@@ -2980,6 +2976,12 @@ const IN_SCOPE_ACTIONS = new Set([
   // here purely so the data-action bubble to the global switch is a silent
   // no-op instead of a "not yet implemented" toast.
   'sort-by', 'select-file',
+  // Handled by their own listeners (the titlebar buttons by id, the Home /
+  // Scan Results sub-tabs by initUnderlineTabs, the Settings theme segmented
+  // control by its settings-set-theme buttons) — silent here, not a stub
+  // toast on every click (pass 2 #186).
+  'window-minimize', 'window-maximize', 'window-close',
+  'switch-home-tab', 'switch-scan-results-tab', 'settings-theme',
   'cm-open-new-tab', 'cm-unpin-sidebar', 'cm-rename-sidebar-item',
   'open-review-bin',
   'switch-inspector-tab',
@@ -4519,6 +4521,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     // init with no trace at all.
     console.warn('[fp-init] startup data load failed:', err);
   }
+  // Startup has finished applying what it loaded (config, known folders,
+  // drives, pins, tags, Quick Access). The Electron harness waits for this
+  // before a test acts: acting earlier raced the config landing — a settings
+  // re-apply or a sidebar re-render under a click (Task 11 flakes).
+  window.__fpInitDone = true;
 
   // ── A.17 Edge case INTEGRATION stubs ──────────────────────────────────────
   // #2  External folder missing on navigation → show fp-error-banner "This folder no longer exists"

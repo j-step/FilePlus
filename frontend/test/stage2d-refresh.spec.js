@@ -97,6 +97,17 @@ const latestOperation = async () => JSON.stringify((await apiGet('/operations?li
 // even when the app catches it. The checks below provoke a few of those on
 // purpose (folders deleted on disk, a folder that never existed); anything
 // else is a real error.
+// Puts back everything the refresh test changes on disk, so a later spec —
+// or the same test under --repeat-each — sees the fixture global-setup built
+// (Task 11: a rerun found Bulk with 242 rows).
+function restoreFixture(root) {
+  const bulk = path.join(root, 'Bulk');
+  for (const f of ['aaa-new-2d.txt', 'aab-second-2d.txt', 'aac-background-2d.txt']) fs.rmSync(path.join(bulk, f), { force: true });
+  if (!fs.existsSync(path.join(bulk, 'bulk-240.txt'))) fs.writeFileSync(path.join(bulk, 'bulk-240.txt'), 'bulk 240\n');
+  for (const d of ['RenameZone', 'GoneBack-2d', 'Doomed', 'ExitGone-2d']) fs.rmSync(path.join(root, d), { recursive: true, force: true });
+  fs.rmSync(path.join(root, '_gen', 'Documents', 'zz-search-gone-2d'), { recursive: true, force: true });
+}
+
 function unexpectedErrors(errors) {
   return errors.filter((e) => !(/status of 404/.test(e)
     && /\/fs\/list\?path=.*(Doomed|Nowhere-2d|GoneBack-2d|zz-search-gone-2d|ExitGone-2d)/.test(e)));
@@ -658,8 +669,9 @@ test('refresh in place, one render per navigation, cached tab repaint, no defaul
 
     expect(await mainCounters(app)).toEqual({ navigations: 0, devtools: 0, windows: 0 });
     expect(await page.evaluate(() => performance.timeOrigin)).toBe(origin0);
-    expect(unexpectedErrors(errors), errors.join('\n')).toEqual([]);
   } finally {
     await app.close();
+    restoreFixture((await apiGet('/fs/list/root')).path);
   }
+  expect(unexpectedErrors(errors), errors.join('\n')).toEqual([]);
 });

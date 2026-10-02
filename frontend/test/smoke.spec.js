@@ -1,9 +1,10 @@
 // frontend/test/smoke.spec.js
 // Launches the real Electron app against a running backend, visits every
 // screen, fails on any renderer error, and screenshots each screen.
-const { test, expect, _electron: electron } = require('@playwright/test');
+const { test, expect } = require('@playwright/test');
 const path = require('path');
 const fs = require('fs');
+const { launchApp, resetToDefaults } = require('./harness/app');
 
 const FRONTEND = path.join(__dirname, '..');
 const SHOTS = path.join(FRONTEND, '..', 'artifacts', 'screenshots');
@@ -30,44 +31,17 @@ test('a token-gated route requires X-FilePlus-Token when FILEPLUS_API_TOKEN is s
 
 test('every screen renders with no renderer errors', async () => {
   fs.mkdirSync(SHOTS, { recursive: true });
-  // Electron-based dev shells (e.g. this one) export ELECTRON_RUN_AS_NODE=1,
-  // which turns the Electron binary into plain Node and breaks the launch;
-  // strip it so the gate works regardless of the caller's shell.
-  const env = { ...process.env };
-  delete env.ELECTRON_RUN_AS_NODE;
-  const app = await electron.launch({
-    executablePath: require('electron'),
-    args: [FRONTEND],
-    cwd: FRONTEND,
-    env,
-  });
-  const page = await app.firstWindow();
-  // The app already zeroes animation/transition durations under
-  // prefers-reduced-motion (styles.css's strict policy, UI-SPEC §A.0) — force
-  // it for the whole run so every fade-in (popovers, modals) settles near-
-  // instantly instead of racing a screenshot against a live CSS transition
-  // (Task 15 carry-over: this is what properties-folder.png needed).
-  await page.emulateMedia({ reducedMotion: 'reduce' });
-  const errors = [];
+  // launchApp (harness): reduced motion forced for the whole run (every
+  // fade-in settles at once instead of racing a screenshot), console and
+  // page errors collected — plus, at close, every error renderer.log holds
+  // from the window's first line on (pass 2 #106) — and the app ready (first
+  // tab seeded, /health green, fonts loaded).
+  const { app, page, errors } = await launchApp();
   try {
-    page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
-    // location() gives {url, lineNumber, columnNumber} for a console entry —
-    // included so a "Failed to load resource: 404" (Chromium's own message,
-    // which never carries the URL in m.text()) actually names the route that
-    // 404'd instead of leaving it a mystery.
-    page.on('console', (m) => {
-      if (m.type() !== 'error') return;
-      const loc = m.location();
-      const where = loc && loc.url ? ` (${loc.url}:${loc.lineNumber})` : '';
-      errors.push(`console: ${m.text()}${where}`);
-    });
-
-    await page.waitForSelector('#shell');
-
-    // Screenshots must show default settings, not whatever this machine's profile persisted.
-    await page.evaluate(() => localStorage.clear());
-    await page.reload();
-    await page.waitForSelector('#shell');
+    // Screenshots must show default settings, not whatever this machine's
+    // profile persisted; resetToDefaults waits for the reloaded app to be
+    // ready again (no fixed sleep).
+    await resetToDefaults(page);
 
     // Capture the solid fallback chrome: Mica is a live desktop material that
     // screenshots as transparent pixels under the harness.
@@ -76,8 +50,6 @@ test('every screen renders with no renderer errors', async () => {
     // Screenshot passes must be deterministic: force dark for the base pass
     // (Playwright emulates prefers-color-scheme: light by default).
     await page.evaluate(() => applyTheme('dark'));
-
-    await page.waitForTimeout(1500); // fonts, first /health poll
 
     for (const id of SCREENS) {
       await page.evaluate((s) => switchScreen(s), id);
@@ -100,13 +72,22 @@ test('every screen renders with no renderer errors', async () => {
     const docsDir = `${root}\\_gen\\Documents`;
 
     const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const rowByName = (name) => page.locator('.fp-row').filter({
+    // Browser rows only: Home's Recent/Favorites rows are .fp-row too, and a
+    // file another test opened or favorited would otherwise match twice.
+    const rowByName = (name) => page.locator('#list-scroll .fp-row').filter({
       has: page.locator('.fp-row__name', { hasText: new RegExp(`^${escapeRe(name)}$`) }),
     });
+    // Navigates and waits until the listing on screen IS the folder asked
+    // for (pass 2 #189): a row-count threshold the previous folder already
+    // met proved nothing. loadDirectory() resolves after it has committed.
+    const openDir = async (p, minRows = 1) => {
+      await page.evaluate((x) => loadDirectory(x), p);
+      await page.waitForFunction(([x, n]) => fpNormalizePath(browserState.path) === fpNormalizePath(x)
+        && !window.__fpLoadPending && document.querySelectorAll('#list-scroll .fp-row').length >= n, [p, minRows]);
+    };
 
     await page.evaluate(() => switchScreen('browser'));
-    await page.evaluate((p) => loadDirectory(p), docsDir);
-    await page.waitForFunction(() => document.querySelectorAll('.fp-row').length >= 10);
+    await openDir(docsDir, 10);
 
     await rowByName('doc-00.txt').click();
     await expect(page.locator('#inspector')).toHaveClass(/inspector--open/);
@@ -204,8 +185,7 @@ test('every screen renders with no renderer errors', async () => {
     // gen_sandbox.py writes six PNGs into <root>\_gen\Pictures, so the grid
     // has real image content for the shell to thumbnail.
     const picsDir = `${root}\\_gen\\Pictures`;
-    await page.evaluate((p) => loadDirectory(p), picsDir);
-    await page.waitForFunction(() => document.querySelectorAll('.fp-row').length >= 6);
+    await openDir(picsDir, 6);
 
     // Every list row carries a file-type family symbol from the sprite.
     expect(await page.locator('#list-scroll use[href^="#fp-ft-"]').count()).toBeGreaterThan(0);
@@ -281,8 +261,7 @@ test('every screen renders with no renderer errors', async () => {
     // Sharpness proof on a .txt row too -- not the pre-fix bug (always a
     // 32-px shell image force-resized to a 16-px, 1x-tagged bitmap that the
     // renderer then stretched again).
-    await page.evaluate((p) => loadDirectory(p), docsDir);
-    await page.waitForFunction(() => document.querySelectorAll('.fp-row').length >= 10);
+    await openDir(docsDir, 10);
     const txtIcon = rowByName('doc-00.txt').locator('img.fp-icon--win');
     await expect(txtIcon).toHaveAttribute('src', /^data:image\/png/, { timeout: 3000 });
     const txtProof = await txtIcon.evaluate((el) => {
@@ -303,8 +282,7 @@ test('every screen renders with no renderer errors', async () => {
     // icon, byte-identical to GET /shell/icon for that folder and different
     // from a file's at the same px. Tier B alone could never do this:
     // app.getFileIcon answers one system-drive glyph for every directory.
-    await page.evaluate((p) => loadDirectory(p), `${root}\\_gen`);
-    await page.waitForFunction(() => document.querySelectorAll('.fp-row').length >= 5);
+    await openDir(`${root}\\_gen`, 5);
     const folderIcon = rowByName('Pictures').locator('img.fp-icon--win');
     await expect(folderIcon).toHaveAttribute('src', /^data:image\/png/, { timeout: 3000 });
     const folderPx = Number(await folderIcon.getAttribute('data-px'));
@@ -330,8 +308,7 @@ test('every screen renders with no renderer errors', async () => {
     const tierBDelta = (await page.evaluate(() => ({ ...window.__fpIconStats }))).tierB - tierBBefore;
     expect(tierBDelta).toBeGreaterThanOrEqual(1);
     expect(tierBDelta).toBeLessThanOrEqual(2); // four .wav rows -> one key (one batch, maybe two)
-    await page.evaluate((p) => loadDirectory(p), `${root}\\_gen\\Projects`);
-    await page.waitForFunction(() => document.querySelectorAll('.fp-row').length >= 4);
+    await openDir(`${root}\\_gen\\Projects`, 4);
     await expect(rowByName('Makefile').locator('svg.fp-row__icon use[href="#fp-ft-generic"]')).toHaveCount(1, { timeout: 3000 });
     // A folder keeps the shell's generic folder icon it painted with its row
     // (learned from step 3's Tier A answers, Stage 2D §4.2) -- Tier B is never
@@ -352,8 +329,7 @@ test('every screen renders with no renderer errors', async () => {
     // 5. Icon-view thumbnails in Windows mode: every bitmap's longer edge is
     // the px bucket of the icon box x dpr, and the <img> (CSS-sized at the
     // picture's aspect ratio) fills its slot along its longer edge.
-    await page.evaluate((p) => loadDirectory(p), picsDir);
-    await page.waitForFunction(() => document.querySelectorAll('.fp-row').length >= 6);
+    await openDir(picsDir, 6);
     await page.evaluate(() => setView('icons', 96));
     await expect(page.locator('#list-scroll img.fp-thumb--ready[src^="data:image/png"]').first())
       .toBeVisible({ timeout: 3000 });
@@ -413,35 +389,39 @@ test('every screen renders with no renderer errors', async () => {
     // (A picture row whose 16-px thumbnail is already cached paints the
     // thumbnail alone, with no sprite under it — Stage 2D §4.2 — so the
     // family sprites are checked on a folder of documents.)
-    await page.evaluate((p) => loadDirectory(p), docsDir);
-    await page.waitForFunction(() => document.querySelectorAll('.fp-row').length >= 10);
+    await openDir(docsDir, 10);
     await expect(page.locator('#list-scroll img.fp-icon--win')).toHaveCount(0);
     expect(await page.locator('#list-scroll use[href^="#fp-ft-"]').count()).toBeGreaterThan(0);
 
     // Special folder icons are decided by PATH (GET /known-folders), not by
     // name: a folder called "Desktop" that is not the user's real Desktop
-    // must render the plain folder symbol.
-    const decoyDir = `${root}\\_gen\\Desktop`;
+    // must render the plain folder symbol. The decoy is made fresh (POST
+    // /fs/mkdir, as New folder does) in a parent of its own beside _gen —
+    // gen_sandbox already builds a _gen\Desktop, which a mkdir there would
+    // 409 on and the cleanup would then trash (pass 2 #99). Both mkdirs must
+    // succeed, and the cleanup trashes only the parent this step created.
+    const decoyParent = `${root}\\Decoy-smoke`;
     const postJson = (route, body) => fetch(`${API}${route}`, {
       method: 'POST',
       headers: { ...apiHeaders, 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
-    await postJson('/fs/mkdir', { dir: `${root}\\_gen`, name: 'Desktop' });
+    expect((await postJson('/fs/mkdir', { dir: root, name: 'Decoy-smoke' })).status).toBe(200);
     try {
-      await page.evaluate((p) => loadDirectory(p), `${root}\\_gen`);
-      await page.waitForFunction(() => document.querySelectorAll('.fp-row').length >= 2);
+      expect((await postJson('/fs/mkdir', { dir: decoyParent, name: 'Desktop' })).status).toBe(200);
+      await openDir(decoyParent, 1);
       const decoyIcon = rowByName('Desktop').locator('use');
       await expect(decoyIcon).toHaveAttribute('href', '#fp-ft-folder');
       // Sanity: the sprite does carry the special symbol, so the assertion
       // above is about identity rather than a missing icon.
       expect(await page.evaluate(() => !!document.getElementById('fp-ft-folder-desktop'))).toBe(true);
     } finally {
-      await postJson('/fs/trash', { paths: [decoyDir] });
+      expect((await postJson('/fs/trash', { paths: [decoyParent] })).status).toBe(200);
     }
+    // The fixture's own _gen\Desktop is untouched.
+    expect(fs.existsSync(`${root}\\_gen\\Desktop\\report-2025 - Copy.txt`)).toBe(true);
 
-    await page.evaluate((p) => loadDirectory(p), docsDir);
-    await page.waitForFunction(() => document.querySelectorAll('.fp-row').length >= 10);
+    await openDir(docsDir, 10);
 
     // --- Tabs (Task 7): real per-tab browser state ---
     // Tab 1 (the only tab so far) is showing _gen\Documents from the
@@ -482,9 +462,12 @@ test('every screen renders with no renderer errors', async () => {
     // then repointed nav.history at tab 2's array by reference.
     const tab2HistoryLenBefore = await page.evaluate(
       (id) => tabs.list.find((t) => t.id === id).history.length, tab2Id);
-    await page.evaluate((p) => { loadDirectory(p); /* deliberately not awaited */ }, docsDir);
+    await page.evaluate((p) => { window.__smokeAbandoned = loadDirectory(p); /* deliberately not awaited here */ }, docsDir);
     await page.evaluate((id) => activateTab(id), tab2Id);
-    await page.waitForTimeout(1000); // let the abandoned fetch resolve (and, unfixed, wrongly apply)
+    // Wait for the abandoned load ITSELF to finish — its fetch answered and
+    // its supersession guard ran (and, unfixed, wrongly applied) — so the
+    // checks below can only run after the late response (pass 2 #102).
+    await page.evaluate(() => window.__smokeAbandoned);
     await expect(page.locator('#breadcrumb .fp-breadcrumb__crumb--current')).toHaveText('Pictures');
     await expect(page.locator('#list-scroll .fp-row')).toHaveCount(picsRowCount);
     const tab2HistoryLenAfter = await page.evaluate(
@@ -526,8 +509,7 @@ test('every screen renders with no renderer errors', async () => {
 
     // --- Task 8: inspector switch, deselect anywhere, refresh, theme
     // (playtest pass 1 §3.4-3.6, 3.9) ---
-    await page.evaluate((p) => loadDirectory(p), docsDir);
-    await page.waitForFunction(() => document.querySelectorAll('.fp-row').length >= 10);
+    await openDir(docsDir, 10);
     // The "Add tag…" step earlier in this test (cm-add-tag) left the
     // inspector's active tab on Tags — switch back to Preview so the
     // geometry checks below measure the meta grid they're actually meant to
@@ -574,7 +556,8 @@ test('every screen renders with no renderer errors', async () => {
       await page.evaluate(() => { const el = document.getElementById('inspector-kind'); if (el) el.textContent = '…'; });
       await rowByName('doc-00.txt').click();
       await page.waitForFunction(() => document.getElementById('inspector-kind')?.textContent !== '…');
-      await page.waitForTimeout(200); // let the chain's own remaining /preview + /files/history steps land too
+      // ...and the chain's own remaining /preview + /files/history steps.
+      await page.waitForFunction(() => window.__fpInspectorPending === 0);
     };
 
     // ui.inspector_open = false (real POST /config, then the same
@@ -631,7 +614,7 @@ test('every screen renders with no renderer errors', async () => {
       // settle that fully too before anything else re-selects doc-00.txt,
       // for the same overlapping-request reason.
       await page.waitForFunction(() => document.getElementById('inspector-kind')?.textContent !== '…');
-      await page.waitForTimeout(200);
+      await page.waitForFunction(() => window.__fpInspectorPending === 0);
     };
     await refreshAndSettle();
     await expect(rowByName('doc-00.txt')).toHaveClass(/fp-row--selected/);
@@ -663,29 +646,32 @@ test('every screen renders with no renderer errors', async () => {
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
 
     // Fix round 1 [Minor]: Home rows get the same deselect-anywhere
-    // coverage as Browser rows. Prefer a real Recent row (populated by an
-    // earlier "opened" action in this run); fall back to creating a
-    // Favorites row directly, since nothing in this test performs an Open
-    // action that would log one.
+    // coverage as Browser rows — always on a Favorites row this step adds and
+    // removes again. The old "a Recent row if an earlier test left one, else
+    // a new favorite" branch made the run depend on what ran before it, and
+    // the favorite it left behind gave later lookups a second doc-00.txt row
+    // (Task 11 flake: a duplicate img in #home-favorites).
     await page.evaluate(() => switchScreen('home'));
-    const homeRecentCount = await page.locator('#home-recent .fp-row').count();
-    let homeRow;
-    if (homeRecentCount > 0) {
-      homeRow = page.locator('#home-recent .fp-row').first();
-    } else {
-      await postJson('/favorites', { path: `${docsDir}\\doc-00.txt` });
+    const homeFav = `${docsDir}\\doc-00.txt`;
+    const favRow = page.locator(`#home-favorites .fp-row[data-path="${homeFav.replace(/\\/g, '\\\\')}"]`);
+    expect((await postJson('/favorites', { path: homeFav })).status).toBe(200);
+    try {
       await page.evaluate(() => loadFavorites());
-      await page.waitForFunction(() => document.querySelectorAll('#home-favorites .fp-row').length > 0);
+      await expect(favRow).toHaveCount(1);
       // The Favorites pane itself is display:none until its sub-tab is
       // activated (initUnderlineTabs, app.js) — Recent starts active.
       await page.locator('#home-tabs .fp-tabs__item[data-tab="favorites"]').click();
-      homeRow = page.locator('#home-favorites .fp-row').first();
+      await favRow.click();
+      await expect(favRow).toHaveClass(/fp-row--selected/);
+      const homeScreenBox = await page.locator('#screen-home').boundingBox();
+      await page.mouse.click(homeScreenBox.x + homeScreenBox.width / 2, homeScreenBox.y + homeScreenBox.height - 20);
+      await expect(page.locator('#screen-home .fp-row--selected')).toHaveCount(0);
+    } finally {
+      await fetch(`${API}/favorites?path=${encodeURIComponent(homeFav)}`, { method: 'DELETE', headers: apiHeaders });
+      await page.evaluate(() => loadFavorites());
+      await page.locator('#home-tabs .fp-tabs__item[data-tab="recent"]').click();
     }
-    await homeRow.click();
-    await expect(homeRow).toHaveClass(/fp-row--selected/);
-    const homeScreenBox = await page.locator('#screen-home').boundingBox();
-    await page.mouse.click(homeScreenBox.x + homeScreenBox.width / 2, homeScreenBox.y + homeScreenBox.height - 20);
-    await expect(page.locator('#screen-home .fp-row--selected')).toHaveCount(0);
+    await expect(favRow).toHaveCount(0);
 
     // --- Task 9: This PC section, Quick Access known folders, Backspace-deletes ---
     await page.evaluate(() => switchScreen('browser'));
@@ -700,8 +686,11 @@ test('every screen renders with no renderer errors', async () => {
     await page.locator('#sb-thispc .fp-sidebar__chevron').click();
     await expect(page.locator('#sb-drives')).toBeHidden();
     await expect(page.locator('#sb-thispc .fp-sidebar__chevron')).toHaveAttribute('aria-expanded', 'false');
-    const cfgCollapsed = await (await fetch(`${API}/config`, { headers: apiHeaders })).json();
-    expect(cfgCollapsed['ui.sidebar_thispc_open']).toBe(false);
+    // saveSetting() POSTs after the DOM has changed: poll the backend for it
+    // rather than reading once while the request may still be in flight
+    // (Task 11 flake: the key read as undefined).
+    await expect.poll(async () => (await (await fetch(`${API}/config`, { headers: apiHeaders })).json())['ui.sidebar_thispc_open'])
+      .toBe(false);
     await page.locator('#sb-thispc .fp-sidebar__chevron').click();
     await expect(page.locator('#sb-drives')).toBeVisible();
     await expect(page.locator('#sb-thispc .fp-sidebar__chevron')).toHaveAttribute('aria-expanded', 'true');
@@ -748,8 +737,7 @@ test('every screen renders with no renderer errors', async () => {
     await postJson('/config', { key: 'ui.backspace_deletes', value: true });
     await page.evaluate(async () => { await loadConfig(); applySettingsFromConfig(); });
     await page.evaluate(() => switchScreen('browser'));
-    await page.evaluate((p) => loadDirectory(p), docsDir);
-    await page.waitForFunction(() => document.querySelectorAll('.fp-row').length >= 10);
+    await openDir(docsDir, 10);
     await rowByName('doc-01.txt').click();
     await page.keyboard.press('Backspace');
     await expect(rowByName('doc-01.txt')).toHaveCount(0);
@@ -770,15 +758,13 @@ test('every screen renders with no renderer errors', async () => {
 
     // Pictures is all images (6/6 PNGs) — dynamic media view opens it in
     // Large icons automatically, with no View menu interaction at all.
-    await page.evaluate((p) => loadDirectory(p), picsDir);
-    await page.waitForFunction(() => document.querySelectorAll('.fp-row').length >= 6);
+    await openDir(picsDir, 6);
     await expect(page.locator('#list-scroll')).toHaveAttribute('data-view', 'icons');
     expect(await page.evaluate(() => browserState.iconSize)).toBe(96);
 
     // Documents is all text/markdown/PDF — opens in 'details' (the renamed
     // columns view) instead.
-    await page.evaluate((p) => loadDirectory(p), docsDir);
-    await page.waitForFunction(() => document.querySelectorAll('.fp-row').length >= 10);
+    await openDir(docsDir, 10);
     await expect(page.locator('#list-scroll')).toHaveAttribute('data-view', 'details');
 
     // The View menu opens below the toolbar button; "List" switches
@@ -838,8 +824,7 @@ test('every screen renders with no renderer errors', async () => {
     await fetch(`${API}/config/ui.folder_views`, { method: 'DELETE', headers: apiHeaders });
     await fetch(`${API}/config/ui.sort`, { method: 'DELETE', headers: apiHeaders });
     await page.evaluate(async () => { await loadConfig(); applySettingsFromConfig(); });
-    await page.evaluate((p) => loadDirectory(p), docsDir);
-    await page.waitForFunction(() => document.querySelectorAll('.fp-row').length >= 10);
+    await openDir(docsDir, 10);
     await expect(page.locator('#list-scroll')).toHaveAttribute('data-view', 'details');
 
     // --- Task 11: selection visuals, context-menu applicability, favorites
@@ -850,19 +835,14 @@ test('every screen renders with no renderer errors', async () => {
     // when the key is absent — so it's still sitting at Size/Descending from
     // Task 10's own sort-menu step. doc-00.txt/doc-01.txt must be adjacent,
     // name-sorted rows for the shift-click merge check below.
+    // applySort() re-renders synchronously: the rows are already in order.
     await page.evaluate(() => applySort('name', 'asc'));
-    await page.waitForFunction(() => document.querySelectorAll('.fp-row').length >= 10);
 
-    // rowByName() is unscoped (page-wide .fp-row) — by this point in the run
-    // doc-00.txt has been selected/inspected many times above, and
-    // inspector.js logs each as a "opened" /recent action, so a Home Recent
-    // row for it now exists in the DOM alongside the Browser row (and, once
-    // this block favorites it below, a Favorites row too — home.js's
-    // .fp-row--recent covers both Home panes). Scope lookups to the Browser
-    // list itself so they stay unambiguous.
-    const browserRow = (name) => page.locator('#list-scroll .fp-row').filter({
-      has: page.locator('.fp-row__name', { hasText: new RegExp(`^${escapeRe(name)}$`) }),
-    });
+    // By this point doc-00.txt also has a Home Recent row (inspector.js logs
+    // each selection as an "opened" /recent action) and, once this block
+    // favorites it below, a Favorites row — rowByName() is scoped to the
+    // Browser list for exactly that reason.
+    const browserRow = rowByName;
 
     // Edge-hugging + merged-border selection (§4.1): click doc-00.txt,
     // shift-click its immediate name-sorted neighbor doc-01.txt — both
@@ -923,12 +903,9 @@ test('every screen renders with no renderer errors', async () => {
     // reopening the menu now offers Remove -> star disappears and the
     // backend no longer lists the path.
     //
-    // doc-00.txt may already be favorited: the earlier Home deselect-anywhere
-    // step (Task 8, above) favorites it directly via POST /favorites as its
-    // fallback source of a Home row whenever this run's Recent list happened
-    // to be empty at that point, and never unfavorites it again. Reset to a
-    // known "not favorited" state first so the Add -> Remove sequence below
-    // holds regardless of that earlier step's outcome.
+    // Start from a known "not favorited" state (the backend is shared by the
+    // whole run, so another spec may have favorited doc-00.txt) so the
+    // Add -> Remove sequence below holds whatever ran before.
     await fetch(`${API}/favorites?path=${encodeURIComponent(`${docsDir}\\doc-00.txt`)}`, {
       method: 'DELETE', headers: apiHeaders,
     });
@@ -964,8 +941,7 @@ test('every screen renders with no renderer errors', async () => {
     // modifiers that retarget the operation with no pointer movement,
     // spring-loaded folders and a right-button climb are all things native
     // drag and drop structurally cannot do.
-    await page.evaluate((p) => loadDirectory(p), docsDir);
-    await page.waitForFunction(() => document.querySelectorAll('.fp-row').length >= 10);
+    await openDir(docsDir, 10);
     await page.evaluate(() => applySort('name', 'asc'));
 
     const dragBadge = page.locator('#drag-badge');
@@ -1071,8 +1047,7 @@ test('every screen renders with no renderer errors', async () => {
     expect(await latestOpId()).toBe(opIdBeforeRight);
 
     // --- Task 13: Properties panel (playtest pass 1 §5) ---
-    await page.evaluate((p) => loadDirectory(p), docsDir);
-    await page.waitForFunction(() => document.querySelectorAll('.fp-row').length >= 10);
+    await openDir(docsDir, 10);
 
     const propsModal = page.locator('#properties-modal');
     const generalGrid = propsModal.locator('#properties-general-grid');
@@ -1118,26 +1093,35 @@ test('every screen renders with no renderer errors', async () => {
 
     // Read-only round trip: tick → Apply → backend reports true; untick →
     // Apply → false. Together these leave the fixture exactly as they found
-    // it, so no separate undo call is needed afterward.
+    // it; the finally clears the bit even if an assertion in between fails
+    // or the test times out there (pass 2 #100), so no later step or spec
+    // meets a read-only doc-00.txt.
     const docPropsUrl = `${API}/fs/properties?path=${encodeURIComponent(`${docsDir}\\doc-00.txt`)}`;
     const readOnlyRow = propsModal.locator('.properties__attr', { hasText: 'Read-only' });
     const readOnlyInput = propsModal.locator('input[data-action="props-attr-toggle"][data-attr="read_only"]');
 
-    await readOnlyRow.click();
-    await expect(readOnlyInput).toBeChecked();
-    await expect(applyBtn).toBeEnabled();
-    await applyBtn.click();
-    await expect.poll(async () => (await (await fetch(docPropsUrl, { headers: apiHeaders })).json()).attributes.read_only)
-      .toBe(true);
-    await expect(applyBtn).toBeDisabled();
+    try {
+      await readOnlyRow.click();
+      await expect(readOnlyInput).toBeChecked();
+      await expect(applyBtn).toBeEnabled();
+      await applyBtn.click();
+      await expect.poll(async () => (await (await fetch(docPropsUrl, { headers: apiHeaders })).json()).attributes.read_only)
+        .toBe(true);
+      await expect(applyBtn).toBeDisabled();
 
-    await readOnlyRow.click();
-    await expect(readOnlyInput).not.toBeChecked();
-    await expect(applyBtn).toBeEnabled();
-    await applyBtn.click();
-    await expect.poll(async () => (await (await fetch(docPropsUrl, { headers: apiHeaders })).json()).attributes.read_only)
-      .toBe(false);
-    await expect(applyBtn).toBeDisabled();
+      await readOnlyRow.click();
+      await expect(readOnlyInput).not.toBeChecked();
+      await expect(applyBtn).toBeEnabled();
+      await applyBtn.click();
+      await expect.poll(async () => (await (await fetch(docPropsUrl, { headers: apiHeaders })).json()).attributes.read_only)
+        .toBe(false);
+      await expect(applyBtn).toBeDisabled();
+    } finally {
+      const now = await (await fetch(docPropsUrl, { headers: apiHeaders })).json();
+      if (now.attributes && now.attributes.read_only) {
+        await postJson('/fs/attributes', { path: `${docsDir}\\doc-00.txt`, read_only: false });
+      }
+    }
 
     // Details tab lazy-loads on first activation: either grouped property
     // rows or the pywin32-missing message — never blank.
@@ -1163,8 +1147,7 @@ test('every screen renders with no renderer errors', async () => {
     await expect(propsModal).toBeHidden();
 
     // Back to a known listing for the screenshots below.
-    await page.evaluate((p) => loadDirectory(p), docsDir);
-    await page.waitForFunction(() => document.querySelectorAll('.fp-row').length >= 10);
+    await openDir(docsDir, 10);
 
     // --- Task 14: search overhaul (playtest pass 1 section 8) ---
     // Everything below runs against _gen\Documents, which gen_sandbox.py fills
@@ -1206,9 +1189,19 @@ test('every screen renders with no renderer errors', async () => {
     await expect(page.locator('#breadcrumb [data-action="search-clear"]')).toBeVisible();
 
     // 3. A filter row expands inline and its choice becomes a chip in the bar.
+    // The chip must reach the query: the search it starts carries type=document
+    // (pass 2 #188 — the row count below cannot prove it, since every
+    // doc-0* match is a document either way; the backend's filtering itself
+    // is covered by pytest).
+    const searchWith = (key, value) => page.waitForRequest((r) => {
+      const u = new URL(r.url());
+      return u.pathname === '/fs/search' && u.searchParams.get('q') === 'doc-0' && u.searchParams.get(key) === value;
+    }, { timeout: 5000 });
     await searchBar.click();
     await searchDropdown.locator('[data-action="search-expand-filter"][data-filter="type"]').click();
+    const typeSearch = searchWith('type', 'document');
     await searchDropdown.locator('[data-action="search-pick-filter"][data-value="document"]').click();
+    await typeSearch;
     const typeChip = page.locator('#search-chips .fp-search-chip');
     await expect(typeChip).toHaveCount(1);
     await expect(typeChip).toContainText('type:');
@@ -1257,15 +1250,18 @@ test('every screen renders with no renderer errors', async () => {
     await expect(searchInput).toHaveValue('');
 
     // 6b. More filters: the modal opens seeded from the bar, and Apply turns
-    //     its fields into chips (ext=txt keeps the same ten doc-0*.txt rows,
-    //     so this proves the modal -> chip -> query parameter path end to end).
+    //     its fields into chips; the search it starts carries ext=txt (the
+    //     request itself is checked — ext=txt keeps the same doc-0*.txt rows,
+    //     so the row count alone could not tell a dropped chip apart).
     await searchInput.fill('doc-0');
     await expect(searchHeader).toHaveText(/\d+ results/, { timeout: 2500 });
     await searchBar.click();
     await searchDropdown.locator('[data-action="search-more-filters"]').click();
     await expect(page.locator('#search-filters-modal')).toBeVisible();
     await page.locator('#search-filter-ext').fill('txt');
+    const extSearch = searchWith('ext', 'txt');
     await page.locator('[data-action="search-more-apply"]').click();
+    await extSearch;                       // the chip reached the query (#188)
     await expect(page.locator('#search-filters-modal')).toBeHidden();
     await expect(page.locator('#search-chips .fp-search-chip')).toContainText('ext:');
     await expect.poll(() => page.locator('#list-scroll .fp-row[data-path]').count())
@@ -1289,9 +1285,13 @@ test('every screen renders with no renderer errors', async () => {
     //     paint over tab 2's Pictures listing nor write itself onto tab 2's
     //     record; switching back re-runs it and tab 1 shows results again.
     const tab2Search = await page.evaluate(() => tabs.list[1].id);
-    await page.evaluate(() => { setSearchText('doc-1'); runSearch(); /* deliberately not awaited */ });
+    await page.evaluate(() => { setSearchText('doc-1'); window.__smokeAbandoned = runSearch(); /* not awaited here */ });
     await page.evaluate((id) => activateTab(id), tab2Search);
-    await page.waitForTimeout(1500);
+    // The abandoned search has run to its end (aborted, or answered and
+    // turned away by its supersession guard) before anything is checked —
+    // never a sleep that a slow response could outlast (pass 2 #102).
+    await page.evaluate(() => window.__smokeAbandoned);
+    await page.waitForFunction(() => !window.__fpLoadPending);
     await expect(page.locator('#list-scroll .fp-row mark')).toHaveCount(0);
     await expect(page.locator('#breadcrumb .fp-breadcrumb__crumb--current')).toHaveText('Pictures');
     expect(await page.evaluate((id) => tabs.list.find(t => t.id === id).search, tab2Search)).toBe(null);
@@ -1315,9 +1315,10 @@ test('every screen renders with no renderer errors', async () => {
     // so a slow /fs/list in flight from a still-earlier navigation can't paint
     // over the search either.
     const histLenBefore = await page.evaluate(() => nav.history.length);
-    await page.evaluate(() => { setSearchText('doc-2'); runSearch(); /* deliberately not awaited */ });
-    await page.evaluate((p) => { loadDirectory(p); /* deliberately not awaited */ }, picsDir);
-    await page.waitForTimeout(1500);
+    await page.evaluate(() => { setSearchText('doc-2'); window.__smokeAbandoned = runSearch(); /* not awaited here */ });
+    await page.evaluate((p) => { window.__smokeNav = loadDirectory(p); /* not awaited here */ }, picsDir);
+    // Both have run to their end before anything is checked (pass 2 #102).
+    await page.evaluate(() => Promise.all([window.__smokeAbandoned, window.__smokeNav]));
     await expect(page.locator('#list-scroll .fp-row mark')).toHaveCount(0);
     await expect(page.locator('#breadcrumb .fp-breadcrumb__crumb--current')).toHaveText('Pictures');
     expect(await page.evaluate(() => activeTab().search)).toBe(null);
@@ -1549,8 +1550,7 @@ test('every screen renders with no renderer errors', async () => {
 
     // Back to the Browser listing the screenshots below expect.
     await page.evaluate(() => switchScreen('browser'));
-    await page.evaluate((p2) => loadDirectory(p2), docsDir);
-    await page.waitForFunction(() => document.querySelectorAll('.fp-row').length >= 10);
+    await openDir(docsDir, 10);
 
     await page.evaluate(() => applyTheme('light'));
     for (const id of ['home', 'browser', 'settings']) {
@@ -1572,52 +1572,34 @@ test('every screen renders with no renderer errors', async () => {
 // scale independently of whatever this machine's own display scale happens
 // to be.
 test('shell bitmaps are device-pixel exact at a forced 150% scale', async () => {
-  const env = { ...process.env };
-  delete env.ELECTRON_RUN_AS_NODE;
-  const app = await electron.launch({
-    executablePath: require('electron'),
-    args: [FRONTEND, '--force-device-scale-factor=1.5'],
-    cwd: FRONTEND,
-    env,
-  });
-  const page = await app.firstWindow();
-  // Without this, a real CSS fade-in transition (the settings screen switch
-  // below) can leave Playwright's actionability check polling forever for a
-  // "stable" frame instead of settling in a couple of frames -- the main
-  // smoke test does the same for the same reason.
-  await page.emulateMedia({ reducedMotion: 'reduce' });
-  const errors = [];
-  page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
-  page.on('console', (m) => { if (m.type() === 'error') errors.push(`console: ${m.text()}`); });
+  // launchApp (harness): reduced motion forced (no fade-in racing
+  // Playwright's actionability checks), errors collected from the first
+  // renderer line on, and the app ready — first tab seeded, /health green,
+  // fonts loaded — instead of the fixed 1.5 s settle this used to sleep.
+  const { app, page, errors } = await launchApp({ args: ['--force-device-scale-factor=1.5'] });
   const apiToken = process.env.FILEPLUS_API_TOKEN;
   const apiHeaders = apiToken ? { 'X-FilePlus-Token': apiToken } : {};
   try {
-    await page.waitForSelector('#shell');
-    // switchScreen() is a no-op until app.js's DOMContentLoaded handler has
-    // run seedInitialTab() (activeTab() returns undefined before then) —
-    // #shell itself is static markup, present in the DOM (and matched by
-    // waitForSelector) before that handler runs at all, so wait for the
-    // actual readiness condition rather than a fixed timeout.
-    await page.waitForFunction(() => typeof tabs !== 'undefined' && tabs.list && tabs.list.length > 0);
-    // Same settle wait the main smoke test uses before its first screen
-    // switch (fonts, first /health poll) -- without it, the settings
-    // screen's own fade-in can race Playwright's actionability check on the
-    // very first interaction of a freshly-launched window.
-    await page.waitForTimeout(1500);
     expect(await page.evaluate(() => window.devicePixelRatio)).toBe(1.5);
 
     const root = (await (await fetch(`${API}/fs/list/root`, { headers: apiHeaders })).json()).path;
     const docsDir = `${root}\\_gen\\Documents`;
     const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const rowByName = (name) => page.locator('.fp-row').filter({
+    // Browser rows only (a Home Recent/Favorites row for the same file is an
+    // .fp-row too — the cause of a strict-mode failure under --repeat-each).
+    const rowByName = (name) => page.locator('#list-scroll .fp-row').filter({
       has: page.locator('.fp-row__name', { hasText: new RegExp(`^${escapeRe(name)}$`) }),
     });
+    const openDir = async (p, minRows = 1) => {
+      await page.evaluate((x) => loadDirectory(x), p);
+      await page.waitForFunction(([x, n]) => fpNormalizePath(browserState.path) === fpNormalizePath(x)
+        && !window.__fpLoadPending && document.querySelectorAll('#list-scroll .fp-row').length >= n, [p, minRows]);
+    };
 
     await page.evaluate(() => switchScreen('settings'));
     await page.locator('[data-action="settings-set-icon-source"][data-val="windows"]').click();
     await page.evaluate(() => switchScreen('browser'));
-    await page.evaluate((p) => loadDirectory(p), docsDir);
-    await page.waitForFunction(() => document.querySelectorAll('.fp-row').length >= 10);
+    await openDir(docsDir, 10);
 
     const txtIcon = rowByName('doc-00.txt').locator('img.fp-icon--win');
     await expect(txtIcon).toHaveAttribute('src', /^data:image\/png/, { timeout: 8000 });
@@ -1656,8 +1638,7 @@ test('shell bitmaps are device-pixel exact at a forced 150% scale', async () => 
 
     // Large-icon thumbnails at 150%: a 96-CSS-px icon box -> a 144-px bitmap.
     await page.evaluate(() => fpShellIconRoute('unknown'));
-    await page.evaluate((p) => loadDirectory(p), `${root}\\_gen\\Pictures`);
-    await page.waitForFunction(() => document.querySelectorAll('.fp-row').length >= 6);
+    await openDir(`${root}\\_gen\\Pictures`, 6);
     await page.evaluate(() => setView('icons', 96));
     const thumb = page.locator('#list-scroll img.fp-thumb--ready[src^="data:image/png"]').first();
     await expect(thumb).toBeVisible({ timeout: 5000 });

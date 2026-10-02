@@ -13,6 +13,12 @@
 // stale data — each async function captures its own seq and re-checks it
 // after every await before touching anything.
 let _inspectorSeq = 0;
+// Inspector work still to come: an armed selection debounce (browser.js
+// onSelectionChanged) plus every showInspectorFor() / showInspectorMulti()
+// fetch chain still running. Read by the Electron tests as the "inspector
+// has settled" signal (like browser.js's __fpLoadPending), so they wait on it
+// instead of sleeping.
+window.__fpInspectorPending = 0;
 
 // Currently-inspected file's DB id (null for folders, which can't be
 // tagged) and the path History is showing, so the tag/undo handlers below
@@ -125,6 +131,15 @@ function updateInspector(mode, data = {}) {
 // GET /files/history for `path`, rendering each into the inspector panes as
 // it lands. Called by browser.js's onSelectionChanged (debounced 120ms).
 async function showInspectorFor(path) {
+  window.__fpInspectorPending++;
+  try {
+    await _showInspectorFor(path);
+  } finally {
+    window.__fpInspectorPending--;
+  }
+}
+
+async function _showInspectorFor(path) {
   const seq = ++_inspectorSeq;
 
   // Optimistic header from what the row already told us — the real fetch
@@ -546,6 +561,15 @@ async function inspectorUndoOp(opId, batchId) {
 // every fetched file renders full-opacity; a tag only some of them carry
 // renders at partial opacity.
 async function showInspectorMulti(paths) {
+  window.__fpInspectorPending++;
+  try {
+    await _showInspectorMulti(paths);
+  } finally {
+    window.__fpInspectorPending--;
+  }
+}
+
+async function _showInspectorMulti(paths) {
   const seq = ++_inspectorSeq;
   updateInspector('multi', { count: paths.length, totalSize: formatSize(selectionTotalSize()) });
 

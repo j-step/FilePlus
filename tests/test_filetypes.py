@@ -29,7 +29,9 @@ def test_no_extension_in_two_families():
 
 def test_generated_js_is_current(tmp_path):
     import subprocess, sys, pathlib
-    src = pathlib.Path("frontend/src/filetypes.js").read_text(encoding="utf-8")
+    # Paths from the repo root, not the caller's working directory (pass-2 #108).
+    repo = pathlib.Path(__file__).resolve().parents[1]
+    src = (repo / "frontend" / "src" / "filetypes.js").read_text(encoding="utf-8")
     out = tmp_path / "filetypes.js"
-    subprocess.run([sys.executable, "scripts/build_filetypes.py", str(out)], check=True)
+    subprocess.run([sys.executable, str(repo / "scripts" / "build_filetypes.py"), str(out)], check=True, cwd=repo)
     assert out.read_text(encoding="utf-8") == src, "run: py -3 scripts/build_filetypes.py"

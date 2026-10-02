@@ -47,7 +47,10 @@ async function setZoom(app, page, z) {
 
 async function setSize(app, page, w, h) {
   await app.evaluate(({ BrowserWindow }, s) => BrowserWindow.getAllWindows()[0].setSize(s.w, s.h), { w, h });
-  await page.waitForTimeout(300);
+  // The renderer has the new size (CSS px x zoom = window px), then layout
+  // and the overlay scrollbars' observers have run.
+  await page.waitForFunction((cw) => Math.abs(window.innerWidth * window.electronAPI.getZoom() - cw) <= 2, w, { timeout: 5000 });
+  await frames(page);
   await frames(page);
 }
 
@@ -228,12 +231,14 @@ test('sidebar: 11px headers, hairline dividers, 28px items, overlay scrollbar wi
     await windowShot(app, page, 'sidebar-scroll-cue');
     await page.mouse.move(700, 300);
     await expect(track).not.toHaveClass(/is-visible/);
-    await sc.evaluate((e) => { e.scrollTop = 20; });
+    const scrolledAt = await sc.evaluate((e) => { e.scrollTop = 20; return performance.now(); });
     await expect(track).toHaveClass(/is-visible/);
-    await page.waitForTimeout(500);
-    await expect(track).toHaveClass(/is-visible/);
-    await page.waitForTimeout(700);
-    await expect(track).not.toHaveClass(/is-visible/);
+    // It stays up for the fade delay (900 ms) after the last scroll, then
+    // goes: measured, so a slow machine can only make it look longer, never
+    // fail it (it used to sleep 500 ms and expect it still up).
+    await page.waitForFunction(() => !document.querySelector('.fp-sidebar .fp-oscroll').classList.contains('is-visible'),
+      null, { timeout: 5000 });
+    expect(await page.evaluate((t) => performance.now() - t, scrolledAt)).toBeGreaterThanOrEqual(850);
     await expect(sc).toHaveClass(/is-scroll-top/);
     await expect(sc).toHaveClass(/is-scroll-bottom/);
     const maskBoth = await sc.evaluate((e) => getComputedStyle(e).webkitMaskImage || getComputedStyle(e).maskImage);
@@ -244,17 +249,15 @@ test('sidebar: 11px headers, hairline dividers, 28px items, overlay scrollbar wi
     const thumb = page.locator('.fp-sidebar .fp-oscroll__thumb');
     const w0 = await thumb.evaluate((e) => e.getBoundingClientRect().width);
     let tb = await thumb.boundingBox();
+    const thumbW = () => thumb.evaluate((e) => e.getBoundingClientRect().width);
     await page.mouse.move(tb.x + tb.width / 2, tb.y + 5);
-    await page.waitForTimeout(250);
-    expect(await thumb.evaluate((e) => e.getBoundingClientRect().width)).toBe(7);
+    await expect.poll(thumbW).toBe(7);
     expect(w0).toBe(3);
     // …and from 8px inside the edge (the hot zone is 10px wide).
     await page.mouse.move(700, 300);
-    await page.waitForTimeout(250);
-    expect(await thumb.evaluate((e) => e.getBoundingClientRect().width)).toBe(3);
+    await expect.poll(thumbW).toBe(3);
     await page.mouse.move(geo.sideRight - 8, tb.y + 5);
-    await page.waitForTimeout(250);
-    expect(await thumb.evaluate((e) => e.getBoundingClientRect().width)).toBe(7);
+    await expect.poll(thumbW).toBe(7);
 
     // Dragging the thumb scrolls; it keeps the hot width while dragging.
     tb = await thumb.boundingBox();
@@ -281,7 +284,7 @@ test('sidebar: 11px headers, hairline dividers, 28px items, overlay scrollbar wi
 
     // At the bottom: the top cue only.
     await sc.evaluate((e) => { e.scrollTop = e.scrollHeight; });
-    await page.waitForTimeout(100);
+    // (Both class checks retry until the scroll handler has run.)
     await expect(sc).toHaveClass(/is-scroll-top/);
     await expect(sc).not.toHaveClass(/is-scroll-bottom/);
     const maskTop = await sc.evaluate((e) => getComputedStyle(e).webkitMaskImage || getComputedStyle(e).maskImage);
@@ -314,8 +317,7 @@ test('sidebar: 11px headers, hairline dividers, 28px items, overlay scrollbar wi
     await setSize(app, page, 1100, 420);
     await page.keyboard.press('Control+b');
     await expect(page.locator('#sidebar')).toHaveClass(/fp-sidebar--collapsed/);
-    await page.waitForTimeout(300);
-    expect(await sc.evaluate((e) => e.scrollHeight > e.clientHeight)).toBe(true);
+    await expect.poll(() => sc.evaluate((e) => e.scrollHeight > e.clientHeight)).toBe(true);
     await expect(page.locator('.fp-sidebar .fp-oscroll')).not.toHaveClass(/is-none/);
     // The rail's thumb column sits in the gutter beside the squares: a press
     // 2px inside a square's right edge reaches the square and navigates.
@@ -509,9 +511,11 @@ test('the inspector body and the Properties body use the overlay scrollbar (§9.
     // Properties: open on a file; its body never reserves a native bar.
     const file = await page.evaluate(() => [...document.querySelectorAll('#list-scroll .fp-row')]
       .map((r) => r.dataset.path).find((p) => p && /\.\w+$/.test(p)));
+    // openProperties() resolves once the modal is rendered and shown.
     await page.evaluate((p) => openProperties(p), file);
     await page.waitForFunction(() => document.getElementById('properties-modal-scrim').style.display !== 'none');
-    await page.waitForTimeout(300);
+    await frames(page);
+    await page.waitForFunction(() => window.__fpIconsIdle());
     expect(await nativeBars(page, '#properties-modal')).toEqual([]);
     expect(await xOverflow(page, '#properties-modal')).toEqual([]);
     await page.evaluate(() => closeProperties());
@@ -534,11 +538,11 @@ test('sweep (§12): no permanent bars or sideways overflow in settings, search p
       // Settings screen, every section — inspector open, the narrowest case.
       await page.evaluate(() => setInspectorOpen(true, { persist: false }));
       await page.evaluate(() => switchScreen('settings'));
-      await page.waitForTimeout(200);
+      await frames(page);
       const navs = await page.locator('.settings-nav__item').count();
       for (let i = 0; i < navs; i++) {
         await page.locator('.settings-nav__item').nth(i).click();
-        await page.waitForTimeout(100);
+        await frames(page);
         for (const o of await xOverflow(page, '#screen-settings')) offenders.push(tag(`settings x: ${o}`));
         for (const o of await nativeBars(page, '#screen-settings')) offenders.push(tag(`settings bar: ${o}`));
         // The content is never squeezed to nothing: at least 200px of it,
@@ -569,7 +573,7 @@ test('sweep (§12): no permanent bars or sideways overflow in settings, search p
 
       // Search dropdown.
       await page.evaluate(() => { focusSearchInput(); openSearchDropdown(); });
-      await page.waitForTimeout(150);
+      await frames(page);
       await expect(page.locator('#search-dropdown')).toBeVisible();
       for (const o of await xOverflow(page, '#search-dropdown')) offenders.push(tag(`search dd x: ${o}`));
       for (const o of await nativeBars(page, '#search-dropdown')) offenders.push(tag(`search dd bar: ${o}`));
@@ -579,14 +583,14 @@ test('sweep (§12): no permanent bars or sideways overflow in settings, search p
 
       // More filters modal.
       await page.evaluate(() => openMoreFilters());
-      await page.waitForTimeout(150);
+      await frames(page);
       for (const o of await xOverflow(page, '#search-filters-modal')) offenders.push(tag(`filters x: ${o}`));
       for (const o of await nativeBars(page, '#search-filters-modal')) offenders.push(tag(`filters bar: ${o}`));
       await page.evaluate(() => closeMoreFilters());
 
       // Ask File+ popout.
       await page.evaluate(() => openAskPopout());
-      await page.waitForTimeout(150);
+      await frames(page);
       for (const o of await xOverflow(page, '#ask-popout')) offenders.push(tag(`ask x: ${o}`));
       for (const o of await nativeBars(page, '#ask-popout')) offenders.push(tag(`ask bar: ${o}`));
       const ask = await page.locator('#ask-popout').boundingBox();

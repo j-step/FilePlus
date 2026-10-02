@@ -78,11 +78,13 @@ April "one fix at a time" rule is retired (D10).
   no registry.
 - `filetypes.js` and `icons-sprite.js` are generated, not hand-edited: `filetypes.js` from
   `backend/filetypes.py` via `scripts/build_filetypes.py`; `icons-sprite.js` (the Fluent chrome
-  sprite) via `scripts/build_icons.js`. `verify.ps1`'s frontend-gates stage runs `check_menu_cases.js`
-  (every `cm-*` action has a switch case), `check_icons.js` (sprite references resolve — symbol/
-  family counts, no raw `<svg>` outside the sprite) and a real parity gate for `filetypes.js` only
-  (rebuilds to `artifacts/`, SHA256-compares, logged as `check_filetypes_parity: ok`); `contrast_check.py`
-  (stage 3/6) is a separate gate. `icons-sprite.js` has no parity gate — `verify.ps1` never runs
+  sprite) via `scripts/build_icons.js`. `verify.ps1`'s frontend-gates stage (3/4) runs `check_menu_cases.js`
+  (every `cm-*` action has a switch case; every `data-action` has a case or is in `IN_SCOPE_ACTIONS`,
+  bar a listed set of placeholders on unbuilt screens), `check_icons.js` (sprite references resolve,
+  including `icons.js`'s `FP_DYNAMIC_ICON_SYMBOLS` for names passed as variables — symbol/family
+  counts, no raw `<svg>` outside the sprite) and a real parity gate for `filetypes.js` only (rebuilds
+  to `artifacts/` and compares the text with line endings normalised, logged as
+  `check_filetypes_parity: ok`); `contrast_check.py` (stage 2/4) is a separate gate. `icons-sprite.js` has no parity gate — `verify.ps1` never runs
   `build_icons.js`, so a hand edit that keeps references resolving still passes `check_icons.js`.
 - Bridge methods added in Stage 2C live on `window.electronAPI` (`preload.js`):
   `fileIcon`, `thumbnail`, `showProperties`, `openWithDialog`, `apiPort` — `icons.js` calls the

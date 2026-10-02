@@ -1908,6 +1908,12 @@ function updateSearchBreadcrumb(root) {
  */
 function leaveSearchMode() {
   if (browserState.mode !== 'search') return;
+  // clearSearch()'s own re-list landing: it reset the bar (and ended the
+  // search) when it started, so whatever is in the bar now — text, chips, an
+  // armed debounce, a search in flight — was typed since and belongs to the
+  // NEXT search. Resetting it here wiped that text and cancelled its search
+  // (Task 11 race).
+  const barIsNewer = exitKeepsBar();
   browserState.mode = 'browse';
   browserState.searchRoot = null;
   // search.js loads after browser.js, so its exports only exist once the app
@@ -1916,20 +1922,29 @@ function leaveSearchMode() {
   // request and bump the sequence runSearch()'s superseded() checks so a
   // response that lands after this navigation is ignored instead of
   // repainting stale search results over the folder we're navigating to.
-  if (typeof abortSearch === 'function') abortSearch();
-  if (typeof searchState !== 'undefined' && searchState) searchState._seq++;
+  if (!barIsNewer) {
+    if (typeof abortSearch === 'function') abortSearch();
+    if (typeof searchState !== 'undefined' && searchState) searchState._seq++;
+  }
   const listScroll = document.getElementById('list-scroll');
   if (listScroll) delete listScroll.dataset.mode;
   const header = document.getElementById('list-search-header');
   if (header) { header.hidden = true; header.innerHTML = ''; }
   const tab = typeof activeTab === 'function' ? activeTab() : null;
   if (tab) tab.search = null;
-  if (typeof searchResetBar === 'function') searchResetBar();
+  if (!barIsNewer && typeof searchResetBar === 'function') searchResetBar();
+}
+
+/** True while the load now committing is clearSearch()'s re-list (see
+ * exitSearchResults' barCleared): the bar was reset when it started. */
+function exitKeepsBar() {
+  const rec = browserState._pendingExit;
+  return !!(rec && rec.barCleared && pendingNavFor(rec));
 }
 
 /** Leaves search mode and re-lists the folder the active tab was showing —
  * the breadcrumb's × and search.js's clearSearch(). */
-function exitSearchResults() {
+function exitSearchResults({ barCleared = false } = {}) {
   if (browserState.mode !== 'search') return undefined;
   const tab = typeof activeTab === 'function' ? activeTab() : null;
   const target = tab && tab.path !== undefined ? tab.path : browserState.path;
@@ -1937,7 +1952,9 @@ function exitSearchResults() {
   // keeps the results if it cannot be).
   // Recorded before the load, like visitHistory()'s step: a synchronous
   // commit (This PC, a cached listing) clears it.
-  browserState._pendingExit = { seq: browserState._loadSeq + 1, tabId: tabs.activeId };
+  // barCleared: the caller (clearSearch) has already reset the bar, so the
+  // commit must not reset it again over newer typing (leaveSearchMode).
+  browserState._pendingExit = { seq: browserState._loadSeq + 1, tabId: tabs.activeId, barCleared };
   return loadDirectory(target, { addToHistory: false });
 }
 
@@ -2435,18 +2452,26 @@ function onSelectionChanged() {
   // The Inspector's Open / Open with… / Reveal follow the selection at once,
   // not after the panel's debounce.
   if (typeof syncInspectorActions === 'function') syncInspectorActions();
+  // An armed debounce counts as inspector work still to come
+  // (window.__fpInspectorPending, inspector.js — the tests' settle signal).
+  if (_inspectorDebounceTimer === null) window.__fpInspectorPending++;
   clearTimeout(_inspectorDebounceTimer);
   _inspectorDebounceTimer = setTimeout(() => {
-    const n = browserState.selection.size;
-    if (n === 0) {
-      _inspectorSeq++; // invalidate any fetch still in flight from the prior selection
-      // updateInspector('none') renders the full empty state itself now
-      // (including revoking any preview blob: URL) — no separate call needed.
-      updateInspector('none');
-    } else if (n === 1) {
-      showInspectorFor([...browserState.selection][0]);
-    } else {
-      showInspectorMulti(getSelectedPaths());
+    _inspectorDebounceTimer = null;
+    try {
+      const n = browserState.selection.size;
+      if (n === 0) {
+        _inspectorSeq++; // invalidate any fetch still in flight from the prior selection
+        // updateInspector('none') renders the full empty state itself now
+        // (including revoking any preview blob: URL) — no separate call needed.
+        updateInspector('none');
+      } else if (n === 1) {
+        showInspectorFor([...browserState.selection][0]);
+      } else {
+        showInspectorMulti(getSelectedPaths());
+      }
+    } finally {
+      window.__fpInspectorPending--;
     }
   }, 120);
 }

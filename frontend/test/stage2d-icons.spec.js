@@ -49,6 +49,8 @@ async function iconsSettled(page) {
     const rows = window.__fpSampleRows();
     return rows.length > 0 && rows.every((r) => r.settled || r.spriteVisible);
   }, null, { timeout: 8000 });
+  // ...and nothing is still on its way that could repaint one of them.
+  await page.waitForFunction(() => window.__fpIconsIdle(), null, { timeout: 8000 });
 }
 
 test('Windows-icon mode paints without flashing (Stage 2D §4)', async () => {
@@ -117,7 +119,8 @@ test('Windows-icon mode paints without flashing (Stage 2D §4)', async () => {
     expect(subSrc0).toHaveLength(3);
     for (const s of subSrc0) expect(s.src).toMatch(/^data:image\/png/); // the generic, painted with the row
     await iconsSettled(page);
-    await page.waitForTimeout(1500); // the per-path answers have long landed
+    // The per-path answers have landed (and any swap they caused is done).
+    await page.waitForFunction(() => window.__fpIconsIdle());
     const subSrcLate = (await page.evaluate(() => window.__fpSampleRows()))
       .filter((s) => /^Sub\d$/.test(s.name));
     expect(subSrcLate.map((s) => s.src)).toEqual(subSrc0.map((s) => s.src));
@@ -215,7 +218,9 @@ test('Windows-icon mode paints without flashing (Stage 2D §4)', async () => {
     await page.evaluate((p) => openBrowserAt(p), `${root}\\_gen`); // away and back: a fresh render
     await page.evaluate((p) => openBrowserAt(p), iconsDir);
     await page.evaluate(() => setView('icons', 96));
-    await page.waitForTimeout(2000);
+    // Every lazy slot asked, every answer (or refusal) in and painted.
+    await page.waitForFunction(() => !document.querySelector('#list-scroll [data-fp-lazy="pending"]')
+      && !window.__fpLoadPending && window.__fpIconsIdle(), null, { timeout: 8000 });
     const broken = await page.evaluate(() => {
       const row = [...document.querySelectorAll('#list-scroll .fp-row')].find((r) => r.querySelector('.fp-row__name').textContent === 'broken.png');
       const shown = [...row.querySelectorAll('img, svg.fp-icon')].filter((el) => {
@@ -387,13 +392,18 @@ test('generic folder icon: two agreeing folders, never a custom icon; cached nul
       fpShellIconRoute('unknown');
       const before = window.__fpIconStats.batches;
       await fpPrewarmGenerics(40);
-      await new Promise((r) => setTimeout(r, 300));
+      // A request would be queued into a batch flushed on the next macrotask
+      // (setTimeout 0): one macrotask later, a counted batch or a non-idle
+      // pipeline would show it — no 300 ms sleep needed.
+      await new Promise((r) => setTimeout(r, 0));
       const after = window.__fpIconStats.batches;
+      const idle = window.__fpIconsIdle();
       fpShellIconRoute('live');
-      return { known, requested: after - before };
+      return { known, requested: after - before, idle };
     });
     expect(quiet.known).toBe(false);
     expect(quiet.requested).toBe(0);
+    expect(quiet.idle).toBe(true);
 
     // -- Tier A absent: a folder whose answer is a definitive null keeps the
     // generic it was painted with, on that render and on every later one --
@@ -403,8 +413,7 @@ test('generic folder icon: two agreeing folders, never a custom icon; cached nul
       .filter((r) => /^Sub\d$/.test(r.querySelector('.fp-row__name').textContent))
       .map((r) => ({ src: r.querySelector('img[data-win-icon]')?.getAttribute('src') || null, sprite: !!r.querySelector('svg.fp-icon') })));
     await page.waitForFunction(() => !document.querySelector('#list-scroll img[data-win-icon][data-fp-lazy="pending"]')
-      && __fpLoadPending === 0, null, { timeout: 8000 });
-    await page.waitForTimeout(300);
+      && __fpLoadPending === 0 && window.__fpIconsIdle(), null, { timeout: 8000 });
     const generic16 = await page.evaluate(() => _fpGenerics.get(`dir:*:${fpDevicePx(16)}`));
     const firstRender = await subState();
     await page.evaluate(() => renderDirectory());

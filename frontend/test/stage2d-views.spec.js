@@ -30,9 +30,21 @@ function menuActionFor(step) {
   return s < 80 ? 'view-medium' : (s < 192 ? 'view-large' : 'view-xl');
 }
 
+/** One Ctrl+wheel event, returning once the page has handled it: a capture
+ * listener counts wheel events, and the app's own (bubble) handler runs in
+ * the same dispatch — so a "nothing changed" check right after is
+ * deterministic, never a sleep. */
 async function ctrlWheel(page, dy) {
+  const seen = await page.evaluate(() => {
+    if (window.__fpWheelSeen === undefined) {
+      window.__fpWheelSeen = 0;
+      document.addEventListener('wheel', () => { window.__fpWheelSeen++; }, { capture: true, passive: true });
+    }
+    return window.__fpWheelSeen;
+  });
   await page.keyboard.down('Control');
   await page.mouse.wheel(0, dy);
+  await page.waitForFunction((n) => window.__fpWheelSeen > n, seen);
   await page.keyboard.up('Control');
 }
 
@@ -102,14 +114,12 @@ test('ladder: Ctrl+wheel walks the eight views in order, the menu check follows,
     }
     // Clamps at the top; the wheel never zooms the app.
     await ctrlWheel(page, -100);
-    await page.waitForTimeout(100);
     expect(await page.evaluate(() => currentViewStep())).toBe(LADDER.length - 1);
     expect(await page.evaluate(() => window.electronAPI.getZoom())).toBe(zoomBefore);
     // Wheel down steps back; half notches accumulate into one step.
     await ctrlWheel(page, 100);
     await expect.poll(() => viewNow(page)).toBe('icons@224');
     await ctrlWheel(page, 50);
-    await page.waitForTimeout(100);
     expect(await viewNow(page)).toBe('icons@224');
     await ctrlWheel(page, 50);
     await expect.poll(() => viewNow(page)).toBe('icons@192');
@@ -288,7 +298,10 @@ test('icon cells: s+28 wide, s×s icon, names wrap inside and clamp at 4 lines; 
     await page.waitForFunction(() => document.querySelectorAll('#list-scroll img.fp-thumb--ready').length >= 6, null, { timeout: 10_000 });
     for (const [label, view, size] of NAMED) {
       await page.evaluate(([v, s]) => setView(v, s, { manual: false }), [view, size]);
-      await page.waitForTimeout(400);
+      // Every visible slot asked for its bitmap and every answer painted.
+      await page.waitForFunction(() => !document.querySelector('#list-scroll [data-fp-lazy="pending"]')
+        && window.__fpIconsIdle(), null, { timeout: 10_000 });
+      await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
       await shot(page, `views-gallery-${label}`);
     }
   } finally {
@@ -446,8 +459,8 @@ test('per-folder view memory survives a restart; image folders default to Large,
     // ...and by a real close straight after a step.
     await ctrlWheel(page, -100);
     await expect.poll(() => viewNow(page)).toBe('icons@160');
-    expect(errors).toEqual([]);
     await app.close();
+    expect(errors).toEqual([]);   // after close: renderer.log errors are collected then
 
     ({ app, page, errors } = await launchApp());
     // The saved config has loaded (app init) before the first navigation.
@@ -458,11 +471,11 @@ test('per-folder view memory survives a restart; image folders default to Large,
     expect(await viewNow(page)).toBe('icons@160');
     await open(page, `${root}\\_gen\\Projects`, 1);
     expect(await viewNow(page)).toBe('details');
-    expect(errors).toEqual([]);
   } finally {
     await fetch(`${API}/config/ui.folder_views`, { method: 'DELETE', headers: apiHeaders() }).catch(() => {});
     await app.close();
   }
+  expect(errors).toEqual([]);
 });
 
 test('old ui.view_mode / ui.list_scale are dropped once; an unremembered folder still opens in Details', async () => {
@@ -480,10 +493,10 @@ test('old ui.view_mode / ui.list_scale are dropped once; an unremembered folder 
     const root = (await apiGet('/fs/list/root')).path;
     await open(page, `${root}\\_gen\\Projects`, 1);
     expect(await viewNow(page)).toBe('details');
-    expect(errors).toEqual([]);
   } finally {
     await app.close();
   }
+  expect(errors).toEqual([]);
 });
 
 test('Home keeps its own layout; Ctrl+wheel over the column header steps too; search results in List start at the left', async () => {
@@ -523,11 +536,11 @@ test('Home keeps its own layout; Ctrl+wheel over the column header steps too; se
     expect(left.fresh).toBe(0);
     expect(left.restored).toBe(300);
     await page.evaluate(() => clearSearch());
-    expect(errors).toEqual([]);
   } finally {
     await fetch(`${API}/config/ui.folder_views`, { method: 'DELETE', headers: apiHeaders() }).catch(() => {});
     await app.close();
   }
+  expect(errors).toEqual([]);
 });
 
 test('arrow keys move geometrically in every view', async () => {

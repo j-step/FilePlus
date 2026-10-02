@@ -517,7 +517,7 @@ function clearSearch() {
   }
   searchResetBar();
   closeSearchDropdown();
-  if (typeof exitSearchResults === 'function') exitSearchResults();
+  if (typeof exitSearchResults === 'function') exitSearchResults({ barCleared: true });
 }
 
 /** Resets the bar's own state and DOM only — no listing side effects. Called

@@ -3,35 +3,23 @@
 // findings (#75-#85, #147-#152). One Electron launch, one page; each section
 // restores whatever state it borrowed (selection, API stubs, panel width,
 // Settings pane) so the next one starts clean.
-const { test, expect, _electron: electron } = require('@playwright/test');
-const path = require('path');
+const { test, expect } = require('@playwright/test');
+const { launchApp, resetToDefaults } = require('./harness/app');
 
-const FRONTEND = path.join(__dirname, '..');
 const API = `http://127.0.0.1:${process.env.FILEPLUS_PORT || 9876}`;
 
 test.setTimeout(180_000);
 
 test('inspector, properties and settings: pass-2 regressions', async () => {
-  const env = { ...process.env };
-  delete env.ELECTRON_RUN_AS_NODE;
-  const app = await electron.launch({
-    executablePath: require('electron'),
-    args: [FRONTEND],
-    cwd: FRONTEND,
-    env,
-  });
-  const page = await app.firstWindow();
-  await page.emulateMedia({ reducedMotion: 'reduce' });
-  const errors = [];
+  // launchApp (harness): reduced motion, errors collected from the first
+  // renderer line on (renderer.log, read at close), app ready. Then default
+  // settings, waiting for the reloaded app to be ready again — not a sleep.
+  const { app, page, errors } = await launchApp();
   try {
-    page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
-    page.on('console', (m) => { if (m.type() === 'error') errors.push(`console: ${m.text()}`); });
-
-    await page.waitForSelector('#shell');
-    await page.evaluate(() => localStorage.clear());
-    await page.reload();
-    await page.waitForSelector('#shell');
-    await page.waitForTimeout(800);
+    await resetToDefaults(page);
+    // The inspector has caught up with the selection: its debounce has fired
+    // and every /file, /preview, /files/history fetch it started has landed.
+    const inspectorSettled = () => page.waitForFunction(() => window.__fpInspectorPending === 0);
 
     const token = process.env.FILEPLUS_API_TOKEN;
     const headers = token ? { 'X-FilePlus-Token': token } : {};
@@ -58,7 +46,7 @@ test('inspector, properties and settings: pass-2 regressions', async () => {
     // #inspector-preview carries an inline display:flex, so `hidden` alone was
     // inert and the previous file's image stayed on screen above "N selected".
     await page.evaluate((p) => selectRow(p), imgA);
-    await page.waitForTimeout(900);
+    await inspectorSettled();
     const previewShown = await page.evaluate(() => ({
       display: getComputedStyle(document.getElementById('inspector-preview')).display,
       hasImg: !!document.querySelector('#inspector-preview img'),
@@ -71,7 +59,7 @@ test('inspector, properties and settings: pass-2 regressions', async () => {
       selectRow(paths[0]);
       selectRow(paths[1], { ctrl: true });
     }, [imgA, `${picsDir}\\IMG_0002.png`]);
-    await page.waitForTimeout(900);
+    await inspectorSettled();
     const previewHidden = await page.evaluate(() => ({
       display: getComputedStyle(document.getElementById('inspector-preview')).display,
       // #149 — the single file's chips go with its id, so nothing that
@@ -89,7 +77,7 @@ test('inspector, properties and settings: pass-2 regressions', async () => {
     await page.evaluate((p) => openBrowserAt(p), genDir);
     await expect(crumbCurrent).toHaveText('_gen');
     await page.evaluate((p) => selectRow(p), docsDir);       // a folder
-    await page.waitForTimeout(900);
+    await inspectorSettled();
     const folderTagInput = await page.evaluate(() => {
       const el = document.getElementById('inspector-tag-input');
       return { disabled: el.disabled, placeholder: el.placeholder, fileId: _inspectorFileId };
@@ -101,7 +89,7 @@ test('inspector, properties and settings: pass-2 regressions', async () => {
     await page.evaluate((p) => openBrowserAt(p), docsDir);
     await expect(crumbCurrent).toHaveText('Documents');
     await page.evaluate((p) => selectRow(p), fileA);
-    await page.waitForTimeout(900);
+    await inspectorSettled();
     const fileTagInput = await page.evaluate(() => {
       const el = document.getElementById('inspector-tag-input');
       return { disabled: el.disabled, placeholder: el.placeholder, fileId: _inspectorFileId };
@@ -131,8 +119,10 @@ test('inspector, properties and settings: pass-2 regressions', async () => {
 
     // ── #80  Undoing a tag-add from History removes the chip too ────────────
     const tagUndo = await page.evaluate(async (p) => {
+      // Polls a condition (10 s cap) — a wait on the outcome, never a fixed sleep.
+      const until = async (cond) => { const end = Date.now() + 10_000; while (!cond() && Date.now() < end) await new Promise(r => setTimeout(r, 20)); };
       await addInspectorTag('pass2undotag');
-      await new Promise(r => setTimeout(r, 400));
+      await until(() => document.getElementById('inspector-tags').textContent.includes('pass2undotag'));
       const before = document.getElementById('inspector-tags').textContent;
       await reloadInspectorHistoryFor(p);
       const row = [...document.querySelectorAll('.inspector-history__row')]
@@ -140,7 +130,8 @@ test('inspector, properties and settings: pass-2 regressions', async () => {
       const btn = row && row.querySelector('[data-action="inspector-undo-op"]');
       if (!btn) return { before, after: null, found: false };
       await inspectorUndoOp(btn.dataset.opId, btn.dataset.batchId || null);
-      await new Promise(r => setTimeout(r, 900));
+      await until(() => !document.getElementById('inspector-tags').textContent.includes('pass2undotag')
+        && window.__fpInspectorPending === 0);
       return { before, after: document.getElementById('inspector-tags').textContent, found: true };
     }, fileA);
     expect(tagUndo.found).toBe(true);
@@ -154,13 +145,11 @@ test('inspector, properties and settings: pass-2 regressions', async () => {
         ? { id: 1, kind: 'Text', tags: [{ id: 1, name: 'work' }] }
         : orig(route, params));
       const paths = Array.from({ length: 60 }, (_, i) => `C:\\fake\\f${i}.txt`);
-      await showInspectorMulti(paths);
-      await new Promise(r => setTimeout(r, 200));
+      await showInspectorMulti(paths);           // resolves once its fetches have landed and rendered
       const host = document.getElementById('inspector-multi-tags');
       const out = { html: host.innerHTML, text: host.textContent };
       // …and under the cap the full-opacity claim still stands.
       await showInspectorMulti(paths.slice(0, 10));
-      await new Promise(r => setTimeout(r, 200));
       out.smallHtml = host.innerHTML;
       API.get = orig;
       return out;
@@ -175,13 +164,17 @@ test('inspector, properties and settings: pass-2 regressions', async () => {
     // (and leaves the Browser's own selection to repaint the panel when the
     // user comes back to it).
     await page.evaluate((p) => selectRow(p), fileA);
-    await page.waitForTimeout(900);
+    await inspectorSettled();
     const homeClick = await page.evaluate(async (p) => {
       document.body.insertAdjacentHTML('beforeend',
         `<div class="home-pane" id="probe-home-pane"><div class="fp-row" data-action="open-recent-file" data-path="${p}">` +
         `<span class="fp-row__name">doc-01.txt</span></div></div>`);
+      // Polls a condition (10 s cap) — a wait on the outcome, never a fixed sleep.
+      const until = async (cond) => { const end = Date.now() + 10_000; while (!cond() && Date.now() < end) await new Promise(r => setTimeout(r, 20)); };
       document.querySelector('#probe-home-pane .fp-row').click();
-      await new Promise(r => setTimeout(r, 1200));
+      // The inspector pipeline ran for it and has landed.
+      await until(() => _inspectorEntry && _inspectorEntry.path === p && window.__fpInspectorPending === 0
+        && document.getElementById('inspector-kind').textContent !== '—');
       const out = {
         entryPath: _inspectorEntry && _inspectorEntry.path,
         fileId: _inspectorFileId,
@@ -199,8 +192,11 @@ test('inspector, properties and settings: pass-2 regressions', async () => {
     // Clearing the Home selection hands the panel back to the Browser's own
     // selection instead of blanking it.
     const afterHomeClear = await page.evaluate(async () => {
+      // Polls a condition (10 s cap) — a wait on the outcome, never a fixed sleep.
+      const until = async (cond) => { const end = Date.now() + 10_000; while (!cond() && Date.now() < end) await new Promise(r => setTimeout(r, 20)); };
       homeClearSelection();
-      await new Promise(r => setTimeout(r, 1200));
+      await until(() => document.getElementById('inspector-filename').textContent === 'doc-00.txt'
+        && window.__fpInspectorPending === 0);
       return {
         filename: document.getElementById('inspector-filename').textContent,
         entryPath: _inspectorEntry && _inspectorEntry.path,
@@ -216,9 +212,10 @@ test('inspector, properties and settings: pass-2 regressions', async () => {
       const label = document.getElementById('val-inspector-width');
       const maxWidth = getComputedStyle(inspector).maxWidth;
       applyInspectorWidth(9999);                    // clamps to INSPECTOR_WIDTH_MAX
-      // A tick, so the measurement below reads the laid-out width rather than
-      // the value from before this frame's style recalc.
-      await new Promise(r => setTimeout(r, 200));
+      // Two frames, so the measurement below reads the laid-out width rather
+      // than the value from before this frame's style recalc.
+      const frames = () => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+      await frames();
       const clamped = {
         css: document.documentElement.style.getPropertyValue('--inspector-w-screen'),
         box: Math.round(inspector.getBoundingClientRect().width),
@@ -228,7 +225,7 @@ test('inspector, properties and settings: pass-2 regressions', async () => {
 
       slider.value = '400';
       slider.dispatchEvent(new Event('input', { bubbles: true }));
-      await new Promise(r => setTimeout(r, 200));
+      await frames();
       const fromSlider = { box: Math.round(inspector.getBoundingClientRect().width), label: label.textContent };
       applyInspectorWidth(340);
       return { maxWidth, clamped, fromSlider, sliderMax: slider.max, sliderMin: slider.min };
@@ -247,22 +244,25 @@ test('inspector, properties and settings: pass-2 regressions', async () => {
 
     // ── #79  Clicking into the accent field is not a validation failure ─────
     await page.evaluate(() => { switchScreen('settings'); switchSettingsPane('personalization'); });
-    await page.waitForTimeout(300);
     await page.evaluate(() => { document.getElementById('settings-accent-hex').value = ''; });
+    // The accent field's click/input handlers are synchronous (no timer, no
+    // fetch before they validate): once click()/fill() return, they have run.
     await page.locator('#settings-accent-hex').click();
-    await page.waitForTimeout(200);
     expect(await page.locator('#settings-accent-error').isHidden()).toBe(true);
     // Typing a real value still applies and persists it.
     await page.locator('#settings-accent-hex').fill('#AA5500');
-    await page.waitForTimeout(400);
     expect(await page.locator('#settings-accent-error').isHidden()).toBe(true);
     expect(await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--accent-custom').trim()))
       .toBe('#AA5500');
-    await page.evaluate(() => { resetAccentToDefault(); deleteSetting('ui.accent_hex'); });
+    // Persisted: and only once the save has landed may the reset's DELETE go
+    // out — sent while the POST was still in flight, it could arrive first and
+    // leave the accent saved for every later test.
+    await expect.poll(async () => (await (await fetch(`${API}/config`, { headers })).json())['ui.accent_hex'])
+      .toBe('#AA5500');
+    await page.evaluate(async () => { resetAccentToDefault(); await deleteSetting('ui.accent_hex'); });
 
     // ── #76  Scan & Index polls itself back to life ─────────────────────────
     await page.evaluate(() => switchSettingsPane('scan-index'));
-    await page.waitForTimeout(400);
     const poll = await page.evaluate(async () => {
       const orig = API.get.bind(API);
       let calls = 0;
@@ -276,7 +276,12 @@ test('inspector, properties and settings: pass-2 regressions', async () => {
         badge: document.getElementById('settings-index-running').hidden,
         addDisabled: document.querySelector('[data-action="settings-index-add"]').disabled,
       };
-      await new Promise(r => setTimeout(r, 2600));
+      // Until the pane's own poll has re-read the status past "running" (or
+      // 10 s, after which the assertions below fail) — not a fixed 2.6 s.
+      const deadline = Date.now() + 10_000;
+      while ((calls < 3 || !document.getElementById('settings-index-running').hidden) && Date.now() < deadline) {
+        await new Promise(r => setTimeout(r, 50));
+      }
       const afterRun = {
         badge: document.getElementById('settings-index-running').hidden,
         addDisabled: document.querySelector('[data-action="settings-index-add"]').disabled,
@@ -314,7 +319,6 @@ test('inspector, properties and settings: pass-2 regressions', async () => {
     expect(failedRead.addDisabled).toBe(false);
     expect(failedRead.text).toContain('read the index');
     await page.evaluate(async () => { await loadIndexStatus(); switchScreen('browser'); });
-    await page.waitForTimeout(500);
 
     // ── #78  A folder type outside the five options is reported, not rewritten
     const folderType = await page.evaluate(() => {
@@ -352,7 +356,7 @@ test('inspector, properties and settings: pass-2 regressions', async () => {
     expect(details.stale).toBe(false);
 
     await page.evaluate(() => clearSelection());
-    await page.waitForTimeout(300);
+    await inspectorSettled();   // nothing still fetching when the app closes
   } finally {
     await app.close();
   }

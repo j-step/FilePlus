@@ -67,6 +67,19 @@ const FP_FOLDER_SPECIALS = {
   screenshots: 'ft-folder-screenshots',
 };
 
+/** Every chrome symbol that reaches icon() / fpShellItemIcon() through a
+ * variable — a data table or a lookup — rather than as a literal at the call
+ * site: search.js's filter rows (`icon: '…'`) and app.js's QUICK_ACCESS_ICON
+ * (plus its 'folder' fallback). scripts/check_icons.js (verify) requires each
+ * name to resolve to a sprite symbol, and every value of those tables to be
+ * listed here — add a name here when a table gains one. (A literal icon() name
+ * is checked where it is written; ft-* family and folder symbols are checked
+ * against filetypes.js and FP_FOLDER_SPECIALS.) */
+const FP_DYNAMIC_ICON_SYMBOLS = Object.freeze([
+  'folder', 'file', 'history', 'drive', 'tag', 'filter', // search.js filter rows
+  'desktop', 'download', 'screenshots',                   // app.js QUICK_ACCESS_ICON
+]);
+
 /** Comparison form for a Windows path: forward slashes folded to back, any
  * trailing separator dropped, lower-cased (NTFS is case-insensitive). */
 function fpNormalizePath(p) {
@@ -429,6 +442,12 @@ const _FP_TIER_A_MAX_INFLIGHT = 2;  // POSTs in flight; later flushes wait their
 const _FP_TIER_B_MAX_ITEMS = 64;    // per electronAPI.fileIcons invoke (main.js slices the same)
 window.__fpIconStats = { requested: 0, keys: 0, batches: 0, tierA: 0, tierB: 0, dropped: 0 };
 let _fpLazySeq = 0;
+let _fpDecodeSwaps = 0; // _fpSwapAfterDecode swaps still waiting on decode()
+/** Nothing in the icon pipeline is still on its way: no batch queued, no
+ * shell icon / thumbnail / peek request unanswered, no decoded swap pending.
+ * The Electron tests' settle signal (instead of sleeping past it). */
+window.__fpIconsIdle = () => !_fpIconBatch && _fpIconInFlight.size === 0 && _fpThumbInFlight.size === 0
+  && _fpPeekInFlight.size === 0 && _fpDecodeSwaps === 0;
 
 /** The physical px every shell icon / thumbnail request for a `css`-px box
  * goes out at (Stage 2D §4.3): round(css * devicePixelRatio) snapped UP to
@@ -712,7 +731,9 @@ function _fpHasBitmap(img) {
 function _fpSwapAfterDecode(img, url, stillWanted, after) {
   const pre = new Image();
   pre.src = url;
+  _fpDecodeSwaps++;
   const swap = () => {
+    _fpDecodeSwaps--;
     if (!stillWanted()) return;
     img.src = url;
     if (after) after();

@@ -98,7 +98,9 @@ test('This PC: drive cards with icon, name, usage bar and free-of-total; history
     await expect(c.locator('.fp-drive-card__free')).toHaveText(freeText);
     // Card icons are the drive glyph in FilePlus mode.
     expect(await c.locator('.fp-drive-card__icon use').getAttribute('href')).toBe('#fp-drive');
-    await page.waitForTimeout(300);
+    // Before a screenshot: nothing in the icon pipeline still on its way
+    // (windowShot itself waits two frames for layout and paint).
+    await page.waitForFunction(() => window.__fpIconsIdle());
     await windowShot(app, page, 'thispc');
 
     // ── Null sizes (a disconnected network drive) and a nearly full drive ──
@@ -279,13 +281,16 @@ test('This PC: drive cards with icon, name, usage bar and free-of-total; history
     await expect(cards).toHaveCount(drives.length);
 
     // ── Light theme, then narrow + zoomed: nothing overflows sideways ──────
-    await page.evaluate(() => applyTheme('light'));
-    await page.waitForTimeout(200);
+    await page.evaluate(() => applyTheme('light'));   // a synchronous restyle; windowShot waits two frames
     await windowShot(app, page, 'thispc-light');
     await page.evaluate(() => applyTheme('dark'));
     await app.evaluate(({ BrowserWindow }) => { BrowserWindow.getAllWindows()[0].setSize(700, 600); });
     await setZoom(app, page, 1.5);
-    await page.waitForTimeout(400);
+    // The renderer has the window's real width (700 asked; the window's own
+    // minimum, 800, wins) at the new zoom, and has laid it out.
+    const contentW = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].getContentSize()[0]);
+    await page.waitForFunction((cw) => Math.abs(window.innerWidth * appZoom.current - cw) <= 2, contentW, { timeout: 5000 });
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
     const overflow = await page.evaluate(() => {
       const v = document.getElementById('thispc-view');
       const vr = v.getBoundingClientRect();
@@ -321,7 +326,9 @@ test('This PC in Windows-icon mode: every card carries the shell drive icon', as
     expect(await page.locator('#thispc-view .fp-drive-card__icon svg').count()).toBe(0);
     // The tab and the breadcrumb root never ask the shell about "thispc:".
     expect(await page.locator('[data-win-icon="thispc:"]').count()).toBe(0);
-    await page.waitForTimeout(300);
+    // Before a screenshot: nothing in the icon pipeline still on its way
+    // (windowShot itself waits two frames for layout and paint).
+    await page.waitForFunction(() => window.__fpIconsIdle());
     await windowShot(app, page, 'thispc-windows-icons');
   } finally {
     await fetch(`${API}/config/ui.icon_source`, { method: 'DELETE', headers: apiHeaders() }).catch(() => {});

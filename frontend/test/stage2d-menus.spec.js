@@ -96,11 +96,11 @@ test('sort Date… flyout, date column, keyboard and persistence', async () => {
     await expect(page.locator('.fp-context-menu:visible')).toHaveCount(0);
     await expect(fly).toHaveCount(0);
 
-    expect(errors).toEqual([]);
   } finally {
     try { await fetch(`${API}/config/ui.sort`, { method: 'DELETE', headers: apiHeaders() }); } catch { /* best effort */ }
     await app.close();
   }
+  expect(errors).toEqual([]);
 });
 
 test('flyout flips left at the right edge; root menu stays on screen', async () => {
@@ -134,8 +134,8 @@ test('flyout flips left at the right edge; root menu stays on screen', async () 
     const topLeft = await page.locator('#context-menu').boundingBox();
     expect(topLeft.x).toBeGreaterThanOrEqual(0);
     expect(topLeft.y).toBeGreaterThanOrEqual(0);
-    expect(errors).toEqual([]);
   } finally { await app.close(); }
+  expect(errors).toEqual([]);
 });
 
 test('keyboard activation keeps focus working; selection and focus survive a sort', async () => {
@@ -200,11 +200,11 @@ test('keyboard activation keeps focus working; selection and focus survive a sor
     await page.locator('.fp-context-menu [data-menu-label="Size"]').click();
     expect(await page.evaluate(() => document.activeElement === document.body)).toBe(false);
 
-    expect(errors).toEqual([]);
   } finally {
     try { await fetch(`${API}/config/ui.sort`, { method: 'DELETE', headers: apiHeaders() }); } catch { /* best effort */ }
     await app.close();
   }
+  expect(errors).toEqual([]);
 });
 
 test('date sort: access-denied and missing dates go last in both directions', async () => {
@@ -229,8 +229,8 @@ test('date sort: access-denied and missing dates go last in both directions', as
     expect(out.createdAsc).toEqual(['ok-old', 'ok-new', 'denied', 'null-date']);
     expect(out.createdDesc).toEqual(['ok-new', 'ok-old', 'denied', 'null-date']);
     expect(out.accessedAsc.slice(0, 2)).toEqual(['ok-old', 'ok-new']);
-    expect(errors).toEqual([]);
   } finally { await app.close(); }
+  expect(errors).toEqual([]);
 });
 
 test('Tab closes the whole menu; a stationary pointer cannot yank a keyboard-opened flyout', async () => {
@@ -272,7 +272,10 @@ test('Tab closes the whole menu; a stationary pointer cannot yank a keyboard-ope
       const beta = document.querySelector('#context-menu [data-menu-label="Beta"]');
       beta.dispatchEvent(new PointerEvent('pointerenter', { clientX: cmLastPointer.x, clientY: cmLastPointer.y }));
     });
-    await page.waitForTimeout(500);
+    // Ignored outright — the keyboard pointer mark is still set, i.e. the
+    // handler returned before arming the 300 ms close timer — rather than
+    // sleeping past the grace and hoping.
+    expect(await page.evaluate(() => cmKbdPointer !== null)).toBe(true);
     await expect(fly).toBeVisible();
     await page.evaluate(() => {
       const beta = document.querySelector('#context-menu [data-menu-label="Beta"]');
@@ -281,6 +284,6 @@ test('Tab closes the whole menu; a stationary pointer cannot yank a keyboard-ope
     await expect(fly).toHaveCount(0);
     await page.keyboard.press('Escape');
     await expect(visibleMenus).toHaveCount(0);
-    expect(errors).toEqual([]);
   } finally { await app.close(); }
+  expect(errors).toEqual([]);
 });
