@@ -438,3 +438,79 @@ async def test_undo_batch_catches_invalid_name_error(conn, sandbox, monkeypatch)
     out = await mover.undo_batch(conn, res["batch_id"])
     assert out["ops"] == [] and len(out["errors"]) == 1
     assert "InvalidNameError" in out["errors"][0]["error"]
+
+
+# ---- file in use (Task 14 follow-up) ---------------------------------------
+# A sharing violation (WinError 32) for the first attempts, as when the
+# inspector's hash/preview read still holds the file: the act step retries.
+
+def _flaky_rename(monkeypatch, failures, winerror=32):
+    real = os.rename
+    calls = []
+
+    def fake(src, dst):
+        calls.append(src)
+        if len(calls) <= failures:
+            raise PermissionError(13, "The process cannot access the file because it is being used by another process",
+                                  str(src), winerror)
+        return real(src, dst)
+    monkeypatch.setattr(mover.os, "rename", fake)
+    monkeypatch.setattr(mover, "_SHARING_RETRY_DELAYS", (0.0, 0.0, 0.0))
+    return calls
+
+
+async def test_trash_retries_a_file_in_use(conn, sandbox, monkeypatch):
+    p = _mk(sandbox, "busy/held.txt", "H")
+    calls = _flaky_rename(monkeypatch, failures=2)
+    r = await mover.trash(conn, p)
+    assert r["status"] == "done" and not p.exists() and Path(r["dest"]).read_text() == "H"
+    assert len(calls) == 3
+    rows = await ol.list_operations(conn)
+    assert rows[0]["executed"] == 1 and not rows[0]["error"]
+
+
+async def test_trash_gives_up_with_the_original_error(conn, sandbox, monkeypatch):
+    p = _mk(sandbox, "busy/stuck.txt", "S")
+    calls = _flaky_rename(monkeypatch, failures=99, winerror=33)
+    with pytest.raises(PermissionError) as info:
+        await mover.trash(conn, p)
+    assert getattr(info.value, "winerror", None) == 33
+    assert len(calls) == 4 and p.exists()
+    rows = await ol.list_operations(conn)
+    assert rows[0]["executed"] == 0 and "PermissionError" in rows[0]["error"]
+
+
+async def test_other_errors_are_not_retried(conn, sandbox, monkeypatch):
+    p = _mk(sandbox, "busy/denied.txt", "D")
+    calls = _flaky_rename(monkeypatch, failures=99, winerror=5)  # access denied: not "in use"
+    with pytest.raises(PermissionError):
+        await mover.trash(conn, p)
+    assert len(calls) == 1
+
+
+async def test_rename_and_move_retry_a_file_in_use(conn, sandbox, monkeypatch):
+    p = _mk(sandbox, "busy/r.txt", "R")
+    calls = _flaky_rename(monkeypatch, failures=1)
+    r = await mover.rename(conn, p, "r2.txt")
+    assert r["status"] == "done" and (sandbox / "busy" / "r2.txt").exists() and len(calls) == 2
+    d = sandbox / "busy" / "dir"
+    d.mkdir()
+    (d / "inner.txt").write_text("i")
+    dest = sandbox / "elsewhere"
+    dest.mkdir()
+    calls.clear()
+    monkeypatch.setattr(mover, "_SHARING_RETRY_DELAYS", (0.0, 0.0, 0.0))
+    r = await mover.move(conn, d, dest)  # a folder moves with os.rename
+    assert r["status"] == "done" and (dest / "dir" / "inner.txt").exists() and len(calls) == 2
+
+
+async def test_trash_waits_out_a_real_open_handle(conn, sandbox):
+    """An actual open handle without FILE_SHARE_DELETE, closed 150 ms later."""
+    import threading
+    if os.name != "nt":
+        pytest.skip("Windows sharing semantics")
+    p = _mk(sandbox, "busy/real.txt", "real")
+    fh = open(p, "rb")
+    threading.Timer(0.15, fh.close).start()
+    r = await mover.trash(conn, p)
+    assert r["status"] == "done" and not p.exists()

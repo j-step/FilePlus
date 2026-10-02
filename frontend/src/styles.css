@@ -1644,10 +1644,20 @@ svg { flex-shrink: 0; }
   cursor: not-allowed;
 }
 .fp-btn[aria-disabled="true"]:active { transform: none; }
-.fp-btn--primary:is([aria-disabled="true"], :disabled):is(:hover, :active) { background: var(--accent); }
+/* Disabled Open / Open with… / Reveal must read as disabled, not as a faded
+   call to action: a disabled primary drops its accent fill for the neutral
+   raised fill (as Fluent does), and both primary and secondary show muted
+   text at full opacity — the faded accent still read "click me" on the
+   neutral, Home and This PC panels (Task 14 follow-up). Cursor and tooltip
+   stay (above). */
+.fp-btn--primary:is([aria-disabled="true"], :disabled),
+.fp-btn--primary:is([aria-disabled="true"], :disabled):is(:hover, :active),
+.fp-btn--secondary:is([aria-disabled="true"], :disabled),
 .fp-btn--secondary:is([aria-disabled="true"], :disabled):is(:hover, :active) {
   background: var(--bg-raised);
   border-color: var(--border-subtle);
+  color: var(--text-tertiary);
+  opacity: 1;
 }
 
 .fp-button--ghost, .fp-btn--ghost {

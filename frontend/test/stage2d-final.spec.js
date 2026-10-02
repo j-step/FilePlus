@@ -277,6 +277,23 @@ test('Q18: a selected This PC drive card shows the drive in the inspector', asyn
       return { name: driveDisplayName(drive), mount: drive.mount, type: driveTypeText(drive), fs: drive.fs || '—', known: driveHasSize(drive) };
     });
     await expect(page.locator('#inspector-filename')).toHaveText(d.name);
+    // The drive's own icon (the This PC card's), never the folder sprite.
+    expect(await page.locator('#inspector-preview use').first().getAttribute('href')).toBe('#fp-drive');
+    // Disabled actions read as disabled: no accent fill, muted text.
+    const btn = await page.evaluate(() => {
+      const b = document.querySelector('#inspector [data-action="inspector-open"]');
+      const probe = document.createElement('span');
+      probe.style.cssText = 'color:var(--text-tertiary);background:var(--accent)';
+      document.body.appendChild(probe);
+      const p = getComputedStyle(probe), cs = getComputedStyle(b);
+      const out = { bg: cs.backgroundColor, accent: p.backgroundColor, color: cs.color, muted: p.color, cursor: cs.cursor, title: b.title };
+      probe.remove();
+      return out;
+    });
+    expect(btn.bg).not.toBe(btn.accent);
+    expect(btn.color).toBe(btn.muted);
+    expect(btn.cursor).toBe('not-allowed');
+    expect(btn.title).toMatch(/Select one item first/);
     await expect(page.locator('#inspector-filepath')).toHaveText(`${d.mount}\u200E`);
     // Reads "C:\" (not "\:C"): the mark keeps the drive path left-to-right.
     const pathRect = await page.evaluate(() => {
@@ -403,6 +420,17 @@ test('Q1/Q11/Q12/Q13/Q14/Q25: panels give the file list room; header, popout and
       for (const [head, cell] of cols) expect(head).toBe(cell);
       if (z === 1.5) await windowShot(app, page, 'final-narrow-800-sidebar480-z150');
     }
+    // N1 — a plain click on the inspector's handle (no movement) at this
+    // clamped width saves nothing and changes nothing.
+    const widthState = () => page.evaluate(() => [
+      document.documentElement.style.getPropertyValue('--inspector-w-screen'),
+      (window.__fpConfig || {})['ui.inspector_w'] ?? null]);
+    const before = await widthState();
+    const rb = await page.locator('#resizer').boundingBox();
+    await page.mouse.move(rb.x + rb.width / 2, rb.y + rb.height / 2);
+    await page.mouse.down();
+    await page.mouse.up();
+    expect(await widthState()).toEqual(before);
     // With the inspector closed the sidebar keeps its 480.
     await setZoom(app, page, 1);
     await page.evaluate(() => setInspectorOpen(false, { persist: false }));

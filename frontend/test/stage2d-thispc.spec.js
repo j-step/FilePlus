@@ -476,7 +476,17 @@ test('Inspector action row: disabled (tooltip kept) without one selected item; O
     };
     const states = () => page.evaluate(() => Object.fromEntries(['inspector-open', 'open-file-with', 'inspector-reveal'].map((a) => {
       const b = document.querySelector(`#inspector [data-action="${a}"]`);
-      return [a, { disabled: b.getAttribute('aria-disabled') === 'true', title: b.title, pe: getComputedStyle(b).pointerEvents, op: getComputedStyle(b).opacity }];
+      const cs = getComputedStyle(b);
+      // A disabled button reads as disabled: faded, or muted text on a fill
+      // that is not the accent (Task 14 follow-up).
+      const probe = document.createElement('span');
+      probe.style.cssText = 'color:var(--text-tertiary);background:var(--accent)';
+      document.body.appendChild(probe);
+      const pcs = getComputedStyle(probe);
+      const muted = cs.color === pcs.color && cs.backgroundColor !== pcs.backgroundColor;
+      probe.remove();
+      return [a, { disabled: b.getAttribute('aria-disabled') === 'true', title: b.title, pe: cs.pointerEvents,
+        looksOff: Number(cs.opacity) < 1 || muted, cursor: cs.cursor }];
     })));
 
     // This PC: nothing in the Browser is selected — all three disabled, with
@@ -489,7 +499,8 @@ test('Inspector action row: disabled (tooltip kept) without one selected item; O
       expect(v.disabled, a).toBe(true);
       expect(v.title, a).toMatch(/Select one item first/);
       expect(v.pe, a).not.toBe('none');
-      expect(Number(v.op), a).toBeLessThan(1);
+      expect(v.looksOff, a).toBe(true);
+      expect(v.cursor, a).toBe('not-allowed');
     }
     await btns.open.click({ force: true });
     await btns.openWith.click({ force: true });

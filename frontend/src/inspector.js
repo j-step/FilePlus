@@ -81,9 +81,10 @@ function updateInspector(mode, data = {}) {
     if (multiPane) multiPane.hidden = true;
     if (tabBar) tabBar.hidden = true;
     if (preview) preview.hidden = false;
-    // The drive glyph the This PC cards use (the shell's drive icon in
-    // Windows mode), never the folder one.
-    renderPreviewNone({ note: '', iconHtml: fpIconSource() === 'windows' ? null : icon('drive', 'fp-icon--40') });
+    // The drive icon exactly as the This PC cards draw it (thispc.js
+    // driveCardHtml): the shell's drive icon in Windows mode, the drive
+    // glyph otherwise — never the folder sprite.
+    renderPreviewNone({ note: '', iconHtml: fpShellItemIcon({ path: d.mount, is_dir: true }, 40, 'drive') });
     const name = driveDisplayName(d);
     if (filenameEl) { filenameEl.textContent = name; filenameEl.title = name; }
     // A left-to-right mark after the mount: the path line is laid out
@@ -911,14 +912,20 @@ function initResizer() {
     document.body.style.cursor = 'col-resize';
     document.body.style.userSelect = 'none';
     let lastW = startW;
+    // The rendered width can be the narrow-window clamp (styles.css), not the
+    // saved one: only a pointer that actually moved sets (and saves) a width —
+    // a plain click on the handle must not turn the clamp into the setting.
+    let moved = false;
     const onMove = ev => {
+      if (!moved && ev.clientX === startX) return;
+      moved = true;
       lastW = applyInspectorWidth(startW + (startX - ev.clientX) * zoom) ?? lastW;
     };
     const onUp = () => {
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
       // One write per drag, at the end — not one per mousemove.
-      applyInspectorWidth(lastW, { persist: true });
+      if (moved) applyInspectorWidth(lastW, { persist: true });
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup', onUp);
     };
