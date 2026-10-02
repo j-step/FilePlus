@@ -932,6 +932,7 @@ const TOOLBAR_SEARCH_MIN       = 180;
 const TOOLBAR_SEARCH_COLLAPSED = 28;
 const TOOLBAR_SEARCH_GROW_MAX  = 0.6;   // share of the free space content may grow the bar to
 const TOOLBAR_HYSTERESIS       = 24;
+const TOOLBAR_FADE             = 24;    // the path's leading fade (styles.css .is-overflowing)
 
 /** The width the search bar's content wants: its chrome, the chips and the
  * typed text (or the placeholder). Measured off the hidden ruler span, so it
@@ -950,10 +951,13 @@ function searchContentWidth() {
   const chipsW = chips && chips.childElementCount ? chips.scrollWidth + gap : 0;
   const icon = wrap.querySelector('.fp-search__icon');
   const iconW = icon ? icon.getBoundingClientRect().width || 14 : 14;
+  const clear = wrap.classList.contains('fp-search--has-content')
+    ? (document.getElementById('search-clear-inline')?.offsetWidth || 20) + gap : 0;
   return px(cs.paddingLeft) + px(cs.paddingRight) + px(cs.borderLeftWidth) + px(cs.borderRightWidth)
-    + iconW + gap + chipsW + text;
+    + iconW + gap + chipsW + text + clear;
 }
 
+let _layoutToolbarDepth = 0;
 function layoutToolbar() {
   const toolbar = document.getElementById('toolbar');
   const wrap = document.getElementById('breadcrumb-wrap');
@@ -977,7 +981,12 @@ function layoutToolbar() {
   const padding = (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0);
   // The room the path and the search slot share.
   const free = width - padding - fixed - gap * Math.max(0, visible - 1);
-  const crumbNatural = Math.max(crumbs.scrollWidth, crumbs.getBoundingClientRect().width);
+  // The path's natural width — with back whatever an ellipsized current
+  // crumb (.is-tight below) is hiding, so that cap never feeds back here.
+  const current = crumbs.querySelector('.fp-breadcrumb__crumb--current');
+  const label = current ? current.querySelector('.fp-breadcrumb__label') : null;
+  const hidden = label ? Math.max(0, label.scrollWidth - label.clientWidth) : 0;
+  const crumbNatural = Math.max(crumbs.scrollWidth, crumbs.getBoundingClientRect().width) + hidden;
 
   const room = free - crumbNatural;       // what the search may take beside the whole path
   const wasCollapsed = toolbar.dataset.search === 'collapsed';
@@ -1000,12 +1009,30 @@ function layoutToolbar() {
   const overlayW = Math.floor(Math.min(preferred, free - gap));
   slot.style.setProperty('--search-overlay-w', `${Math.max(TOOLBAR_SEARCH_COLLAPSED, overlayW)}px`);
   // The path overflows only when it does not fit beside what the slot takes.
-  wrap.classList.toggle('is-overflowing', crumbNatural > free - slotW + 0.5);
+  const overflowing = crumbNatural > free - slotW + 0.5;
+  wrap.classList.toggle('is-overflowing', overflowing);
+  // The current folder is never under the fade: when the wrap cannot hold it
+  // plus the 24px fade, the fade goes and the crumb ellipsizes to the wrap.
+  const wrapW = Math.max(0, Math.floor(free - slotW));
+  const currentW = current ? current.getBoundingClientRect().width + hidden : 0;
+  const tight = overflowing && currentW + TOOLBAR_FADE > wrapW;
+  wrap.classList.toggle('is-tight', tight);
+  wrap.style.setProperty('--crumb-current-max', `${wrapW}px`);
+  if (current) {
+    if (tight) current.title = label ? label.textContent : current.textContent;
+    else current.removeAttribute('title');
+  }
   // The Filters/History dropdown hangs leftward from the bar's right edge;
   // on a narrow bar it must not run past the toolbar's left edge, where the
   // main column clips it (styles.css .fp-search-dd).
   const ddRoom = slot.getBoundingClientRect().right - toolbar.getBoundingClientRect().left - 4;
   slot.style.setProperty('--search-dd-room', `${Math.max(0, Math.floor(ddRoom))}px`);
+  // A flip changes what is measurable (chips are display:none while folded):
+  // one more pass settles it.
+  if (collapsed !== wasCollapsed && _layoutToolbarDepth === 0) {
+    _layoutToolbarDepth++;
+    try { layoutToolbar(); } finally { _layoutToolbarDepth--; }
+  }
 }
 
 function initToolbarLayout() {
@@ -2696,7 +2723,7 @@ const IN_SCOPE_ACTIONS = new Set([
   'palette-open-file', 'palette-open-folder', 'palette-search-files',
   'open-palette', 'close-palette', 'palette-set-mode',
   // Toolbar search (Task 14)
-  'search-clear', 'search-remove-chip', 'search-expand-filter', 'search-pick-filter',
+  'search-clear', 'search-clear-inline', 'search-remove-chip', 'search-expand-filter', 'search-pick-filter',
   'search-more-filters', 'search-more-apply', 'search-more-cancel',
   'search-history-run', 'search-history-clear', 'search-index-drives', 'search-retry',
   // Settings › Scan & Index (Task 14)
@@ -2894,6 +2921,14 @@ document.addEventListener('click', e => {
     // ── Toolbar search (Task 14) ──────────────────────────────────
     case 'search-clear':
       clearSearch();
+      break;
+    case 'search-clear-inline':
+      // The bar's own ×: clears and, on a full bar, leaves the caret in it
+      // (Explorer); on a collapsed bar the empty overlay folds away.
+      clearSearch();
+      if (document.getElementById('toolbar')?.dataset.search !== 'collapsed') {
+        focusSearchInput({ keepDropdownClosed: true });
+      }
       break;
     case 'search-remove-chip':
       removeChip(Number(btn.dataset.chipIndex));
@@ -3758,10 +3793,16 @@ document.addEventListener('keydown', e => {
   if ((e.metaKey || e.ctrlKey) && e.key === 'k') { e.preventDefault(); openPalette(); }
   // Ctrl+F — the search bar (Explorer's key). In the collapsed toolbar it
   // opens as the overlay over the path (Stage 2D §6.2). Not behind a dialog.
+  // Never from another text field (inline rename, Ask File+, Settings):
+  // Ctrl+F there belongs to that field.
   if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && (e.key === 'f' || e.key === 'F')) {
-    e.preventDefault();
-    if (!(typeof anyScrimOpen === 'function' && anyScrimOpen())) focusSearchInput();
-    return;
+    const t = document.activeElement;
+    const editable = t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable);
+    if (!editable || t.id === 'search-input') {
+      e.preventDefault();
+      if (!(typeof anyScrimOpen === 'function' && anyScrimOpen())) focusSearchInput();
+      return;
+    }
   }
   // Ctrl+B — sidebar
   if ((e.metaKey || e.ctrlKey) && e.key === 'b') { e.preventDefault(); toggleSidebar(); }
@@ -3829,8 +3870,13 @@ document.addEventListener('keydown', e => {
   // button, a crumb, the new-tab "+", a tab): Enter/Space act on THAT
   // control (Stage 2D Task 7) — browserKeydown's preventDefault used to
   // swallow the button's own click and open the focused row instead.
+  // Only while that control has KEYBOARD focus (:focus-visible): a mouse
+  // click also leaves focus on a toolbar button, and a list cursor moved
+  // with the arrows since (browserKeydown hands DOM focus to the row then)
+  // must still open its row on Enter.
   const controlKeyActivation = (e.key === 'Enter' || e.key === ' ')
-    && activeEl?.closest?.('#sidebar, #toolbar, #tabbar');
+    && !!activeEl?.closest?.('#sidebar, #toolbar, #tabbar')
+    && activeEl.matches(':focus-visible');
   const browserScreenActive = document.getElementById('screen-browser')?.classList.contains('active');
   if (browserScreenActive && !isEditableTarget && !controlKeyActivation && typeof browserKeydown === 'function') {
     browserKeydown(e);

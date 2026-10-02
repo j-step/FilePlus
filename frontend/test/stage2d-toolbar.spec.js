@@ -84,7 +84,14 @@ const state = (page) => page.evaluate(() => {
   const ics = getComputedStyle(input);
   ctx.font = `${ics.fontWeight} ${ics.fontSize} ${ics.fontFamily}`;
   const inputShown = input.getClientRects().length > 0 && ics.visibility !== 'hidden';
+  const wcs = getComputedStyle(wrap);
+  const mask = wcs.webkitMaskImage || wcs.maskImage || 'none';
+  const lab = cur ? cur.querySelector('.fp-breadcrumb__label') : null;
   return {
+    masked: mask !== 'none',
+    curTruncated: !!lab && lab.scrollWidth > lab.clientWidth + 1,
+    curEllipsis: !!lab && getComputedStyle(lab).textOverflow === 'ellipsis',
+    curTitle: cur ? cur.getAttribute('title') : null,
     search: tb.dataset.search,
     narrowAttr: tb.hasAttribute('data-narrow'),
     of: wrap.classList.contains('is-overflowing'),
@@ -119,11 +126,16 @@ function invariants(s, label) {
   }
   if (!s.of && s.crumbNatural > s.wrap.w + 1) bad.push(`path clipped without is-overflowing: ${s.crumbNatural}>${s.wrap.w}`);
   if (!s.of && s.first && s.first.x - s.wrap.x > 12) bad.push(`path not left-anchored: ${s.first.x - s.wrap.x}`);
-  // Not overflowing: the whole current crumb is in view. Overflowing: the
-  // path is right-anchored, so the current crumb's END is the wrap's end (at
-  // 200 % on a small window the wrap can be narrower than one crumb).
-  if (s.cur && !s.of && (s.cur.r > s.wrap.r + 1 || s.cur.x < s.wrap.x - 1)) bad.push(`current crumb outside the wrap: ${s.cur.x}..${s.cur.r} vs ${s.wrap.x}..${s.wrap.r}`);
-  if (s.cur && s.of && Math.abs(s.cur.r - s.wrap.r) > 1) bad.push(`overflowing path not right-anchored: ${s.cur.r} vs ${s.wrap.r}`);
+  // The current folder is always readable: its crumb lies wholly inside the
+  // wrap, never under the leading fade, and if its text is cut it ends in an
+  // ellipsis (with the full name as a tooltip). Overflowing, the path is
+  // right-anchored on it.
+  if (s.cur) {
+    if (s.cur.r > s.wrap.r + 1 || s.cur.x < s.wrap.x - 1) bad.push(`current crumb outside the wrap: ${s.cur.x}..${s.cur.r} vs ${s.wrap.x}..${s.wrap.r}`);
+    if (s.masked && s.cur.x < s.wrap.x + 24 - 1) bad.push(`current crumb under the fade: ${s.cur.x - s.wrap.x}px from the edge`);
+    if (s.curTruncated && !(s.curEllipsis && s.curTitle)) bad.push('current crumb cut without an ellipsis + title');
+    if (s.of && Math.abs(s.cur.r - s.wrap.r) > 1) bad.push(`overflowing path not right-anchored: ${s.cur.r} vs ${s.wrap.r}`);
+  }
   if (s.tbScroll > s.tbClient + 1) bad.push(`toolbar overflows ${s.tbScroll}>${s.tbClient}`);
   return bad.map((b) => `${label}: ${b}`);
 }
@@ -180,15 +192,19 @@ test('path grows from the left; search shrinks then collapses BEFORE the path ca
 
     // A long query grows the bar past 280 into the free space (never into
     // the path); clearing it gives the width back.
-    await page.locator('#search-wrap').click();
-    await page.keyboard.type('a fairly long query that wants more room than the bar has');
+    // setSearchText: the bar's text without the debounced search a typed
+    // query would start (a real walk of the system drive).
+    await page.evaluate(() => {
+      focusSearchInput({ keepDropdownClosed: true });
+      setSearchText('a fairly long query that wants more room than the bar has');
+    });
     await twoFrames(page);
     s = await state(page);
     expect(invariants(s, '1400 drive typing')).toEqual([]);
     expect(s.sw.w).toBeGreaterThan(SEARCH_PREFERRED + 40);
     expect(s.inputW).toBeGreaterThan(300);
     await windowShot(app, page, 'toolbar-1400-long-query');
-    await page.evaluate(() => { clearSearch(); document.activeElement?.blur(); });
+    await page.evaluate(() => { searchResetBar(); document.activeElement?.blur(); });
     await twoFrames(page);
     s = await state(page);
     expect(s.sw.w).toBeCloseTo(SEARCH_PREFERRED, 0);
@@ -337,6 +353,27 @@ test('narrowest bar: collapsed + overflowing, current folder visible; Ctrl+F / m
     await page.evaluate(() => clearSearch());
     await expect(page.locator('#search-wrap')).not.toHaveClass(/fp-search--expanded/);
     await expect(page.locator('#search-collapsed')).toBeVisible();
+
+    // An ACTIVE search on the collapsed bar: the overlay covers the path's
+    // "Search in … ×", so the bar carries its own clear ×. One click ends
+    // the search, brings the listing back and folds the overlay.
+    await page.locator('#search-collapsed').click();
+    await page.keyboard.type('deep');
+    await page.keyboard.press('Enter');
+    await expect(page.locator('#list-search-header')).toBeVisible({ timeout: 6000 });
+    await page.evaluate(() => document.activeElement?.blur());
+    const clearX = page.locator('#search-clear-inline');
+    await expect(clearX).toBeVisible();
+    await expect(clearX).toHaveAttribute('aria-label', 'Clear search');
+    await windowShot(app, page, 'toolbar-narrow-active-search');
+    await clearX.click();
+    await expect(page.locator('#list-search-header')).toBeHidden();
+    await expect(page.locator('#search-input')).toHaveValue('');
+    await expect(page.locator('#list-scroll .fp-row[data-path$="deep-note.txt"]')).toBeVisible();
+    await expect(page.locator('#search-wrap')).not.toHaveClass(/fp-search--expanded/);
+    await expect(page.locator('#search-collapsed')).toBeVisible();
+    await expect(clearX).toBeHidden();
+    expect(await crumbRects()).toEqual(before);
   } finally {
     await page.evaluate(() => document.documentElement.style.setProperty('--sidebar-w-screen', '240px')).catch(() => {});
     await app.close();
@@ -381,9 +418,12 @@ test('Enter/Space on a focused toolbar button act on that button, not the focuse
     const viewsDir = `${root}\\Views`;
     await setSize(app, page, 1400, 800);
     await open(page, viewsDir);
-    // A FOLDER row has focus — Enter in the list would open it.
+    // A FOLDER row has focus — Enter in the list would open it. The toolbar
+    // button gets KEYBOARD focus (Tab), the case the divert is for.
     await page.locator('#list-scroll .fp-row[data-path$="Folder One"]').click();
-    await page.locator('#btn-sort-menu').focus();
+    await page.locator('#btn-view-menu').focus();
+    await page.keyboard.press('Tab');
+    await expect(page.locator('#btn-sort-menu')).toBeFocused();
     await page.keyboard.press('Enter');
     await expect(page.locator('#context-menu')).toBeVisible();
     expect(await page.evaluate(() => activeTab().path)).toBe(viewsDir);
@@ -391,7 +431,9 @@ test('Enter/Space on a focused toolbar button act on that button, not the focuse
     await expect(page.locator('#context-menu')).toBeHidden();
 
     await page.locator('#list-scroll .fp-row[data-path$="Folder One"]').click();
-    await page.locator('#btn-view-menu').focus();
+    await page.locator('#btn-sort-menu').focus();
+    await page.keyboard.press('Shift+Tab');
+    await expect(page.locator('#btn-view-menu')).toBeFocused();
     await page.keyboard.press(' ');
     await expect(page.locator('#context-menu')).toBeVisible();
     expect(await page.evaluate(() => activeTab().path)).toBe(viewsDir);
@@ -399,9 +441,52 @@ test('Enter/Space on a focused toolbar button act on that button, not the focuse
 
     // A breadcrumb crumb is a toolbar control too: Enter navigates THERE.
     await page.locator('#list-scroll .fp-row[data-path$="Folder One"]').click();
-    await page.evaluate((p) => document.querySelector(`#breadcrumb .fp-breadcrumb__crumb[data-path="${CSS.escape(p)}"]`).focus(), `${root}\\`);
+    await page.evaluate((p) => {
+      const crumbs = [...document.querySelectorAll('#breadcrumb .fp-breadcrumb__crumb')];
+      const i = crumbs.findIndex((c) => c.dataset.path === p);
+      crumbs[i - 1].focus();
+    }, `${root}\\`);
+    await page.keyboard.press('Tab');
     await page.keyboard.press('Enter');
     await page.waitForFunction((p) => activeTab().path === p && window.__fpLoadPending === 0, root);
+
+    // MOUSE users: a click leaves focus on the toolbar button, but arrowing
+    // through the list hands DOM focus to the row, so Enter opens the row.
+    await open(page, `${viewsDir}\\Folder One`);
+    await page.locator('#btn-up').click();                   // -> Views
+    await page.waitForFunction((p) => activeTab().path === p && window.__fpLoadPending === 0, viewsDir);
+    await page.keyboard.press('Home');                         // cursor on the first row: a folder
+    const firstFolder = await page.evaluate(() => browserState.focus);
+    expect(await page.evaluate(() => document.activeElement?.classList.contains('fp-row'))).toBe(true);
+    await page.keyboard.press('Enter');
+    await page.waitForFunction((p) => activeTab().path === p && window.__fpLoadPending === 0, firstFolder);
+
+    await open(page, viewsDir);
+    await page.locator('#btn-refresh').click();
+    await page.waitForFunction(() => window.__fpLoadPending === 0);
+    await page.keyboard.press('Home');
+    await page.keyboard.press('ArrowDown');                    // second row: a folder too
+    const secondFolder = await page.evaluate(() => browserState.focus);
+    await page.keyboard.press('Enter');
+    await page.waitForFunction((p) => activeTab().path === p && window.__fpLoadPending === 0, secondFolder);
+
+    // Ctrl+F never steals focus from another text field (inline rename).
+    await open(page, viewsDir);
+    await page.locator('#list-scroll .fp-row[data-path$="readme.md"]').click();
+    await page.keyboard.press('F2');
+    const renameFocused = () => page.evaluate(() => {
+      const a = document.activeElement;
+      return !!a && a.tagName === 'INPUT' && a.id !== 'search-input';
+    });
+    await expect.poll(renameFocused).toBe(true);
+    await page.keyboard.press('Control+f');
+    expect(await renameFocused()).toBe(true);
+    await page.keyboard.press('Escape');
+    // ...but from the list it does focus search.
+    await page.locator('#list-scroll .fp-row[data-path$="readme.md"]').click();
+    await page.keyboard.press('Control+f');
+    await expect(page.locator('#search-input')).toBeFocused();
+    await page.keyboard.press('Escape');
   } finally {
     await app.close();
   }

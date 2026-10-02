@@ -327,13 +327,11 @@ test('toolbar search: pass-2 regressions', async () => {
     await expect(page.locator('#search-wrap')).toHaveClass(/fp-search--expanded/);
     await expect(page.locator('#search-chips .fp-search-chip').first()).toBeVisible();
     await expect(searchHeader).toBeVisible({ timeout: 6000 });
-    // The open bar overlays the path (it never reflows it), so the search
-    // header's × sits under it: dispatched like the chip above — the clear
-    // that does not come from a blur or Escape is what is under test.
-    // Focus has moved on (the user clicked into the results) before the ×.
-    await page.evaluate(() => document.activeElement?.blur());
+    // The open bar overlays the path (it never reflows it), so the clear the
+    // user reaches is the bar's own × — a real click, the clear that does not
+    // come from a blur or Escape.
     await expect(page.locator('#search-wrap')).toHaveClass(/fp-search--expanded/);
-    await page.locator('#breadcrumb [data-action="search-clear"]').dispatchEvent('click');
+    await page.locator('#search-clear-inline').click();
     await expect(searchHeader).toBeHidden();
     await expect(page.locator('#search-wrap')).not.toHaveClass(/fp-search--expanded/);
     await expect(page.locator('#search-collapsed')).toBeVisible();

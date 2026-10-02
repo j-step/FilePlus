@@ -1905,12 +1905,13 @@ function updateBreadcrumb(path) {
     const iconHtml = isDriveRoot
       ? fpShellItemIcon({ path: cumulative, is_dir: true }, 16, 'drive', 'fp-breadcrumb__icon')
       : '';
-    return `<button class="${cls}" data-action="navigate-crumb" data-path="${escapeHtml(cumulative)}">${iconHtml}${escapeHtml(label)}</button>`;
+    // The label is its own span so a too-narrow bar can ellipsize the
+    // current crumb (styles.css .is-tight, Stage 2D §6.2).
+    return `<button class="${cls}" data-action="navigate-crumb" data-path="${escapeHtml(cumulative)}">${iconHtml}<span class="fp-breadcrumb__label">${escapeHtml(label)}</span></button>`;
   }).join('<span class="fp-breadcrumb__sep">·</span>');
+  // app.js's MutationObserver on #breadcrumb re-runs layoutToolbar() for this
+  // (before the next paint) — one layout pass per navigation.
   crumb.innerHTML = html;
-  // The path's natural width just changed: re-run the path/search collapse
-  // order now, not a frame later (app.js, Stage 2D §6.2).
-  if (typeof layoutToolbar === 'function') layoutToolbar();
 }
 
 /**
@@ -2467,6 +2468,10 @@ function browserKeydown(e) {
 
   const key = e.key;
   const ctrl = e.ctrlKey || e.metaKey;
+  // A key an element's own handler already took (the tab strip's roving
+  // arrows) still moves the list cursor as before, but must not pull DOM
+  // focus away from that element.
+  const handledElsewhere = e.defaultPrevented;
 
   if (e.altKey) {
     if (key === 'ArrowUp')         { e.preventDefault(); navUp(); }
@@ -2551,4 +2556,17 @@ function browserKeydown(e) {
     }
     default: break;
   }
+  // The list cursor and DOM focus move together: after a mouse click left
+  // focus on a toolbar button, arrowing through the list and pressing Enter
+  // must open the row, not re-fire the button (Stage 2D Task 7) — the same
+  // hand-over applySort() does after a re-render.
+  if (!handledElsewhere && LIST_CURSOR_KEYS.has(key)) focusCursorRow();
+}
+
+const LIST_CURSOR_KEYS = new Set(['ArrowDown', 'ArrowUp', 'ArrowLeft', 'ArrowRight', 'PageDown', 'PageUp', 'Home', 'End']);
+
+/** Gives DOM focus to the row under the list cursor (browserState.focus). */
+function focusCursorRow() {
+  const row = browserState.focus ? findListRow(browserState.focus) : null;
+  if (row && document.activeElement !== row) row.focus({ preventScroll: true });
 }

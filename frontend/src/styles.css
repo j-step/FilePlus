@@ -859,7 +859,8 @@ svg { flex-shrink: 0; }
 }
 #toolbar[data-search="collapsed"] .fp-toolbar__search:not(.fp-search--expanded) .fp-search__icon,
 #toolbar[data-search="collapsed"] .fp-toolbar__search:not(.fp-search--expanded) .fp-search__chips,
-#toolbar[data-search="collapsed"] .fp-toolbar__search:not(.fp-search--expanded) .fp-search__input {
+#toolbar[data-search="collapsed"] .fp-toolbar__search:not(.fp-search--expanded) .fp-search__input,
+#toolbar[data-search="collapsed"] .fp-toolbar__search:not(.fp-search--expanded) .fp-search__clear {
   display: none;
 }
 /* Opened while collapsed (the magnifier, Ctrl+F, a tag chip): an overlay that
@@ -972,6 +973,25 @@ svg { flex-shrink: 0; }
   -webkit-mask-image: linear-gradient(to right, transparent 0, #000 24px, #000 100%);
           mask-image: linear-gradient(to right, transparent 0, #000 24px, #000 100%);
 }
+/* The current folder is never faded: when the wrap is too narrow for it plus
+   the fade (layoutToolbar's .is-tight), the fade goes and the current crumb
+   itself is capped to the wrap and ends in an ellipsis. */
+.fp-breadcrumb-wrap.is-overflowing.is-tight {
+  -webkit-mask-image: none;
+          mask-image: none;
+}
+.fp-breadcrumb-wrap.is-tight .fp-breadcrumb__crumb--current {
+  display: inline-flex;
+  align-items: center;
+  max-width: var(--crumb-current-max, 100%);
+  min-width: 0;
+}
+.fp-breadcrumb__label { white-space: nowrap; }
+.fp-breadcrumb-wrap.is-tight .fp-breadcrumb__crumb--current .fp-breadcrumb__label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .fp-breadcrumb {
   display: flex;
   align-items: center;
@@ -1080,6 +1100,24 @@ svg { flex-shrink: 0; }
 }
 .fp-search__chips:empty { display: none; }
 .fp-search--has-chips .fp-search__input::placeholder { color: transparent; }
+/* In-bar clear ×: only while the bar holds text or chips. */
+.fp-search__clear {
+  display: none;
+  flex: none;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: var(--r-chip);
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  align-items: center;
+  justify-content: center;
+}
+.fp-search--has-content .fp-search__clear { display: inline-flex; }
+.fp-search__clear:hover { background: var(--bg-pressed); color: var(--text-primary); }
+.fp-search__clear:focus-visible { outline: 1px solid var(--accent); outline-offset: 0; }
 /* Off-screen ruler for the field-sizing fallback — never painted. */
 .fp-search__measure {
   position: absolute;

@@ -312,6 +312,14 @@
                  placeholder="Search files…" aria-label="Search files"
                  spellcheck="false" autocomplete="off"
                  role="combobox" aria-expanded="false" aria-controls="search-dropdown" />
+          <!-- In-bar clear (Explorer's model): shown whenever the bar holds
+               text or chips (.fp-search--has-content, search.js), so a search
+               always has a one-click exit — also when the collapsed bar's
+               overlay covers the path's "Search in … ×" (Stage 2D §6.2). -->
+          <button type="button" class="fp-search__clear" id="search-clear-inline"
+                  data-action="search-clear-inline" title="Clear search" aria-label="Clear search">
+            <svg class="fp-icon fp-icon--10" aria-hidden="true"><use href="#fp-close"></use></svg>
+          </button>
           <!-- Width ruler for the field-sizing:content fallback (search.js's
                resizeSearchInput) — never painted. -->
           <span class="fp-search__measure" id="search-measure" aria-hidden="true"></span>
