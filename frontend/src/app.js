@@ -345,8 +345,11 @@ function activateTab(id) {
       // Nothing of this tab's own to paint yet (a tab staged in the
       // background): #list-scroll still holds another tab's rows, which must
       // not be shown under this tab while its first fetch is in flight.
-      document.getElementById('list-scroll')?.replaceChildren();
-      browserState.listingTabId = null;
+      // The state goes with the rows: entries, selection, anchor, focus and
+      // path all belonged to the outgoing tab, and Delete / F2 / Ctrl+C /
+      // Ctrl+X / Ctrl+R would otherwise act on that folder's invisible rows.
+      // Until this tab's listing commits it has none (browserHasOwnListing).
+      clearBrowserListing();
     }
     showScreenDom('browser');
     if (typeof searchResetBar === 'function') searchResetBar();

@@ -57,6 +57,31 @@ async function settleKeys(app, page) {
   await page.waitForFunction((k) => (window.__fpSentinelKeys || 0) > k, n);
 }
 
+// Holds every /fs/list request for `dirPath` in the page until
+// releaseListings() — "while the fetch is in flight" becomes a state the test
+// can sit in, not a race against the backend.
+async function holdListings(page, dirPath) {
+  await page.evaluate((held) => {
+    window.__fpHeld = [];
+    window.__fpOrigGet = window.__fpOrigGet || API.get;
+    API.get = function (route, params, ...rest) {
+      if (route === '/fs/list' && params && params.path === held) {
+        return new Promise((res) => { window.__fpHeld.push(res); })
+          .then(() => window.__fpOrigGet.call(API, route, params, ...rest));
+      }
+      return window.__fpOrigGet.call(API, route, params, ...rest);
+    };
+  }, dirPath);
+}
+async function releaseListings(page) {
+  await page.evaluate(() => {
+    API.get = window.__fpOrigGet;
+    (window.__fpHeld || []).splice(0).forEach((res) => res());
+  });
+  await page.waitForFunction(() => !window.__fpLoadPending);
+}
+const latestOperation = async () => JSON.stringify((await apiGet('/operations?limit=1'))[0] || null);
+
 // Chromium reports a 404 fetch as a console error ("Failed to load resource")
 // even when the app catches it. The checks below provoke a few of those on
 // purpose (folders deleted on disk, a folder that never existed); anything
@@ -370,6 +395,51 @@ test('refresh in place, one render per navigation, cached tab repaint, no defaul
     await expect(rowByName(page, 'rz-03.txt')).toHaveCount(1);
     expect(fs.existsSync(path.join(renameZone, 'half.txt'))).toBe(false);
 
+    // fix round 2: every rename the app starts is counted, so "no rename
+    // happened" is read synchronously, not waited for.
+    await page.evaluate(() => {
+      window.__fpRenameCalls = 0;
+      const orig = fileops.rename;
+      fileops.rename = function (...args) { window.__fpRenameCalls++; return orig.apply(fileops, args); };
+    });
+    // A refresh that has to fully re-render (here: the DOM no longer matches
+    // the listing) destroys the rename input — which cancels it, never commits.
+    await page.evaluate((p) => startInlineRename(p), `${renameZone}\\rz-04.txt`);
+    await expect(renameInput).toBeFocused();
+    await page.keyboard.type('quarter');
+    await page.evaluate(() => document.querySelector('#list-scroll .fp-row[data-path$="rz-01.txt"]').remove());
+    fs.writeFileSync(path.join(renameZone, 'rz-00-full.txt'), 'f');
+    const rendersBeforeFull = await page.evaluate(() => window.__fpRenderCount);
+    await page.evaluate(() => refreshDirectory());
+    expect(await page.evaluate(() => window.__fpRenderCount)).toBe(rendersBeforeFull + 1);   // it was a full render
+    expect(await page.evaluate(() => window.__fpRenameCalls)).toBe(0);
+    await expect(renameInput).toHaveCount(0);
+    await expect(rowByName(page, 'rz-04.txt')).toHaveCount(1);
+    expect(fs.existsSync(path.join(renameZone, 'quarter.txt'))).toBe(false);
+    // The row being renamed never moves, even when its sort key changes under
+    // it (sort by size; the file grows on disk): moving it would blur — and
+    // commit — the input.
+    await page.evaluate(() => applySort('size', 'asc'));
+    await page.evaluate((p) => startInlineRename(p), `${renameZone}\\rz-05.txt`);
+    await expect(renameInput).toBeFocused();
+    await page.keyboard.type('fifth');
+    fs.writeFileSync(path.join(renameZone, 'rz-05.txt'), 'x'.repeat(10_000));   // now the largest
+    fs.writeFileSync(path.join(renameZone, 'rz-00-moved.txt'), 'm');
+    await page.evaluate(() => refreshDirectory());
+    await expect(rowByName(page, 'rz-00-moved.txt')).toHaveCount(1);
+    await expect(renameInput).toBeFocused();
+    await expect(renameInput).toHaveValue('fifth.txt');
+    expect(await page.evaluate(() => window.__fpRenameCalls)).toBe(0);
+    await page.keyboard.press('Escape');
+    await expect(renameInput).toHaveCount(0);
+    expect(fs.existsSync(path.join(renameZone, 'fifth.txt'))).toBe(false);
+    // Once the rename has settled the row goes where it sorts (the largest
+    // file, last), and a refresh keeps it there.
+    expect(await page.evaluate(() => [...document.querySelectorAll('#list-scroll .fp-row__name')].pop().textContent)).toBe('rz-05.txt');
+    await page.evaluate(() => refreshDirectory());
+    expect(await page.evaluate(() => [...document.querySelectorAll('#list-scroll .fp-row__name')].pop().textContent)).toBe('rz-05.txt');
+    await page.evaluate(() => applySort('name', 'asc'));
+
     // ── A failed navigation out of search results keeps the results ─────────
     await page.evaluate((p) => openBrowserAt(p), docsDir);
     const searchGone = `${docsDir}\\zz-search-gone-2d`;
@@ -392,6 +462,24 @@ test('refresh in place, one render per navigation, cached tab repaint, no defaul
     await page.evaluate(() => clearSearch());
     await expect(crumbCurrent).toHaveText('Documents');
     expect(await page.evaluate(() => browserState.mode)).toBe('browse');
+
+    // Back pressed twice while the first Back is still leaving the search:
+    // the second steps on from where the first is going (fix round 2).
+    await page.evaluate((p) => openBrowserAt(p), bigDir);
+    await page.evaluate((p) => openBrowserAt(p), docsDir);
+    await expect(crumbCurrent).toHaveText('Documents');
+    await page.evaluate(() => {
+      const input = document.getElementById('search-input');
+      input.value = 'doc-0';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await page.waitForFunction(() => browserState.mode === 'search' && searchState.results && searchState.results.length > 0 && !searchState.inflight);
+    await holdListings(page, docsDir);
+    await page.evaluate(() => { navBack(); navBack(); });
+    await releaseListings(page);
+    await expect(crumbCurrent).toHaveText('Bulk');
+    expect(await page.evaluate(() => browserState.mode)).toBe('browse');
+    expect(await page.evaluate(() => nav.history[nav.index])).toBe(bigDir);
 
     // ── Opening a folder from Home keeps Home up until the listing lands ─────
     // The fetch is held in the page until released, so "while in flight" is a
@@ -432,6 +520,45 @@ test('refresh in place, one render per navigation, cached tab repaint, no defaul
     await expect(page.locator('.fp-tab.fp-tab--active .fp-tab__label')).toHaveText('Home');
     expect(await page.evaluate(() => activeTab().screen)).toBe('home');
     await page.locator('#toast-container .fp-toast--error button').click();
+
+    // ── A staged tab's first load: the old folder's state is gone too ───────
+    // Delete / F2 / Ctrl+R while a background tab's first fetch is in flight
+    // act on nothing — not on the invisible rows of the folder before it.
+    await page.evaluate((p) => openBrowserAt(p), docsDir);
+    await expect(crumbCurrent).toHaveText('Documents');
+    await rowByName(page, 'doc-00.txt').click();
+    await expect(rowByName(page, 'doc-00.txt')).toHaveClass(/fp-row--selected/);
+    const stagedId = await page.evaluate((pics) => {
+      const t = createTab({ screen: 'home', label: 'Home' });
+      openBrowserAt(pics, { tab: t });                       // staged, not loaded
+      return t.id;
+    }, picsDir);
+    await holdListings(page, picsDir);
+    await page.evaluate((id) => activateTab(id), stagedId);
+    await page.waitForFunction(() => (window.__fpHeld || []).length === 1);
+    expect(await page.evaluate(() => ({
+      rows: document.querySelectorAll('#list-scroll .fp-row').length,
+      selection: browserState.selection.size,
+      entries: browserState.entries.length,
+      path: browserState.path,
+    }))).toEqual({ rows: 0, selection: 0, entries: 0, path: null });
+    const opBefore = await latestOperation();
+    const rendersHeldTab = await page.evaluate(() => window.__fpRenderCount);
+    await page.evaluate(() => document.getElementById('list-scroll').focus());
+    await page.keyboard.press('Delete');
+    await page.keyboard.press('F2');
+    await page.keyboard.press('Control+r');
+    expect(await page.evaluate(() => window.__fpRenderCount)).toBe(rendersHeldTab);
+    expect(await page.evaluate(() => window.__fpLoadPending)).toBe(1);          // only the held first load
+    await expect(page.locator('#list-scroll .fp-row')).toHaveCount(0);
+    await expect(page.locator('.fp-row__rename')).toHaveCount(0);
+    await expect(page.locator('.fp-scrim:visible')).toHaveCount(0);            // no delete confirmation either
+    expect(await latestOperation()).toBe(opBefore);
+    expect(fs.existsSync(path.join(docsDir, 'doc-00.txt'))).toBe(true);
+    await releaseListings(page);
+    await expect(crumbCurrent).toHaveText('Pictures');
+    await expect(page.locator('#list-scroll .fp-row').first()).toBeVisible();
+    expect(fs.existsSync(path.join(docsDir, 'doc-00.txt'))).toBe(true);
 
     // ── Closed tabs drop their listing; the reopen stack is capped ──────────
     const closeId = await page.evaluate(() => {

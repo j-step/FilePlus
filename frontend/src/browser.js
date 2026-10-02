@@ -99,6 +99,10 @@ const browserState = {
   _pendingHistory: null,
   // The tab whose search results are on screen in 'search' mode.
   searchTabId: null,
+  // exitSearchResults()'s load while it is in flight: {seq} (searchExitPending).
+  _pendingExit: null,
+  // patchDirectory() left a row being renamed out of sorted order.
+  _orderDirty: false,
 };
 
 // Test hooks (Stage 2D §11): renders of the listing, and directory fetches
@@ -833,7 +837,7 @@ function refreshDirectory() {
       }
     });
   }
-  if (!browserState.path) return Promise.resolve();
+  if (!browserState.path || !browserHasOwnListing()) return Promise.resolve();
   const path = browserState.path;
   // #list-scroll is DOM shared by every tab: a refresh that lands after a tab
   // switch or a newer navigation must not patch somebody else's listing
@@ -924,20 +928,31 @@ function patchDirectory(newEntries, data = null) {
   const total = Math.max(oldEntries.length, newEntries.length);
   const domMatches = rows.length === oldEntries.length && oldEntries.length > 0;
 
-  if (changes === 0 && domMatches && truncatedBefore === browserState.truncated) {
+  // _orderDirty: an earlier patch left a renaming row out of sorted place;
+  // the row-by-row pass below puts it back once the rename has settled.
+  const orderDirty = !!browserState._orderDirty && !renaming;
+  if (changes === 0 && !orderDirty && domMatches && truncatedBefore === browserState.truncated) {
     applySelectionState();
     updateStatusBar();
   } else if (!domMatches || !newEntries.length || truncatedBefore !== browserState.truncated
              || (changes > total * PATCH_FULL_RENDER_SHARE && !(renamingPath && valid.has(renamingPath)))) {
     // (A full render would destroy an inline rename in progress; that one
     // case always takes the row-by-row path below instead.)
+    browserState._orderDirty = false;
     renderDirectory();
   } else {
     for (const o of removed) nodeByPath.get(entryPath(o))?.remove();
     const tpl = document.createElement('template');
+    // The row being renamed never moves, even if its sort key changed (a move
+    // detaches it, and a detached rename input blurs — which commits). Rows
+    // flow around it; it re-sorts with the refresh after the rename settles.
+    const pinned = (renamingPath && valid.has(renamingPath)) ? renaming : null;
     let cursor = listScroll.querySelector(':scope > .fp-row[data-path]');
+    const skipPinned = () => { while (cursor && cursor === pinned) cursor = cursor.nextElementSibling; };
     for (const e of sortedEntries()) {
       let node = nodeByPath.get(entryPath(e));
+      if (node && node === pinned) continue;
+      skipPinned();
       if (changed.has(e.name)) {
         tpl.innerHTML = renderFsRow(e, browserState.path);
         const fresh = tpl.content.firstElementChild;
@@ -948,9 +963,11 @@ function patchDirectory(newEntries, data = null) {
         node = fresh;
       }
       if (!node) continue;
+      skipPinned();
       if (node === cursor) cursor = node.nextElementSibling;
       else listScroll.insertBefore(node, cursor);
     }
+    browserState._orderDirty = !!pinned;
     applySelectionState();
     updateStatusBar();
   }
@@ -1017,19 +1034,28 @@ function pushHistory(path) {
   refreshNavButtons();
 }
 
+/** True while this tab's search is on screen but a navigation out of it
+ * (the × / Back / Up, or any other loadDirectory) is already in flight —
+ * search mode only ends when that listing commits. A second Back/Forward/Up
+ * then steps on from where the first is going instead of repeating it. */
+function searchExitPending() {
+  const ex = browserState._pendingExit;
+  return !!(ex && ex.seq === browserState._loadSeq && browserState.mode === 'search');
+}
+
 function navBack() {
   // Same Explorer rule navUp() follows: the first Back out of a results
   // listing leaves the search and returns to the folder that was searched —
   // searching never pushed a history entry of its own, so without this Back
   // silently skips PAST the searched folder to the previous one (pass 2 #154).
-  if (browserState.mode === 'search') return exitSearchResults();
+  if (browserState.mode === 'search' && !searchExitPending()) return exitSearchResults();
   const from = pendingHistoryIndex();
   if (from <= 0) return undefined;
   return visitHistory(from - 1);
 }
 
 function navForward() {
-  if (browserState.mode === 'search') return exitSearchResults();
+  if (browserState.mode === 'search' && !searchExitPending()) return exitSearchResults();
   const from = pendingHistoryIndex();
   if (from >= nav.history.length - 1) return undefined;
   return visitHistory(from + 1);
@@ -1054,7 +1080,7 @@ function navUp() {
   // was searched, not to that folder's parent. This is the one path behind the
   // toolbar Up button, Alt+Up and Backspace (browserKeydown, when
   // ui.backspace_deletes is off), so all three agree by construction.
-  if (browserState.mode === 'search') { exitSearchResults(); return; }
+  if (browserState.mode === 'search' && !searchExitPending()) { exitSearchResults(); return; }
   if (browserState.isRoot || !browserState.parent) return;
   loadDirectory(browserState.parent);
 }
@@ -1072,6 +1098,38 @@ function navUp() {
 function browserScreenActive() {
   const el = document.getElementById('screen-browser');
   return !!(el && el.classList.contains('active'));
+}
+
+/**
+ * Does #list-scroll hold the ACTIVE tab's own content — its committed folder
+ * listing, or its own search results? False while a tab's first fetch is in
+ * flight (clearBrowserListing): every shortcut that acts on the listing, and
+ * refresh, is then a no-op rather than acting on another tab's rows.
+ */
+function browserHasOwnListing() {
+  const id = typeof tabs !== 'undefined' ? tabs.activeId : null;
+  return browserState.mode === 'search'
+    ? browserState.searchTabId === id
+    : (!!browserState.path && browserState.listingTabId === id);
+}
+
+/** Empties the Browser listing — DOM and state together — for a tab that has
+ * nothing of its own to show yet. */
+function clearBrowserListing() {
+  leaveSearchMode();
+  document.getElementById('list-scroll')?.replaceChildren();
+  browserState.path = null;
+  browserState.entries = [];
+  browserState.parent = null;
+  browserState.isRoot = false;
+  browserState.truncated = false;
+  browserState.selection = new Set();
+  browserState.anchor = null;
+  browserState.focus = null;
+  browserState.listingTabId = null;
+  browserState._pendingHistory = null;
+  updateStatusBar();
+  onSelectionChanged();
 }
 
 function refreshNavButtons() {
@@ -1407,7 +1465,10 @@ function exitSearchResults() {
   const target = tab && tab.path !== undefined ? tab.path : browserState.path;
   // loadDirectory() ends this tab's search once the folder has loaded (and
   // keeps the results if it cannot be).
-  return loadDirectory(target, { addToHistory: false });
+  const p = loadDirectory(target, { addToHistory: false });
+  // loadDirectory() bumped _loadSeq synchronously, before its first await.
+  browserState._pendingExit = { seq: browserState._loadSeq };
+  return p;
 }
 
 function updateAddressBar(path) {
@@ -1685,6 +1746,9 @@ function startInlineRename(path) {
     if (settled) return;
     settled = true;
     input.replaceWith(nameEl);
+    // A refresh during the rename left this row where it was; now that the
+    // rename is over, put it where the current sort says (no re-fetch).
+    if (browserState._orderDirty && nameEl.isConnected) patchDirectory(browserState.entries);
   };
   const doRename = (newName) => {
     settled = true;
@@ -1710,6 +1774,16 @@ function startInlineRename(path) {
   };
   const commitFromBlur = () => {
     if (settled) return;
+    // A blur that comes from the row being re-rendered or removed under the
+    // input (a refresh) is not the user leaving the field: cancel, never
+    // rename without them confirming (fix round 2). Chromium fires that blur
+    // from inside the removal, while the input can still read as connected,
+    // so the decision waits for the current task's DOM work to finish.
+    queueMicrotask(commitAfterBlur);
+  };
+  const commitAfterBlur = () => {
+    if (settled) return;
+    if (!input.isConnected) { settled = true; return; }
     const newName = input.value.trim();
     if (!newName || newName === currentName) { restore(); return; }
     const error = validateEntryName(newName);
@@ -1872,6 +1946,12 @@ function browserKeydown(e) {
     }
     return;
   }
+
+  // Everything below acts on the listing (or the file clipboard / undo for
+  // it). A tab whose first listing is still loading — or that shows only an
+  // error banner — has none of its own: the folder it came from went with
+  // its rows (fix round 2). Alt+arrows above still navigate.
+  if (!browserHasOwnListing()) return;
 
   if (ctrl && key.toLowerCase() === 'a') {
     e.preventDefault();
