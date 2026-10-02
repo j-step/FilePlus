@@ -185,6 +185,15 @@ function createTab({ screen = 'home', path = null, history = [], historyIndex = 
     // deactivation and repainted on reactivation, so switching tabs and back
     // keeps the results without re-walking the tree.
     search: null,
+    // Stage 2D §4.2: this tab's last folder listing ({path, entries, parent,
+    // isRoot, truncated, fetchedAt}, entries by reference), painted at once
+    // when the tab is activated again and then revalidated. null until the
+    // tab has had a listing of its own.
+    listing: null,
+    // Set by refreshAll() on every tab but the active one: its listing is
+    // older than the refresh the user asked for. Cleared on activation, which
+    // always revalidates.
+    stale: false,
   };
   tabs.list.push(record);
   const el = createTabElement(record);
@@ -255,6 +264,10 @@ function syncActiveTabRecord() {
   // The live search bar + its results, or null when this tab is showing a
   // plain listing (search.js's captureSearchState).
   tab.search = typeof captureSearchState === 'function' ? captureSearchState() : null;
+  // The folder listing this tab shows, for the synchronous repaint when it is
+  // activated again (Stage 2D §4.2). Search results are not a folder listing:
+  // the tab keeps the one committed before the search started.
+  if (typeof rememberTabListing === 'function') rememberTabListing();
   const listScroll = document.getElementById('list-scroll');
   if (listScroll) tab.scrollTop = listScroll.scrollTop;
 }
@@ -310,10 +323,12 @@ function activateTab(id) {
     // render as tiles). Mirrors the listing branch's restore.view handling below.
     const cfg = window.__fpConfig || {};
     const cfgView = ['details', 'list', 'grid'].includes(cfg['ui.view_mode']) ? cfg['ui.view_mode'] : 'details';
-    if (typeof setViewMode === 'function') setViewMode(incoming.view || cfgView);
+    // render:false / invalidate:false — the results render right below is the
+    // only render (Stage 2D §4.2).
+    if (typeof setViewMode === 'function') setViewMode(incoming.view || cfgView, { render: false });
     if (typeof setListScale === 'function' && typeof LIST_SCALE_STEPS !== 'undefined') {
       const cfgScale = LIST_SCALE_STEPS.includes(cfg['ui.list_scale']) ? cfg['ui.list_scale'] : 1;
-      setListScale(incoming.listScale || cfgScale, { persist: false });
+      setListScale(incoming.listScale || cfgScale, { persist: false, invalidate: false });
     }
     // This tab's own selection + scroll offset come back with its results, the
     // same two things the folder branch below restores (pass 2 #153).
@@ -326,6 +341,7 @@ function activateTab(id) {
   } else if (incoming.screen === 'browser') {
     showScreenDom('browser');
     if (typeof searchResetBar === 'function') searchResetBar();
+    incoming.stale = false;
     const loaded = loadDirectory(incoming.isRootTarget ? null : incoming.path, {
       // Empty history means this tab was staged in the background (openBrowserAt
       // on an inactive tab) and is only now getting its first real fetch — treat
@@ -337,6 +353,10 @@ function activateTab(id) {
         view: incoming.view,
         listScale: incoming.listScale,
       },
+      // Stale-while-revalidate (Stage 2D §4.2): the tab's own last listing is
+      // painted synchronously — rows, scroll and selection in this same task,
+      // no empty frame — and the fetch only patches what changed.
+      cached: cachedListingFor(incoming),
     });
     // A search this tab had typed but not finished (its request was aborted
     // when it was switched away) re-runs once the folder listing underneath it
@@ -346,6 +366,7 @@ function activateTab(id) {
       Promise.resolve(loaded).then(() => resumeSearchForTab(pendingSearch, incoming.id));
     }
   } else {
+    incoming.stale = false;
     showScreenDom(incoming.screen);
     updateSidebarActive(incoming.screen);
     // browserState is global: a Home/Settings tab must not inherit the
@@ -363,6 +384,13 @@ function activateTab(id) {
     resetToolbarForNonBrowser(incoming.screen);
   }
   updateTabElementAppearance(incoming);
+}
+
+/** The tab's cached listing when it still describes the folder the tab is
+ * at, else null (Stage 2D §4.2). */
+function cachedListingFor(tab) {
+  const l = tab && tab.listing;
+  return (l && l.path && l.path === tab.path && Array.isArray(l.entries)) ? l : null;
 }
 
 // Load a screen's DOM into view (no tab-state changes, no data fetch —
@@ -444,6 +472,9 @@ function switchScreen(id, labelOverride) {
           view: tab.view,
           listScale: tab.listScale,
         },
+        // A listing fetched before a settings change (listingStale) is not
+        // worth painting first: the fetch would replace most of it.
+        cached: browserState.listingStale ? null : cachedListingFor(tab),
       });
     } else {
       // Already has a folder loaded, still sitting in #list-scroll from
@@ -558,6 +589,7 @@ function reopenLastTab() {
   // tab at search:null, so it has to be carried across explicitly or Ctrl+W /
   // Ctrl+Shift+T silently drops the results (pass 2 #18).
   restored.search = record.search;
+  restored.listing = record.listing || null;
   activateTab(restored.id);
 }
 
@@ -581,6 +613,8 @@ function duplicateTab(id) {
   // Duplicating a results tab duplicates the results, not the folder under
   // them — deep-cloned so the two tabs' snapshots never alias (pass 2 #18).
   copy.search = source.search ? JSON.parse(JSON.stringify(source.search)) : null;
+  // Listings are never mutated in place, so the two tabs can share one.
+  copy.listing = source.listing || null;
   // Place the duplicate right after its source, matching a browser's
   // "Duplicate tab" placement, instead of at the end of the strip.
   const copyEl = document.querySelector(`.fp-tab[data-tab-id="${copy.id}"]`);
@@ -599,7 +633,7 @@ function closeOtherTabs(id) {
 function seedInitialTab() {
   const el = document.querySelector('.fp-tab[data-tab-id]');
   const id = el ? el.dataset.tabId : 'tab-1';
-  const record = { id, screen: 'home', label: 'Home', path: null, history: [], historyIndex: -1, view: null, listScale: null, scrollTop: 0, selection: [], isRootTarget: false, search: null };
+  const record = { id, screen: 'home', label: 'Home', path: null, history: [], historyIndex: -1, view: null, listScale: null, scrollTop: 0, selection: [], isRootTarget: false, search: null, listing: null, stale: false };
   tabs.list.push(record);
   tabs.activeId = id;
   nav.history = record.history;
@@ -1956,6 +1990,47 @@ function showToast(message, variant = '') {
   container.appendChild(el);
 }
 
+// ── Refresh (Stage 2D §7) ─────────────────────────────────────────────────────
+// One 360° spin of the toolbar icon and one quick opacity dip of the list.
+// Classes come off on a timer (not animationend), so they never stick when
+// reduced motion removes the animation.
+const REFRESH_SPIN_MS = 400;
+const REFRESH_DIP_MS = 160;
+const _refreshFxTimers = { spin: 0, dip: 0 };
+
+function restartClassAnimation(el, cls, ms, timerKey) {
+  if (!el) return;
+  clearTimeout(_refreshFxTimers[timerKey]);
+  el.classList.remove(cls);
+  void el.offsetWidth; // restart the animation when it is already running
+  el.classList.add(cls);
+  _refreshFxTimers[timerKey] = setTimeout(() => el.classList.remove(cls), ms);
+}
+
+/**
+ * The single entry point for Ctrl+R, F5, the toolbar Refresh button and the
+ * empty-area menu's Refresh (Stage 2D §7.1). Re-lists what the active tab
+ * shows, in place: a folder is re-fetched and patched (scroll, selection,
+ * anchor, focus, view and size stay), search results are re-run, Home
+ * re-fetches its data. Every other tab is marked stale and revalidates when
+ * it is next activated.
+ */
+async function refreshAll() {
+  const tab = activeTab();
+  if (!tab) return;
+  tabs.list.forEach(t => { if (t.id !== tab.id) t.stale = true; });
+  const onBrowser = browserScreenActive();
+  restartClassAnimation(document.getElementById('btn-refresh'), 'is-spinning', REFRESH_SPIN_MS, 'spin');
+  if (onBrowser) {
+    // This PC (Task 8) hooks in here; until then there is nothing to re-read.
+    if (typeof tab.path === 'string' && tab.path.startsWith('thispc:')) return;
+    restartClassAnimation(document.getElementById('list-scroll'), 'is-refreshing', REFRESH_DIP_MS, 'dip');
+    await refreshDirectory();
+  } else if (tab.screen === 'home') {
+    await Promise.all([loadRecent(), loadFavorites()]);
+  }
+}
+
 async function triggerScan(path) {
   showToast('Scanning…', 'default');
   try {
@@ -2496,7 +2571,7 @@ document.addEventListener('click', e => {
       if (browserScreenActive()) retryLoad();
       break;
     case 'refresh-directory':
-      refreshDirectory();
+      refreshAll();
       break;
     case 'switch-tab':
       // btn IS the .fp-tab itself — it's the only data-action="switch-tab"
@@ -3042,7 +3117,7 @@ document.addEventListener('click', e => {
       fileops.newFile(contextTargetDir()).catch(fileopsReported);
       break;
     case 'cm-refresh':
-      refreshDirectory();
+      refreshAll();
       break;
     // Task 11: toggles the WHOLE selection (design spec §4.2 — "any count").
     // "Remove" only when every selected path is already favorited (matching
@@ -3438,6 +3513,15 @@ function initTabbarScroll() {
 
 // ── Keyboard shortcuts ────────────────────────────────────────────────────────
 document.addEventListener('keydown', e => {
+  // Ctrl+R / F5 — refresh in place (Stage 2D §7.1). There is no Electron menu
+  // any more, so nothing else would reload the page; preventDefault anyway so
+  // the keys never reach anything but refreshAll(). A modal dialog keeps them.
+  const ctrlR = (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && (e.key === 'r' || e.key === 'R');
+  if (ctrlR || e.key === 'F5') {
+    e.preventDefault();
+    if (!e.repeat && !(typeof anyScrimOpen === 'function' && anyScrimOpen())) refreshAll();
+    return;
+  }
   // ⌘K / Ctrl+K — command palette
   if ((e.metaKey || e.ctrlKey) && e.key === 'k') { e.preventDefault(); openPalette(); }
   // Ctrl+B — sidebar

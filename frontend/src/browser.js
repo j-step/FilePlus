@@ -86,7 +86,23 @@ const browserState = {
   // bail out instead of painting stale data over whatever's current. See
   // loadDirectory()'s reqTabId/reqSeq guard.
   _loadSeq: 0,
+  // The tab whose listing browserState.path/entries (and #list-scroll) hold —
+  // set by every committed listing. A failed navigation may only fall back
+  // to "keep what is on screen" when what is on screen is this tab's own.
+  listingTabId: null,
+  // When browserState.entries was fetched (ms epoch) — carried into the tab
+  // record's cached listing (Stage 2D §4.2).
+  fetchedAt: 0,
+  // A Back/Forward whose fetch is still in flight: {seq, index}. nav.index
+  // only moves once the fetch succeeds (pass-2 #55), so a second Back pressed
+  // before the first lands steps on from here instead of repeating it.
+  _pendingHistory: null,
 };
+
+// Test hooks (Stage 2D §11): renders of the listing, and directory fetches
+// still in flight. Read by the Electron tests, never by the app.
+window.__fpRenderCount = 0;
+window.__fpLoadPending = 0;
 
 // ── View modes ────────────────────────────────────────────────────────────────
 /**
@@ -100,23 +116,21 @@ const browserState = {
  * choice (loadDirectory()'s dynamic-media-view check, via decideViewAndScale)
  * does neither, so it never clobbers a default the user picked deliberately,
  * nor a future folder's own auto-decision.
+ *
+ * `render: false` is for internal callers that render the listing themselves
+ * right afterwards (loadDirectory() decides the view BEFORE its one render —
+ * Stage 2D §4.2 "one render per navigation").
  */
-function setViewMode(mode, { manual = false } = {}) {
+function setViewMode(mode, { manual = false, render = true } = {}) {
   const v = (mode === 'list' || mode === 'grid') ? mode : 'details';
   browserState.view = v;
   const listScroll = document.getElementById('list-scroll');
   const listHead   = document.getElementById('list-head');
   if (listScroll) {
-    // Suppress layout flicker by hiding briefly during the layout swap
-    listScroll.style.opacity = '0';
     listScroll.dataset.view = v;
     // Only 'details' shows the column header — 'list' (name-only) and
     // 'grid' both hide it (A.3.1's rule extended to the new name-only view).
     if (listHead) listHead.classList.toggle('list-head--grid-hidden', v !== 'details');
-    // Restore opacity on next paint — batches DOM updates before repaint
-    requestAnimationFrame(() => {
-      listScroll.style.opacity = '';
-    });
   }
   // Home — Recent and Favorites panes share the same view-mode toggle
   document.querySelectorAll('.home-pane').forEach(pane => {
@@ -129,7 +143,7 @@ function setViewMode(mode, { manual = false } = {}) {
   // Rows and tiles are different markup (a tile has a 96px thumbnail area
   // that requests a real shell thumbnail; a row has a 16px icon), so the
   // listing has to be re-rendered rather than just re-styled.
-  if (browserState.entries && browserState.entries.length) renderDirectory();
+  if (render && browserState.entries && browserState.entries.length) renderDirectory();
 }
 
 /**
@@ -140,12 +154,16 @@ function setViewMode(mode, { manual = false } = {}) {
  * or just re-syncing the already-persisted value) without touching the
  * user's actual saved preference.
  */
-function setListScale(v, { persist = true } = {}) {
+function setListScale(v, { persist = true, invalidate = true } = {}) {
   const scale = LIST_SCALE_STEPS.includes(v) ? v : 1;
   browserState.listScale = scale;
   const listScroll = document.getElementById('list-scroll');
   if (listScroll) {
     listScroll.style.setProperty('--list-scale', String(scale));
+    // `invalidate: false` — the navigation path sets the scale BEFORE its one
+    // render, so every icon is requested at the right size already and there
+    // is nothing on screen to re-resolve (Stage 2D §4.1 #1).
+    if (!invalidate) { if (persist) saveSetting('ui.list_scale', scale); return; }
     // Row/tile icons and thumbnails are sized in physical px from the CSS
     // box (icon-design.md §2), so a --list-scale change makes the old
     // bitmap the wrong size until it re-resolves. A timer, not rAF: an
@@ -477,61 +495,163 @@ function parentOfPath(p) {
 }
 
 /**
- * opts.restore (Stage 2C Task 7) — {scrollTop, selection, view} from a tab
- * record being reactivated: applied after the fresh render lands (selection
- * only for paths still present in the refreshed listing). Mutually exclusive
- * with opts.preserveSelection — activateTab() is the only restore caller and
- * it always passes addToHistory:false too.
+ * Loads `absPath` (null = the sandbox root) into the Browser listing.
+ *
+ * opts.restore (Stage 2C Task 7) — {scrollTop, selection, view, listScale}
+ * from a tab record being reactivated: applied with the render (selection
+ * only for paths present in the listing). Mutually exclusive with
+ * opts.preserveSelection — activateTab()/switchScreen() are the restore
+ * callers and they always pass addToHistory:false too.
+ *
+ * opts.cached (Stage 2D §4.2, stale-while-revalidate) — the tab's last
+ * listing {path, entries, parent, isRoot, truncated, fetchedAt}. Painted
+ * synchronously (rows, scroll, selection — no empty frame on a tab switch),
+ * then re-fetched; a changed answer is patched in (patchDirectory), an
+ * unchanged one touches nothing.
+ *
+ * opts.historyIndex — Back/Forward: the nav.history slot being visited. It
+ * becomes nav.index only once the fetch succeeds.
+ *
+ * One render per navigation (§4.2): the view and scale are decided BEFORE
+ * the single renderDirectory(). Navigation state — browserState.path, the
+ * tab's label, the breadcrumb, the sidebar highlight and history — commits
+ * only after a successful fetch (pass-2 #55): a failed navigation leaves the
+ * folder on screen and says why in an error toast.
  *
  * reqTabId/reqSeq (fix round 1) guard against the fetch resolving after this
  * call has been superseded — either by a tab switch (tabs.activeId no longer
  * reqTabId) or by a newer navigation in the same tab (browserState._loadSeq
- * moved on). Without this, an unawaited loadDirectory() left running while
- * the user switches tabs (or fires a second navigation before the first
- * lands) could paint a stale listing over whatever's actually current.
+ * moved on). A late answer for a tab that is no longer active may refresh
+ * that tab's cached listing, and never touches the DOM.
  */
 async function loadDirectory(absPath, opts = {}) {
-  const { addToHistory = true, preserveSelection = false, restore = null } = opts;
+  const { addToHistory = true, preserveSelection = false, restore = null, cached = null, historyIndex = null } = opts;
   const reqTabId = tabs.activeId;
   const reqSeq = ++browserState._loadSeq;
+  const superseded = () => tabs.activeId !== reqTabId || browserState._loadSeq !== reqSeq;
+  const wasSearch = browserState.mode === 'search';
   // Any real navigation ends a search — opening a result folder, Back, a
   // sidebar click, a spring-loaded drop. Done here rather than at each call
   // site so there is exactly one exit from search mode.
   leaveSearchMode();
   browserState.lastAttemptedPath = absPath;
-  // Sets the active tab's label/icon, the sidebar highlight, and (when
-  // absPath is a real path) the breadcrumb — synchronously, before the
-  // fetch below, so none of them wait on the network or get rewritten a
-  // second time once it resolves.
-  onNavigated(absPath);
+
+  const cachedListing = (cached && Array.isArray(cached.entries) && cached.path) ? cached : null;
+  if (cachedListing) {
+    commitListing({
+      path: cachedListing.path,
+      entries: cachedListing.entries,
+      parent: cachedListing.parent ?? null,
+      is_root: !!cachedListing.isRoot,
+      truncated: !!cachedListing.truncated,
+    }, { absPath, addToHistory, restore, historyIndex, fetchedAt: cachedListing.fetchedAt || 0 });
+  }
+
   let data;
+  window.__fpLoadPending++;
   try {
     data = absPath
       ? await API.get('/fs/list', { path: absPath, show_hidden: browserState.showHidden })
       : await API.get('/fs/list/root', { show_hidden: browserState.showHidden });
   } catch (err) {
-    if (tabs.activeId !== reqTabId || browserState._loadSeq !== reqSeq) return;
-    handleLoadError(err, absPath);
+    if (superseded()) return;
+    if (cachedListing) {
+      // The tab's own listing is on screen already: keep it and say why it
+      // could not be brought up to date.
+      showToast(loadErrorMessage(err, absPath), 'error');
+      return;
+    }
+    failNavigation(err, absPath, { reqTabId, wasSearch });
+    return;
+  } finally {
+    window.__fpLoadPending--;
+  }
+
+  if (superseded()) {
+    if (tabs.activeId !== reqTabId) storeBackgroundListing(reqTabId, data);
     return;
   }
-  if (tabs.activeId !== reqTabId || browserState._loadSeq !== reqSeq) return;
+  if (cachedListing && data.path === browserState.path) {
+    browserState.parent = data.parent;
+    browserState.isRoot = data.is_root;
+    patchDirectory(data.entries, data);
+    rememberTabListing();
+    return;
+  }
+  commitListing(data, { absPath, addToHistory, restore, preserveSelection, historyIndex });
+}
 
+/** The tab-record form of a listing (Stage 2D §4.2) — `entries` by
+ * reference, never copied: every writer replaces browserState.entries with a
+ * new array rather than mutating it. */
+function listingRecordFrom(data, fetchedAt = Date.now()) {
+  return {
+    path: data.path,
+    entries: data.entries,
+    parent: data.parent ?? null,
+    isRoot: !!(data.is_root ?? data.isRoot),
+    truncated: !!data.truncated,
+    fetchedAt,
+  };
+}
+
+/** Points the active tab's cached listing at what browserState now holds. */
+function rememberTabListing() {
+  const tab = activeTab();
+  if (!tab || browserState.mode === 'search' || !browserState.path) return;
+  if (browserState.listingTabId !== tab.id) return;
+  tab.listing = listingRecordFrom({
+    path: browserState.path, entries: browserState.entries, parent: browserState.parent,
+    is_root: browserState.isRoot, truncated: browserState.truncated,
+  }, browserState.fetchedAt || Date.now());
+}
+
+/** A fetch that landed after its tab stopped being the active one: it may
+ * refresh that tab's cached listing (the folder it is still showing), and
+ * never touches the DOM. */
+function storeBackgroundListing(tabId, data) {
+  const t = typeof tabRecordFor === 'function' ? tabRecordFor(tabId) : null;
+  if (!t || t.screen !== 'browser' || t.search || t.path !== data.path) return;
+  t.listing = listingRecordFrom(data);
+}
+
+/**
+ * Makes `data` the Browser listing: browserState, the tab record, the chrome
+ * (tab label, sidebar, breadcrumb, address bar, history) and ONE render, with
+ * the view and scale decided before it.
+ */
+function commitListing(data, { absPath, addToHistory = true, restore = null, preserveSelection = false, historyIndex = null, fetchedAt = Date.now() } = {}) {
   const prevSelection = preserveSelection ? new Set(browserState.selection) : null;
   const prevAnchor    = preserveSelection ? browserState.anchor : null;
-  const prevFocus      = preserveSelection ? browserState.focus : null;
+  const prevFocus     = preserveSelection ? browserState.focus : null;
 
   browserState.path = data.path;
   browserState.entries = data.entries;
   browserState.parent = data.parent;
   browserState.isRoot = data.is_root;
-  // Dynamic media view (Task 10): decided fresh on every real navigation —
-  // never for a tab-switch restore (restore.view below reapplies whatever
-  // that tab last showed instead), and never in a future search-results mode.
-  const decidedView = (!(restore && restore.view) && browserState.mode !== 'search')
-    ? decideViewAndScale(data.path, data.entries)
-    : null;
-  if (restore && restore.view) browserState.view = restore.view;
-  else if (decidedView) browserState.view = decidedView.view;
+  browserState.truncated = !!data.truncated;
+  browserState.fetchedAt = fetchedAt;
+  browserState.listingTabId = tabs.activeId;
+  browserState.listingStale = false;
+  browserState._pendingHistory = null;
+
+  // View + scale first, so the one render below paints rows at their final
+  // size. A tab-switch restore reapplies whatever that tab last showed;
+  // every real navigation decides fresh (dynamic media view, Task 10).
+  let view = null, scale = null;
+  if (restore && restore.view) {
+    view = restore.view;
+    // --list-scale is a single global custom property, so a restore has to
+    // re-assert THIS tab's scale too — otherwise the tab inherits whatever
+    // scale the outgoing tab (or a Ctrl+wheel zoom in it) last set (pass 2 #19).
+    scale = restore.listScale || null;
+  } else if (browserState.mode !== 'search') {
+    const decided = decideViewAndScale(data.path, data.entries);
+    view = decided.view;
+    scale = decided.scale;
+  }
+  if (scale) setListScale(scale, { persist: false, invalidate: false });
+  if (view) setViewMode(view, { manual: false, render: false });
 
   // Keep the active tab's own record continuously pointed at the real
   // (resolved) path — this is what lets switchScreen() tell "this tab has
@@ -546,21 +666,24 @@ async function loadDirectory(absPath, opts = {}) {
     // this the "This PC" label would be recomputed as its basename the first
     // time the tab is re-activated or duplicated (pass 2 #16).
     tab.isRootTarget = !absPath;
+    tab.listing = listingRecordFrom(data, fetchedAt);
+    tab.stale = false;
   }
-  browserState.listingStale = false;
-  // onNavigated(null) (the sandbox-root request) couldn't build breadcrumb
-  // crumbs from nothing — finalize them now that the real path is known.
+  // Tab label/icon, sidebar highlight and breadcrumb — only now that the
+  // folder is known to exist (pass-2 #55).
+  onNavigated(absPath);
+  // onNavigated(null) (the sandbox-root request) can't build breadcrumb
+  // crumbs from nothing — the real path is known now.
   if (!absPath) updateBreadcrumb(data.path);
 
+  const validPaths = new Set(data.entries.map(e => joinPath(data.path, e.name)));
   if (restore) {
-    const validPaths = new Set(data.entries.map(e => joinPath(data.path, e.name)));
     const restoredSelection = (restore.selection || []).filter(p => validPaths.has(p));
     browserState.selection = new Set(restoredSelection);
     browserState.anchor = restoredSelection.length ? restoredSelection[0] : null;
     browserState.focus  = restoredSelection.length ? restoredSelection[restoredSelection.length - 1] : null;
   } else if (preserveSelection && prevSelection) {
     // Keep only paths that still exist in the refreshed listing.
-    const validPaths = new Set(data.entries.map(e => joinPath(data.path, e.name)));
     browserState.selection = new Set([...prevSelection].filter(p => validPaths.has(p)));
     browserState.anchor = prevAnchor && validPaths.has(prevAnchor) ? prevAnchor : null;
     browserState.focus  = prevFocus && validPaths.has(prevFocus) ? prevFocus : null;
@@ -571,17 +694,10 @@ async function loadDirectory(absPath, opts = {}) {
   }
 
   renderDirectory(data);
-  if (restore && restore.view) {
-    // --list-scale is a single global custom property, so a restore has to
-    // re-assert THIS tab's scale too — otherwise the tab inherits whatever
-    // scale the outgoing tab (or a Ctrl+wheel zoom in it) last set (pass 2 #19).
-    if (restore.listScale) setListScale(restore.listScale, { persist: false });
-    setViewMode(restore.view);
-  } else if (decidedView) {
-    setListScale(decidedView.scale, { persist: false });
-    setViewMode(decidedView.view, { manual: false });
-  }
-  if (addToHistory) pushHistory(data.path);
+  if (historyIndex !== null && historyIndex >= 0 && historyIndex < nav.history.length) {
+    nav.index = historyIndex;
+    refreshNavButtons();
+  } else if (addToHistory) pushHistory(data.path);
   else refreshNavButtons();
   updateAddressBar(data.path);
   onSelectionChanged();
@@ -590,14 +706,56 @@ async function loadDirectory(absPath, opts = {}) {
   if (listScroll) listScroll.scrollTop = restore ? (restore.scrollTop || 0) : 0;
 }
 
-/** Re-fetches the current directory, keeping selection/anchor/focus (by path)
- * and the list scroll position where they still apply, and spins the
- * toolbar refresh button's icon for the duration — shared by the toolbar
- * button (data-action="refresh-directory"), F5, and the empty-area context
- * menu's Refresh item, all of which just call this (Task 8, playtest pass 1
- * §3.6). Returns loadDirectory's promise so callers (fileops.run(), inline
- * rename) can await the re-render actually landing before touching the DOM
- * again.
+/**
+ * A navigation whose fetch failed. Nothing about it is committed (pass-2
+ * #55): when this tab's own listing is on screen it stays, with the chrome
+ * re-pointed at it, and an error toast says why. A tab that was on another
+ * screen (a Home row, a sidebar link) goes back to that screen. Only a tab
+ * with no listing of its own to fall back on shows the error banner (Go back
+ * / Retry) for the folder it tried to open.
+ */
+function failNavigation(err, absPath, { reqTabId, wasSearch }) {
+  const tab = activeTab();
+  const message = loadErrorMessage(err, absPath);
+  if (tab && tab.screen !== 'browser') {
+    showScreenDom(tab.screen);
+    showToast(message, 'error');
+    return;
+  }
+  const ownListingShown = !wasSearch && browserState.path && browserState.listingTabId === reqTabId
+    && document.querySelector('#list-scroll > .fp-row, #list-scroll > .fp-empty-state');
+  if (ownListingShown) {
+    onNavigated(tab && tab.isRootTarget ? null : browserState.path);
+    if (tab && tab.isRootTarget) updateBreadcrumb(browserState.path);
+    refreshNavButtons();
+    showToast(message, 'error');
+    return;
+  }
+  onNavigated(absPath);
+  handleLoadError(err, absPath);
+}
+
+/** One sentence for a failed /fs/list — the error toast's text. Names the
+ * folder the way its tab would (tabLabelFor, app.js), not by its full path. */
+function loadErrorMessage(err, absPath) {
+  const where = typeof tabLabelFor === 'function' ? tabLabelFor(absPath) : (absPath || 'This PC');
+  if (err instanceof ApiError) {
+    if (err.status === 403) return `Access denied: ${where}`;
+    if (err.status === 404) return `Folder not found: ${where}`;
+    if (err.status === 400) return `Invalid path: ${where}`;
+    return formatApiError(err);
+  }
+  return `Couldn't reach backend: ${formatApiError(err)}`;
+}
+
+/** Re-fetches the current directory and patches the difference into the
+ * rendered listing (patchDirectory) — selection/anchor/focus (by path),
+ * scroll position, view and size all stay. Shared by refreshAll() (Ctrl+R,
+ * F5, the toolbar button, the empty-area menu's Refresh) and every file
+ * operation that has to show its result. Returns a promise that resolves once
+ * the patch has landed, so callers (fileops.run(), inline rename) can await it
+ * before touching the DOM again. A failed fetch keeps the listing on screen
+ * and shows an error toast; it never navigates away (Stage 2D §7.2).
  *
  * In search-results mode there is no folder to re-list: the same call re-runs
  * the current search instead (Task 14), which is what a file operation
@@ -616,7 +774,6 @@ function refreshDirectory() {
     return Promise.resolve();
   }
   if (browserState.mode === 'search') {
-    const searchBtn = document.getElementById('btn-refresh');
     const searchList = document.getElementById('list-scroll');
     // renderSearchResults() scrolls a fresh result set to the top; a re-run of
     // the SAME search (F5, or the refresh every fileops.run() ends with) is not
@@ -625,7 +782,6 @@ function refreshDirectory() {
     // Same reqTabId guard the browse branch below carries.
     const searchScrollTop = searchList ? searchList.scrollTop : 0;
     const searchTabId = tabs.activeId;
-    searchBtn?.classList.add('is-spinning');
     const rerun = typeof runSearch === 'function'
       ? Promise.resolve(runSearch({ pushHistory: false, preserveSelection: true }))
       : Promise.resolve();
@@ -633,24 +789,125 @@ function refreshDirectory() {
       if (searchList && tabs.activeId === searchTabId && browserState.mode === 'search') {
         searchList.scrollTop = searchScrollTop;
       }
-      searchBtn?.classList.remove('is-spinning');
     });
   }
-  if (!browserState.path) return;
-  const btn = document.getElementById('btn-refresh');
-  const listScroll = document.getElementById('list-scroll');
-  const scrollTop = listScroll ? listScroll.scrollTop : 0;
-  // #list-scroll is DOM shared by every tab: if the user switches tabs while
-  // this refresh is in flight, loadDirectory() bails on its own reqTabId guard
-  // but this finally() would still stamp THIS tab's offset onto the tab that
-  // is now showing (pass 2 #20).
+  if (!browserState.path) return Promise.resolve();
+  const path = browserState.path;
+  // #list-scroll is DOM shared by every tab: a refresh that lands after a tab
+  // switch or a newer navigation must not patch somebody else's listing
+  // (pass 2 #20) — the same reqTabId/reqSeq guard loadDirectory() carries.
   const reqTabId = tabs.activeId;
-  btn?.classList.add('is-spinning');
-  const p = loadDirectory(browserState.path, { addToHistory: false, preserveSelection: true });
-  return p.finally(() => {
-    if (listScroll && tabs.activeId === reqTabId) listScroll.scrollTop = scrollTop;
-    btn?.classList.remove('is-spinning');
-  });
+  const reqSeq = ++browserState._loadSeq;
+  window.__fpLoadPending++;
+  return API.get('/fs/list', { path, show_hidden: browserState.showHidden }).then(data => {
+    if (tabs.activeId !== reqTabId || browserState._loadSeq !== reqSeq) {
+      if (tabs.activeId !== reqTabId) storeBackgroundListing(reqTabId, data);
+      return;
+    }
+    browserState.parent = data.parent;
+    browserState.isRoot = data.is_root;
+    browserState.listingStale = false;
+    patchDirectory(data.entries, data);
+    rememberTabListing();
+  }, err => {
+    if (tabs.activeId !== reqTabId || browserState._loadSeq !== reqSeq) return;
+    showToast(loadErrorMessage(err, path), 'error');
+  }).finally(() => { window.__fpLoadPending--; });
+}
+
+/** What a row shows, as one comparable string — patchDirectory() replaces a
+ * row only when this changes. */
+function rowSignature(e) {
+  return [e.name, e.is_dir ? 1 : 0, e.size ?? '', e.modified ?? '', e.created ?? '', e.accessed ?? '',
+    e.is_hidden ? 1 : 0, e.error || '', e.ext || ''].join('\u0001');
+}
+
+// Above this share of changed rows, one full render is cheaper (and no less
+// stable) than row surgery (Stage 2D §7.2).
+const PATCH_FULL_RENDER_SHARE = 0.3;
+
+/**
+ * Brings the rendered listing in line with `newEntries` (Stage 2D §7.2): the
+ * listing is diffed against the rendered one by name, and only added, removed
+ * or changed rows are inserted, removed or replaced, in sorted position.
+ * Unchanged rows keep their DOM nodes (their icons never repaint). When more
+ * than 30% of the rows changed it does one full render instead. Either way
+ * scrollTop, the selection (by path — gone paths drop out), the anchor and
+ * DOM focus on the focused row are kept. `data` (the /fs/list payload)
+ * carries `truncated`.
+ */
+function patchDirectory(newEntries, data = null) {
+  const listScroll = document.getElementById('list-scroll');
+  const oldEntries = browserState.entries || [];
+  const truncatedBefore = browserState.truncated;
+  if (data) browserState.truncated = !!data.truncated;
+  browserState.entries = newEntries;
+  browserState.fetchedAt = Date.now();
+
+  const valid = new Set(newEntries.map(entryPath));
+  browserState.selection = new Set([...browserState.selection].filter(p => valid.has(p)));
+  if (browserState.anchor && !valid.has(browserState.anchor)) browserState.anchor = null;
+  if (browserState.focus && !valid.has(browserState.focus)) browserState.focus = null;
+  if (!listScroll) return;
+
+  const scrollTop = listScroll.scrollTop;
+  const active = document.activeElement;
+  const focusOnRow = !!(active && active !== listScroll && listScroll.contains(active) && active.closest('.fp-row'));
+
+  const rows = [...listScroll.querySelectorAll(':scope > .fp-row[data-path]')];
+  const nodeByPath = new Map(rows.map(r => [r.dataset.path, r]));
+  const oldByName = new Map(oldEntries.map(e => [e.name, e]));
+  const newNames = new Set(newEntries.map(e => e.name));
+  const changed = new Set();
+  for (const e of newEntries) {
+    const o = oldByName.get(e.name);
+    if (!o || rowSignature(o) !== rowSignature(e)) { changed.add(e.name); continue; }
+    // A favourite toggled since the row was drawn changes its star.
+    const p = entryPath(e);
+    const node = nodeByPath.get(p);
+    const starred = typeof favoritesHas === 'function' && favoritesHas(p);
+    if (node && starred !== !!node.querySelector('.fp-row__star')) changed.add(e.name);
+  }
+  const removed = oldEntries.filter(o => !newNames.has(o.name));
+  const changes = changed.size + removed.length;
+  const total = Math.max(oldEntries.length, newEntries.length);
+  const domMatches = rows.length === oldEntries.length && oldEntries.length > 0;
+
+  if (changes === 0 && domMatches && truncatedBefore === browserState.truncated) {
+    applySelectionState();
+    updateStatusBar();
+  } else if (!domMatches || !newEntries.length || truncatedBefore !== browserState.truncated
+             || changes > total * PATCH_FULL_RENDER_SHARE) {
+    renderDirectory();
+  } else {
+    for (const o of removed) nodeByPath.get(entryPath(o))?.remove();
+    const tpl = document.createElement('template');
+    let cursor = listScroll.querySelector(':scope > .fp-row[data-path]');
+    for (const e of sortedEntries()) {
+      let node = nodeByPath.get(entryPath(e));
+      if (changed.has(e.name)) {
+        tpl.innerHTML = renderFsRow(e, browserState.path);
+        const fresh = tpl.content.firstElementChild;
+        if (node) {
+          if (cursor === node) cursor = node.nextElementSibling;
+          node.remove();
+        }
+        node = fresh;
+      }
+      if (!node) continue;
+      if (node === cursor) cursor = node.nextElementSibling;
+      else listScroll.insertBefore(node, cursor);
+    }
+    applySelectionState();
+    updateStatusBar();
+  }
+  listScroll.scrollTop = scrollTop;
+  if (focusOnRow) {
+    const row = browserState.focus ? findRowByPath(browserState.focus) : null;
+    if (row) row.focus({ preventScroll: true });
+    else focusListContainer();
+  }
+  onSelectionChanged();
 }
 
 // Every load failure gets the same two recovery actions: "Go back" (real
@@ -712,17 +969,31 @@ function navBack() {
   // listing leaves the search and returns to the folder that was searched —
   // searching never pushed a history entry of its own, so without this Back
   // silently skips PAST the searched folder to the previous one (pass 2 #154).
-  if (browserState.mode === 'search') { exitSearchResults(); return; }
-  if (nav.index <= 0) return;
-  nav.index -= 1;
-  loadDirectory(nav.history[nav.index], { addToHistory: false });
+  if (browserState.mode === 'search') return exitSearchResults();
+  const from = pendingHistoryIndex();
+  if (from <= 0) return undefined;
+  return visitHistory(from - 1);
 }
 
 function navForward() {
-  if (browserState.mode === 'search') { exitSearchResults(); return; }
-  if (nav.index >= nav.history.length - 1) return;
-  nav.index += 1;
-  loadDirectory(nav.history[nav.index], { addToHistory: false });
+  if (browserState.mode === 'search') return exitSearchResults();
+  const from = pendingHistoryIndex();
+  if (from >= nav.history.length - 1) return undefined;
+  return visitHistory(from + 1);
+}
+
+/** Where Back/Forward step from: a still-in-flight Back/Forward's target, or
+ * nav.index (which moves only once a fetch succeeds — pass-2 #55). */
+function pendingHistoryIndex() {
+  const ph = browserState._pendingHistory;
+  return (ph && ph.seq === browserState._loadSeq) ? ph.index : nav.index;
+}
+
+function visitHistory(index) {
+  const p = loadDirectory(nav.history[index], { addToHistory: false, historyIndex: index });
+  // loadDirectory() bumped _loadSeq synchronously, before its first await.
+  browserState._pendingHistory = { seq: browserState._loadSeq, index };
+  return p;
 }
 
 function navUp() {
@@ -767,6 +1038,7 @@ function refreshNavButtons() {
 }
 
 function renderDirectory(data) {
+  window.__fpRenderCount++;
   if (data) browserState.truncated = !!data.truncated;
   const listScroll = document.getElementById('list-scroll');
   if (!listScroll) return;
@@ -967,6 +1239,8 @@ function showSearchPending(query, root) {
   browserState._loadSeq++;
   browserState.mode = 'search';
   browserState.searchRoot = root;
+  // #list-scroll no longer holds a folder listing (see listingTabId).
+  browserState.listingTabId = null;
   if (listScroll) listScroll.dataset.mode = 'search';
   if (entering) {
     browserState.entries = [];
@@ -1001,6 +1275,7 @@ function renderSearchResults(payload, { query = '', root = '', preserveSelection
   const prevFocus = preserveSelection ? browserState.focus : null;
   browserState.mode = 'search';
   browserState.searchRoot = root;
+  browserState.listingTabId = null;
   browserState.truncated = false;
   browserState.entries = (payload.results || []).map(r => ({ ...r, location: parentOfPath(r.path) }));
   if (preserveSelection && prevSelection) {
@@ -1598,7 +1873,6 @@ function browserKeydown(e) {
       else navUp();
       break;
     }
-    case 'F5':        e.preventDefault(); refreshDirectory(); break;
     default: break;
   }
 }

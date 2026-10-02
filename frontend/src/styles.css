@@ -122,6 +122,12 @@
   --dur-spring:     250ms;
   --dur-pulse:      400ms;
   --dur-info:       1500ms;
+  /* Refresh feedback (Stage 2D §7.2): one 360° spin of the toolbar icon, one
+     quick opacity dip of the list. app.js's REFRESH_SPIN_MS / REFRESH_DIP_MS
+     take the classes off after exactly these — keep them equal. */
+  --dur-refresh-spin: 400ms;
+  --dur-refresh-dip:  160ms;
+  --opacity-refresh-dip: 0.55;
 
   --ease-out:  cubic-bezier(0.16, 1, 0.3, 1);
   --ease-snap: cubic-bezier(0.4, 0.0, 0.2, 1);
@@ -3315,11 +3321,20 @@ body.is-dragging { cursor: default; }
 .fp-spinner--lg { width: 16px; height: 16px; }
 @keyframes fp-spin { to { transform: rotate(360deg); } }
 
-/* Toolbar refresh button (Task 8, playtest pass 1 §3.6) — spins its icon
-   while refreshDirectory() is in flight. Reuses fp-spin above; the global
-   prefers-reduced-motion block (bottom of this file) already collapses
-   every animation-duration to ~0, so reduced motion needs no override here. */
-#btn-refresh.is-spinning svg { animation: fp-spin 800ms linear infinite; }
+/* Refresh feedback (Stage 2D §7.2) — refreshAll() adds .is-spinning to the
+   toolbar button for one 360° turn and .is-refreshing to the list for one
+   1 → 0.55 → 1 opacity dip, then takes both off on a timer. Both are off
+   entirely under reduced motion (block below). */
+#btn-refresh.is-spinning svg { animation: fp-spin var(--dur-refresh-spin) var(--ease-ui) 1; }
+#list-scroll.is-refreshing { animation: fp-refresh-dip var(--dur-refresh-dip) var(--ease-ui) 1; }
+@keyframes fp-refresh-dip {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: var(--opacity-refresh-dip); }
+}
+@media (prefers-reduced-motion: reduce) {
+  #btn-refresh.is-spinning svg,
+  #list-scroll.is-refreshing { animation: none !important; }
+}
 
 /* -----------------------------------------------------------------------------
    34. LAYOUT HELPERS

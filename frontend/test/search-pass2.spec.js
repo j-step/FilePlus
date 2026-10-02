@@ -294,7 +294,11 @@ test('toolbar search: pass-2 regressions', async () => {
     await searchInput.click();
     await page.keyboard.press('Enter');
     await expect(marks.first()).toBeVisible({ timeout: 4000 });
-    expect(await page.evaluate(() => loadSearchHistory().map(e => e.text))).toEqual(['doc-0']);
+    // Polled: the marks above are still the previous run's, so they do not
+    // say the Enter run has landed yet — reading history once raced it (it
+    // failed 1 run in 3 before Stage 2D touched anything).
+    await expect.poll(() => page.evaluate(() => loadSearchHistory().map(e => e.text)), { timeout: 4000 })
+      .toEqual(['doc-0']);
 
     // -- #97 / #165  Narrow toolbar: the bar opens for a sidebar tag chip and
     //                folds again when the search is cleared -----------------

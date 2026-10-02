@@ -4,8 +4,9 @@
  * Creates the application window, configures security settings,
  * and wires up the dev-tools shortcut.
  */
-const { app, BrowserWindow, ipcMain, nativeTheme, nativeImage, shell, dialog, clipboard } = require('electron');
+const { app, BrowserWindow, Menu, ipcMain, nativeTheme, nativeImage, shell, dialog, clipboard } = require('electron');
 const path = require('path');
+const { pathToFileURL } = require('url');
 const os   = require('os');
 const { spawn } = require('child_process');
 const { resolveApiPort, resolveApiToken } = require('./envToken');
@@ -128,6 +129,13 @@ const thumbQueue = makeQueue(THUMBNAIL_CONCURRENCY, { lifo: true });
 globalThis.__fpMainIconStats = { shellCalls: 0, thumbCalls: 0, batches: 0 };
 
 function createWindow() {
+  // No application menu (Stage 2D §7.1). Electron's default one carries
+  // accelerators the app must not have: Ctrl+R / Ctrl+Shift+R reload the page
+  // (every tab lost), Ctrl+Shift+I opens DevTools, Ctrl+W closes the window,
+  // its own zoom keys, and Alt shows a menu bar. Every shortcut FilePlus wants
+  // is handled in the renderer; copy/cut/paste/select-all/undo in text fields
+  // are Chromium's own and need no Edit menu.
+  Menu.setApplicationMenu(null);
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
@@ -143,6 +151,25 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
     },
     autoHideMenuBar: true,
+  });
+
+  // A renderer-initiated navigation away from the app (a file dropped onto
+  // the window, a stray link) would replace the whole UI and lose every tab;
+  // only the app's own page may load. window.open never makes a window.
+  const pageKey = (u) => { try { return decodeURI(String(u).split('#')[0]).toLowerCase(); } catch (_e) { return String(u); } };
+  const indexKey = pageKey(pathToFileURL(path.join(__dirname, 'index.html')).href);
+  mainWindow.webContents.on('will-navigate', (event, legacyUrl) => {
+    // Electron 41 puts the url on the event; the positional argument is the
+    // older form, kept as a fallback.
+    const url = (event && event.url) || legacyUrl;
+    if (pageKey(url) !== indexKey) {
+      event.preventDefault();
+      mainLog.warn(`blocked navigation to ${url}`);
+    }
+  });
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    mainLog.warn(`blocked window.open(${url})`);
+    return { action: 'deny' };
   });
 
   // F12 toggles DevTools. before-input-event (not globalShortcut): a global

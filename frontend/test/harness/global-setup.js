@@ -68,6 +68,15 @@ module.exports = async function globalSetup() {
 
   runPy(['scripts/clear_logs.py', '--dir', logDir], env);
   process.stdout.write(runPy(['scripts/gen_sandbox.py', '--out', path.join(sandbox, '_gen')], env));
+  // A folder long enough to scroll (Stage 2D refresh tests: scroll position
+  // and row identity across an in-place refresh). Beside _gen, not inside it,
+  // so _gen's own listings and indexed searches are unchanged. Deterministic
+  // names and contents.
+  const bulk = path.join(sandbox, 'Bulk');
+  fs.mkdirSync(bulk);
+  for (let i = 1; i <= 240; i++) {
+    fs.writeFileSync(path.join(bulk, `bulk-${String(i).padStart(3, '0')}.txt`), `bulk ${i}\n`);
+  }
 
   const backend = spawn(PY.cmd, [...PY.pre, '-m', 'backend.api'], {
     cwd: REPO, env, stdio: 'ignore', windowsHide: true, detached: false,

@@ -602,7 +602,7 @@ test('every screen renders with no renderer errors', async () => {
     expect(emptyBoxes).toEqual(fileBoxes);
 
     // Refresh, part 1: a real click on the toolbar button proves the
-    // data-action="refresh-directory" wiring reaches refreshDirectory() end
+    // data-action="refresh-directory" wiring reaches refreshAll() end
     // to end, and that it preserves the selection and inspector content
     // across the round trip.
     await clickDocAndSettle();
@@ -621,7 +621,8 @@ test('every screen renders with no renderer errors', async () => {
     await expect(rowByName('doc-00.txt')).toHaveClass(/fp-row--selected/);
     await expect(page.locator('#inspector-filename')).toHaveText('doc-00.txt');
 
-    // Refresh, part 2: refreshDirectory() itself adds .is-spinning to the
+    // Refresh, part 2: refreshAll() (the one entry point for the button,
+    // Ctrl+R, F5 and the menu — Stage 2D §7.1) adds .is-spinning to the
     // button synchronously, before it ever awaits the re-list — proven by
     // calling it and reading the class back in the SAME evaluate() (no
     // round trip in between), since the local backend answers /fs/list fast
@@ -631,7 +632,7 @@ test('every screen renders with no renderer errors', async () => {
     // dropped — toggling network interception mid-test made an unrelated,
     // genuinely concurrent /preview request fail instead).
     const spunImmediately = await page.evaluate(() => {
-      refreshDirectory();
+      refreshAll();
       return document.getElementById('btn-refresh').classList.contains('is-spinning');
     });
     expect(spunImmediately).toBe(true);
