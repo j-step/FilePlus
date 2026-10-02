@@ -170,6 +170,12 @@ module.exports = async function globalSetup() {
   delete env.ELECTRON_RUN_AS_NODE;
 
   runPy(['scripts/clear_logs.py', '--dir', logDir], env);
+  // Screenshots are judged by eye after a run: one left over from a test that
+  // was renamed or deleted (or a run that stopped early) would be read as
+  // today's app (Task 14 Q27). Every run starts with an empty folder.
+  const shots = path.join(REPO, 'artifacts', 'screenshots');
+  fs.rmSync(shots, { recursive: true, force: true });
+  fs.mkdirSync(shots, { recursive: true });
   process.stdout.write(runPy(['scripts/gen_sandbox.py', '--out', path.join(sandbox, '_gen')], env));
   // A folder long enough to scroll (Stage 2D refresh tests: scroll position
   // and row identity across an in-place refresh). Beside _gen, not inside it,
@@ -201,6 +207,23 @@ module.exports = async function globalSetup() {
   for (const name of ['clip-a.txt', 'clip-b.txt', 'clip-c.txt', 'clip-d.txt']) {
     fs.writeFileSync(path.join(clip, name), `clip fixture ${name}\n`);
   }
+
+  // Stage 2D Task 14 (final fix wave, stage2d-final.spec.js): files to
+  // delete with a held key (Del), one to paste with a held Ctrl+V (Paste),
+  // text files to page the inspector preview through (Texts), a folder whose
+  // navigation a refresh must not cancel (Nav) and a one-item folder (One).
+  const fin = path.join(sandbox, 'Final');
+  for (const sub of ['Del', 'Paste', 'Texts', path.join('Nav', 'A'), path.join('Nav', 'B'), 'One']) {
+    fs.mkdirSync(path.join(fin, sub), { recursive: true });
+  }
+  for (let i = 1; i <= 6; i++) fs.writeFileSync(path.join(fin, 'Del', `del-${i}.txt`), `del ${i}\n`);
+  fs.writeFileSync(path.join(fin, 'Paste', 'p.txt'), 'paste me\n');
+  for (let i = 1; i <= 20; i++) {
+    fs.writeFileSync(path.join(fin, 'Texts', `t-${String(i).padStart(2, '0')}.txt`), `text ${i}\n`.repeat(40 + i));
+  }
+  fs.writeFileSync(path.join(fin, 'Nav', 'A', 'in-a.txt'), 'a\n');
+  fs.writeFileSync(path.join(fin, 'Nav', 'B', 'in-b.txt'), 'b\n');
+  fs.writeFileSync(path.join(fin, 'One', 'only.txt'), 'one\n');
 
   const backend = spawn(PY.cmd, [...PY.pre, '-m', 'backend.api'], {
     cwd: REPO, env, stdio: 'ignore', windowsHide: true, detached: false,

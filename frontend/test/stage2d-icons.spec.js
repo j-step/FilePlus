@@ -8,7 +8,9 @@
 // the reflow; Properties shows the file-TYPE icon (never the thumbnail); and
 // every item icon site carries a shell <img>.
 const { test, expect } = require('@playwright/test');
-const { launchApp, shot, rowByName, apiGet, API, apiHeaders } = require('./harness/app');
+const fs = require('fs');
+const path = require('path');
+const { launchApp, shot, rowByName, apiGet, API, apiHeaders, SHOTS } = require('./harness/app');
 
 test.setTimeout(180_000);
 
@@ -215,23 +217,38 @@ test('Windows-icon mode paints without flashing (Stage 2D §4)', async () => {
     // -- 6. A corrupt picture with Tier A gone ends on a type icon or the
     // sprite — never an empty slot --------------------------------------
     await page.evaluate(() => fpShellIconRoute('absent'));
+    // Without Tier A every bitmap must come from Tier B; the renderer's
+    // caches still held Tier A's, which painted the folder exactly as in
+    // step 4 (the screenshot came out byte-identical, Task 14 Q28).
+    await page.evaluate(() => fpClearIconCaches());
     await page.evaluate((p) => openBrowserAt(p), `${root}\\_gen`); // away and back: a fresh render
     await page.evaluate((p) => openBrowserAt(p), iconsDir);
     await page.evaluate(() => setView('icons', 96));
     // Every lazy slot asked, every answer (or refusal) in and painted.
     await page.waitForFunction(() => !document.querySelector('#list-scroll [data-fp-lazy="pending"]')
       && !window.__fpLoadPending && window.__fpIconsIdle(), null, { timeout: 8000 });
-    const broken = await page.evaluate(() => {
+    // Painted from Tier B now (not the cache), so the icon may still be in
+    // its fade-in (opacity starts at 0): that counts as shown. Polled — the
+    // thumbnail's refusal can land after the idle signal and restore the
+    // type icon in the frame after.
+    const broken = await page.waitForFunction(() => {
       const row = [...document.querySelectorAll('#list-scroll .fp-row')].find((r) => r.querySelector('.fp-row__name').textContent === 'broken.png');
+      if (!row) return false;
       const shown = [...row.querySelectorAll('img, svg.fp-icon')].filter((el) => {
         const cs = getComputedStyle(el);
-        if (cs.display === 'none' || cs.visibility === 'hidden' || Number(cs.opacity) === 0) return false;
+        const fading = el.getAnimations().length > 0;
+        if (cs.display === 'none' || cs.visibility === 'hidden' || (!fading && Number(cs.opacity) === 0)) return false;
         return el.tagName === 'svg' || (el.complete && el.naturalWidth > 1 && !el.src.startsWith('data:image/gif'));
       });
-      return shown.map((el) => el.tagName.toLowerCase());
-    });
+      return shown.length ? shown.map((el) => el.tagName.toLowerCase()) : false;
+    }, null, { timeout: 8000 }).then((h) => h.jsonValue());
     expect(broken.length).toBeGreaterThan(0);
-    await shot(page, 'stage2d-icons-broken-tierb');
+    // Let the fade-in finish before the capture.
+    await page.evaluate(() => Promise.all(document.getElementById('list-scroll').getAnimations({ subtree: true })
+      .filter((a) => a.effect && a.effect.getTiming().iterations !== Infinity).map((a) => a.finished.catch(() => {}))));
+    const tierBShot = await shot(page, 'stage2d-icons-broken-tierb');
+    // The capture is of the Tier-B state, not step 4's Tier-A one again.
+    expect(fs.readFileSync(tierBShot).equals(fs.readFileSync(path.join(SHOTS, 'stage2d-icons-freeform-thumbs.png')))).toBe(false);
     await page.evaluate(() => fpShellIconRoute('live'));
     await page.evaluate(() => setView('details'));
 

@@ -149,11 +149,27 @@ async function resetToDefaults(page) {
 }
 
 /** Saves artifacts/screenshots/<name>.png and returns its path. Names are
- * descriptive on purpose: they are opened and judged by eye (qa agent). */
+ * descriptive on purpose: they are opened and judged by eye (qa agent).
+ * Mica is flattened for the capture (Task 14 QC): it is a live desktop
+ * material the OS paints BEHIND the window, so a page capture saved its
+ * transparent regions (the sidebar, the title bar) as white — the screenshot
+ * showed a window nobody sees. The solid fallback chrome is what the capture
+ * can show truthfully; data-mica comes back afterwards. */
 async function shot(page, name) {
   fs.mkdirSync(SHOTS, { recursive: true });
   const file = path.join(SHOTS, `${name}.png`);
-  await page.screenshot({ path: file });
+  const mica = await page.evaluate(async () => {
+    const was = document.documentElement.dataset.mica || null;
+    if (!was) return null;
+    delete document.documentElement.dataset.mica;
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    return was;
+  });
+  try {
+    await page.screenshot({ path: file });
+  } finally {
+    if (mica) await page.evaluate((m) => { document.documentElement.dataset.mica = m; }, mica);
+  }
   return file;
 }
 
