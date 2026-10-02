@@ -1936,7 +1936,7 @@ function updateAddressBar(path) {
  * §8) — there just its icon, named by its tooltip, so the path itself keeps
  * the toolbar's width. */
 function thisPcCrumbHtml(current) {
-  const glyph = icon('desktop', 'fp-icon--14 fp-breadcrumb__icon');
+  const glyph = icon('this-pc', 'fp-icon--14 fp-breadcrumb__icon');
   return current
     ? `<button class="fp-breadcrumb__crumb fp-breadcrumb__crumb--current" data-action="navigate-crumb" data-path="${THISPC}">`
       + `${glyph}<span class="fp-breadcrumb__label">This PC</span></button>`

@@ -272,17 +272,14 @@ test('resize handles store screen px; both panel widths survive a restart; the i
     await expect.poll(async () => (await apiGet('/config'))['ui.inspector_w']).toBe(Math.round(iw1));
 
     // Sidebar: the pointer at CSS x 200 is screen x 300 → a 300 screen-px panel.
-    // The sidebar's own scrollbar sits over the inner half of its handle
-    // until Task 9 (spec §9.3) stops .fp-sidebar itself from scrolling, so
-    // the drag starts on the handle with that scrolling switched off.
-    await page.evaluate(() => { document.getElementById('sidebar').style.overflow = 'hidden'; });
+    // The panel itself never scrolls (spec §9.3) and its overlay scrollbar
+    // sits under the handle, so the handle's inner half is grabbable as is.
     const sh = await page.locator('#sidebar-resize-handle').boundingBox();
     await page.mouse.move(sh.x + 1.5, sh.y + 200);
     await page.mouse.down();
     await page.mouse.move(180, sh.y + 200, { steps: 4 });
     await page.mouse.move(200, sh.y + 200, { steps: 4 });
     await page.mouse.up();
-    await page.evaluate(() => { document.getElementById('sidebar').style.overflow = ''; });
     expect(Math.abs((await screenW(page, '#sidebar')) - 300)).toBeLessThanOrEqual(1);
     await expect.poll(async () => (await apiGet('/config'))['ui.sidebar_w']).toBe(300);
 

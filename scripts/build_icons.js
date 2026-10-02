@@ -80,6 +80,9 @@ const CHROME_ICONS = {
   redo: 'arrow_redo_20_regular.svg',
   'new-tab': 'tab_add_20_regular.svg',
   file: 'document_20_regular.svg',
+  // Stage 2D §9.2: the collapsed rail's This PC entry (fp-desktop is
+  // already Quick Access's Desktop folder).
+  'this-pc': 'laptop_20_regular.svg',
 
   // ---- Task 5 additions beyond the brief's list (see task-5-report.md) ----
   // Titlebar window controls (custom 12x12 glyphs in the old markup) —

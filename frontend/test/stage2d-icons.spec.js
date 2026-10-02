@@ -232,6 +232,11 @@ test('Windows-icon mode paints without flashing (Stage 2D §4)', async () => {
 
     // -- 7. Every item icon site carries a shell <img> --------------------
     await apiPost('/recent', { path: `${docsDir}\\doc-00.txt`, action: 'opened' });
+    // A crumb clipped off the path's left edge is never asked for (it is not
+    // on screen), and the sidebar's drive icon no longer shares its 16px
+    // bitmap since the sidebar draws 18px icons (Stage 2D §9.1): give the
+    // whole path room so the drive crumb is on screen and resolves itself.
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1700, 800));
     await page.evaluate((p) => openBrowserAt(p), docsDir);
     await iconsSettled(page);
     const sites = {
@@ -243,6 +248,7 @@ test('Windows-icon mode paints without flashing (Stage 2D §4)', async () => {
     for (const [site, sel] of Object.entries(sites)) {
       await expect(page.locator(sel).first(), site).toHaveAttribute('src', /^data:image\/png/, { timeout: 5000 });
     }
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1200, 800));
     // Quick Access and drives show no sprite glyph for an item in this mode.
     expect(await page.locator('#sb-quick-access-folders svg.fp-icon, #sb-drives svg.fp-sidebar__drive-icon').count()).toBe(0);
     // Inspector header: a folder has no preview, so its own icon shows.

@@ -156,7 +156,44 @@
   --view-tile-h:      64px;
   --view-cell-gap:    2px;    /* between icon cells / tiles */
 
-  --sidebar-item-h:  28px;
+  /* ---------- Sidebar (Stage 2D §9, logical px) ----------
+     Every sidebar dimension lives here; the sidebar rules use no other
+     numbers. The panel's own width is the screen-px pair further down. */
+  --sidebar-item-h:  28px;    /* an item row */
+  --sidebar-pad-x:   8px;     /* item inner padding, and the scroller's inset from the panel */
+  --sidebar-icon:    18px;    /* an item's icon */
+  --sidebar-gap:     8px;     /* icon → label */
+  --sidebar-label:   13px;    /* an item's label */
+  --sidebar-label-line: 20px;
+  --sidebar-section-gap-top:    6px;  /* above a section divider */
+  --sidebar-section-gap-bottom: 4px;  /* below it */
+  --sidebar-divider-inset: 12px;      /* the divider's inset from each panel edge */
+  --sidebar-head-pad-y: 4px;          /* a section header's top/bottom padding */
+  --sidebar-drive-bar-h: 3px;         /* the drive usage mini-bar */
+  --sidebar-drive-bar-tuck: 3px;      /* how far the bar rides up into its item */
+  --sidebar-rail-item: 40px;  /* collapsed rail: the item square */
+  --sidebar-rail-icon: 22px;  /* …its icon, and the drive letter badge's height */
+  --sidebar-rail-divider-inset: 8px;  /* rail dividers: full width minus 2 × this */
+  --sidebar-chevron:      16px;       /* This PC's collapse chevron box */
+  --sidebar-chevron-icon: 12px;       /* …and its glyph */
+  --sidebar-active-bar-w: 3px;        /* the active item's accent bar */
+  --sidebar-active-bar-h: 16px;
+  /* Section headers across screens (sidebar, Settings nav): 11px/16px, 600,
+     uppercase, 0.04em — the .t-caption / --t-small size, one up from --t-micro. */
+  --t-section:     11px/16px;
+  --track-section: 0.04em;
+
+  /* ---------- Overlay scrollbar (Stage 2D §9.3, overlayscroll.js) ----------
+     A tint of the text colour, so the thumb reads over Mica and over the
+     opaque chrome in both themes. --oscroll-hot is FP_OSCROLL_HOT_PX. */
+  --scrollbar-thumb:     color-mix(in srgb, var(--text-primary) 32%, transparent);
+  --scrollbar-thumb-hot: color-mix(in srgb, var(--text-primary) 50%, transparent);
+  --oscroll-w:     3px;
+  --oscroll-w-hot: 7px;
+  --oscroll-hot:   10px;
+  --oscroll-inset: 3px;      /* thumb's gap from the panel edge (clears the resize handle's inner half) */
+  --oscroll-cue:   20px;     /* the top/bottom mask fade */
+  --dur-oscroll:   160ms;
 
   /* ---------- This PC (Stage 2D §8, logical px) ---------- */
   --drive-card-min:  280px;   /* tiles: auto-fill columns at least this wide */
@@ -499,12 +536,17 @@ svg { flex-shrink: 0; }
 /* -----------------------------------------------------------------------------
    6. SIDEBAR (Section 10)
    ----------------------------------------------------------------------------- */
+/* The panel itself never scrolls (Stage 2D §9.3): only .fp-sidebar__scroll
+   does, under the overlay scrollbar (overlayscroll.js), and nothing in it is
+   wider than the panel. It has no side padding of its own so the scroller
+   (and its thumb) reach the panel's right edge; header, Ask File+ and the
+   bottom block each carry the --sidebar-pad-x inset instead. */
 .fp-sidebar {
   width: var(--sidebar-w-css);
   background: var(--bg-chrome);
   border-right: 1px solid var(--border-hairline);
-  padding: var(--s-4) var(--s-8);
-  overflow-y: auto;
+  padding: var(--s-4) 0;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   position: relative;
@@ -539,11 +581,16 @@ svg { flex-shrink: 0; }
      where the tab bar now lives in the right column. */
   height: 88px;
   padding: var(--s-12) var(--s-14);
+  margin: 0 var(--sidebar-pad-x);
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   gap: var(--s-10);
 }
 .fp-sidebar__brand-mark { width: 36px; height: 36px; flex-shrink: 0; }
+/* The name's wrapper: clipped (nothing can widen the panel), but with room
+   for the name's own -4px focus/edit background to paint. */
+.fp-sidebar__brand { flex: 1; min-width: 0; overflow: clip; overflow-clip-margin: var(--s-4); }
 .fp-sidebar__brand-name {
   font: 600 17px var(--font-ui);
   letter-spacing: var(--track-body);
@@ -570,56 +617,70 @@ svg { flex-shrink: 0; }
 .fp-sidebar__brand-sub .path,
 .fp-sidebar__brand-sub .mono { font-family: var(--font-data); }
 
+/* Section headers (Quick Access / This PC / Tags / System — Stage 2D §9.1):
+   the shared --t-section type. Sections are separated by .fp-sidebar__divider
+   alone; the header adds no gap of its own above the divider's. */
 .fp-sidebar__section-label {
-  font: 500 var(--t-micro) var(--font-ui);
-  letter-spacing: var(--track-caps);
+  font: 600 var(--t-section) var(--font-ui);
+  letter-spacing: var(--track-section);
   text-transform: uppercase;
-  color: var(--text-tertiary);
-  padding: var(--s-14) var(--s-8) var(--s-6);
+  color: var(--text-secondary);
+  padding: var(--sidebar-head-pad-y) var(--sidebar-pad-x);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-/* Group separation between sidebar sections (Quick Access / This PC / Tags /
-   System). Specificity beats the collapsed-mode margin reset on purpose:
-   collapsed labels are invisible spacers and keep this same rhythm.
-   .fp-sidebar__section (This PC's wrapper) gets the same top rhythm as a
-   bare .fp-sidebar__section-label since its own head owns the label. */
-.fp-sidebar__scroll > .fp-sidebar__section-label:not(:first-child),
-.fp-sidebar__scroll > .fp-sidebar__section:not(:first-child) {
-  margin-top: var(--s-8);
+/* The hairline between two sections: 1px --border-subtle, inset
+   --sidebar-divider-inset from each panel edge (the scroller already sits
+   --sidebar-pad-x in), 6px above and 4px below. */
+.fp-sidebar__divider {
+  flex-shrink: 0;
+  height: 1px;
+  background: var(--border-subtle);
+  margin: var(--sidebar-section-gap-top) calc(var(--sidebar-divider-inset) - var(--sidebar-pad-x))
+          var(--sidebar-section-gap-bottom);
 }
+.fp-sidebar__divider[hidden] { display: none; }
 
 /* This PC — collapsible section head (chevron + label) wrapping #sb-drives.
    The label re-uses .fp-sidebar__section-label but sits inside a flex row
-   with the chevron, so it drops its own top/bottom padding in favor of the
-   head's (avoids doubling the vertical rhythm above). */
+   with the chevron, so it drops its own padding in favour of the head's. */
 .fp-sidebar__section-head {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--s-4);
   width: 100%;
-  padding: var(--s-14) var(--s-8) var(--s-6);
+  min-width: 0;
+  padding: var(--sidebar-head-pad-y) var(--sidebar-pad-x);
+  border-radius: var(--r-button);
   cursor: pointer;
   user-select: none;
   background: transparent;
   border: none;
+  position: relative;
 }
 .fp-sidebar__section-head .fp-sidebar__section-label {
   padding: 0;
 }
 .fp-sidebar__section-head:hover .fp-sidebar__section-label {
-  color: var(--text-secondary);
+  color: var(--text-primary);
 }
+/* The rail's This PC icon (index.html): only the collapsed rail shows it. */
+.fp-sidebar__section-head .fp-sidebar__section-icon { display: none; }
 /* The This PC page is open in the active tab (Stage 2D §8): the head is that
    page's sidebar entry, so it carries the accent the way an active item does. */
 .fp-sidebar__section-head--active .fp-sidebar__section-label,
 .fp-sidebar__section-head--active:hover .fp-sidebar__section-label,
-.fp-sidebar__section-head--active .fp-sidebar__chevron { color: var(--accent); }
+.fp-sidebar__section-head--active .fp-sidebar__chevron,
+.fp-sidebar__section-head--active .fp-sidebar__section-icon { color: var(--accent); }
 .fp-sidebar__chevron {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 16px;
-  height: 16px;
+  width: var(--sidebar-chevron);
+  height: var(--sidebar-chevron);
   padding: 0;
   flex-shrink: 0;
   background: transparent;
@@ -630,7 +691,7 @@ svg { flex-shrink: 0; }
   transition: transform var(--dur-flash) var(--ease-snap),
               color var(--dur-flash) var(--ease-snap);
 }
-.fp-sidebar__chevron svg { width: 12px; height: 12px; }
+.fp-sidebar__chevron svg { width: var(--sidebar-chevron-icon); height: var(--sidebar-chevron-icon); }
 .fp-sidebar__chevron:hover { color: var(--text-primary); }
 .fp-sidebar__chevron[aria-expanded="false"] { transform: rotate(-90deg); }
 
@@ -638,8 +699,12 @@ svg { flex-shrink: 0; }
   display: flex;
   flex-wrap: wrap;
   gap: var(--s-4);
-  padding: 0 var(--s-8) var(--s-4);
+  padding: 0 var(--sidebar-pad-x) var(--s-4);
+  min-width: 0;
 }
+#sb-tags-chips { display: flex; flex-wrap: wrap; gap: var(--s-4); min-width: 0; max-width: 100%; }
+/* A long tag name ellipsizes inside its chip instead of widening the panel. */
+#sb-tags .fp-chip { max-width: 100%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* Accent dot on AI-organised drive rows */
 .fp-sidebar__drive-ai-dot {
@@ -661,15 +726,16 @@ svg { flex-shrink: 0; }
 .fp-sidebar__item {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--sidebar-gap);
   width: 100%;
+  min-width: 0;
   height: var(--sidebar-item-h);
-  padding: 0 8px;
+  padding: 0 var(--sidebar-pad-x);
   background: transparent;
   color: var(--text-secondary);
   border: 1px solid transparent;
   border-radius: var(--r-button);
-  font: 500 var(--t-body) var(--font-ui);
+  font: 500 var(--sidebar-label)/var(--sidebar-label-line) var(--font-ui);
   letter-spacing: var(--track-body);
   cursor: pointer;
   position: relative;
@@ -678,9 +744,12 @@ svg { flex-shrink: 0; }
   transition: background-color var(--dur-flash) var(--ease-snap),
               color var(--dur-flash) var(--ease-snap);
 }
+/* The icon — a sprite <svg> or a Windows-mode shell <img> — whatever size
+   class its markup carries. */
 .fp-sidebar__item > svg,
-.fp-sidebar__item > .icon {
-  width: 16px; height: 16px;
+.fp-sidebar__item > .icon,
+.fp-sidebar__item > .fp-icon {
+  width: var(--sidebar-icon); height: var(--sidebar-icon);
   color: var(--text-secondary);
   flex-shrink: 0;
 }
@@ -698,16 +767,17 @@ svg { flex-shrink: 0; }
   font-weight: 600;
 }
 .fp-sidebar__item--active::before,
-.fp-sidebar__item.active::before {
+.fp-sidebar__item.active::before,
+.fp-sidebar--collapsed .fp-sidebar__section-head--active::before {
   content: '';
   position: absolute;
-  left: -4px;
+  left: calc(var(--sidebar-pad-x) / -2);
   top: 50%;
   transform: translateY(-50%);
-  width: 3px;
-  height: 16px;
+  width: var(--sidebar-active-bar-w);
+  height: var(--sidebar-active-bar-h);
   background: var(--accent);
-  border-radius: 2px;
+  border-radius: var(--r-pill);
 }
 .fp-sidebar__item--active > svg,
 .fp-sidebar__item--active > .icon,
@@ -723,12 +793,18 @@ svg { flex-shrink: 0; }
   box-shadow: inset 0 0 0 1px var(--accent-edge);
 }
 
-.fp-sidebar__item:focus-visible {
-  outline: none;
+/* Keyboard focus (pass-2 #173): the app's accent ring, drawn inside the item
+   so the scroller's clip never cuts it. A mouse press never shows it (Task 7
+   hands focus straight back, and :focus-visible is keyboard-only). */
+.fp-sidebar__item:focus-visible,
+.fp-sidebar__section-head:focus-visible,
+.fp-sidebar--collapsed .fp-sidebar__tags-collapsed:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
 }
 
 .fp-sidebar__item__label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.fp-sidebar__item__badge { margin-left: auto; }
+.fp-sidebar__item__badge { margin-left: auto; flex-shrink: 0; }
 
 .fp-sidebar__tree-item { padding-left: calc(var(--s-10) + var(--indent, 0) * 16px); }
 .fp-sidebar__caret {
@@ -740,15 +816,19 @@ svg { flex-shrink: 0; }
 .fp-sidebar__caret svg { width: 14px; height: 14px; }
 .fp-sidebar__caret--open { transform: rotate(90deg); }
 
+/* Collapsed rail (Stage 2D §9.2): 40px squares with 22px icons. */
 .fp-sidebar--collapsed .fp-sidebar__item {
-  width: 36px; height: 36px; padding: 0;
+  width: var(--sidebar-rail-item); height: var(--sidebar-rail-item); padding: 0;
   justify-content: center;
-  margin: 4px auto;
+  margin: var(--s-2) auto;
   border-radius: var(--r-icon-btn);
 }
 .fp-sidebar--collapsed .fp-sidebar__item > svg,
-.fp-sidebar--collapsed .fp-sidebar__item > .icon { width: 18px; height: 18px; }
-.fp-sidebar--collapsed .fp-sidebar__brand-mark { width: 18px; height: 18px; }
+.fp-sidebar--collapsed .fp-sidebar__item > .icon,
+.fp-sidebar--collapsed .fp-sidebar__item > .fp-icon {
+  width: var(--sidebar-rail-icon); height: var(--sidebar-rail-icon);
+}
+.fp-sidebar--collapsed .fp-sidebar__brand-mark { width: var(--sidebar-rail-icon); height: var(--sidebar-rail-icon); }
 /* Collapsed header: center brand + expand button vertically */
 .fp-sidebar--collapsed .fp-sidebar__header {
   flex-direction: column;
@@ -757,14 +837,13 @@ svg { flex-shrink: 0; }
   gap: var(--s-6);
   height: auto;
   min-height: 56px;
+  margin: 0;
   padding: var(--s-8) 0;
 }
-.fp-sidebar--collapsed .fp-sidebar__item--active::before {
-  left: -2px;
+.fp-sidebar--collapsed .fp-sidebar__item--active::before,
+.fp-sidebar--collapsed .fp-sidebar__section-head--active::before {
+  left: calc(-1 * var(--s-2));
 }
-/* In collapsed mode, items must not overflow the narrow sidebar */
-.fp-sidebar--collapsed .fp-sidebar__item > svg,
-.fp-sidebar--collapsed .fp-sidebar__item > .icon { width: 18px; height: 18px; }
 
 /* ── Ask File+ (Task 15, design spec §9) ────────────────────────────────────
    Sidebar CTA that opens #ask-popout — the AI entry point's visible shell
@@ -777,9 +856,9 @@ svg { flex-shrink: 0; }
   align-items: center;
   justify-content: center;
   gap: var(--s-8);
-  width: 100%;
+  min-width: 0;
   height: 32px;
-  margin: var(--s-6) 0 var(--s-4);
+  margin: var(--s-6) var(--sidebar-pad-x) var(--s-4);
   padding: 0 var(--s-12);
   background: var(--accent);
   color: var(--text-on-accent);
@@ -802,18 +881,19 @@ svg { flex-shrink: 0; }
   outline: 1px solid var(--text-on-accent);
   outline-offset: -3px;
 }
-.fp-ask svg { color: var(--text-on-accent); }
+.fp-ask svg { color: var(--text-on-accent); flex-shrink: 0; }
 .fp-ask__label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* Collapsed sidebar: icon-only square, same treatment .fp-sidebar__item's own
    collapsed override gets just above. */
 .fp-sidebar--collapsed .fp-ask {
-  width: 36px;
-  height: 36px;
+  width: var(--sidebar-rail-item);
+  height: var(--sidebar-rail-item);
   padding: 0;
   margin: var(--s-4) auto;
   border-radius: var(--r-icon-btn);
 }
+.fp-sidebar--collapsed .fp-ask svg { width: var(--sidebar-rail-icon); height: var(--sidebar-rail-icon); }
 .fp-sidebar--collapsed .fp-ask__label { display: none; }
 
 /* -----------------------------------------------------------------------------
@@ -1252,9 +1332,13 @@ svg { flex-shrink: 0; }
 #sb-tags-label[hidden] { display: none; }
 
 /* ── More filters modal body ── */
+/* The field column may shrink below the date inputs' intrinsic width, and
+   the dialog never outgrows the window (Stage 2D §12 sweep). */
+#search-filters-modal { max-width: calc(100vw - var(--s-32)); }
+.search-filters__grid > .fp-input { min-width: 0; width: 100%; }
 .search-filters__grid {
   display: grid;
-  grid-template-columns: 132px 1fr;
+  grid-template-columns: minmax(0, 132px) minmax(0, 1fr);
   align-items: center;
   gap: var(--s-8) var(--s-12);
 }
@@ -1905,8 +1989,11 @@ svg { flex-shrink: 0; }
   color: var(--text-primary);
   font-weight: 600;
 }
+/* Keyboard focus (pass-2 #173): the accent ring, inside the tab so the strip
+   never clips it. */
 .fp-tabs__item:focus-visible {
-  outline: none;
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
 }
 .fp-tabs__indicator {
   position: absolute;
@@ -3348,6 +3435,58 @@ body.is-dragging { cursor: default; }
   background: rgba(0, 0, 0, 0.18);
   background-clip: padding-box;
   border: 2px solid transparent;
+}
+
+/* ── Overlay scrollbar (Stage 2D §9.3) — overlayscroll.js's fpOverlayScroll ──
+   For panels (sidebar, inspector, Properties, the Settings nav): the native
+   bar is hidden and a track + thumb sit OVER the scroller's right edge, so
+   they take no layout width. The file list keeps its native bar. */
+.fp-oscroll-host { scrollbar-width: none; overflow-x: hidden; }
+.fp-oscroll-host::-webkit-scrollbar { display: none; }
+/* Scroll cues: a 20px fade at the edge where content is hidden. */
+.fp-oscroll-host--fade.is-scroll-top {
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 var(--oscroll-cue));
+  mask-image: linear-gradient(to bottom, transparent 0, #000 var(--oscroll-cue));
+}
+.fp-oscroll-host--fade.is-scroll-bottom {
+  -webkit-mask-image: linear-gradient(to top, transparent 0, #000 var(--oscroll-cue));
+  mask-image: linear-gradient(to top, transparent 0, #000 var(--oscroll-cue));
+}
+.fp-oscroll-host--fade.is-scroll-top.is-scroll-bottom {
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 var(--oscroll-cue),
+                                      #000 calc(100% - var(--oscroll-cue)), transparent 100%);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 var(--oscroll-cue),
+                              #000 calc(100% - var(--oscroll-cue)), transparent 100%);
+}
+/* The track is the 10px hot zone; JS sets its top/left/height. It stays under
+   a panel's resize handle (z-index 10), which keeps the inner half it shares. */
+.fp-oscroll {
+  position: absolute;
+  z-index: 5;
+  width: var(--oscroll-hot);
+  opacity: 0;
+  transition: opacity var(--dur-oscroll) ease;
+  user-select: none;
+  -webkit-app-region: no-drag;
+}
+.fp-oscroll.is-visible { opacity: 1; }
+.fp-oscroll.is-none { display: none; }
+body.is-dragging .fp-oscroll { pointer-events: none; }
+.fp-oscroll__thumb {
+  position: absolute;
+  top: 0;
+  right: var(--oscroll-inset);
+  width: var(--oscroll-w);
+  border-radius: var(--r-pill);
+  background: var(--scrollbar-thumb);
+  transition: width var(--dur-oscroll) ease, opacity var(--dur-oscroll) ease,
+              background-color var(--dur-oscroll) ease;
+}
+.fp-oscroll:hover .fp-oscroll__thumb,
+.fp-oscroll.is-hot .fp-oscroll__thumb,
+.fp-oscroll.is-dragging .fp-oscroll__thumb {
+  width: var(--oscroll-w-hot);
+  background: var(--scrollbar-thumb-hot);
 }
 
 /* -----------------------------------------------------------------------------
@@ -5330,23 +5469,31 @@ body.is-dragging { cursor: default; }
 /* ── Sidebar subcomponents ───────────────────────────────────────────────── */
 .fp-sidebar__scroll {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: var(--s-4) 0 var(--s-8);
-  scrollbar-width: thin;
+  padding: var(--s-4) var(--sidebar-pad-x) var(--s-8);
+  scrollbar-width: none;    /* the overlay thumb (overlayscroll.js) replaces it */
 }
 .fp-sidebar__bottom {
   flex-shrink: 0;
+  min-width: 0;
+  margin: 0 var(--sidebar-pad-x);
   padding: var(--s-4) 0;
   border-top: 1px solid var(--border-hairline);
 }
-.fp-sidebar__drive-item { padding: 0 var(--s-12) var(--s-4); }
+/* A drive row: the item, then its usage mini-bar tucked into the item's
+   bottom edge under the label (it paints above the item's hover fill). */
+.fp-sidebar__drive-item { padding: 0 0 var(--s-4); min-width: 0; }
 .fp-sidebar__drive-bar {
-  height: 3px;
+  position: relative;
+  height: var(--sidebar-drive-bar-h);
   background: var(--bg-raised);
   border-radius: var(--r-pill);
-  margin: 2px var(--s-10) 0 calc(var(--s-10) + 16px + var(--s-10));
+  margin: calc(-1 * var(--sidebar-drive-bar-tuck)) calc(1px + var(--sidebar-pad-x)) 0
+          calc(1px + var(--sidebar-pad-x) + var(--sidebar-icon) + var(--sidebar-gap));
   overflow: hidden;
+  pointer-events: none;
 }
 .fp-sidebar__drive-bar__fill {
   height: 100%;
@@ -5367,58 +5514,79 @@ body.is-dragging { cursor: default; }
 /* Expand button — hidden in expanded mode, shown in collapsed */
 .fp-sidebar__expand-btn { display: none; }
 
-/* ── Collapsed state overrides ─────────────────────────────────────────── */
+/* ── Collapsed state overrides (Stage 2D §9.2) ─────────────────────────── */
 .fp-sidebar--collapsed .fp-sidebar__brand-name,
 .fp-sidebar--collapsed .fp-sidebar__brand-sub,
 .fp-sidebar--collapsed .fp-sidebar__item__label,
 .fp-sidebar--collapsed .fp-sidebar__item__badge,
 .fp-sidebar--collapsed .fp-sidebar__drive-bar,
-.fp-sidebar--collapsed .fp-sidebar__drive-ai-dot { display: none; }
+.fp-sidebar--collapsed .fp-sidebar__drive-ai-dot,
+.fp-sidebar--collapsed .fp-sidebar__section-label { display: none; }
 
-/* Section labels become invisible spacers — provide equal vertical gap between
-   Quick Access / This PC / Tags / System groups in the collapsed rail. */
-.fp-sidebar--collapsed .fp-sidebar__section-label {
-  display: block;
-  height: 12px;
-  font-size: 0;
-  color: transparent;
-  padding: 0;
-  margin: 0;
-  pointer-events: none;
+/* The rail separates its groups with the dividers alone: full rail width
+   minus 2 × --sidebar-rail-divider-inset. */
+.fp-sidebar--collapsed .fp-sidebar__divider {
+  align-self: stretch;
+  margin: var(--sidebar-section-gap-top) var(--sidebar-rail-divider-inset) var(--sidebar-section-gap-bottom);
 }
-/* This PC's chevron has no room in the 52px collapsed rail — the section
-   head collapses to the same invisible spacer as every other section label
-   (above), drive icons underneath stay visible via .fp-sidebar__drive-item. */
+
+/* This PC in the rail: the head (chevron and label hidden) becomes a rail
+   item showing the This PC icon — it opens the page (its data-action) and
+   carries the page's active state like any other item. */
 .fp-sidebar--collapsed .fp-sidebar__chevron { display: none; }
+.fp-sidebar--collapsed .fp-sidebar__section-head {
+  justify-content: center;
+  align-self: center;
+  width: var(--sidebar-rail-item);
+  max-width: calc(100% - var(--s-8));
+  height: var(--sidebar-rail-item);
+  padding: 0;
+  margin: var(--s-2) auto;
+  border-radius: var(--r-icon-btn);
+  color: var(--text-secondary);
+  transition: background-color var(--dur-flash) var(--ease-snap),
+              color var(--dur-flash) var(--ease-snap);
+}
+.fp-sidebar--collapsed .fp-sidebar__section-head .fp-sidebar__section-icon {
+  display: block;
+  width: var(--sidebar-rail-icon);
+  height: var(--sidebar-rail-icon);
+  flex-shrink: 0;
+}
+.fp-sidebar--collapsed .fp-sidebar__section-head:hover {
+  background: var(--bg-raised);
+  color: var(--text-primary);
+}
+.fp-sidebar--collapsed .fp-sidebar__section-head--active { background: var(--bg-raised); }
 
 /* Drive in collapsed mode: the letter renders as a small SSD-shaped badge with
    a tiny LED dot top-right, signifying "this is a drive." The original disc
-   icon SVG hides in collapsed mode. */
+   icon hides in collapsed mode. The badge is as tall as a rail icon. */
 .fp-sidebar--collapsed .fp-sidebar__drive-icon { display: none; }
 .fp-sidebar--collapsed .fp-sidebar__drive-letter {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  height: 18px;
-  padding: 0 2px;
-  font: 700 11px/1 var(--font-data);
+  width: calc(var(--sidebar-rail-icon) + var(--s-8));
+  height: var(--sidebar-rail-icon);
+  padding: 0 var(--s-2);
+  font: 700 var(--t-compact) var(--font-data);
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.02em;
   color: currentColor;
   background: var(--bg-pressed);
   border: 1px solid var(--border-mid);
-  border-radius: 3px;
+  border-radius: var(--r-sm);
   position: relative;
   flex-shrink: 0;
 }
 .fp-sidebar--collapsed .fp-sidebar__drive-letter::after {
   content: '';
   position: absolute;
-  top: 2px;
-  right: 2px;
-  width: 3px;
-  height: 3px;
+  top: var(--s-2);
+  right: var(--s-2);
+  width: var(--sidebar-active-bar-w);
+  height: var(--sidebar-active-bar-w);
   background: var(--good);
   border-radius: 50%;
   opacity: 0.7;
@@ -5439,7 +5607,6 @@ body.is-dragging { cursor: default; }
 /* Collapsed sidebar: center everything in the narrow 52px rail */
 .fp-sidebar--collapsed {
   align-items: center;
-  padding: var(--s-4) 0; /* remove horizontal padding so items can centre themselves */
 }
 .fp-sidebar--collapsed .fp-sidebar__scroll {
   display: flex;
@@ -5453,9 +5620,20 @@ body.is-dragging { cursor: default; }
   display: flex;
   flex-direction: column;
   align-items: center;
-  width: 100%;
-  padding-left: 0;
-  padding-right: 0;
+  align-self: stretch;
+  margin: 0;
+  border-top-color: transparent;
+  position: relative;
+}
+/* Its seam is inset like the rail's dividers (the squares need the full rail). */
+.fp-sidebar--collapsed .fp-sidebar__bottom::before {
+  content: '';
+  position: absolute;
+  top: -1px;
+  left: var(--sidebar-rail-divider-inset);
+  right: var(--sidebar-rail-divider-inset);
+  height: 1px;
+  background: var(--border-hairline);
 }
 .fp-sidebar--collapsed .fp-sidebar__drive-item {
   display: flex;
@@ -5470,7 +5648,7 @@ body.is-dragging { cursor: default; }
   width: 100%;
 }
 /* The rail keeps 52 screen px at every app zoom (Stage 2D §5) while its
-   squares grow, so from ~140% up a 36px square is wider than the rail: every
+   squares grow, so from ~130% up a 40px square is wider than the rail: every
    level stretches to the rail's width and the squares cap at it, so nothing
    sticks out past the edge. */
 .fp-sidebar--collapsed .fp-sidebar__scroll > div,
@@ -5478,34 +5656,38 @@ body.is-dragging { cursor: default; }
   align-self: stretch;
   min-width: 0;
 }
+.fp-sidebar--collapsed .fp-sidebar__scroll > *,
+.fp-sidebar--collapsed .fp-sidebar__section > *,
+.fp-sidebar--collapsed .fp-sidebar__bottom > * { flex-shrink: 0; }
 .fp-sidebar--collapsed .fp-sidebar__item,
 .fp-sidebar--collapsed .fp-ask,
 .fp-sidebar--collapsed .fp-sidebar__tags-collapsed { max-width: calc(100% - var(--s-8)); }
 .fp-sidebar--collapsed .fp-sidebar__drive-letter { max-width: 100%; }
+.fp-sidebar--collapsed .fp-sidebar__section > .fp-sidebar__section-head { align-self: center; }
 
 /* Tags: in collapsed mode, hide all chips + View all and show single Tags icon */
 .fp-sidebar--collapsed #sb-tags {
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 4px 0;
+  padding: 0;
   width: 100%;
   gap: 0;
 }
-.fp-sidebar--collapsed #sb-tags > .fp-chip,
+.fp-sidebar--collapsed #sb-tags[hidden] { display: none; }
+.fp-sidebar--collapsed #sb-tags-chips,
 .fp-sidebar--collapsed #sb-tags > .fp-btn {
   display: none;
 }
-/* Tags-collapsed entry: tag icon + small chevron-down underneath */
+/* Tags-collapsed entry: the tag icon, a rail item like the others. */
 .fp-sidebar__tags-collapsed { display: none; }
 .fp-sidebar--collapsed .fp-sidebar__tags-collapsed {
   display: inline-flex;
-  flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 1px;
-  width: 36px;
-  height: 36px;
+  width: var(--sidebar-rail-item);
+  height: var(--sidebar-rail-item);
+  margin: var(--s-2) auto;
   padding: 0;
   background: transparent;
   border: none;
@@ -5515,12 +5697,11 @@ body.is-dragging { cursor: default; }
   -webkit-app-region: no-drag;
   transition: background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
 }
+.fp-sidebar--collapsed .fp-sidebar__tags-collapsed > .fp-icon:first-child { width: var(--sidebar-rail-icon); height: var(--sidebar-rail-icon); }
+.fp-sidebar--collapsed .fp-sidebar__tags-collapsed > .fp-icon + .fp-icon { display: none; }
 .fp-sidebar--collapsed .fp-sidebar__tags-collapsed:hover {
   background: var(--bg-raised);
   color: var(--text-primary);
-}
-.fp-sidebar--collapsed .fp-sidebar__tags-collapsed:focus-visible {
-  outline: none;
 }
 
 /* ── Statusbar subcomponents ─────────────────────────────────────────────── */
@@ -6105,12 +6286,17 @@ button.fp-pill:hover {
    40d. SETTINGS (A.12)
    ══════════════════════════════════════════════════════════════════════════════ */
 
+/* The settings screen sizes its layout by the room it actually has (the file
+   area shrinks with the sidebar and inspector open, and at app zoom — Stage
+   2D §12 sweep): see the fp-settings container query below. */
+.screen--settings { container: fp-settings / inline-size; }
 .settings-layout {
   display: flex;
   flex-direction: row;
   flex: 1;
   overflow: hidden;
   height: 100%;
+  min-width: 0;
 }
 
 /* ── Nav rail ── */
@@ -6125,11 +6311,12 @@ button.fp-pill:hover {
   flex-direction: column;
   gap: 2px;
 }
+/* A section header like the sidebar's (Stage 2D §9.1 / §12): --t-section. */
 .settings-nav__section-label {
-  font: 500 var(--t-micro) var(--font-ui);
-  letter-spacing: var(--track-heading);
+  font: 600 var(--t-section) var(--font-ui);
+  letter-spacing: var(--track-section);
   text-transform: uppercase;
-  color: var(--text-tertiary);
+  color: var(--text-secondary);
   padding: var(--s-6) var(--s-14) var(--s-4);
 }
 .settings-nav__item {
@@ -6151,7 +6338,8 @@ button.fp-pill:hover {
 .settings-nav__item:hover { background: var(--bg-pressed); }
 .settings-nav__item:active { transform: translateY(1px); }
 .settings-nav__item:focus-visible {
-  outline: none;
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
 }
 .settings-nav__item--active {
   background: var(--bg-pressed);
@@ -6171,8 +6359,10 @@ button.fp-pill:hover {
 /* ── Content area ── */
 .settings-content {
   flex: 1;
+  min-width: 0;
   background: var(--bg-content);
   overflow-y: auto;
+  overflow-x: hidden;
   padding: var(--s-24);
 }
 .settings-pane {
@@ -6189,13 +6379,19 @@ button.fp-pill:hover {
   padding: var(--s-14);
   margin-bottom: var(--s-12);
 }
+/* Rows wrap instead of overflowing: in a narrow pane the control drops under
+   its label (Stage 2D §12 sweep). */
 .settings-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   min-height: 36px;
-  gap: var(--s-12);
+  gap: var(--s-4) var(--s-12);
 }
+.settings-row > * { min-width: 0; max-width: 100%; }
+.settings-row__label,
+.settings-row__desc { overflow-wrap: anywhere; }
 .settings-row--col {
   flex-direction: column;
   align-items: flex-start;
@@ -6244,9 +6440,11 @@ button.fp-pill:hover {
 /* ── Keyboard shortcut rows ── */
 .settings-kbd-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  height: 32px;
+  gap: 0 var(--s-8);
+  min-height: 32px;
   padding: 0 var(--s-8);
   border-bottom: 1px solid var(--border-hairline);
   font: var(--t-body) var(--font-ui);
@@ -6273,7 +6471,8 @@ button.fp-pill:hover {
 .settings-filetypes-header,
 .settings-filetypes-row {
   display: grid;
-  grid-template-columns: 80px 80px 1fr 100px 48px;
+  /* Columns may shrink (cells ellipsize) so a narrow pane never scrolls sideways. */
+  grid-template-columns: minmax(0, 80px) minmax(0, 80px) minmax(0, 1fr) minmax(0, 100px) 48px;
   align-items: center;
   height: 32px;
   padding: 0 var(--s-8);
@@ -6293,6 +6492,53 @@ button.fp-pill:hover {
 }
 .settings-filetypes-row:last-child { border-bottom: none; }
 .settings-filetypes-row:hover { background: var(--bg-raised); }
+
+.settings-filetypes-col { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* A narrow settings screen (the file area with the sidebar and inspector open
+   at 800px, or at app zoom — Stage 2D §12): the nav moves above the content
+   as a wrapping strip of its items, so the content keeps the full width. */
+@container fp-settings (max-width: 600px) {
+  .settings-layout { flex-direction: column; }
+  .settings-nav {
+    width: auto;
+    flex-direction: row;
+    flex-wrap: wrap;
+    flex-shrink: 0;
+    overflow: visible;
+    border-right: none;
+    border-bottom: 1px solid var(--border-hairline);
+    padding: var(--s-6);
+    gap: var(--s-2);
+  }
+  .settings-nav__section-label { display: none; }
+  .settings-nav__item {
+    display: block;
+    max-width: 100%;
+    margin: 0;
+    padding: 0 var(--s-10);
+    height: var(--h-button-sm);
+    line-height: var(--h-button-sm);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .settings-nav__item--active::before { left: var(--s-6); right: var(--s-6); top: auto; bottom: 0; width: auto; height: 2px; }
+  .settings-content { padding: var(--s-16); min-height: 0; }
+  /* Controls wrap or shrink to the pane instead of pushing it sideways. */
+  .settings-content .fp-segmented { flex-wrap: wrap; height: auto; max-width: 100%; }
+  .settings-content .fp-input { max-width: 100%; min-width: 0; }
+  .settings-pane__title { overflow-wrap: anywhere; }
+  .settings-radio-row { min-width: 0; overflow-wrap: anywhere; }
+  .settings-content .fp-mono { min-width: 0; overflow-wrap: anywhere; }
+}
+/* …and at the very narrowest (800px window, both panels open, zoom 150%) the
+   insets tighten so a control still fits its card. */
+@container fp-settings (max-width: 360px) {
+  .settings-content { padding: var(--s-8); }
+  .settings-card { padding: var(--s-8); }
+  .settings-content .fp-segmented__opt { padding-inline: var(--s-6); }
+}
 
 /* ── Accent swatch picker ── */
 .settings-accent-grid {
@@ -6738,7 +6984,13 @@ button.fp-pill:hover {
    multi-selection actually hides the preview box (pass 2 #148). */
 .inspector__preview[hidden] { display: none !important; }
 .fp-inspector__tabs { height: 44px; flex-shrink: 0; }
-.inspector__body { min-height: 0; flex: 1; overflow: auto; }
+/* The body reaches the panel's right edge (the panel's padding moves inside
+   it) so its overlay scrollbar hugs that edge (Stage 2D §9.3). */
+.inspector__body {
+  min-height: 0; flex: 1; overflow: auto;
+  margin-right: calc(-1 * var(--s-16));
+  padding-right: var(--s-16);
+}
 /* Panes container: fixed min-height so the shortest pane (Tags/History's
    "Select a file"/"No history available yet." one-liners) reserves the same
    space as the tallest (Preview's 5-row meta grid). */

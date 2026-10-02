@@ -122,7 +122,7 @@ function tabIconFor(record) {
   if (record.screen === 'browser' && (!record.path || record.path === THISPC)) {
     // The This PC page is not a folder: the chrome glyph, never a shell
     // lookup of "thispc:".
-    return icon('desktop', 'fp-icon--14 fp-tab__icon');
+    return icon('this-pc', 'fp-icon--14 fp-tab__icon');
   }
   if (record.screen === 'browser') {
     const norm = String(record.path || '').replace(/[\\/]+$/, '');
@@ -804,6 +804,17 @@ function setSidebarCollapsed(collapsed) {
     setSidebarWidthVar(savedSidebarWidth());
   }
   localStorage.setItem('fp-sidebar-collapsed', collapsed ? 'on' : 'off');
+  // Rail icons are bigger (Stage 2D §9.2): shell bitmaps re-resolve at the
+  // size they are now drawn at instead of being stretched.
+  if (typeof fpInvalidateLazyIcons === 'function') fpInvalidateLazyIcons(sidebar);
+}
+
+/** The px a sidebar row's icon is drawn at — --sidebar-icon, or the rail's
+ * --sidebar-rail-icon while collapsed (styles.css is the one source). */
+function sidebarIconPx() {
+  const collapsed = !!sidebar && sidebar.classList.contains('fp-sidebar--collapsed');
+  const v = getComputedStyle(document.documentElement).getPropertyValue(collapsed ? '--sidebar-rail-icon' : '--sidebar-icon');
+  return parseInt(v, 10) || (collapsed ? 22 : 18);
 }
 
 function toggleSidebar() {
@@ -2516,28 +2527,35 @@ function setDriveList(list) {
 }
 
 /** A sidebar drive row: the shared name, a 3px usage bar (--bad above 90%)
- * and "X free of Y" as its tooltip — the page's own numbers. */
+ * tucked under the label, and a tooltip of the full name over "X free of Y"
+ * — the page's own numbers. */
 function renderDriveItem(d) {
   const letter = driveLetterOf(d);
   const labelText = driveDisplayName(d);
   const full = driveIsNearlyFull(d) ? ' fp-sidebar__drive-bar__fill--full' : '';
   return `<div class="fp-sidebar__drive-item">
     <button class="fp-sidebar__item" data-screen="browser" data-path="${escapeHtml(d.mount)}"
-            data-action="navigate-path" title="${escapeHtml(labelText)}">
-      ${fpShellItemIcon({ path: d.mount, is_dir: true }, 16, 'drive', 'fp-sidebar__drive-icon')}
+            data-action="navigate-path" title="${escapeHtml(driveItemTitle(d))}">
+      ${fpShellItemIcon({ path: d.mount, is_dir: true }, sidebarIconPx(), 'drive', 'fp-sidebar__drive-icon')}
       <span class="fp-sidebar__drive-letter" aria-hidden="true">${escapeHtml(letter)}</span>
       <span class="fp-sidebar__item__label">${escapeHtml(labelText)}</span>
     </button>
-    <div class="fp-sidebar__drive-bar" title="${escapeHtml(driveFreeText(d))}">
+    <div class="fp-sidebar__drive-bar" aria-hidden="true">
       <div class="fp-sidebar__drive-bar__fill${full}" style="width:${drivePercentUsed(d)}%"></div>
     </div>
   </div>`;
 }
 
+/** "Label (C:)" over "X GB free of Y GB" (the bar under the label paints
+ * over the item's bottom edge, so it carries no tooltip of its own). */
+function driveItemTitle(d) {
+  return `${driveDisplayName(d)}\n${driveFreeText(d)}`;
+}
+
 function patchDriveItem(row, d) {
-  const bar = row.querySelector('.fp-sidebar__drive-bar');
+  const item = row.querySelector('.fp-sidebar__item');
   const fill = row.querySelector('.fp-sidebar__drive-bar__fill');
-  if (bar) bar.title = driveFreeText(d);
+  if (item) item.title = driveItemTitle(d);
   if (!fill) return;
   const width = `${drivePercentUsed(d)}%`;
   if (fill.style.width !== width) fill.style.width = width;
@@ -2561,7 +2579,7 @@ function renderPinItem(pin) {
   const label = pin.label || pathBaseName(pin.path) || pin.path;
   return `<button class="fp-sidebar__item" data-screen="browser" data-path="${escapeHtml(pin.path)}"
           data-pin-id="${pin.id}" data-action="navigate-path" title="${escapeHtml(pin.path)}">
-    ${fpShellItemIcon({ path: pin.path, is_dir: true }, 16, 'folder')}
+    ${fpShellItemIcon({ path: pin.path, is_dir: true }, sidebarIconPx(), 'folder')}
     <span class="fp-sidebar__item__label">${escapeHtml(label)}</span>
   </button>`;
 }
@@ -2579,6 +2597,7 @@ async function loadSidebarTags() {
   const chips = document.getElementById('sb-tags-chips');
   const section = document.getElementById('sb-tags');
   const label = document.getElementById('sb-tags-label');
+  const divider = document.getElementById('sb-tags-divider');
   if (!chips) return;
   let tags;
   try {
@@ -2591,6 +2610,7 @@ async function loadSidebarTags() {
     console.warn('[fp-tags] failed to load tags:', formatApiError(err));
     if (section) section.hidden = true;
     if (label) label.hidden = true;
+    if (divider) divider.hidden = true;
     return;
   }
   window.__fpTags = Array.isArray(tags) ? tags : [];
@@ -2601,6 +2621,7 @@ async function loadSidebarTags() {
   const empty = top.length === 0;
   if (section) section.hidden = empty;
   if (label) label.hidden = empty;
+  if (divider) divider.hidden = empty;
   chips.innerHTML = top.map(t => `<button class="fp-chip" data-action="filter-by-tag"
       data-tag="${escapeHtml(t.name)}" title="Search This PC for tag: ${escapeHtml(t.name)}">
       ${escapeHtml(t.name)} <span class="fp-chip__count">${t.count}</span>
@@ -2653,7 +2674,7 @@ function renderQuickAccessItem(f) {
   const label = f.name || pathBaseName(f.path) || f.id;
   return `<button class="fp-sidebar__item" data-screen="browser" data-path="${escapeHtml(f.path)}"
           data-known-id="${escapeHtml(f.id)}" data-action="navigate-path" title="${escapeHtml(label)}">
-    ${fpShellItemIcon({ path: f.path, is_dir: true }, 16, symbol)}
+    ${fpShellItemIcon({ path: f.path, is_dir: true }, sidebarIconPx(), symbol)}
     <span class="fp-sidebar__item__label">${escapeHtml(label)}</span>
   </button>`;
 }
@@ -2707,6 +2728,24 @@ function setThisPcOpen(open, { persist = true } = {}) {
   }
   if (body) body.hidden = !open;
   if (persist) saveSetting('ui.sidebar_thispc_open', open);
+}
+
+// ── Overlay scrollbars (Stage 2D §9.3) ────────────────────────────────────────
+/** The panels scroll under fpOverlayScroll (overlayscroll.js) instead of a
+ * native bar: the sidebar, the inspector body and the Properties body (the
+ * §9.3 ruling), and the Settings nav (§12 sweep). Each element is static
+ * markup, so attaching once at startup is enough — the component's observers
+ * follow everything rendered into them later, and a panel shown from
+ * display:none re-measures through its ResizeObserver. */
+function initOverlayScrollbars() {
+  for (const el of [
+    document.querySelector('#sidebar .fp-sidebar__scroll'),
+    document.getElementById('inspector-body'),
+    document.querySelector('#properties-modal .properties__body'),
+    document.querySelector('#screen-settings .settings-nav'),
+  ]) {
+    if (el) fpOverlayScroll(el);
+  }
 }
 
 // ── Window controls (Electron IPC) ───────────────────────────────────────────
@@ -4167,6 +4206,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   updateInspector('none');
   initSidebarResize();
   restoreSidebarState();
+  initOverlayScrollbars();
   initSearch();
   initToolbarLayout();
   initChromeMouseFocus();

@@ -63,7 +63,7 @@
                 data-action="toggle-sidebar" title="Expand sidebar (Ctrl+B)" style="-webkit-app-region:no-drag">
           <svg class="fp-icon fp-icon--14" aria-hidden="true"><use href="#fp-chevron-right"></use></svg>
         </button>
-        <div style="flex:1;min-width:0">
+        <div class="fp-sidebar__brand">
           <!-- Editable device name — double-click to rename, persists to localStorage. -->
           <div class="fp-sidebar__brand-name" id="sb-device-name"
                title="Double-click to rename" tabindex="0">My PC</div>
@@ -121,6 +121,8 @@
         <!-- Populated by loadPins() from GET /pins -->
         <div id="sb-pinned-folders"></div>
 
+        <div class="fp-sidebar__divider" role="separator"></div>
+
         <!-- ── THIS PC ──────────────────────────────────────────── -->
         <!-- Real fixed drives from GET /drives (Stage 3 will add the
              AI-organised dot). Collapsible: thispc-toggle flips
@@ -128,10 +130,14 @@
              persists ui.sidebar_thispc_open; thispc-open opens the This PC
              page (drive cards, thispc.js; tab label "This PC"). -->
         <div class="fp-sidebar__section" id="sb-thispc">
-          <div class="fp-sidebar__section-head" role="button" tabindex="0" data-action="thispc-open">
+          <div class="fp-sidebar__section-head" role="button" tabindex="0" data-action="thispc-open" title="This PC">
             <button class="fp-sidebar__chevron" data-action="thispc-toggle" aria-label="Collapse This PC" aria-expanded="true">
               <svg class="fp-icon fp-icon--14" aria-hidden="true"><use href="#fp-chevron-down"></use></svg>
             </button>
+            <!-- The collapsed rail's This PC entry (Stage 2D §9.2): the label
+                 has no room there, so the head shows this icon instead and
+                 carries the page's active state like any rail item. -->
+            <svg class="fp-icon fp-icon--16 fp-sidebar__section-icon" aria-hidden="true"><use href="#fp-this-pc"></use></svg>
             <span class="fp-sidebar__section-label">This PC</span>
           </div>
           <div class="fp-sidebar__section-body" id="sb-drives"></div>
@@ -145,6 +151,7 @@
              section once GET /tags has answered with at least one used tag,
              so neither a failed request nor the window before it resolves
              leaves an empty "Tags" shelf standing in the sidebar. -->
+        <div class="fp-sidebar__divider" id="sb-tags-divider" role="separator" hidden></div>
         <div class="fp-sidebar__section-label" id="sb-tags-label" hidden>Tags</div>
         <div id="sb-tags" hidden>
           <div id="sb-tags-chips"></div>
@@ -156,6 +163,8 @@
             <svg class="fp-icon fp-icon--10" aria-hidden="true"><use href="#fp-chevron-down"></use></svg>
           </button>
         </div>
+
+        <div class="fp-sidebar__divider" role="separator"></div>
 
         <!-- ── SYSTEM ───────────────────────────────────────────── -->
         <div class="fp-sidebar__section-label">System</div>
@@ -2151,7 +2160,7 @@
                 <div class="fp-card settings-card">
                   <div class="settings-row">
                     <div class="settings-row__label">Watched folder path</div>
-                    <div style="display:flex;align-items:center;gap:var(--s-8)">
+                    <div style="display:flex;flex-wrap:wrap;align-items:center;gap:var(--s-8)">
                       <input type="text" class="fp-input" value="C:\EverythingFolder" data-action="settings-set-ef-path" style="width:220px" />
                       <button class="fp-btn fp-btn--secondary fp-btn--sm" data-action="settings-browse-ef-path">Browse…</button>
                     </div>
@@ -2251,7 +2260,7 @@
                 <div class="fp-card settings-card">
                   <div class="settings-row">
                     <div class="settings-row__label">Path</div>
-                    <div style="display:flex;align-items:center;gap:var(--s-8)">
+                    <div style="display:flex;flex-wrap:wrap;align-items:center;gap:var(--s-8)">
                       <input type="text" class="fp-input" value="C:\Users\justi\Downloads" data-action="settings-set-dl-path" style="width:220px" />
                       <button class="fp-btn fp-btn--secondary fp-btn--sm" data-action="settings-browse-dl-path">Browse…</button>
                     </div>
@@ -2365,7 +2374,7 @@
                   <div class="fp-card__header"><span class="fp-card__title">Local LLM</span></div>
                   <div class="settings-row">
                     <!-- INTEGRATION: live Ollama status from GET /health/ollama -->
-                    <div style="display:flex;align-items:center;gap:var(--s-8)">
+                    <div style="display:flex;flex-wrap:wrap;align-items:center;gap:var(--s-8)">
                       <span class="ef-state-dot" style="background:var(--good)"></span>
                       <span style="font:400 var(--t-body) var(--font-ui);color:var(--text-secondary)">Ollama detected — llama3.1:8b</span>
                     </div>
@@ -2448,7 +2457,7 @@
                 <div class="fp-card settings-card">
                   <div class="fp-card__header"><span class="fp-card__title">Usage this month</span></div>
                   <!-- INTEGRATION: from GET /ai/usage -->
-                  <div style="display:flex;gap:var(--s-24);margin-bottom:var(--s-12)">
+                  <div style="display:flex;flex-wrap:wrap;gap:var(--s-8) var(--s-24);margin-bottom:var(--s-12)">
                     <div>
                       <div style="font:400 var(--t-micro) var(--font-ui);color:var(--text-tertiary);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px">Tokens used</div>
                       <div class="fp-mono" style="font:600 var(--t-display-sm) var(--font-data);color:var(--text-primary)">247,312</div>
@@ -2512,7 +2521,7 @@
                     </span>
                   </div>
                 </div>
-                <div style="display:flex;gap:var(--s-8);margin-top:var(--s-12)">
+                <div style="display:flex;flex-wrap:wrap;gap:var(--s-8);margin-top:var(--s-12)">
                   <button class="fp-btn fp-btn--primary fp-btn--sm" data-action="settings-add-filetype">Add file type</button>
                   <button class="fp-btn fp-btn--secondary fp-btn--sm" data-action="navigate-screen" data-screen="scan-config">Re-run setup conversation</button>
                 </div>
@@ -2653,7 +2662,7 @@
                   <div class="settings-sep"></div>
                   <div class="settings-row">
                     <div class="settings-row__label">Snapshot storage</div>
-                    <div style="display:flex;align-items:center;gap:var(--s-8)">
+                    <div style="display:flex;flex-wrap:wrap;align-items:center;gap:var(--s-8)">
                       <span class="fp-mono" style="font:600 var(--t-display-sm) var(--font-data);color:var(--text-primary)">2.4 GB</span>
                       <button class="fp-btn fp-btn--secondary fp-btn--sm" data-action="settings-cleanup-snapshots">Cleanup snapshots</button>
                     </div>
@@ -3531,6 +3540,7 @@
 <script src="src/filetypes.js"></script>
 <script src="src/icons-sprite.js"></script>
 <script src="iconCache.js"></script>
+<script src="src/overlayscroll.js"></script>
 <script src="src/icons.js"></script>
 <script src="src/fileops.js"></script>
 <script src="src/browser.js"></script>
