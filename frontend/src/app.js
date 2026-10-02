@@ -1607,6 +1607,7 @@ function showContextMenu(x, y, items, opts = {}) {
   closeContextFlyouts(0);
   clearTimeout(cmTimer);
   cmPrevFocus = document.activeElement;
+  cmKbdPointer = null;
   contextMenu.innerHTML = '';
   buildContextMenuItems(contextMenu, items, opts.ctx, 0);
   contextMenu.style.display = 'block';
@@ -1637,7 +1638,14 @@ const CM_FLYOUT_OPEN_DELAY = 250;    // hover this long on a parent row to open
 const CM_FLYOUT_CLOSE_GRACE = 300;   // sibling hover shorter than this keeps it open
 let cmFlyouts = [];                  // [{ menu, owner }]
 let cmTimer = null;                  // the one pending hover open/close
-let cmPrevFocus = null;              // focus to give back when Escape closes the menu
+let cmPrevFocus = null;              // focus to give back when the menu closes by keyboard / activation
+// Hover is ignored while the keyboard drives the menu: set to the pointer's
+// position when a menu key is handled, cleared by the first pointerenter that
+// arrives at a DIFFERENT position (a layout shift under a stationary pointer
+// fires pointerenter with the same coordinates and must not close a flyout the
+// user opened with the arrow keys).
+let cmKbdPointer = null;
+let cmLastPointer = { x: -1, y: -1 };
 
 function cmOpenMenus() { return [contextMenu, ...cmFlyouts.map(f => f.menu)]; }
 
@@ -1668,7 +1676,7 @@ function openContextFlyout(item, btn, depth, ctx, focusFirst) {
   const menu = document.createElement('div');
   menu.className = 'fp-context-menu fp-context-menu--flyout';
   menu.setAttribute('role', 'menu');
-  menu.addEventListener('mouseenter', () => clearTimeout(cmTimer));
+  menu.addEventListener('pointerenter', () => clearTimeout(cmTimer));
   buildContextMenuItems(menu, item.items, ctx, depth + 1);
   document.body.appendChild(menu);
   cmFlyouts[depth] = { menu, owner: btn };
@@ -1746,8 +1754,8 @@ function buildContextMenuItems(menuEl, items, ctx, depth) {
     // against that CSS being bypassed some other way, not the only guard.
     if (isEnabled) {
       if (hasChildren) btn.addEventListener('click', () => { clearTimeout(cmTimer); openContextFlyout(item, btn, depth, ctx, false); });
-      else if (item.onClick) btn.addEventListener('click', () => { item.onClick(); hideContextMenu(); });
-      else btn.addEventListener('click', hideContextMenu);
+      else if (item.onClick) btn.addEventListener('click', () => { closeContextMenuAfterActivation(); item.onClick(); });
+      else btn.addEventListener('click', closeContextMenuAfterActivation);
       btn._cmItem = hasChildren ? item : null;
       btn._cmCtx = ctx;
       btn._cmDepth = depth;
@@ -1756,7 +1764,11 @@ function buildContextMenuItems(menuEl, items, ctx, depth) {
     // row while a flyout is open closes it only after a 300 ms grace, so the
     // pointer can cross a sibling on its way to the flyout (safe triangle) —
     // entering the flyout (or coming back to the parent row) cancels that.
-    btn.addEventListener('mouseenter', () => {
+    btn.addEventListener('pointerenter', e => {
+      if (cmKbdPointer) {
+        if (e.clientX === cmKbdPointer.x && e.clientY === cmKbdPointer.y) return;
+        cmKbdPointer = null;
+      }
       clearTimeout(cmTimer);
       const open = cmFlyouts[depth];
       if (hasChildren && isEnabled) {
@@ -1776,6 +1788,17 @@ function hideContextMenu() {
   if (contextMenu) contextMenu.style.display = 'none';
 }
 
+/** Closes the menu because an item was activated (mouse or keyboard) and gives
+ * focus back to where it was before the menu opened — the focused item was
+ * about to be removed, which would drop focus to <body>. This runs BEFORE the
+ * item's action, so an action that moves focus itself (a re-sorted list, an
+ * inline rename, a dialog) still wins. */
+function closeContextMenuAfterActivation() {
+  const prev = cmPrevFocus;
+  hideContextMenu();
+  if (prev && prev.isConnected && prev !== document.body) prev.focus({ preventScroll: true });
+}
+
 function contextMenuIsOpen() {
   return !!contextMenu && contextMenu.style.display === 'block';
 }
@@ -1790,13 +1813,32 @@ document.addEventListener('click', e => {
 // root menu closes everything. Capture phase + stopPropagation so the keys
 // never also reach the file list (arrow selection, Enter to open) or the
 // global Escape handler behind the menu.
+document.addEventListener('pointermove', e => { cmLastPointer = { x: e.clientX, y: e.clientY }; }, true);
+
+// Tab leaves the menu: close it all and put focus back, so Tab then continues
+// from where the user was. Focus moving to anything outside the menu tree by
+// other means (focusout with a real target) closes it too; relatedTarget null
+// is the menu removing its own focused item and is ignored.
+document.addEventListener('focusout', e => {
+  if (!contextMenuIsOpen()) return;
+  const to = e.relatedTarget;
+  if (to && !to.closest?.('.fp-context-menu')) hideContextMenu();
+});
+
 document.addEventListener('keydown', e => {
   if (!contextMenuIsOpen()) return;
   const key = e.key;
+  if (key === 'Tab') {
+    const prev = cmPrevFocus;
+    hideContextMenu();
+    if (prev && prev.isConnected && prev !== document.body) prev.focus({ preventScroll: true });
+    return;
+  }
   if (!['ArrowDown', 'ArrowUp', 'ArrowLeft', 'ArrowRight', 'Enter', 'Escape', 'Home', 'End'].includes(key)) return;
   if (e.ctrlKey || e.metaKey || e.altKey) return;
   e.preventDefault();
   e.stopPropagation();
+  cmKbdPointer = { ...cmLastPointer };
   const menus = cmOpenMenus();
   const active = menus[menus.length - 1];
   const items = cmFocusableItems(active);

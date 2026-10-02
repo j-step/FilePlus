@@ -247,7 +247,15 @@ function applySort(key, dir) {
   saveSetting('ui.sort', browserState.sort);
   updateSortHeaderUI();
   renderDirectory();
-  if (browserState.focus) findRowByPath(browserState.focus)?.scrollIntoView({ block: 'nearest' });
+  // Re-rendering dropped DOM focus (the sort menu / header held it): give it to
+  // the focused row (or the list) so arrow keys keep working right after a sort.
+  const focusedRow = browserState.focus ? findRowByPath(browserState.focus) : null;
+  if (focusedRow) {
+    focusedRow.focus({ preventScroll: true });
+    focusedRow.scrollIntoView({ block: 'nearest' });
+  } else {
+    focusListContainer();
+  }
 }
 
 /**
@@ -267,7 +275,10 @@ function sortedEntries() {
     if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
     let cmp;
     if (isDate) {
-      const av = a[key], bv = b[key];
+      // An access-denied entry (error set) carries dates of 0.0 — treat it as
+      // missing so it sorts last instead of first in an ascending date sort.
+      const av = a.error ? null : a[key];
+      const bv = b.error ? null : b[key];
       const aMissing = av == null, bMissing = bv == null;
       if (aMissing || bMissing) {
         if (aMissing && bMissing) return byName(a, b);
