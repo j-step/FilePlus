@@ -400,10 +400,10 @@
                   Name
                   <svg class="fp-icon fp-icon--10 list-col__caret" aria-hidden="true"><use href="#fp-chevron-down"></use></svg>
                 </div>
-                <div class="list-col list-col--size fp-sortable" data-sort="size" data-action="sort-by" style="cursor:pointer;display:flex;align-items:center;gap:4px;justify-content:flex-end">Size
+                <div class="list-col list-col--size fp-sortable" data-sort="size" data-action="sort-by" style="cursor:pointer">Size
                   <svg class="fp-icon fp-icon--10 list-col__caret" aria-hidden="true"><use href="#fp-chevron-down"></use></svg>
                 </div>
-                <div class="list-col list-col--modified fp-sortable" data-col="date" data-sort="modified" data-action="sort-by" style="cursor:pointer;display:flex;align-items:center;gap:4px;justify-content:flex-end"><span class="list-col__label">Date modified</span>
+                <div class="list-col list-col--modified fp-sortable" data-col="date" data-sort="modified" data-action="sort-by" style="cursor:pointer"><span class="list-col__label">Date modified</span>
                   <svg class="fp-icon fp-icon--10 list-col__caret" aria-hidden="true"><use href="#fp-chevron-down"></use></svg>
                 </div>
                 <div class="list-col list-col--tags">Tags</div>
@@ -523,16 +523,18 @@
                     <div class="fp-field-error" id="settings-accent-error" role="alert" aria-live="polite" hidden style="margin-top:6px"></div>
                   </div>
                   <div class="settings-sep"></div>
+                  <!-- Label and its explanation stacked on the left, the control on
+                       the right like every other row (Task 14 Q16). -->
                   <div class="settings-row">
-                    <div class="settings-row__label">Show in-app notifications</div>
-                    <div class="settings-row__control">
-                      <label class="fp-toggle">
-                        <input type="checkbox" id="settings-show-notifications" data-action="settings-set-show-notifications"/>
-                        <span class="fp-toggle__track"></span>
-                        <span class="fp-toggle__thumb"></span>
-                      </label>
-                      <span style="font:400 var(--t-small) var(--font-ui);color:var(--text-tertiary);margin-left:10px">Toasts and snackbars (tab opened, tab closed, tab order saved, scan complete, etc.). Errors always show.</span>
+                    <div class="settings-row__text">
+                      <div class="settings-row__label">Show in-app notifications</div>
+                      <div class="settings-row__desc">Toasts and snackbars (tab opened, tab closed, tab order saved, scan complete, etc.). Errors always show.</div>
                     </div>
+                    <label class="fp-toggle">
+                      <input type="checkbox" id="settings-show-notifications" data-action="settings-set-show-notifications"/>
+                      <span class="fp-toggle__track"></span>
+                      <span class="fp-toggle__thumb"></span>
+                    </label>
                   </div>
                   <div class="settings-sep"></div>
                   <div class="settings-row">
@@ -599,24 +601,24 @@
                   </div>
                   <div class="settings-sep"></div>
                   <div class="settings-row">
-                    <div class="settings-row__label">File icons</div>
-                    <div class="settings-row__control">
-                      <div class="fp-segmented">
-                        <button class="fp-segmented__opt active" data-action="settings-set-icon-source" data-val="fileplus">FilePlus</button>
-                        <button class="fp-segmented__opt" data-action="settings-set-icon-source" data-val="windows">Windows</button>
-                      </div>
-                      <span style="font:400 var(--t-small) var(--font-ui);color:var(--text-tertiary);margin-left:10px">FilePlus draws its own file-type icons; Windows uses the icon each file's registered app supplies.</span>
+                    <div class="settings-row__text">
+                      <div class="settings-row__label">File icons</div>
+                      <div class="settings-row__desc">FilePlus draws its own file-type icons; Windows uses the icon each file's registered app supplies.</div>
+                    </div>
+                    <div class="fp-segmented">
+                      <button class="fp-segmented__opt active" data-action="settings-set-icon-source" data-val="fileplus">FilePlus</button>
+                      <button class="fp-segmented__opt" data-action="settings-set-icon-source" data-val="windows">Windows</button>
                     </div>
                   </div>
                   <div class="settings-sep"></div>
                   <div class="settings-row">
-                    <div class="settings-row__label">Properties panel</div>
-                    <div class="settings-row__control">
-                      <div class="fp-segmented">
-                        <button class="fp-segmented__opt active" data-action="settings-set-properties-mode" data-val="fileplus">FilePlus</button>
-                        <button class="fp-segmented__opt" data-action="settings-set-properties-mode" data-val="windows">Windows</button>
-                      </div>
-                      <span style="font:400 var(--t-small) var(--font-ui);color:var(--text-tertiary);margin-left:10px">FilePlus shows its own Properties panel; Windows opens the native dialog instead.</span>
+                    <div class="settings-row__text">
+                      <div class="settings-row__label">Properties panel</div>
+                      <div class="settings-row__desc">FilePlus shows its own Properties panel; Windows opens the native dialog instead.</div>
+                    </div>
+                    <div class="fp-segmented">
+                      <button class="fp-segmented__opt active" data-action="settings-set-properties-mode" data-val="fileplus">FilePlus</button>
+                      <button class="fp-segmented__opt" data-action="settings-set-properties-mode" data-val="windows">Windows</button>
                     </div>
                   </div>
                 </div>
@@ -637,15 +639,15 @@
                 <div class="fp-card settings-card">
                   <div class="fp-card__header"><span class="fp-card__title">Keyboard</span></div>
                   <div class="settings-row">
-                    <div class="settings-row__label">Backspace deletes selected items</div>
-                    <div class="settings-row__control">
-                      <label class="fp-toggle">
-                        <input type="checkbox" id="settings-backspace-deletes" data-action="settings-set-backspace-deletes" />
-                        <span class="fp-toggle__track"></span>
-                        <span class="fp-toggle__thumb"></span>
-                      </label>
-                      <span style="font:400 var(--t-small) var(--font-ui);color:var(--text-tertiary);margin-left:10px">Otherwise Backspace goes up a folder. Applies in the file browser only; no effect with nothing selected.</span>
+                    <div class="settings-row__text">
+                      <div class="settings-row__label">Backspace deletes selected items</div>
+                      <div class="settings-row__desc">Otherwise Backspace goes up a folder. Applies in the file browser only; no effect with nothing selected.</div>
                     </div>
+                    <label class="fp-toggle">
+                      <input type="checkbox" id="settings-backspace-deletes" data-action="settings-set-backspace-deletes" />
+                      <span class="fp-toggle__track"></span>
+                      <span class="fp-toggle__thumb"></span>
+                    </label>
                   </div>
                 </div>
               </div><!-- /#settings-pane-personalization -->
@@ -742,6 +744,7 @@
                     <div class="settings-row__text">
                       <div class="settings-row__label">Writes</div>
                       <p class="settings-row__desc" id="settings-writes-status">—</p>
+                      <p class="settings-row__desc settings-row__desc--detail" id="settings-writes-detail"></p>
                     </div>
                   </div>
                 </div>
@@ -1123,18 +1126,23 @@
               <svg class="fp-icon fp-icon--14" aria-hidden="true" style="flex-shrink:0;color:var(--text-secondary)"><use href="#fp-folder"></use></svg>
               <span>Open Browser</span>
             </button>
+            <!-- Every command carries an icon, so the labels line up (Task 14 Q15). -->
             <button class="fp-palette__item" role="option" data-action="toggle-theme">
+              <svg class="fp-icon fp-icon--14" aria-hidden="true" style="flex-shrink:0;color:var(--text-secondary)"><use href="#fp-theme-dark"></use></svg>
               <span>Toggle Theme</span>
             </button>
             <button class="fp-palette__item" role="option" data-action="toggle-sidebar">
+              <svg class="fp-icon fp-icon--14" aria-hidden="true" style="flex-shrink:0;color:var(--text-secondary)"><use href="#fp-chevron-left"></use></svg>
               <span>Toggle Sidebar</span>
               <span class="fp-palette__kbd fp-mono">Ctrl+B</span>
             </button>
             <button class="fp-palette__item" role="option" data-action="toggle-inspector">
+              <svg class="fp-icon fp-icon--14" aria-hidden="true" style="flex-shrink:0;color:var(--text-secondary)"><use href="#fp-inspector"></use></svg>
               <span>Toggle Inspector</span>
               <span class="fp-palette__kbd fp-mono">Ctrl+I</span>
             </button>
             <button class="fp-palette__item" role="option" data-action="navigate-screen" data-screen="settings">
+              <svg class="fp-icon fp-icon--14" aria-hidden="true" style="flex-shrink:0;color:var(--text-secondary)"><use href="#fp-settings"></use></svg>
               <span>Open Settings</span>
               <span class="fp-palette__kbd fp-mono">Ctrl+,</span>
             </button>

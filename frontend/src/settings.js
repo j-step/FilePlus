@@ -254,11 +254,19 @@ function refreshIconSurfaces() {
   if (typeof propertiesRefreshIcon === 'function') propertiesRefreshIcon();
 }
 
-/** The write mode in words, from a /health answer. */
+/** The write mode in plain words, from a /health answer (Task 14 Q23: the
+ * main line is for the owner; the settings behind it go in the detail line). */
 function writesStatusText(health) {
   return health.write_unlocked
-    ? 'Unlocked — real-drive writes enabled'
-    : 'Sandbox only — set FILEPLUS_ENV=prod and WRITE_UNLOCKED=true in .env to enable real-drive writes';
+    ? 'Unlocked: FilePlus can move, rename and delete files on your drives, always after you approve.'
+    : 'Practice mode: FilePlus only moves, renames or deletes files inside its own sandbox folder. Your other files are only read.';
+}
+
+/** Where the write mode is set — the secondary line under the main one. */
+function writesDetailText(health) {
+  return health.write_unlocked
+    ? 'Set in FilePlus\u2019s .env file (WRITE_UNLOCKED=true, FILEPLUS_ENV=prod).'
+    : 'To work on your real drives, the .env file in the FilePlus folder needs FILEPLUS_ENV=prod and WRITE_UNLOCKED=true.';
 }
 
 /** Updates the Data pane's read-only "Writes" line from the last /health
@@ -268,6 +276,8 @@ function updateWritesStatusLine() {
   const el = document.getElementById('settings-writes-status');
   if (!el || !window.__fpHealth) return;
   el.textContent = writesStatusText(window.__fpHealth);
+  const detail = document.getElementById('settings-writes-detail');
+  if (detail) detail.textContent = writesDetailText(window.__fpHealth);
 }
 
 // ── Settings › About and Data actions (Stage 2D Task 12a) ──────────────────
@@ -600,12 +610,24 @@ function applyAccentHex(rawHex) {
   return true;
 }
 
+/** The accent field's hint names the accent actually in use: the theme's own
+ * default (dark and light differ) unless a custom one is set — the field used
+ * to say the dark default's #4CC2FF beside the light theme's swatch
+ * (Task 14 Q17). Called on every theme change (applyTheme, app.js). */
+function syncAccentField() {
+  const input = document.getElementById('settings-accent-hex');
+  if (!input) return;
+  const current = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim();
+  if (current && /^#[0-9a-f]{3,8}$/i.test(current)) input.placeholder = current.toUpperCase();
+}
+
 function resetAccentToDefault() {
   document.documentElement.style.removeProperty('--accent-custom');
   const swatch = document.getElementById('settings-accent-swatch');
   if (swatch) swatch.style.background = `var(--accent)`;
   const input = document.getElementById('settings-accent-hex');
   if (input) input.value = '';
+  syncAccentField();
   const errorEl = document.getElementById('settings-accent-error');
   if (errorEl) { errorEl.hidden = true; errorEl.textContent = ''; }
   localStorage.removeItem('fp-accent');

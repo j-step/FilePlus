@@ -251,7 +251,19 @@
   --w-inspector:         340px;
   --w-inspector-min:     280px;
   --w-inspector-max:     520px;
-  --sidebar-w-css:   calc(var(--sidebar-w-screen, var(--w-sidebar)) / var(--app-zoom));
+  /* The file area always keeps --file-area-min screen px (Task 14 Q1): an
+     800px window with the sidebar dragged to 480 and the inspector open left
+     the list 0 px wide and pushed the inspector off the window. The panels
+     give way at render time, the saved widths stay as they are: the sidebar
+     first, down to its 180px floor (leaving room for the inspector's minimum
+     when that is open), then the inspector down to its 280px minimum.
+     --inspector-open is 1/0, set by setInspectorOpen (inspector.js). */
+  --file-area-min:   280px;
+  --sidebar-w-floor: 180px;
+  --inspector-open:  0;
+  --sidebar-w-css:   min(calc(var(--sidebar-w-screen, var(--w-sidebar)) / var(--app-zoom)),
+                         max(calc(var(--sidebar-w-floor) / var(--app-zoom)),
+                             calc(100vw - (var(--file-area-min) + var(--w-inspector-min) * var(--inspector-open)) / var(--app-zoom))));
   --rail-w-css:      calc(var(--w-sidebar-collapsed) / var(--app-zoom));
 
   /* ---------- File-type family colours (Stage 2C Task 6) ----------
@@ -595,6 +607,11 @@ svg { flex-shrink: 0; }
 .fp-sidebar__resize-handle--active {
   background: var(--accent);
 }
+/* A pointer resting near the panel edge (the rail's own scrollbar sits
+   there) is not asking to resize: the line shows after a short hover, and
+   never on the collapsed rail unless it is being dragged (Task 14 Q21). */
+.fp-sidebar__resize-handle:hover:not(.fp-sidebar__resize-handle--active) { transition-delay: 400ms; }
+.fp-sidebar--collapsed .fp-sidebar__resize-handle:hover:not(.fp-sidebar__resize-handle--active) { background: transparent; }
 
 .fp-sidebar__header {
   /* 88px = original 56px + 32px reclaimed from the moved tab-bar row.
@@ -1164,6 +1181,8 @@ svg { flex-shrink: 0; }
   font-size: 11px;
   user-select: none;
 }
+/* Its crumb is gone under the fade: no lone dot at the path's edge. */
+.fp-breadcrumb__sep.is-orphan { visibility: hidden; }
 
 /* -----------------------------------------------------------------------------
    10. SEARCH FIELD (Section 15)
@@ -1276,7 +1295,9 @@ svg { flex-shrink: 0; }
      layoutToolbar) — a collapsed or narrow bar never clips the panel. */
   min-width: min(340px, var(--search-dd-room, 340px));
   max-width: min(460px, var(--search-dd-room, 460px));
-  max-height: 420px;
+  /* Never past the status bar: --search-dd-top is the bar's bottom edge
+     (app.js layoutToolbar); the list scrolls inside (Task 14 Q13). */
+  max-height: min(420px, calc(100vh - var(--search-dd-top, 120px) - 6px - var(--h-statusbar) - var(--s-8)));
   overflow-y: auto;
   padding: var(--s-4);
   background: var(--bg-raised);
@@ -1428,6 +1449,9 @@ svg { flex-shrink: 0; }
   cursor: default;
 }
 .fp-palette__item:hover { background: var(--bg-pressed); }
+/* A command with no icon keeps the icon's slot, so every label starts at
+   the same x (Task 14 Q15). */
+#palette-commands .fp-palette__item > span:first-child { margin-left: calc(14px + var(--s-10)); }
 .fp-palette__item--selected { background: var(--accent-wash); }
 .fp-palette__item--selected::before {
   content: '';
@@ -1937,6 +1961,8 @@ svg { flex-shrink: 0; }
   justify-content: center;
   height: 100%;
   padding: 0 12px;
+  /* One line, always: a label never breaks inside its segment (Task 14 Q9). */
+  white-space: nowrap;
   background: transparent;
   color: var(--text-tertiary);
   border: none;
@@ -2168,19 +2194,21 @@ svg { flex-shrink: 0; }
 .fp-toggle__track {
   position: absolute;
   inset: 0;
-  background: var(--bg-raised);
-  border: 1px solid var(--border-mid);
+  background: transparent;
+  /* Off reads as an outlined pill with a grey knob, as in Windows: the old
+     raised-on-raised track all but vanished on a dark card (Task 14 Q16). */
+  border: 1px solid var(--text-tertiary);
   border-radius: var(--r-pill);
   transition: background-color var(--dur-fast) var(--ease-out);
 }
 .fp-toggle__thumb {
   position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 14px;
-  height: 14px;
-  background: var(--bg-raised);
-  border: 1px solid var(--border-subtle);
+  top: 3px;
+  left: 3px;
+  width: 12px;
+  height: 12px;
+  background: var(--text-secondary);
+  border: none;
   border-radius: var(--r-pill);
   box-shadow: none;
   transition: transform var(--dur-slide) var(--ease-out),
@@ -2521,6 +2549,7 @@ svg { flex-shrink: 0; }
 #ask-popout {
   position: fixed;
   width: 320px;
+  overflow-y: auto;
   padding: var(--s-14);
   display: flex;
   flex-direction: column;
@@ -3522,6 +3551,8 @@ body.is-dragging { cursor: default; }
   -webkit-app-region: no-drag;
 }
 .fp-oscroll.is-visible { opacity: 1; }
+/* The search dropdown's bar sits over the dropdown (z-index 300). */
+#search-dropdown + .fp-oscroll { z-index: 301; }
 .fp-oscroll.is-none { display: none; }
 body.is-dragging .fp-oscroll { pointer-events: none; }
 .fp-oscroll__thumb {
@@ -3687,6 +3718,9 @@ body.is-dragging .fp-oscroll { pointer-events: none; }
 
 /* Shell: sidebar | main */
 .shell {
+  /* The sidebar column as laid out (rail when collapsed): the inspector's
+     clamp subtracts it (Task 14 Q1). */
+  --side-col: var(--sidebar-w-css);
   display: grid;
   grid-template-columns: var(--sidebar-w-css) 1fr;
   min-height: 0;
@@ -4006,6 +4040,11 @@ body.is-dragging .fp-oscroll { pointer-events: none; }
 .list-col--icon { width: 16px; min-width: 16px; }
 .list-col--name { flex: 1; min-width: 120px; display: flex; align-items: center; gap: 4px; cursor: pointer; flex-shrink: 1; }
 .list-col--name:hover { color: var(--text-secondary); }
+/* display lives here, not inline in index.html: an inline display:flex beat
+   the narrow-pane rules below, so the header kept Size and Date while the
+   rows had dropped them (Task 14 Q14). */
+.list-col--size,
+.list-col--modified { display: flex; align-items: center; gap: 4px; justify-content: flex-end; }
 .list-col--size { width: 96px; min-width: 96px; text-align: right; cursor: pointer; }
 .list-col--modified { width: 136px; min-width: 136px; text-align: right; cursor: pointer; }
 .list-col--size:hover, .list-col--modified:hover { color: var(--text-secondary); }
@@ -4330,7 +4369,9 @@ body.is-dragging .fp-oscroll { pointer-events: none; }
 
 /* Small icons: 16px icon + name, fixed-width columns, row-major. */
 #list-scroll[data-view="small"] {
-  grid-template-columns: repeat(auto-fill, var(--list-col-w, 200px));
+  /* A column is never wider than the pane: a name ends in an ellipsis at
+     the panel edge instead of running under it (Task 14 Q14). */
+  grid-template-columns: repeat(auto-fill, min(var(--list-col-w, 200px), 100%));
   grid-auto-rows: minmax(var(--view-row-list), max-content);
   column-gap: var(--s-4);
   row-gap: 0;
@@ -4343,7 +4384,7 @@ body.is-dragging .fp-oscroll { pointer-events: none; }
   display: grid;
   grid-auto-flow: column;
   grid-template-rows: repeat(var(--list-rows, 20), var(--view-row-list));
-  grid-auto-columns: var(--list-col-w, 200px);
+  grid-auto-columns: min(var(--list-col-w, 200px), calc(100% - var(--s-16)));
   justify-content: start;
   align-content: start;
   column-gap: var(--s-4);
@@ -4411,6 +4452,12 @@ body.is-dragging .fp-oscroll { pointer-events: none; }
   position: absolute;
   top: var(--s-4);
   right: var(--s-4);
+}
+/* An icon cell is wider than its icon (s + 28): the star sits on the icon
+   box's top-right corner, attached to the item (Task 14 Q20). */
+#list-scroll[data-view="icons"] .fp-row__star {
+  top: calc(var(--s-4) + var(--icon-size, 96px) * 0.08);
+  right: calc(50% - var(--icon-size, 96px) * 0.4);
 }
 #list-scroll:is([data-view="list"], [data-view="small"]) .fp-row__star { display: none; }
 
@@ -4870,6 +4917,7 @@ body.is-dragging .fp-oscroll { pointer-events: none; }
 /* ── Shell: handle fp-sidebar--collapsed ─────────────────────────────────── */
 .shell.fp-sidebar--collapsed,
 .shell.sidebar-collapsed {
+  --side-col: var(--rail-w-css);
   grid-template-columns: var(--rail-w-css) 1fr;
 }
 
@@ -5456,7 +5504,9 @@ button.fp-pill:hover {
    INSPECTOR_WIDTH_MIN/MAX). A 480px cap here once made the last 40px of drag
    travel dead — the handle moved, the panel did not (pass 2 #82). */
 .inspector {
-  width: calc(var(--inspector-w-screen, var(--w-inspector)) / var(--app-zoom));
+  width: min(calc(var(--inspector-w-screen, var(--w-inspector)) / var(--app-zoom)),
+             max(calc(var(--w-inspector-min) / var(--app-zoom)),
+                 calc(100vw - var(--side-col) - var(--file-area-min) / var(--app-zoom))));
   min-width: calc(var(--w-inspector-min) / var(--app-zoom));
   max-width: calc(var(--w-inspector-max) / var(--app-zoom));
   flex-shrink: 0;
@@ -5541,6 +5591,8 @@ button.fp-pill:hover {
   flex: 1;
   overflow-y: auto;
   min-height: 0;
+  /* Its rows drop the location, then the time, as the pane narrows. */
+  container: home-pane / inline-size;
 }
 /* Sub-tab bar at top of Home content area */
 #home-tabs { flex-shrink: 0; min-width: 0; }
@@ -5548,12 +5600,14 @@ button.fp-pill:hover {
    zoom) gives the Home header less room than its three sub-tabs' natural
    width: the padding gives first, then the labels end in an ellipsis —
    nothing runs past the edge (Stage 2D §12 sibling sweep). */
+#home-tabs { gap: var(--s-4); }
 #home-tabs .fp-tabs__item {
   display: block;
   line-height: 44px;
   flex: 0 1 auto;
   min-width: 0;
-  padding: 0 min(16px, 2.5%);
+  /* Never under 8px a side: the two labels used to touch (Task 14 Q8). */
+  padding: 0 max(var(--s-8), min(16px, 2.5%));
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -5562,6 +5616,8 @@ button.fp-pill:hover {
 .fp-row--recent {
   gap: var(--s-8);
   padding: 0 var(--s-14);
+  /* The row's own background, which the hover actions sit on (below). */
+  --home-row-bg: transparent;
 }
 /* Space goes to the name first: it keeps at least min(45%, 240px) of the row,
    the location (fixed 160px basis, the same in every row so the columns line
@@ -5576,10 +5632,20 @@ button.fp-pill:hover {
 }
 .home-pane:not([data-view="grid"]) .fp-row--recent > .fp-row__recent-path { flex: 0 100 160px; min-width: 0; }
 .home-pane:not([data-view="grid"]) .fp-row--recent > .fp-row__recent-time { flex: 0 1 120px; min-width: 0; }
-.fp-row--recent:hover { background: var(--bg-raised); }
+/* A column too narrow to say anything goes, rather than showing a stub
+   (".\", "…s\", a cut "opened"): the location below 480px of pane, the
+   time below 300px — the name keeps the room (Task 14 Q8). */
+@container home-pane (max-width: 480px) {
+  .fp-row--recent > .fp-row__recent-path { display: none; }
+}
+@container home-pane (max-width: 300px) {
+  .fp-row--recent > .fp-row__recent-time { display: none; }
+}
+.fp-row--recent:hover { background: var(--bg-raised); --home-row-bg: var(--bg-raised); }
 .fp-row--recent:hover .fp-row__hover-actions { opacity: 1; pointer-events: all; }
 .fp-row--recent.fp-row--selected {
   background: var(--accent-wash);
+  --home-row-bg: var(--accent-wash);
 }
 /* 2px accent left bar on selected recent row */
 .fp-row--recent.fp-row--selected::before {
@@ -5615,13 +5681,21 @@ button.fp-pill:hover {
   text-overflow: ellipsis;
 }
 /* Only a favourite star lives here: the list's 120px tag-cell minimum
-   (.fp-row__tags) held 120px of a narrow row for one 12px glyph. */
+   (.fp-row__tags) held 120px of a narrow row for one 12px glyph. The slot
+   is the same in every row, star or not, so a favourite's location and
+   time line up with the rows around it (Task 14 Q7: they sat ~13px left). */
 .fp-row--recent .fp-row__tags {
   display: flex;
-  gap: var(--s-4);
-  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 var(--s-16);
+  width: var(--s-16);
   min-width: 0;
 }
+/* The buttons sit OVER the row's right end on hover, on the row's own
+   background (opaque, with a short fade on their left), so the time and the
+   star under them are covered instead of showing through the icons
+   (Task 14 Q6). */
 .fp-row--recent .fp-row__hover-actions {
   display: flex;
   gap: var(--s-2);
@@ -5630,8 +5704,13 @@ button.fp-pill:hover {
   pointer-events: none;
   position: absolute;
   right: var(--s-8);
-  top: 50%;
-  transform: translateY(-50%);
+  top: 0;
+  bottom: 0;
+  align-items: center;
+  padding-left: var(--s-16);
+  background:
+    linear-gradient(to right, transparent, var(--home-row-bg) var(--s-16)),
+    linear-gradient(to right, transparent, var(--bg-content) var(--s-16));
   transition: opacity var(--dur-fast) var(--ease-out);
 }
 /* Favorites star (right-most icon button on a Favorites row) */
@@ -5774,7 +5853,10 @@ button.fp-pill:hover {
   position: relative;
   transition: background var(--dur-fast) var(--ease-out);
 }
-.settings-nav__item:hover { background: var(--bg-pressed); }
+/* Hover is lighter than the selected item, so only the open pane looks
+   selected (Task 14 Q17: in light, a hovered "Data" matched it exactly). */
+.settings-nav__item:hover { background: var(--bg-raised); }
+.settings-nav__item--active:hover { background: var(--bg-pressed); }
 .settings-nav__item:active { transform: translateY(1px); }
 .settings-nav__item:focus-visible {
   outline: 1px solid var(--accent);
@@ -5933,6 +6015,9 @@ button.fp-pill:hover {
   padding: var(--s-6) 0;
 }
 .settings-row__text .settings-row__desc { margin: 2px 0 0; }
+/* A secondary line (where a setting lives): smaller and quieter. */
+.settings-row__desc--detail { font-size: var(--t-small); color: var(--text-tertiary); }
+.settings-row__desc--detail:empty { display: none; }
 .settings-row__action {
   display: flex;
   align-items: center;
@@ -5976,7 +6061,12 @@ button.fp-pill:hover {
   .settings-nav__select { display: block; width: 100%; }
   .settings-content { flex: none; overflow: hidden; padding: var(--s-16) var(--oscroll-clear) var(--s-16) var(--s-16); }
   /* Controls wrap or shrink to the pane instead of pushing it sideways. */
-  .settings-content .fp-segmented { flex-wrap: wrap; height: auto; max-width: 100%; }
+  /* A control that does not fit beside its label drops under it (the row
+     wraps) and keeps one line: its options shrink and end in an ellipsis
+     rather than wrapping inside the box (Task 14 Q9). */
+  .settings-content .fp-segmented { flex-wrap: nowrap; max-width: 100%; min-width: 0; }
+  .settings-content .fp-segmented__opt { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .settings-nav__select { text-overflow: ellipsis; overflow: hidden; white-space: nowrap; }
   .settings-content .fp-input { max-width: 100%; min-width: 0; }
   .settings-pane__title { overflow-wrap: anywhere; }
   .settings-radio-row { min-width: 0; overflow-wrap: anywhere; }
@@ -6226,6 +6316,9 @@ button.fp-pill:hover {
   height: 100%;
   object-fit: contain;
   outline: 1px solid var(--border-subtle);
+  /* Inside the picture's edge: a picture that fills its slot had the
+     outside line clipped away (Task 14 Q24). */
+  outline-offset: -1px;
   opacity: 0;
   transition: opacity var(--dur-icon-in) var(--ease-out);
 }
@@ -6391,6 +6484,7 @@ button.fp-pill:hover {
   flex-shrink: 0;
 }
 .properties__opens-with-icon img { width: 16px; height: 16px; }
+.properties__opens-with-icon[hidden] { display: none; }
 .properties__opens-with-label {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -6431,7 +6525,19 @@ button.fp-pill:hover {
    inspector-empty.png/inspector-file.png (smoke) compare the header,
    preview and meta blocks' bounding boxes between the two states.
    ============================================================================= */
-.inspector__header { flex-shrink: 0; height: 56px; overflow: hidden; }
+/* Two one-line rows (name, path) at whatever height they take: a fixed 56px
+   cut the path line in half at 150 % (Task 14 Q11). The path keeps its line
+   even when empty, so the header is the same height in every state. */
+.inspector__header { flex-shrink: 0; min-height: 56px; overflow: hidden; }
+#inspector-filepath { min-height: 1lh; }
+/* A very short window (500px at 150 % leaves ~330 CSS px): the panel has
+   room for the preview strip and the name, not a third line — the path goes
+   (the breadcrumb above already says where the file is) rather than showing half
+   cut under the scroll edge. */
+@media (max-height: 400px) {
+  .inspector__header { min-height: 0; }
+  #inspector-filepath { display: none; }
+}
 /* A short window (the 500px minimum, or less room at app zoom) takes height
    from the preview first, down to a strip: the body below keeps room for its
    whole metadata table instead of being squeezed to nothing (Stage 2D §12
@@ -6451,6 +6557,17 @@ button.fp-pill:hover {
    multi-selection actually hides the preview box (pass 2 #148). */
 .inspector__preview[hidden] { display: none !important; }
 .fp-inspector__tabs { height: 44px; flex-shrink: 0; }
+/* The panel at its 280px minimum and 150 %: the three tabs share the strip
+   (padding gives first, then a label ellipsizes) instead of "History"
+   running off the edge. */
+.fp-inspector__tabs .fp-tabs__item {
+  flex: 0 1 auto;
+  min-width: 0;
+  padding: 0 min(16px, 5%);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
 /* Same restatement for the tab strip (.fp-tabs is display:flex): multi and
    drive selections hide it, and it used to stay up over "N items selected"
    (Task 14 Q19). */

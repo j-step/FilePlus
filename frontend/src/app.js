@@ -1056,6 +1056,12 @@ function layoutToolbar() {
   // The path overflows only when it does not fit beside what the slot takes.
   const overflowing = crumbNatural > free - slotW + 0.5;
   wrap.classList.toggle('is-overflowing', overflowing);
+  // A separator under the fade has lost the crumb before it: alone at the
+  // path's left edge it read as a stray "·" (Task 14 Q12).
+  const wrapLeft = wrap.getBoundingClientRect().left;
+  crumbs.querySelectorAll('.fp-breadcrumb__sep').forEach((sep) => {
+    sep.classList.toggle('is-orphan', overflowing && sep.getBoundingClientRect().left < wrapLeft + TOOLBAR_FADE);
+  });
   // The current folder is never under the fade: when the wrap cannot hold it
   // plus the 24px fade, the fade goes and the crumb ellipsizes to the wrap.
   const wrapW = Math.max(0, Math.floor(free - slotW));
@@ -1072,6 +1078,9 @@ function layoutToolbar() {
   // main column clips it (styles.css .fp-search-dd).
   const ddRoom = slot.getBoundingClientRect().right - toolbar.getBoundingClientRect().left - 4;
   slot.style.setProperty('--search-dd-room', `${Math.max(0, Math.floor(ddRoom))}px`);
+  // …and it hangs no lower than the status bar: styles.css caps its height at
+  // the room from here to there (Task 14 Q13).
+  slot.style.setProperty('--search-dd-top', `${Math.ceil(slot.getBoundingClientRect().bottom)}px`);
   // A flip changes what is measurable (chips are display:none while folded):
   // one more pass settles it.
   if (collapsed !== wasCollapsed && _layoutToolbarDepth === 0) {
@@ -1221,8 +1230,15 @@ function openAskPopout() {
   const r = btn.getBoundingClientRect();
   const vw = window.innerWidth, vh = window.innerHeight;
   const edge = menuEdgePx();
+  // Never over the status bar (Task 14 Q12): the popout fits between the
+  // title bar and the status bar, and scrolls inside itself when even that
+  // is too short (a 500 px window at 150 %).
+  const status = document.querySelector('.fp-statusbar, #statusbar');
+  const bottom = (status ? status.getBoundingClientRect().top : vh) - edge;
+  const top = Math.max(edge, document.querySelector('.fp-titlebar')?.getBoundingClientRect().bottom || edge);
+  popout.style.maxHeight = `${Math.max(0, bottom - top)}px`;
   popout.style.left = `${Math.min(r.left, vw - popout.offsetWidth - edge)}px`;
-  popout.style.top  = `${Math.min(r.bottom + 6, vh - popout.offsetHeight - edge)}px`;
+  popout.style.top  = `${Math.max(top, Math.min(r.bottom + 6, bottom - popout.offsetHeight))}px`;
   document.getElementById('ask-input')?.focus();
 }
 
@@ -1395,6 +1411,7 @@ function applyTheme(mode) {
   // 'system' resolves to whichever the OS currently reports).
   const themeIconUse = document.querySelector('#btn-theme use');
   if (themeIconUse) themeIconUse.setAttribute('href', `#fp-theme-${resolved}`);
+  if (typeof syncAccentField === 'function') syncAccentField();
 }
 
 // ── App zoom (Stage 2D §5, decision D2D-1) ─────────────────────────────────
@@ -2878,6 +2895,11 @@ function initOverlayScrollbars() {
   ]) {
     if (el) fpOverlayScroll(el);
   }
+  // The search dropdown scrolls inside itself when the window is short
+  // (Task 14 Q13): the overlay bar, not a permanent native one — and no fade
+  // cue, which would dissolve the popover's own bottom edge and background.
+  const searchDd = document.getElementById('search-dropdown');
+  if (searchDd) fpOverlayScroll(searchDd, { fade: false });
   // Everything above the inspector's action row scrolls as one only when even
   // a shrunk preview leaves the body no room (a short window at high zoom).
   const inspectorScroll = document.getElementById('inspector-scroll');

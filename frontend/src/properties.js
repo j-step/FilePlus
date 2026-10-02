@@ -251,11 +251,32 @@ function renderOpensWithCell(props) {
  * then the Electron bridge; the executable sprite only if both fail), at the
  * 16-px box's px bucket. Resolved at once, like the header icon — the lazy
  * observer cannot be trusted inside this dialog. */
+let _propsAppIconUrl = null;
 function loadOpensWithIcon(props) {
   const el = document.getElementById('properties-opens-with-icon');
-  if (!el || !props.opens_with_exe) return;
-  el.innerHTML = fpShellIconMarkup({ path: props.opens_with_exe, ext: 'exe', is_dir: false }, 16, 'ft-executable');
-  fpResolveIconsNow(el);
+  if (!el) return;
+  if (_propsAppIconUrl) { URL.revokeObjectURL(_propsAppIconUrl); _propsAppIconUrl = null; }
+  if (props.opens_with_exe) {
+    el.innerHTML = fpShellIconMarkup({ path: props.opens_with_exe, ext: 'exe', is_dir: false }, 16, 'ft-executable');
+    fpResolveIconsNow(el);
+    return;
+  }
+  // No app at all: no icon slot (the label says "Unknown application").
+  el.hidden = !props.opens_with;
+  if (!props.opens_with) return;
+  // A Store app (Photos, Media Player) has no executable: the generic app
+  // glyph at once, swapped for the app's own icon image when the backend
+  // named one (Task 14 Q10 — the slot used to stay empty).
+  el.innerHTML = icon('ft-executable', 'fp-icon--16 fp-icon--compact');
+  if (!props.opens_with_icon) return;
+  const want = props.path;
+  API.blob('/preview', { path: props.opens_with_icon }).then(async (res) => {
+    if (!(res.headers.get('content-type') || '').startsWith('image/')) return;
+    const blob = await res.blob();
+    if (!_propsData || _propsData.path !== want || !el.isConnected) return;
+    _propsAppIconUrl = URL.createObjectURL(blob);
+    el.innerHTML = `<img alt="" src="${_propsAppIconUrl}">`;
+  }).catch(() => { /* the glyph stays */ });
 }
 
 function renderFolderTypeSelect(props) {

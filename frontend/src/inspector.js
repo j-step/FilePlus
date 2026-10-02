@@ -81,10 +81,15 @@ function updateInspector(mode, data = {}) {
     if (multiPane) multiPane.hidden = true;
     if (tabBar) tabBar.hidden = true;
     if (preview) preview.hidden = false;
-    renderPreviewNone({ note: '' });
+    // The drive glyph the This PC cards use (the shell's drive icon in
+    // Windows mode), never the folder one.
+    renderPreviewNone({ note: '', iconHtml: fpIconSource() === 'windows' ? null : icon('drive', 'fp-icon--40') });
     const name = driveDisplayName(d);
     if (filenameEl) { filenameEl.textContent = name; filenameEl.title = name; }
-    if (filepathEl) filepathEl.textContent = d.mount || '';
+    // A left-to-right mark after the mount: the path line is laid out
+    // right-to-left (it ellipsizes from the start), and "C:\" alone, with
+    // no letter after the backslash, came out as "\:C".
+    if (filepathEl) filepathEl.textContent = d.mount ? `${d.mount}\u200E` : '';
     if (drivePane) {
       drivePane.hidden = false;
       const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
@@ -306,7 +311,7 @@ function renderInspectorEmptyPreview() {
   el.innerHTML = `<span style="opacity:.4;display:flex">${icon('file', 'fp-icon--40')}</span>`;
 }
 
-function renderPreviewNone({ note = 'No preview' } = {}) {
+function renderPreviewNone({ note = 'No preview', iconHtml = null } = {}) {
   const el = previewContainer();
   if (!el) return;
   _inspectorPreviewFor = null;
@@ -315,7 +320,7 @@ function renderPreviewNone({ note = 'No preview' } = {}) {
   el.style.flexDirection = 'row'; // back to the container's default centering (a text preview sets 'column')
   dropInspectorPreviewScroll();
   el.innerHTML = `<div style="display:flex;flex-direction:column;align-items:center;gap:8px;color:var(--text-tertiary)">
-    ${iconFor(_inspectorEntry, 40)}
+    ${iconHtml || iconFor(_inspectorEntry, 40)}
     ${note ? `<span class="inspector__preview-note" style="font:400 var(--t-compact) var(--font-ui)">${escapeHtml(note)}</span>` : ''}
   </div>`;
 }
@@ -354,7 +359,9 @@ async function loadInspectorPreview(path, seq) {
     const img = document.createElement('img');
     img.src = _inspectorPreviewUrl;
     img.alt = '';
-    img.style.cssText = 'max-width:100%;max-height:100%;object-fit:contain';
+    // Fills the box, aspect kept: a small picture is scaled up to the room
+    // the panel has rather than drawn at its own 16 px (Task 14 Q25).
+    img.style.cssText = 'width:100%;height:100%;object-fit:contain';
     el.appendChild(img);
     return true;
   }
@@ -844,6 +851,8 @@ function setInspectorOpen(open, { persist = true } = {}) {
   const toggleBtn = document.getElementById('btn-inspector-toggle');
   if (!inspector) return;
   inspector.classList.toggle('inspector--open', open);
+  // The panel clamp (styles.css --sidebar-w-css) leaves room for it.
+  document.documentElement.style.setProperty('--inspector-open', open ? '1' : '0');
   toggleBtn?.classList.toggle('fp-icon-btn--active', open);
   // The panel is display:none while closed, so its tab underline could not be
   // measured until now (moveTabIndicator, app.js, skips a zero-width tab).
