@@ -915,7 +915,12 @@ function initDeviceName() {
   const fallback = (window.electronAPI?.hostname?.() || 'My PC').trim() || 'My PC';
   el.textContent = saved || fallback;
 
+  // The name as it stood when this edit began: Escape restores THIS, not the
+  // name from app start, which threw away a rename made earlier in the
+  // session (pass 2 #59).
+  let before = el.textContent;
   el.addEventListener('dblclick', () => {
+    before = el.textContent;
     el.setAttribute('contenteditable', 'plaintext-only');
     el.focus();
     // Select all so the user can just start typing to replace
@@ -936,7 +941,7 @@ function initDeviceName() {
   el.addEventListener('blur',    commit);
   el.addEventListener('keydown', e => {
     if (e.key === 'Enter')  { e.preventDefault(); el.blur(); }
-    if (e.key === 'Escape') { e.preventDefault(); el.textContent = saved || fallback; el.blur(); }
+    if (e.key === 'Escape') { e.preventDefault(); el.textContent = before; el.blur(); }
   });
 }
 
@@ -1985,7 +1990,48 @@ function showContextMenu(x, y, items, opts = {}) {
   }
   contextMenu.style.left = `${Math.max(0, Math.min(left, vw - w - 8))}px`;
   contextMenu.style.top  = `${Math.max(0, Math.min(top, vh - h - 8))}px`;
+  contextMenu.scrollTop = 0;
+  cmSyncScrollCue(contextMenu);
+  armContextMenuScrollClose();
 }
+
+/** A menu too tall for the window scrolls inside itself (pass 2 #61); the
+ * shared scroll-cue fade marks the edge where items are hidden. */
+function cmSyncScrollCue(menu) {
+  menu.classList.add('fp-oscroll-host--fade');
+  const over = menu.scrollHeight > menu.clientHeight + 1;
+  menu.classList.toggle('is-scroll-top', over && menu.scrollTop > 1);
+  menu.classList.toggle('is-scroll-bottom', over && menu.scrollTop + menu.clientHeight < menu.scrollHeight - 1);
+}
+
+// ── Menus and popovers never float at stale coordinates (pass 2 #175) ──────
+// The context menu, the View / Sort dropdowns (the same element) and the Ask
+// File+ popout are position:fixed, placed once from viewport coordinates. A
+// window resize (app zoom included) closes them, and so does any scroll of
+// what is under them (the list, the sidebar, a pane) — Windows' rule for
+// menus. A scroll inside the menu itself never closes it. The scroll close
+// is armed two frames after the menu opens, so the scroll-into-view that
+// right-clicking a half-hidden row can cause does not close the menu it just
+// opened.
+let cmScrollArmed = false;
+let cmScrollArmRaf = 0;
+function armContextMenuScrollClose() {
+  cmScrollArmed = false;
+  cancelAnimationFrame(cmScrollArmRaf);
+  cmScrollArmRaf = requestAnimationFrame(() => {
+    cmScrollArmRaf = requestAnimationFrame(() => { cmScrollArmed = true; });
+  });
+}
+window.addEventListener('resize', () => {
+  if (contextMenuIsOpen()) hideContextMenu();
+  if (askPopoutOpen()) closeAskPopout();
+});
+document.addEventListener('scroll', e => {
+  const t = e.target;
+  const inMenu = t instanceof Element && t.closest('.fp-context-menu');
+  if (inMenu) { cmSyncScrollCue(inMenu); return; }
+  if (cmScrollArmed && contextMenuIsOpen()) hideContextMenu();
+}, true);
 
 // ── Flyout submenus (Stage 2D §6.3) ────────────────────────────────────────
 // An item with `items: [...]` renders a trailing chevron and opens a child
@@ -2051,6 +2097,7 @@ function openContextFlyout(item, btn, depth, ctx, focusFirst) {
   const top = Math.max(0, Math.min(rr.top - 5, vh - h - 8));
   menu.style.left = `${Math.max(0, left)}px`;
   menu.style.top = `${top}px`;
+  cmSyncScrollCue(menu);
   if (focusFirst) cmFocusableItems(menu)[0]?.focus();
 }
 
@@ -2290,7 +2337,20 @@ function showSnackbar(message, undoLabel, onUndo) {
   prog.className = 'fp-snackbar__progress';
   el.appendChild(prog);
   container.appendChild(el);
+  capNoticeStack(container, '.fp-snackbar');
   setTimeout(() => el.remove(), 5200);
+}
+
+// At most this many snackbars / toasts show at once; the newest win (pass 2
+// #62/#63). An error toast leaves on its own after TOAST_ERROR_MS — long
+// enough to read a path in it, short enough that repeated failures cannot
+// bury the window — and has a dismiss button for sooner.
+const NOTICE_MAX = 3;
+const TOAST_MS = 5000;
+const TOAST_ERROR_MS = 8000;
+function capNoticeStack(container, sel) {
+  const items = container.querySelectorAll(sel);
+  for (let i = 0; i < items.length - NOTICE_MAX; i++) items[i].remove();
 }
 
 // ── Toast ────────────────────────────────────────────────────────────────────────
@@ -2306,15 +2366,16 @@ function showToast(message, variant = '') {
   el.innerHTML = `<span>${escapeHtml(message)}</span>`;
   if (variant === 'error') {
     const btn = document.createElement('button');
-    btn.className = 'fp-btn fp-btn--ghost fp-btn--sm';
+    btn.className = 'fp-btn fp-btn--ghost fp-btn--sm fp-toast__dismiss';
     btn.textContent = '✕';
+    btn.title = 'Dismiss';
+    btn.setAttribute('aria-label', 'Dismiss');
     btn.addEventListener('click', () => el.remove());
-    btn.style.marginLeft = 'auto';
     el.appendChild(btn);
-  } else {
-    setTimeout(() => el.remove(), 5000);
   }
   container.appendChild(el);
+  capNoticeStack(container, '.fp-toast');
+  setTimeout(() => el.remove(), variant === 'error' ? TOAST_ERROR_MS : TOAST_MS);
 }
 
 // ── Refresh (Stage 2D §7) ─────────────────────────────────────────────────────
@@ -2766,6 +2827,19 @@ function initWindowControls() {
   document.getElementById('btn-minimize')?.addEventListener('click', () => api.minimize?.());
   document.getElementById('btn-maximize')?.addEventListener('click', () => api.maximize?.());
   document.getElementById('btn-close')?.addEventListener('click', () => api.close?.());
+  // Maximize <-> Restore: glyph, label and tooltip follow the window's real
+  // state, pushed by main on every maximize / unmaximize (pass 2 #174).
+  if (typeof api.isMaximized === 'function') setMaximizeButtonState(!!api.isMaximized());
+  api.onMaximizedChange?.(setMaximizeButtonState);
+}
+
+function setMaximizeButtonState(maximized) {
+  const btn = document.getElementById('btn-maximize');
+  if (!btn) return;
+  const label = maximized ? 'Restore' : 'Maximize';
+  btn.setAttribute('aria-label', label);
+  btn.title = label;
+  btn.querySelector('use')?.setAttribute('href', maximized ? '#fp-window-restore' : '#fp-window-maximize');
 }
 
 // ── Underline tab indicator (sub-tabs within screens) ─────────────��──────────
@@ -2932,6 +3006,10 @@ function toggleShowHidden() {
 document.addEventListener('click', e => {
   const btn = e.target.closest('[data-action]');
   if (!btn) return;
+  // A disabled control now takes the pointer (its tooltip and not-allowed
+  // cursor show, pass 2 #58), so a click that does reach one — a synthetic
+  // click, a descendant hit — is refused here as well as by the browser.
+  if (btn.disabled) return;
   const action = btn.dataset.action;
 
   switch (action) {

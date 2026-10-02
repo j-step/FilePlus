@@ -50,6 +50,8 @@
   --bad:       #EF8A8A;
   --bad-wash:  color-mix(in srgb, var(--bad) 10%, transparent);
   --bad-edge:  color-mix(in srgb, var(--bad) 40%, transparent);
+  /* --bad-wash over the raised surface: the same tint, but opaque (toasts). */
+  --bad-wash-solid: color-mix(in srgb, var(--bad) 10%, var(--bg-raised));
   --warn:      #E6C465;
   --warn-rgb:  230 196 101;
   --warn-wash: color-mix(in srgb, var(--warn) 10%, transparent);
@@ -67,6 +69,13 @@
   --shadow-popover: 0 8px 24px rgba(0, 0, 0, 0.30);
   --shadow-modal:   0 16px 48px rgba(0, 0, 0, 0.40);
   --shadow-window:  none;
+  /* Snackbars and toasts: above panels and the modal scrims (1000), below
+     the drag badge (1200). */
+  --z-notice: 1100;
+
+  /* Clipboard marks on listing rows (pass 2 #172). */
+  --clip-cut-opacity: 0.5;
+  --clip-badge-size: 6px;
 
   /* ---------- Fonts ---------- */
   --font-ui:   'Segoe UI Variable Text', 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif;
@@ -1566,14 +1575,18 @@ svg { flex-shrink: 0; }
   outline: 1px solid var(--accent);
   outline-offset: 1px;
 }
+/* Disabled buttons keep pointer events (pass 2 #58): a native [disabled]
+   button already ignores clicks, and pointer-events:none also hid its
+   tooltip (the one place that says WHY it is off) and its not-allowed
+   cursor. Hover and press do nothing visible instead. */
 .fp-button:disabled,
 .fp-button[disabled],
 .fp-btn:disabled,
 .fp-btn[disabled] {
   opacity: 0.4;
   cursor: not-allowed;
-  pointer-events: none;
 }
+.fp-button:disabled:active, .fp-btn:disabled:active { transform: none; }
 .fp-button:active, .fp-btn:active {
   transform: translateY(1px);
 }
@@ -1611,8 +1624,8 @@ svg { flex-shrink: 0; }
   cursor: not-allowed;
 }
 .fp-btn[aria-disabled="true"]:active { transform: none; }
-.fp-btn--primary[aria-disabled="true"]:is(:hover, :active) { background: var(--accent); }
-.fp-btn--secondary[aria-disabled="true"]:is(:hover, :active) {
+.fp-btn--primary:is([aria-disabled="true"], :disabled):is(:hover, :active) { background: var(--accent); }
+.fp-btn--secondary:is([aria-disabled="true"], :disabled):is(:hover, :active) {
   background: var(--bg-raised);
   border-color: var(--border-subtle);
 }
@@ -1672,7 +1685,6 @@ svg { flex-shrink: 0; }
 .fp-button--icon[disabled] {
   opacity: 0.35;
   cursor: not-allowed;
-  pointer-events: none;
   color: var(--text-tertiary);
 }
 .fp-icon-btn:disabled:hover,
@@ -1702,6 +1714,11 @@ svg { flex-shrink: 0; }
 .fp-button--danger:hover, .fp-btn--danger:hover {
   background: var(--bad-wash);
 }
+/* A disabled ghost / danger button shows no hover or press either (#58). */
+:is(.fp-button--ghost, .fp-btn--ghost, .fp-button--danger, .fp-btn--danger):disabled:is(:hover, :active) {
+  background: transparent;
+}
+:is(.fp-button--ghost, .fp-btn--ghost):disabled:is(:hover, :active) { color: var(--text-secondary); }
 
 /* Legacy .fp-icon-btn size variants and active state */
 .fp-icon-btn svg, .fp-icon-btn .icon { width: 16px; height: 16px; }
@@ -1984,8 +2001,7 @@ svg { flex-shrink: 0; }
 .fp-tabs__item[disabled] {
   color: var(--text-tertiary);
   opacity: 0.4;
-  pointer-events: none;
-  cursor: default;
+  cursor: not-allowed;
 }
 .fp-tabs__item[disabled]:hover { color: var(--text-tertiary); }
 .fp-tabs__item--active,
@@ -2680,6 +2696,29 @@ svg { flex-shrink: 0; }
 }
 .fp-row--selected .fp-row__icon { color: var(--accent); }
 
+/* Clipboard marks (pass 2 #172). Cut: the icon and the name are ghosted, the
+   row itself (its selection highlight) is not — Explorer's cue. Copied: a
+   small accent dot at the row's leading edge (beside the selection bar in
+   the line views, the cell's top-left corner in the grid views). */
+.fp-row--cut > :first-child,
+.fp-row--cut .fp-row__name { opacity: var(--clip-cut-opacity); }
+.fp-row--copied::after {
+  content: '';
+  position: absolute;
+  left: var(--s-4);
+  top: 50%;
+  width: var(--clip-badge-size);
+  height: var(--clip-badge-size);
+  margin-top: calc(var(--clip-badge-size) / -2);
+  border-radius: 50%;
+  background: var(--accent);
+  pointer-events: none;
+}
+#list-scroll:is([data-view="icons"], [data-view="tiles"]) .fp-row--copied::after {
+  top: var(--s-4);
+  margin-top: 0;
+}
+
 /* Merged borders for a contiguous run of selected rows (Task 11): the lower
    row of an adjacent pair drops its own top border/radius so only the upper
    row's bottom edge shows at the seam, and the upper row squares its bottom
@@ -3163,12 +3202,26 @@ body.is-dragging { cursor: default; }
    26. SNACKBAR + TOAST (Section 30 / UI-SPEC §A.11.4)
    ----------------------------------------------------------------------------- */
 
+/* The two notice stacks. Each notice is an ordinary flex item, so several
+   at once stack instead of painting on one spot (pass 2 #62). They sit above
+   every panel AND above the modal scrims (an error raised from a dialog is
+   still read), below only the drag badge. */
+#snackbar-container,
+#toast-container {
+  position: fixed;
+  bottom: 40px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-8);
+  z-index: var(--z-notice);
+  pointer-events: none;
+}
+#snackbar-container { left: 50%; transform: translateX(-50%); align-items: center; }
+#toast-container { right: var(--s-16); align-items: flex-end; }
+
 /* === fp-snackbar (bottom-center, 5s progress bar, undo) === */
 .fp-snackbar {
-  position: fixed;
-  bottom: 16px;
-  left: 50%;
-  transform: translateX(-50%);
+  position: relative;   /* anchors the progress bar */
   display: inline-flex;
   align-items: center;
   gap: var(--s-16);
@@ -3181,14 +3234,13 @@ body.is-dragging { cursor: default; }
   box-shadow: var(--shadow-popover);
   font: 500 var(--t-body) var(--font-ui);
   color: var(--text-primary);
-  z-index: 1100;
   overflow: hidden;
   pointer-events: all;
   animation: fp-snackbar-in var(--dur-fast) var(--ease-out);
 }
 @keyframes fp-snackbar-in {
-  from { opacity: 0; transform: translateX(-50%) translateY(8px); }
-  to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 .fp-snackbar__undo {
   margin-left: auto;
@@ -3245,8 +3297,10 @@ body.is-dragging { cursor: default; }
 .fp-toast--action { border-color: var(--accent-edge); }
 .fp-toast--good   { border-color: var(--good-edge); }
 .fp-toast--warn   { border-color: var(--warn-edge); }
+/* Opaque: the translucent --bad-wash let whatever sat under the toast (the
+   Inspector's buttons) show through it. */
 .fp-toast--bad,
-.fp-toast--error  { background: var(--bad-wash); border-color: var(--bad-edge); color: var(--text-primary); }
+.fp-toast--error  { background: var(--bad-wash-solid); border-color: var(--bad-edge); color: var(--text-primary); }
 .fp-toast__icon { width: 16px; height: 16px; flex-shrink: 0; color: var(--text-secondary); margin-top: 2px; }
 .fp-toast--action .fp-toast__icon,
 .fp-toast--accent .fp-toast__icon { color: var(--accent); }
@@ -4401,7 +4455,12 @@ body.is-dragging .fp-oscroll { pointer-events: none; }
   position: sticky;
   top: 0;
   z-index: 1;
+  /* Rows wider than the pane scroll sideways in #list-scroll; the header's
+     columns follow by --list-scroll-x (browser.js initViewLayout), clipped
+     here (pass 2 #177). */
+  overflow: hidden;
 }
+.list-head > * { transform: translateX(calc(var(--list-scroll-x, 0px) * -1)); }
 .list-col {
   font: 500 var(--t-small) var(--font-ui);
   color: var(--text-tertiary);
@@ -4415,7 +4474,7 @@ body.is-dragging .fp-oscroll { pointer-events: none; }
 }
 /* Column widths mirror .fp-row sub-element widths exactly */
 .list-col--icon { width: 16px; min-width: 16px; }
-.list-col--name { flex: 1; min-width: 0; display: flex; align-items: center; gap: 4px; cursor: pointer; flex-shrink: 1; }
+.list-col--name { flex: 1; min-width: 120px; display: flex; align-items: center; gap: 4px; cursor: pointer; flex-shrink: 1; }
 .list-col--name:hover { color: var(--text-secondary); }
 .list-col--size { width: 96px; min-width: 96px; text-align: right; cursor: pointer; }
 .list-col--modified { width: 136px; min-width: 136px; text-align: right; cursor: pointer; }
@@ -5838,6 +5897,15 @@ button.fp-pill:hover {
 .fp-context-menu {
   position: fixed;
   min-width: 180px;
+  /* A menu taller than the window (a folder menu at the 500px minimum
+     height, high app zoom) scrolls inside itself instead of running off the
+     bottom edge (pass 2 #61); showContextMenu clamps the top to 0. */
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
+  /* No native bar (panels never carry one, §9.3): the edge fades say more is
+     above / below (app.js cmSyncScrollCue adds is-scroll-top / -bottom to
+     the fp-oscroll-host--fade cue), and wheel / arrow keys scroll it. */
+  scrollbar-width: none;
   background: var(--bg-raised);
   border: 1px solid var(--border-mid);
   border-radius: var(--r-card);
@@ -5846,6 +5914,7 @@ button.fp-pill:hover {
   z-index: 600;
   animation: fp-fade-in 80ms var(--ease-out);
 }
+.fp-context-menu::-webkit-scrollbar { display: none; }
 .fp-context-menu__item {
   display: flex;
   align-items: center;

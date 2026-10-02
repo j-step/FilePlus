@@ -142,8 +142,17 @@ const fileops = {
   // Both no-op on an empty selection rather than replacing a real clipboard
   // with an empty one: a stray Ctrl+C after a deselect used to wipe the copy
   // the user had just made, greying Paste out with no feedback (pass 2 #50).
-  copySelection() { const paths = getSelectedPaths(); if (!paths.length) return; this.clipboard = { mode: 'copy', paths }; },
-  cutSelection()  { const paths = getSelectedPaths(); if (!paths.length) return; this.clipboard = { mode: 'cut',  paths }; },
+  copySelection() { const paths = getSelectedPaths(); if (!paths.length) return; this.setClipboard('copy', paths); },
+  cutSelection()  { const paths = getSelectedPaths(); if (!paths.length) return; this.setClipboard('cut', paths); },
+
+  /** The one writer of `clipboard`. Every change repaints the cut / copied
+   * marks on the listing and the status-bar count (browser.js
+   * syncClipboardMarks) — with notifications off (the default) those are the
+   * only sign a Ctrl+X / Ctrl+C happened at all (pass 2 #172). */
+  setClipboard(mode, paths) {
+    this.clipboard = { mode: mode || null, paths: mode ? paths : [] };
+    if (typeof syncClipboardMarks === 'function') syncClipboardMarks();
+  },
 
   /** Number of paths currently on the clipboard — the Paste context-menu
    * item's enabled(ctx) predicate (Task 11, playtest pass 1 §4.2) reads this
@@ -160,7 +169,7 @@ const fileops = {
     // A conflict the user cancelled (resolveConflicts settles 'cancel') means
     // nothing new happened for the still-pending sources — keep the clipboard
     // so Ctrl+V can be retried instead of silently losing the cut selection.
-    if (mode === 'cut' && res !== 'cancel') this.clipboard = { mode: null, paths: [] };
+    if (mode === 'cut' && res !== 'cancel') this.setClipboard(null, []);
   },
 
   async trashSelection() {

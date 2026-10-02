@@ -218,6 +218,14 @@ function createWindow() {
     rendererLog.info(`--- page loaded: ${mainWindow.webContents.getURL().replace(/^file:\/\/\/?/, '')}`);
   });
   mainWindow.on('unresponsive', () => mainLog.warn('window unresponsive'));
+  // The frameless titlebar's maximize button turns into Restore while the
+  // window is maximized, however it got there (the button, a titlebar
+  // double-click, Win+Up, a snap) — pass 2 #174. win-is-maximized answers
+  // the renderer's first ask at startup.
+  const sendMaximized = () => {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('win-maximized', mainWindow.isMaximized());
+  };
+  for (const ev of ['maximize', 'unmaximize', 'restore']) mainWindow.on(ev, sendMaximized);
   mainWindow.on('closed', () => mainLog.info('window closed'));
 
   mainWindow.loadFile(path.join(__dirname, 'index.html'));
@@ -241,6 +249,7 @@ app.whenReady().then(() => {
     else mainWindow?.maximize();
   });
   ipcMain.on('win-close', () => mainWindow?.close());
+  ipcMain.on('win-is-maximized', (event) => { event.returnValue = !!mainWindow?.isMaximized(); });
 
   // App zoom (Stage 2D §5). ZOOM_STEPS is the one step list: the renderer
   // reads it (win-zoom-steps), picks the next step and eases there through

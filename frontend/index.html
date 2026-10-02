@@ -2959,6 +2959,9 @@
       <span class="mono" id="status-count">0 items</span>
       <span class="fp-statusbar__sep">·</span>
       <span id="status-selected">Nothing selected</span>
+      <!-- Pending cut / copy ("3 items cut") — browser.js syncClipboardStatus. -->
+      <span class="fp-statusbar__sep" id="status-clipboard-sep" hidden>·</span>
+      <span id="status-clipboard" hidden></span>
       <!-- Zoom percentage pill — the app zoom factor (Stage 2D §5). Shown on
            every zoom change, faded 1.2 s after the last one (app.js
            updateZoomPill); hidden at 100%. Click to reset to 100% (Ctrl+0). -->
@@ -3514,12 +3517,8 @@
 </div>
 -->
 
-<!-- Snackbar container -->
-<div id="snackbar-container" style="
-  position:fixed;bottom:40px;left:50%;transform:translateX(-50%);
-  display:flex;flex-direction:column;gap:8px;align-items:center;
-  z-index:900;pointer-events:none
-"></div>
+<!-- Snackbar container (bottom-centre stack; styles.css section 26) -->
+<div id="snackbar-container" aria-live="polite"></div>
 
 <!-- Drag badge (Task 12) — follows the pointer during a pointer-event drag
      session, reading "Move file" / "Copy 3 files". pointer-events:none is
@@ -3529,12 +3528,8 @@
   <span class="fp-drag-badge__icon"></span><span class="fp-drag-badge__text"></span>
 </div>
 
-<!-- Toast container (bottom-right) -->
-<div id="toast-container" style="
-  position:fixed;bottom:40px;right:16px;
-  display:flex;flex-direction:column;gap:8px;
-  z-index:900;pointer-events:none
-"></div>
+<!-- Toast container (bottom-right stack; styles.css section 26) -->
+<div id="toast-container" aria-live="polite"></div>
 
 <script src="src/api.js"></script>
 <script src="src/filetypes.js"></script>

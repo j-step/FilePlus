@@ -193,6 +193,14 @@ module.exports = async function globalSetup() {
   }
   fs.mkdirSync(deep, { recursive: true });
   fs.writeFileSync(path.join(deep, 'deep-note.txt'), 'deep fixture\n');
+  // Stage 2D Task 10 (pass-2 ux-daily-use leftovers): files to cut, copy and
+  // paste (the clipboard marks) plus a destination folder. Beside the others,
+  // so no other listing changes.
+  const clip = path.join(sandbox, 'Clip');
+  fs.mkdirSync(path.join(clip, 'Dest'), { recursive: true });
+  for (const name of ['clip-a.txt', 'clip-b.txt', 'clip-c.txt', 'clip-d.txt']) {
+    fs.writeFileSync(path.join(clip, name), `clip fixture ${name}\n`);
+  }
 
   const backend = spawn(PY.cmd, [...PY.pre, '-m', 'backend.api'], {
     cwd: REPO, env, stdio: 'ignore', windowsHide: true, detached: false,

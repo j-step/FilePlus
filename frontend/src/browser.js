@@ -435,6 +435,19 @@ function initViewLayout() {
   if (typeof ResizeObserver === 'function') {
     new ResizeObserver(() => { if (browserState.view === 'list') syncListRows(listScroll); }).observe(listScroll);
   }
+  // Details: when the rows are wider than the pane and scroll sideways, the
+  // column header (a sibling above the scroller, clipped) slides with them,
+  // so every value stays under its own column name (pass 2 #177).
+  const listHead = document.getElementById('list-head');
+  if (listHead) {
+    let lastX = 0;
+    listScroll.addEventListener('scroll', () => {
+      const x = listScroll.scrollLeft;
+      if (x === lastX) return;
+      lastX = x;
+      listHead.style.setProperty('--list-scroll-x', `${x}px`);
+    }, { passive: true });
+  }
   applyViewDom();
 }
 
@@ -1643,7 +1656,9 @@ function renderFsRow(entry, parentPath) {
   const dateField = dateFieldForSort();
   const dateValue = entry[dateField];
   const dateText = (entry.error || dateValue == null) ? '—' : formatDate(dateValue * 1000);
-  const rowClass = `fp-row${entry.is_dir ? ' fp-row--folder' : ''}${entry.error ? ' fp-row--disabled' : ''}`;
+  const clipMark = clipboardMarkFor(childPath);
+  const rowClass = `fp-row${entry.is_dir ? ' fp-row--folder' : ''}${entry.error ? ' fp-row--disabled' : ''}`
+    + (clipMark ? ` fp-row--${clipMark}` : '');
   const titleAttr = entry.error ? ' title="Access denied"' : '';
   // ui.show_extensions === false hides the extension on FILE rows only —
   // folders never have one to hide; the full name is then the tooltip. Any
@@ -2446,8 +2461,50 @@ function selectionTotalSize() {
   return total;
 }
 
-/** Updates the status bar's item count and selection summary. */
+// ── Clipboard marks (pass 2 #172) ────────────────────────────────────────────
+// Explorer's cue for Ctrl+X: the cut items' icon and name are ghosted until
+// they are pasted or the clipboard is replaced. Copied items carry a small
+// accent badge (styles.css .fp-row--copied). Both are classes renderFsRow
+// writes, so every view, every re-render and every in-place refresh keeps
+// them; syncClipboardMarks() repaints the rows already on screen when the
+// clipboard changes. The status bar says how many items are pending.
+let _clipKeys = { mode: null, set: new Set() };
+function _clipboardKeys() {
+  const clip = (typeof fileops !== 'undefined' && fileops.clipboard) || { mode: null, paths: [] };
+  if (_clipKeys.src !== clip) {
+    _clipKeys = { src: clip, mode: clip.mode, set: new Set((clip.paths || []).map(p => String(p).toLowerCase())) };
+  }
+  return _clipKeys;
+}
+/** 'cut' | 'copied' | '' for a row path (Windows paths: case-insensitive). */
+function clipboardMarkFor(path) {
+  const { mode, set } = _clipboardKeys();
+  if (!mode || !set.has(String(path).toLowerCase())) return '';
+  return mode === 'cut' ? 'cut' : 'copied';
+}
+function syncClipboardMarks() {
+  document.querySelectorAll('#list-scroll .fp-row[data-path]').forEach(row => {
+    const mark = clipboardMarkFor(row.dataset.path);
+    row.classList.toggle('fp-row--cut', mark === 'cut');
+    row.classList.toggle('fp-row--copied', mark === 'copied');
+  });
+  syncClipboardStatus();
+}
+function syncClipboardStatus() {
+  const el = document.getElementById('status-clipboard');
+  const sep = document.getElementById('status-clipboard-sep');
+  if (!el) return;
+  const clip = (typeof fileops !== 'undefined' && fileops.clipboard) || { mode: null, paths: [] };
+  const n = clip.mode ? clip.paths.length : 0;
+  el.hidden = !n;
+  if (sep) sep.hidden = !n;
+  el.textContent = n ? `${n} item${n === 1 ? '' : 's'} ${clip.mode === 'cut' ? 'cut' : 'copied'}` : '';
+}
+
+/** Updates the status bar's item count, selection summary and pending
+ * clipboard count. */
 function updateStatusBar() {
+  syncClipboardStatus();
   if (thisPcActive()) { updateThisPcStatus(); return; }
   const countEl = document.getElementById('status-count');
   const selEl = document.getElementById('status-selected');

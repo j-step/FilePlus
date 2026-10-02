@@ -165,17 +165,21 @@ function renderRecentRow(entry, bucketKey) {
   const starHtml = favoritesHas(entry.path)
     ? `<span class="fp-row__star" title="In Favorites">${icon('star')}</span>`
     : '';
-  return `<div class="fp-row fp-row--recent" role="option" tabindex="0"
+  // tabindex -1 on the row and its buttons: homeRovingSync() makes ONE row
+  // per pane the tab stop, and the hover buttons (invisible until hover) are
+  // never Tab targets — the row's context menu carries the same actions
+  // (pass 2 #170).
+  return `<div class="fp-row fp-row--recent" role="option" tabindex="-1"
        data-path="${escapeHtml(entry.path)}" data-ext="${escapeHtml(entry.ext)}"${dirAttr} data-action="open-recent-file">
     ${homeIconFor(entry)}
-    <span class="fp-row__name"${nameTitleAttr}>${escapeHtml(displayName)}</span>
+    <span class="fp-row__name" data-full="${escapeHtml(entry.name)}"${nameTitleAttr}>${escapeHtml(displayName)}</span>
     <span class="fp-row__recent-path mono">${escapeHtml(parentDisplay)}</span>
     <span class="fp-row__recent-time mono">${escapeHtml(entry.action)} ${escapeHtml(timeLabel)}</span>
     <div class="fp-row__tags">${starHtml}</div>
     <div class="fp-row__hover-actions">
-      <button class="fp-icon-btn fp-icon-btn--sm" data-action="open-file" title="Open">${HOME_ICON_OPEN}</button>
-      <button class="fp-icon-btn fp-icon-btn--sm" data-action="reveal-file" title="Reveal in Browser">${HOME_ICON_REVEAL}</button>
-      <button class="fp-icon-btn fp-icon-btn--sm" data-action="copy-path" title="Copy path">${HOME_ICON_COPY}</button>
+      <button class="fp-icon-btn fp-icon-btn--sm" tabindex="-1" data-action="open-file" title="Open">${HOME_ICON_OPEN}</button>
+      <button class="fp-icon-btn fp-icon-btn--sm" tabindex="-1" data-action="reveal-file" title="Reveal in Browser">${HOME_ICON_REVEAL}</button>
+      <button class="fp-icon-btn fp-icon-btn--sm" tabindex="-1" data-action="copy-path" title="Copy path">${HOME_ICON_COPY}</button>
     </div>
   </div>`;
 }
@@ -199,17 +203,54 @@ function renderFavoriteRow(entry) {
   const displayName = hideExt ? stemOf(entry.name) : entry.name;
   const nameTitleAttr = hideExt ? ` title="${escapeHtml(entry.name)}"` : '';
   const dirAttr = isDir ? ' data-dir=""' : '';
-  return `<div class="fp-row fp-row--recent" role="option" tabindex="0" draggable="true"
+  return `<div class="fp-row fp-row--recent" role="option" tabindex="-1" draggable="true"
        data-path="${escapeHtml(entry.path)}" data-ext="${escapeHtml(entry.ext)}"${dirAttr} data-action="open-recent-file">
     ${homeIconFor(entry)}
-    <span class="fp-row__name"${nameTitleAttr}>${escapeHtml(displayName)}</span>
+    <span class="fp-row__name" data-full="${escapeHtml(entry.name)}"${nameTitleAttr}>${escapeHtml(displayName)}</span>
     <span class="fp-row__recent-path mono">${escapeHtml(parentDisplay)}</span>
     <span class="fp-row__recent-time mono">${escapeHtml(addedLabel)}</span>
-    <button class="fp-icon-btn fp-icon-btn--sm fp-row__fav-star" data-action="unfavorite-file"
+    <button class="fp-icon-btn fp-icon-btn--sm fp-row__fav-star" tabindex="-1" data-action="unfavorite-file"
             data-path="${escapeHtml(entry.path)}" title="Remove from favorites">
       ${HOME_ICON_STAR}
     </button>
   </div>`;
+}
+
+// ── Roving focus (pass 2 #170) ─────────────────────────────────────────────
+// Each pane (Recent, Favorites) is ONE tab stop: the row last focused there,
+// else its first row. Up/Down/Home/End move between rows (homeKeydown).
+// Before this every row and every hidden hover button was a tab stop — up to
+// 800 presses to cross the Recent pane.
+function homePaneRows(pane) {
+  return pane ? [...pane.querySelectorAll('.fp-row[data-path]')] : [];
+}
+function homeRovingSync(pane, stop) {
+  const rows = homePaneRows(pane);
+  const target = (stop && rows.includes(stop)) ? stop : rows[0];
+  for (const r of rows) r.tabIndex = r === target ? 0 : -1;
+}
+/** Replaces a pane's rows, keeping its tab stop (and DOM focus, when it was
+ * on one of the rows) on the same path. */
+function homeRerender(container, html) {
+  const active = document.activeElement;
+  const hadFocus = !!active && container.contains(active);
+  const stopPath = container.querySelector('.fp-row[data-path][tabindex="0"]')?.dataset.path;
+  container.innerHTML = html;
+  const stop = stopPath ? homePaneRows(container).find(r => r.dataset.path === stopPath) : null;
+  homeRovingSync(container, stop);
+  if (hadFocus) (stop || homePaneRows(container)[0])?.focus({ preventScroll: true });
+}
+
+/** Row text cut short by its column gets the full text as a tooltip; text
+ * that fits gets none (Explorer's rule, as browser.js's syncTruncationTitle
+ * does for the file list — pass 2 #60). A name whose extension is hidden
+ * always shows the full name (data-full). */
+function homeSyncTruncationTitle(el) {
+  const cut = el.scrollWidth > el.clientWidth + 1 || el.scrollHeight > el.clientHeight + 1;
+  const shown = el.textContent.trim();
+  const full = el.dataset.full || shown;
+  if (cut || full !== shown) el.title = full;
+  else el.removeAttribute('title');
 }
 
 // ── Data loading ────────────────────────────────────────────────────────────
@@ -229,7 +270,7 @@ async function loadRecent() {
     return;
   }
   const groups = (data && data.groups) || [];
-  container.innerHTML = groups.length ? groups.map(renderRecentSection).join('') : HOME_RECENT_EMPTY_HTML;
+  homeRerender(container, groups.length ? groups.map(renderRecentSection).join('') : HOME_RECENT_EMPTY_HTML);
 }
 
 /** GET /favorites -> flat, manually-ordered row list. Refreshes favoritesSet
@@ -254,7 +295,7 @@ async function loadFavorites() {
     favoritesSet.add(norm);
     favoritesPathToId.set(norm, f.id);
   });
-  container.innerHTML = files.length ? files.map(renderFavoriteRow).join('') : HOME_FAVORITES_EMPTY_HTML;
+  homeRerender(container, files.length ? files.map(renderFavoriteRow).join('') : HOME_FAVORITES_EMPTY_HTML);
   // Every other pane that draws a star reads favoritesSet at render time, so
   // whoever just changed it has to repaint them (pass 2 #52).
   syncFavoriteStars();
@@ -521,6 +562,15 @@ function initHomeRowInteractions() {
     if (!row) return;
     homeOpenPath(row.dataset.path, row.dataset.ext || '', homeRowIsDir(row));
   });
+  // A row that gets focus (click, arrow, Tab) becomes its pane's tab stop.
+  screen.addEventListener('focusin', e => {
+    const row = e.target.closest && e.target.closest('.fp-row[data-path]');
+    if (row && e.target === row) homeRovingSync(row.closest('#home-recent, #home-favorites'), row);
+  });
+  screen.addEventListener('pointerover', e => {
+    const el = e.target.closest && e.target.closest('.fp-row__name, .fp-row__recent-path, .fp-row__recent-time');
+    if (el && screen.contains(el)) homeSyncTruncationTitle(el);
+  });
 }
 
 /**
@@ -534,6 +584,26 @@ function homeKeydown(e) {
   const active = document.activeElement;
   const row = active && active.closest && active.closest('.fp-row[data-path]');
   if (!row) return;
+  // Inert behind any dialog, like the Browser's keys (pass 2 #53).
+  if (typeof anyScrimOpen === 'function' && anyScrimOpen()) return;
+  // A button inside the row (reachable by mouse only now) acts as itself.
+  if (active !== row) return;
+  if (!e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
+    const pane = row.closest('#home-recent, #home-favorites');
+    const rows = homePaneRows(pane);
+    const i = rows.indexOf(row);
+    const grid = !!row.closest('.home-pane[data-view="grid"]');
+    let next = null;
+    if (e.key === 'ArrowDown' || (grid && e.key === 'ArrowRight')) next = rows[i + 1];
+    else if (e.key === 'ArrowUp' || (grid && e.key === 'ArrowLeft')) next = rows[i - 1];
+    else if (e.key === 'Home') next = rows[0];
+    else if (e.key === 'End') next = rows[rows.length - 1];
+    if (next !== null) {
+      e.preventDefault();
+      if (next) { homeRovingSync(pane, next); next.focus(); next.scrollIntoView({ block: 'nearest' }); }
+      return;
+    }
+  }
   if (e.key === 'Enter') {
     e.preventDefault();
     homeOpenPath(row.dataset.path, row.dataset.ext || '', homeRowIsDir(row));
