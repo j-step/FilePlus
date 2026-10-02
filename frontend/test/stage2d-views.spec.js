@@ -117,7 +117,7 @@ test('ladder: Ctrl+wheel walks the eight views in order, the menu check follows,
     // The View menu lists the eight views Explorer's way, top to bottom, and
     // picking one applies it (named sizes 48 / 96 / 256).
     await page.locator('#btn-view-menu').click();
-    const labels = await page.locator('#context-menu > .fp-context-menu__item').allTextContents();
+    const labels = await page.locator('#context-menu .fp-context-menu__item').allTextContents();
     expect(labels.slice(0, 8).map((s) => s.trim())).toEqual(
       ['Extra large icons', 'Large icons', 'Medium icons', 'Small icons', 'List', 'Details', 'Tiles', 'Content']);
     await page.locator('#context-menu [data-menu-label="Medium icons"]').click();

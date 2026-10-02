@@ -1228,8 +1228,9 @@ function openAskPopout() {
   // uses for the View/Sort toolbar dropdowns.
   const r = btn.getBoundingClientRect();
   const vw = window.innerWidth, vh = window.innerHeight;
-  popout.style.left = `${Math.min(r.left, vw - popout.offsetWidth - 8)}px`;
-  popout.style.top  = `${Math.min(r.bottom + 6, vh - popout.offsetHeight - 8)}px`;
+  const edge = menuEdgePx();
+  popout.style.left = `${Math.min(r.left, vw - popout.offsetWidth - edge)}px`;
+  popout.style.top  = `${Math.min(r.bottom + 6, vh - popout.offsetHeight - edge)}px`;
   document.getElementById('ask-input')?.focus();
 }
 
@@ -1972,7 +1973,7 @@ function showContextMenu(x, y, items, opts = {}) {
   cmPrevFocus = document.activeElement;
   cmKbdPointer = null;
   contextMenu.innerHTML = '';
-  buildContextMenuItems(contextMenu, items, opts.ctx, 0);
+  buildContextMenuItems(cmMakeScroller(contextMenu), items, opts.ctx, 0);
   contextMenu.style.display = 'block';
   // Position within the viewport using the MEASURED size (pass 2 #61: the old
   // hardcoded 200px/220px let a wide menu spill off the right edge), and never
@@ -1988,20 +1989,41 @@ function showContextMenu(x, y, items, opts = {}) {
     left = x;
     top = y;
   }
-  contextMenu.style.left = `${Math.max(0, Math.min(left, vw - w - 8))}px`;
-  contextMenu.style.top  = `${Math.max(0, Math.min(top, vh - h - 8))}px`;
-  contextMenu.scrollTop = 0;
-  cmSyncScrollCue(contextMenu);
+  const edge = menuEdgePx();
+  contextMenu.style.left = `${Math.max(0, Math.min(left, vw - w - edge))}px`;
+  contextMenu.style.top  = `${Math.max(0, Math.min(top, vh - h - edge))}px`;
+  cmSyncScrollCue(cmScroller(contextMenu));
   armContextMenuScrollClose();
 }
 
-/** A menu too tall for the window scrolls inside itself (pass 2 #61); the
- * shared scroll-cue fade marks the edge where items are hidden. */
-function cmSyncScrollCue(menu) {
-  menu.classList.add('fp-oscroll-host--fade');
-  const over = menu.scrollHeight > menu.clientHeight + 1;
-  menu.classList.toggle('is-scroll-top', over && menu.scrollTop > 1);
-  menu.classList.toggle('is-scroll-bottom', over && menu.scrollTop + menu.clientHeight < menu.scrollHeight - 1);
+/** --menu-edge: the gap a menu or popover keeps from the window edge (CSS
+ * token, read once; the menus' max-height uses the same one). */
+let _menuEdgePx = null;
+function menuEdgePx() {
+  if (_menuEdgePx === null) {
+    const v = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--menu-edge'));
+    _menuEdgePx = Number.isFinite(v) ? v : 8;
+  }
+  return _menuEdgePx;
+}
+
+/** Items live in an inner scroller, so a menu too tall for the window
+ * scrolls inside its own border and shadow (pass 2 #61), and the scroll-cue
+ * fade masks only the items, never the menu's frame. */
+function cmMakeScroller(menu) {
+  const scroller = document.createElement('div');
+  scroller.className = 'fp-context-menu__scroll fp-oscroll-host--fade';
+  scroller.setAttribute('role', 'none');
+  menu.appendChild(scroller);
+  return scroller;
+}
+function cmScroller(menu) {
+  return menu.querySelector(':scope > .fp-context-menu__scroll') || menu;
+}
+function cmSyncScrollCue(scroller) {
+  const over = scroller.scrollHeight > scroller.clientHeight + 1;
+  scroller.classList.toggle('is-scroll-top', over && scroller.scrollTop > 1);
+  scroller.classList.toggle('is-scroll-bottom', over && scroller.scrollTop + scroller.clientHeight < scroller.scrollHeight - 1);
 }
 
 // ── Menus and popovers never float at stale coordinates (pass 2 #175) ──────
@@ -2022,15 +2044,22 @@ function armContextMenuScrollClose() {
     cmScrollArmRaf = requestAnimationFrame(() => { cmScrollArmed = true; });
   });
 }
+/** Closes the menu for a resize / scroll. When the keyboard was inside it,
+ * focus goes back where it was before the menu opened (as after an
+ * activation) instead of dropping to <body>. */
+function closeContextMenuForLayout() {
+  if (document.activeElement?.closest?.('.fp-context-menu')) closeContextMenuAfterActivation();
+  else hideContextMenu();
+}
 window.addEventListener('resize', () => {
-  if (contextMenuIsOpen()) hideContextMenu();
+  if (contextMenuIsOpen()) closeContextMenuForLayout();
   if (askPopoutOpen()) closeAskPopout();
 });
 document.addEventListener('scroll', e => {
   const t = e.target;
-  const inMenu = t instanceof Element && t.closest('.fp-context-menu');
-  if (inMenu) { cmSyncScrollCue(inMenu); return; }
-  if (cmScrollArmed && contextMenuIsOpen()) hideContextMenu();
+  if (t instanceof Element && t.classList.contains('fp-context-menu__scroll')) { cmSyncScrollCue(t); return; }
+  if (t instanceof Element && t.closest('.fp-context-menu')) return;
+  if (cmScrollArmed && contextMenuIsOpen()) closeContextMenuForLayout();
 }, true);
 
 // ── Flyout submenus (Stage 2D §6.3) ────────────────────────────────────────
@@ -2054,7 +2083,7 @@ let cmLastPointer = { x: -1, y: -1 };
 function cmOpenMenus() { return [contextMenu, ...cmFlyouts.map(f => f.menu)]; }
 
 function cmFocusableItems(menu) {
-  return [...menu.children].filter(el =>
+  return [...cmScroller(menu).children].filter(el =>
     el.classList.contains('fp-context-menu__item') && !el.classList.contains('fp-context-menu__item--disabled'));
 }
 
@@ -2081,7 +2110,7 @@ function openContextFlyout(item, btn, depth, ctx, focusFirst) {
   menu.className = 'fp-context-menu fp-context-menu--flyout';
   menu.setAttribute('role', 'menu');
   menu.addEventListener('pointerenter', () => clearTimeout(cmTimer));
-  buildContextMenuItems(menu, item.items, ctx, depth + 1);
+  buildContextMenuItems(cmMakeScroller(menu), item.items, ctx, depth + 1);
   document.body.appendChild(menu);
   cmFlyouts[depth] = { menu, owner: btn };
   btn.classList.add('fp-context-menu__item--open');
@@ -2092,12 +2121,13 @@ function openContextFlyout(item, btn, depth, ctx, focusFirst) {
   const pr = parentMenu.getBoundingClientRect();
   const rr = btn.getBoundingClientRect();
   const w = menu.offsetWidth, h = menu.offsetHeight;
+  const edge = menuEdgePx();
   let left = pr.right - 2;
-  if (left + w > vw - 4) left = pr.left - w + 2;
-  const top = Math.max(0, Math.min(rr.top - 5, vh - h - 8));
+  if (left + w > vw - edge / 2) left = pr.left - w + 2;
+  const top = Math.max(0, Math.min(rr.top - 5, vh - h - edge));
   menu.style.left = `${Math.max(0, left)}px`;
   menu.style.top = `${top}px`;
-  cmSyncScrollCue(menu);
+  cmSyncScrollCue(cmScroller(menu));
   if (focusFirst) cmFocusableItems(menu)[0]?.focus();
 }
 
@@ -2341,16 +2371,49 @@ function showSnackbar(message, undoLabel, onUndo) {
   setTimeout(() => el.remove(), 5200);
 }
 
-// At most this many snackbars / toasts show at once; the newest win (pass 2
-// #62/#63). An error toast leaves on its own after TOAST_ERROR_MS — long
-// enough to read a path in it, short enough that repeated failures cannot
-// bury the window — and has a dismiss button for sooner.
+// At most this many snackbars / toasts show at once (pass 2 #62/#63). An
+// error is never evicted to make room for anything but another error: the
+// oldest non-error goes first (the new one included), and only an error
+// arriving with nothing but errors on screen pushes the oldest error out.
+// An error toast leaves on its own after TOAST_ERROR_MS — long enough to read
+// a path in it, short enough that repeated failures cannot bury the window —
+// paused while the pointer or focus is on it, and has a dismiss button.
 const NOTICE_MAX = 3;
 const TOAST_MS = 5000;
 const TOAST_ERROR_MS = 8000;
-function capNoticeStack(container, sel) {
-  const items = container.querySelectorAll(sel);
-  for (let i = 0; i < items.length - NOTICE_MAX; i++) items[i].remove();
+const TOAST_RESUME_MIN_MS = 1500;   // after a pause, never vanish sooner than this
+function capNoticeStack(container, sel, isKeep = () => false) {
+  let items = [...container.querySelectorAll(sel)];
+  while (items.length > NOTICE_MAX) {
+    const victim = items.find(el => !isKeep(el)) || items[0];
+    victim.remove();
+    items = items.filter(el => el !== victim);
+  }
+}
+/** Removes `el` after `ms`; with `pausable`, the clock stops while the
+ * pointer is over it or focus is inside it, and restarts (at least
+ * TOAST_RESUME_MIN_MS) once both have left. */
+function scheduleNoticeRemoval(el, ms, pausable) {
+  let remaining = ms;
+  let started = performance.now();
+  let timer = setTimeout(() => el.remove(), ms);
+  if (!pausable) return;
+  const pause = () => {
+    if (!timer) return;
+    clearTimeout(timer);
+    timer = 0;
+    remaining -= performance.now() - started;
+  };
+  const resume = () => {
+    if (timer || !el.isConnected || el.matches(':hover') || el.contains(document.activeElement)) return;
+    started = performance.now();
+    remaining = Math.max(remaining, TOAST_RESUME_MIN_MS);
+    timer = setTimeout(() => el.remove(), remaining);
+  };
+  el.addEventListener('pointerenter', pause);
+  el.addEventListener('focusin', pause);
+  el.addEventListener('pointerleave', resume);
+  el.addEventListener('focusout', e => { if (!el.contains(e.relatedTarget)) setTimeout(resume, 0); });
 }
 
 // ── Toast ────────────────────────────────────────────────────────────────────────
@@ -2361,6 +2424,7 @@ function showToast(message, variant = '') {
   if (!container) return;
   const el = document.createElement('div');
   el.className = 'fp-toast' + (variant ? ` fp-toast--${variant}` : '');
+  if (variant === 'error') el.setAttribute('role', 'alert');
   // message is frequently API error text (formatApiError()) now that fileops
   // routes every failure through here — escape it before inserting.
   el.innerHTML = `<span>${escapeHtml(message)}</span>`;
@@ -2374,8 +2438,8 @@ function showToast(message, variant = '') {
     el.appendChild(btn);
   }
   container.appendChild(el);
-  capNoticeStack(container, '.fp-toast');
-  setTimeout(() => el.remove(), variant === 'error' ? TOAST_ERROR_MS : TOAST_MS);
+  capNoticeStack(container, '.fp-toast', t => t.classList.contains('fp-toast--error'));
+  if (el.isConnected) scheduleNoticeRemoval(el, variant === 'error' ? TOAST_ERROR_MS : TOAST_MS, variant === 'error');
 }
 
 // ── Refresh (Stage 2D §7) ─────────────────────────────────────────────────────

@@ -72,6 +72,12 @@
   /* Snackbars and toasts: above panels and the modal scrims (1000), below
      the drag badge (1200). */
   --z-notice: 1100;
+  /* Snackbar / toast stacks sit this far above the window's bottom edge
+     (clear of the status bar). */
+  --notice-bottom: 40px;
+  /* The gap a menu or popover keeps from the window edge (app.js reads it
+     for the clamp; the menu scroller's max-height uses it too). */
+  --menu-edge: 8px;
 
   /* Clipboard marks on listing rows (pass 2 #172). */
   --clip-cut-opacity: 0.5;
@@ -3209,7 +3215,7 @@ body.is-dragging { cursor: default; }
 #snackbar-container,
 #toast-container {
   position: fixed;
-  bottom: 40px;
+  bottom: var(--notice-bottom);
   display: flex;
   flex-direction: column;
   gap: var(--s-8);
@@ -5897,15 +5903,6 @@ button.fp-pill:hover {
 .fp-context-menu {
   position: fixed;
   min-width: 180px;
-  /* A menu taller than the window (a folder menu at the 500px minimum
-     height, high app zoom) scrolls inside itself instead of running off the
-     bottom edge (pass 2 #61); showContextMenu clamps the top to 0. */
-  max-height: calc(100vh - 16px);
-  overflow-y: auto;
-  /* No native bar (panels never carry one, §9.3): the edge fades say more is
-     above / below (app.js cmSyncScrollCue adds is-scroll-top / -bottom to
-     the fp-oscroll-host--fade cue), and wheel / arrow keys scroll it. */
-  scrollbar-width: none;
   background: var(--bg-raised);
   border: 1px solid var(--border-mid);
   border-radius: var(--r-card);
@@ -5914,7 +5911,20 @@ button.fp-pill:hover {
   z-index: 600;
   animation: fp-fade-in 80ms var(--ease-out);
 }
-.fp-context-menu::-webkit-scrollbar { display: none; }
+/* The items' own scroller. A menu taller than the window (a folder menu at
+   the 500px minimum height, high app zoom) scrolls inside its frame instead
+   of running off the bottom edge (pass 2 #61): its height leaves --menu-edge
+   above and below, less the menu's padding and border. No native bar
+   (panels never carry one, §9.3): the scroll-cue fade (fp-oscroll-host--fade
+   + is-scroll-top / -bottom from app.js cmSyncScrollCue) masks the items
+   only, never the menu's border or shadow; wheel and arrow keys scroll it. */
+.fp-context-menu__scroll {
+  max-height: calc(100vh - 2 * var(--menu-edge) - 2 * var(--s-4) - 2px);
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: none;
+}
+.fp-context-menu__scroll::-webkit-scrollbar { display: none; }
 .fp-context-menu__item {
   display: flex;
   align-items: center;

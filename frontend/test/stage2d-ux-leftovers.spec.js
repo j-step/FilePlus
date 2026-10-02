@@ -134,7 +134,27 @@ test('#62/#63 snackbars stack; error toasts are opaque, above panels, capped at 
     const boxes = await bars.evaluateAll((els) => els.map((e) => { const r = e.getBoundingClientRect(); return { top: r.top, bottom: r.bottom }; }));
     for (let i = 1; i < boxes.length; i++) expect(boxes[i].top).toBeGreaterThanOrEqual(boxes[i - 1].bottom);
     await shot(page, 'ux-leftovers-snackbars-stacked');
-    await page.evaluate(() => { document.getElementById('snackbar-container').innerHTML = ''; localStorage.removeItem('fp-notifications-enabled'); });
+    await page.evaluate(() => { document.getElementById('snackbar-container').innerHTML = ''; });
+
+    // The cap never evicts an error for a non-error: the oldest non-error
+    // goes first (the newcomer included); only an error arriving among
+    // errors pushes the oldest error out.
+    const stack = () => page.evaluate(() => [...document.querySelectorAll('#toast-container .fp-toast')]
+      .map((t) => t.textContent.replace('✕', '').trim()));
+    await page.evaluate(() => { showToast('e1', 'error'); showToast('i1'); showToast('i2'); showToast('e2', 'error'); });
+    expect(await stack()).toEqual(['e1', 'i2', 'e2']);
+    await page.evaluate(() => { showToast('i3'); });
+    expect(await stack()).toEqual(['e1', 'e2', 'i3']);
+    await page.evaluate(() => { showToast('e3', 'error'); });
+    expect(await stack()).toEqual(['e1', 'e2', 'e3']);
+    await page.evaluate(() => { showToast('i4'); });
+    expect(await stack()).toEqual(['e1', 'e2', 'e3']);
+    await page.evaluate(() => { showToast('e4', 'error'); });
+    expect(await stack()).toEqual(['e2', 'e3', 'e4']);
+    await page.evaluate(() => {
+      document.getElementById('toast-container').innerHTML = '';
+      localStorage.removeItem('fp-notifications-enabled');
+    });
 
     // #63: errors bypass the gate, at most 3 at a time (the newest win).
     if (!(await page.evaluate(() => document.getElementById('inspector').classList.contains('inspector--open')))) {
@@ -147,9 +167,10 @@ test('#62/#63 snackbars stack; error toasts are opaque, above panels, capped at 
     await expect(toasts).toHaveCount(3);
     await expect(toasts.last()).toContainText('try 5');
     await expect(toasts.first()).toContainText('try 3');
-    // Dismiss button is labelled.
+    // Dismiss button is labelled; errors are announced.
     const dismiss = toasts.first().locator('button');
     await expect(dismiss).toHaveAttribute('aria-label', 'Dismiss');
+    await expect(toasts.first()).toHaveAttribute('role', 'alert');
     // Opaque, and on top of whatever panel it covers (the inspector's buttons
     // used to show through it).
     const look = await toasts.last().evaluate((el) => {
@@ -164,9 +185,16 @@ test('#62/#63 snackbars stack; error toasts are opaque, above panels, capped at 
     expect(look.alpha).toBe(1);
     expect(look.onTop).toBe(true);
     await shot(page, 'ux-leftovers-error-toasts');
-    // They go on their own after 8 s (not 5, not never).
-    await expect(toasts).toHaveCount(0, { timeout: 15_000 });
+    // They go on their own after 8 s (not 5, not never) — except the one the
+    // pointer rests on, whose clock is paused until the pointer leaves.
+    await toasts.last().hover();
+    await expect(toasts).toHaveCount(1, { timeout: 15_000 });
     expect(Date.now() - t0).toBeGreaterThanOrEqual(7_500);
+    await expect(toasts.first()).toContainText('try 5');
+    await page.mouse.move(5, 300);
+    const tLeave = Date.now();
+    await expect(toasts).toHaveCount(0, { timeout: 10_000 });
+    expect(Date.now() - tLeave).toBeGreaterThanOrEqual(1_000);
     expect(errors).toEqual([]);
   } finally { await app.close(); }
 });
@@ -178,6 +206,7 @@ test('#60/#170 Home rows: truncation tooltips, one tab stop per pane, arrow keys
     'short.txt', 'readme.md', 'budget.xlsx']) {
     await apiPost('/recent', { path: `${views}\\${n}`, action: 'opened' });
   }
+  await apiPost('/favorites', { path: `${views}\\readme.md` }).catch(() => {});   // already there on a rerun
   const { app, page, errors } = await launchApp();
   try {
     await setSize(app, 1200, 760, page);
@@ -190,6 +219,10 @@ test('#60/#170 Home rows: truncation tooltips, one tab stop per pane, arrow keys
     // #170: one roving tab stop for the whole pane; hover buttons never take Tab.
     await expect(page.locator('#home-recent .fp-row[data-path][tabindex="0"]')).toHaveCount(1);
     expect(await page.locator('#home-recent .fp-row__hover-actions button:not([tabindex="-1"])').count()).toBe(0);
+    const favRows = page.locator('#home-favorites .fp-row[data-path]');
+    await expect.poll(() => favRows.count()).toBeGreaterThanOrEqual(1);
+    await expect(page.locator('#home-favorites .fp-row[data-path][tabindex="0"]')).toHaveCount(1);
+    expect(await page.locator('#home-favorites button').count()).toBeGreaterThanOrEqual(1);
     expect(await page.locator('#home-favorites button:not([tabindex="-1"])').count()).toBe(0);
     const first = rows.nth(0), second = rows.nth(1);
     await first.focus();
@@ -218,11 +251,18 @@ test('#60/#170 Home rows: truncation tooltips, one tab stop per pane, arrow keys
     const shortName = page.locator('#home-recent .fp-row[data-path$="short.txt"] .fp-row__name');
     await shortName.hover();
     await expect(shortName).not.toHaveAttribute('title', /.+/);
+    // The folder column, held narrow so it is always cut short here.
+    await page.evaluate(() => {
+      const st = document.createElement('style');
+      st.id = 'test-narrow-path';
+      st.textContent = '#home-recent .fp-row__recent-path { max-width: 60px; }';
+      document.head.appendChild(st);
+    });
     const pathCell = longRow.locator('.fp-row__recent-path');
-    if (await pathCell.evaluate((el) => el.scrollWidth > el.clientWidth)) {
-      await pathCell.hover();
-      await expect(pathCell).toHaveAttribute('title', /Views\\$/);
-    }
+    await expect.poll(() => pathCell.evaluate((el) => el.clientWidth > 0 && el.scrollWidth > el.clientWidth)).toBe(true);
+    await pathCell.hover();
+    await expect(pathCell).toHaveAttribute('title', /Views\\$/);
+    await page.evaluate(() => document.getElementById('test-narrow-path').remove());
     expect(errors).toEqual([]);
   } finally { await app.close(); }
 });
@@ -300,6 +340,40 @@ test('#172 cut and copied items stay visible in every view, across refreshes, un
     // Put the fixture back (the move is undoable like any other).
     await page.evaluate(() => fileops.undoLast());
     await expect(rowByName(page, 'clip-d.txt')).toBeVisible();
+
+    // A cut item renamed afterwards stays cut under its new name: the count
+    // and the ghosted row agree, and Paste would move the file that exists.
+    await rowByName(page, 'clip-a.txt').click();
+    await page.keyboard.press('Control+x');
+    await expect(page.locator('#status-clipboard')).toHaveText('1 item cut');
+    await page.evaluate((p) => fileops.rename(p, 'clip-a-renamed.txt'), `${clip}\\clip-a.txt`);
+    await expect(rowByName(page, 'clip-a-renamed.txt')).toHaveClass(/fp-row--cut/);
+    await expect(page.locator('#status-clipboard')).toHaveText('1 item cut');
+    expect(await page.evaluate(() => fileops.clipboard.paths.map((p) => p.split(/[\\/]/).pop()))).toEqual(['clip-a-renamed.txt']);
+    await page.evaluate(() => fileops.undoLast());
+    await expect(rowByName(page, 'clip-a.txt')).toHaveClass(/fp-row--cut/);
+    expect(await page.evaluate(() => fileops.clipboard.paths.map((p) => p.split(/[\\/]/).pop()))).toEqual(['clip-a.txt']);
+
+    // A cut item sent to the trash leaves the clipboard.
+    await rowByName(page, 'clip-a.txt').click();
+    await page.evaluate(() => fileops.trashSelection());
+    await expect(rowByName(page, 'clip-a.txt')).toHaveCount(0);
+    await expect(page.locator('#status-clipboard')).toBeHidden();
+    expect(await page.evaluate(() => fileops.clipboard.mode)).toBe(null);
+    await page.evaluate(() => fileops.undoLast());
+    await expect(rowByName(page, 'clip-a.txt')).toBeVisible();
+
+    // A paste where one item fails: the moved one is done, the failed one
+    // stays cut so Ctrl+V can retry it.
+    const ghost = `${clip}\\no-such-file.txt`;
+    await page.evaluate(([a, g]) => fileops.setClipboard('cut', [a, g]), [`${clip}\\clip-b.txt`, ghost]);
+    await page.evaluate((d) => fileops.pasteInto(d), `${clip}\\Dest`);
+    await expect(rowByName(page, 'clip-b.txt')).toHaveCount(0);
+    expect(await page.evaluate(() => fileops.clipboard)).toEqual({ mode: 'cut', paths: [ghost] });
+    await expect(page.locator('#status-clipboard')).toHaveText('1 item cut');
+    await page.evaluate(() => { fileops.setClipboard(null, []); return fileops.undoLast(); });
+    await expect(rowByName(page, 'clip-b.txt')).toBeVisible();
+    await page.evaluate(() => { document.getElementById('toast-container').innerHTML = ''; });
     expect(errors).toEqual([]);
   } finally { await app.close(); }
 });
@@ -346,6 +420,17 @@ test('#175/#61 menus close on resize and on scroll; a tall menu fits the window'
     await setSize(app, 1100, 760, page);
     await expect(menu).toBeHidden();
 
+    // Keyboard inside the menu, then a resize: focus goes back to the row.
+    await rowByName(page, 'bulk-003.txt').click({ button: 'right' });
+    await expect(menu).toBeVisible();
+    await page.keyboard.press('ArrowDown');
+    expect(await page.evaluate(() => !!document.activeElement.closest('#context-menu'))).toBe(true);
+    await frames(page);
+    await setSize(app, 1150, 780, page);
+    await expect(menu).toBeHidden();
+    expect(await page.evaluate(() => document.activeElement?.closest?.('.fp-row')?.dataset.path || document.activeElement.id))
+      .toMatch(/bulk-003\.txt$|^list-scroll$/);
+
     // Row menu, then the list scrolls under it: it closes.
     await rowByName(page, 'bulk-003.txt').click({ button: 'right' });
     await expect(menu).toBeVisible();
@@ -376,11 +461,40 @@ test('#175/#61 menus close on resize and on scroll; a tall menu fits the window'
     await expect(menu).toBeVisible();
     const fit = await menu.evaluate((el) => {
       const r = el.getBoundingClientRect();
-      return { top: r.top, bottom: r.bottom, vh: window.innerHeight, overflowY: getComputedStyle(el).overflowY };
+      const sc = el.querySelector(':scope > .fp-context-menu__scroll');
+      return { top: r.top, bottom: r.bottom, vh: window.innerHeight, overflowY: getComputedStyle(sc).overflowY,
+        frameMask: getComputedStyle(el).maskImage || getComputedStyle(el).webkitMaskImage };
     });
     expect(fit.top).toBeGreaterThanOrEqual(0);
     expect(fit.bottom).toBeLessThanOrEqual(fit.vh);
     expect(fit.overflowY).toBe('auto');
+    expect(fit.frameMask).toBe('none');
+    // At 1.5 zoom the menu is taller than the window: the items scroll in
+    // their own scroller, the fade marks the hidden end, the frame stays whole.
+    await page.keyboard.press('Escape');
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.setZoomFactor(1.5));
+    await page.waitForFunction(() => window.innerHeight < 400);
+    await folderRow.click({ button: 'right' });
+    await expect(menu).toBeVisible();
+    const tall = await menu.evaluate((el) => {
+      const r = el.getBoundingClientRect();
+      const sc = el.querySelector(':scope > .fp-context-menu__scroll');
+      return { top: r.top, bottom: r.bottom, vh: window.innerHeight, over: sc.scrollHeight > sc.clientHeight,
+        cueBottom: sc.classList.contains('is-scroll-bottom'), frameMask: getComputedStyle(el).maskImage || 'none',
+        itemsMask: getComputedStyle(sc).maskImage || getComputedStyle(sc).webkitMaskImage,
+        right: r.right, vw: window.innerWidth };
+    });
+    expect(tall.right).toBeLessThanOrEqual(tall.vw);
+    expect(tall.itemsMask).toMatch(/gradient/);
+    expect(tall.over).toBe(true);
+    expect(tall.cueBottom).toBe(true);
+    expect(tall.frameMask).toBe('none');
+    expect(tall.top).toBeGreaterThanOrEqual(0);
+    expect(tall.bottom).toBeLessThanOrEqual(tall.vh);
+    await shot(page, 'ux-leftovers-menu-tall-zoomed');
+    await page.keyboard.press('Escape');
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.setZoomFactor(1));
+    await page.waitForFunction(() => window.innerHeight > 400);
     await shot(page, 'ux-leftovers-menu-short-window');
     await page.keyboard.press('Escape');
     expect(errors).toEqual([]);

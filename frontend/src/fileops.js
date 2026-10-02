@@ -52,6 +52,7 @@ const fileops = {
     try {
       const res = await fn();
       if (res && res.batch_id && res.ops && res.ops.length) { this.undoStack.push(res.batch_id); this.redoStack.length = 0; }
+      this.followOps(res && res.ops);
       if (res && res.errors && res.errors.length) showToast(`${label}: ${res.errors[0].error}`, 'error');
       if (res && res.conflicts && res.conflicts.length) return this.resolveConflicts(label, res, fn);
       // `skipped` is the fourth bucket mover._batch returns (on_conflict:
@@ -89,6 +90,7 @@ const fileops = {
   async undoBatch(id) {
     try {
       const res = await API.post(`/operations/batch/${id}/undo`);
+      this.followOps(res && res.ops);
       this.undoStack = this.undoStack.filter(b => b !== id);
       if (res.batch_id) this.redoStack.push(res.batch_id);
       if (res.errors.length) showToast(`Undo: ${res.errors[0].error}`, 'error');
@@ -121,6 +123,7 @@ const fileops = {
     this._inFlight = true;
     try {
       const res = await API.post(`/operations/batch/${id}/undo`);
+      this.followOps(res && res.ops);
       // Mirror undoBatch: the inverse of an op can be refused (the item moved
       // or vanished behind our back) and the backend reports that in
       // `errors`. Dropping the entry regardless made a wholly-failed redo
@@ -154,6 +157,32 @@ const fileops = {
     if (typeof syncClipboardMarks === 'function') syncClipboardMarks();
   },
 
+  /** Keeps the clipboard true to what is on disk after operations land: a
+   * clipboard item (or anything under a clipboard folder) that was renamed or
+   * moved now lives at its new path; one sent to the trash is dropped. So the
+   * status-bar count always matches the ghosted rows, and Paste never offers
+   * a path that is gone (pass 2 #172 review). Copies leave their source. */
+  followOps(ops) {
+    const { mode, paths } = this.clipboard;
+    if (!mode || !paths.length || !ops || !ops.length) return;
+    let next = paths.slice();
+    let changed = false;
+    for (const op of ops) {
+      if (!op || !op.src || op.op_type === 'copy') continue;
+      const src = String(op.src);
+      const lsrc = src.toLowerCase();
+      const prefix = lsrc.endsWith('\\') ? lsrc : `${lsrc}\\`;
+      next = next.flatMap(p => {
+        const lp = String(p).toLowerCase();
+        if (lp !== lsrc && !lp.startsWith(prefix)) return [p];
+        changed = true;
+        if (op.op_type === 'trash' || !op.dest) return [];
+        return [String(op.dest) + String(p).slice(src.length)];
+      });
+    }
+    if (changed) this.setClipboard(next.length ? mode : null, next);
+  },
+
   /** Number of paths currently on the clipboard — the Paste context-menu
    * item's enabled(ctx) predicate (Task 11, playtest pass 1 §4.2) reads this
    * via buildMenuContext(target)'s ctx.clipboard rather than reaching into
@@ -169,7 +198,15 @@ const fileops = {
     // A conflict the user cancelled (resolveConflicts settles 'cancel') means
     // nothing new happened for the still-pending sources — keep the clipboard
     // so Ctrl+V can be retried instead of silently losing the cut selection.
-    if (mode === 'cut' && res !== 'cancel') this.setClipboard(null, []);
+    // Otherwise the moved items are done (followOps already pointed them at
+    // their new home); any item still at its original path failed (an error,
+    // or skipped) and stays cut, so Ctrl+V can retry just those.
+    if (mode === 'cut' && res !== 'cancel') {
+      const original = new Set(paths.map(p => String(p).toLowerCase()));
+      const left = this.clipboard.mode === 'cut'
+        ? this.clipboard.paths.filter(p => original.has(String(p).toLowerCase())) : [];
+      this.setClipboard(left.length ? 'cut' : null, left);
+    }
   },
 
   async trashSelection() {
