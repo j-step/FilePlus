@@ -747,6 +747,7 @@ function initMarqueeSelection() {
     if (e.target.closest('.fp-row, .fp-row__icon, .fp-row__name')) return;
     if (e.button !== 0) return;
     dragging = true;
+    settleListFlips();   // the band hit-tests rows where they really are
     ctrlDrag = e.ctrlKey;
     startX = e.clientX; startY = e.clientY;
     marqueeRect.style.display = 'block';
@@ -1830,17 +1831,33 @@ function listMotionPlay(listScroll, cap, { added = null, gone = [], moved = null
       });
     }
     for (const row of grows) {
-      fpAnimate(row, [{ opacity: 0, transform: 'scale(.96)' }, { opacity: 1, transform: 'none' }],
-        { duration: 'base', key: 'flip' });
+      trackListFlip(row, fpAnimate(row, [{ opacity: 0, transform: 'scale(.96)' }, { opacity: 1, transform: 'none' }],
+        { duration: 'base', key: 'flip' }));
     }
   }
   if (!slide) return -1;
   for (const [row, dx, dy] of slides) {
-    fpAnimate(row, [{ transform: `translate(${dx}px, ${dy}px)` }, { transform: 'none' }],
-      { duration: 'base', key: 'flip' });
+    trackListFlip(row, fpAnimate(row, [{ transform: `translate(${dx}px, ${dy}px)` }, { transform: 'none' }],
+      { duration: 'base', key: 'flip' }));
   }
   for (const row of fades) fpAnimate(row, [{ opacity: 0 }, { opacity: 1 }], { duration: 'base', key: 'flip' });
   return slides.length;
+}
+
+// Rows mid-slide or mid-grow: their boxes on screen are not where the
+// layout has them. Anything that reads row geometry to act — the geometric
+// arrow keys, the marquee — first lands them (rule 1: a new action cancels
+// the animation, it never acts on a half-way picture).
+const _listFlips = new Set();
+function trackListFlip(row, anim) {
+  if (!anim) return;
+  _listFlips.add(row);
+  fpAfter(anim, () => _listFlips.delete(row));
+}
+function settleListFlips() {
+  if (!_listFlips.size) return;
+  for (const row of [..._listFlips]) fpCancelAnimation(row, 'flip');
+  _listFlips.clear();
 }
 
 /** A removed row's node, kept painted where it was while it fades and
@@ -2742,6 +2759,8 @@ function moveFocusDir(dir, { shift = false } = {}) {
   if (!listScroll) return;
   const rows = listScroll.querySelectorAll(':scope > .fp-row[data-path]');
   if (!rows.length) return;
+  // Geometry is read below: rows still sliding into place land first.
+  settleListFlips();
   let cur = -1;
   if (browserState.focus) {
     const focused = findListRow(browserState.focus);

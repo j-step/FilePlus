@@ -2311,3 +2311,46 @@ test('breadcrumb: the overflow fade grows in when the path starts to overflow (a
     expect(errors).toEqual([]);
   }
 });
+
+test('a key pressed while rows slide acts on where they land: a geometric arrow right after a sort', async () => {
+  const { app, page, errors } = await launchApp({ motion: true });
+  try {
+    await installListProbes(page);
+    const sortDir = `${await motionDir()}\\Sort`;
+    await openFolder(page, sortDir);
+    await page.evaluate((dir) => {
+      setView('icons', 96, { manual: false });
+      applySort('name', 'asc');
+      selectRow(`${dir}\\sort-8.txt`);
+    }, sortDir);
+    await settled(page);
+    const r = await page.evaluate(() => {
+      applySort('size', 'asc');
+      const sliding = __fpRowAnims().filter((a) => a.kind === 'Animation' && a.self).length;
+      const order = __fpRowPaths();
+      const from = order.indexOf(browserState.focus.split('\\').pop());
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', code: 'ArrowDown', bubbles: true, cancelable: true }));
+      const rows = [...document.querySelectorAll('#list-scroll > .fp-row[data-path]')];
+      const top0 = rows[0].getBoundingClientRect().top;
+      return {
+        sliding,
+        left: __fpRowAnims().filter((a) => a.kind === 'Animation' && a.self).length,
+        from,
+        to: order.indexOf(browserState.focus.split('\\').pop()),
+        cols: rows.filter((row) => Math.abs(row.getBoundingClientRect().top - top0) < 1).length,
+        n: rows.length,
+      };
+    });
+    expect(r.sliding).toBeGreaterThan(0);
+    expect(r.left).toBe(0);
+    expect(r.from).toBe(0);
+    expect(r.cols).toBeGreaterThan(1);
+    expect(r.cols).toBeLessThan(r.n);
+    expect(r.to).toBe(r.cols);
+  } finally {
+    await app.close();
+    await delConfig('ui.sort');
+    await delConfig('ui.folder_views');
+  }
+  expect(errors).toEqual([]);
+});
