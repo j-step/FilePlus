@@ -4050,10 +4050,17 @@ body.is-dragging .fp-oscroll { pointer-events: none; }
    "thispc:" (thispc.js): the column header, the notice and the listing are
    off, never under it. Drive cards are flat like every other surface —
    borders do the work; the usage bar is accent on a --bg-raised track and
-   turns --bad above 90% used. */
-.list-pane--thispc > #list-head,
-.list-pane--thispc > #list-notice,
-.list-pane--thispc > #list-scroll { display: none; }
+   turns --bad above 90% used.
+   The hide is anchored on #list-pane so it outranks every per-view display
+   rule on #list-scroll (40f: `#list-scroll:is([data-view="icons"], …)
+   { display: grid }`, List's grid and its empty-folder block), which come
+   later in this file with the same or higher specificity. At equal weight
+   they won: the emptied listing stayed in the flex column with flex: 1 and
+   pushed the drive cards half-way down the pane after any Icons, Tiles,
+   Small icons or List folder (addendum §4). */
+#list-pane.list-pane--thispc > #list-head,
+#list-pane.list-pane--thispc > #list-notice,
+#list-pane.list-pane--thispc > #list-scroll { display: none; }
 .thispc-view {
   flex: 1;
   min-height: 0;

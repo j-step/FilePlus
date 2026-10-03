@@ -540,3 +540,168 @@ test('Inspector action row: disabled (tooltip kept) without one selected item; O
   }
   expectNoErrors(errors);
 });
+
+// ── Addendum §4: This PC never drops half-way down ──────────────────────────
+// The bug: from a folder in Icons (or Tiles, Small icons, List), opening This
+// PC showed the drive cards starting half-way down the pane. Each view's own
+// rule (#list-scroll[data-view=…] { display: grid }) outranked the rule that
+// hides the listing while This PC is on, so the emptied listing kept its
+// flex: 1 share of the pane above #thispc-view.
+
+/** Where This PC sits in the list pane: no listing box above it, the page
+ * filling the pane edge to edge, scrolled to the top, and the first card's
+ * offset from the page's top edge. */
+const thisPcPlacement = (page) => page.evaluate(() => {
+  const pane = document.getElementById('list-pane').getBoundingClientRect();
+  const view = document.getElementById('thispc-view');
+  const vr = view.getBoundingClientRect();
+  const card = document.querySelector('#thispc-drives > .fp-drive-card');
+  return {
+    listBoxes: document.getElementById('list-scroll').getClientRects().length,
+    viewTop: Math.round(vr.top - pane.top),
+    viewBottom: Math.round(pane.bottom - vr.bottom),
+    scrollTop: view.scrollTop,
+    cardTop: card ? Math.round(card.getBoundingClientRect().top - vr.top) : null,
+  };
+});
+
+/** Where the folder listing sits in the list pane: no This PC box, the
+ * listing reaching the pane's bottom, and its first row near its top. */
+const listingPlacement = (page) => page.evaluate(() => {
+  const pane = document.getElementById('list-pane').getBoundingClientRect();
+  const ls = document.getElementById('list-scroll');
+  const lr = ls.getBoundingClientRect();
+  const row = ls.querySelector(':scope > .fp-row[data-path]');
+  return {
+    thispcBoxes: document.getElementById('thispc-view').getClientRects().length,
+    listBottom: Math.round(pane.bottom - lr.bottom),
+    listHeightShare: lr.height / pane.height,
+    rowTop: row ? Math.round(row.getBoundingClientRect().top - lr.top) : null,
+    listRows: ls.style.getPropertyValue('--list-rows'),
+  };
+});
+
+const scrollListingToEnd = (page) => page.evaluate(() => {
+  const ls = document.getElementById('list-scroll');
+  ls.scrollTop = ls.scrollHeight;
+  ls.scrollLeft = ls.scrollWidth;
+  return ls.scrollTop + ls.scrollLeft;
+});
+
+test('This PC starts at the top of the pane from every view and every way in; the listing comes back whole (addendum §4)', async () => {
+  const { app, page, errors } = await launchApp();
+  try {
+    await page.waitForFunction(() => Array.isArray(window.__fpDrives));
+    const root = (await apiGet('/fs/list/root')).path;
+    const bulk = `${root}\\Bulk`;
+    const driveRoot = root.slice(0, 3);
+    const VIEWS = [['icons', 96], ['icons', 256], ['icons', 48], ['tiles', null], ['small', null], ['list', null], ['content', null], ['details', null]];
+
+    /** Opens `dir` in the active tab in `view`, scrolled to its end. */
+    const openScrolled = async (dir, view, size) => {
+      await page.evaluate((p) => loadDirectory(p), dir);
+      await settled(page);
+      await expect(page.locator('#list-scroll')).toBeVisible();
+      await page.evaluate(([v, s]) => setView(v, s), [view, size]);
+      return scrollListingToEnd(page);
+    };
+    const expectAtTop = async (baseline, what) => {
+      await expect(page.locator('#thispc-view')).toBeVisible();
+      await settled(page);
+      expect(await thisPcPlacement(page), what).toEqual(baseline);
+    };
+
+    // The baseline: Details → This PC (the case that always worked).
+    await openScrolled(bulk, 'details', null);
+    await page.click('[data-action="thispc-open"]');
+    await expect(page.locator('#thispc-view')).toBeVisible();
+    await settled(page);
+    const base = await thisPcPlacement(page);
+    expect(base).toMatchObject({ listBoxes: 0, viewTop: 0, viewBottom: 0, scrollTop: 0 });
+    expect(base.cardTop).toBeGreaterThan(0);
+    expect(base.cardTop).toBeLessThan(80);
+
+    // Every view → This PC (the sidebar's This PC header).
+    for (const [view, size] of VIEWS) {
+      expect(await openScrolled(bulk, view, size), `${view}@${size} scrolls`).toBeGreaterThan(0);
+      await page.click('[data-action="thispc-open"]');
+      await expectAtTop(base, `${view}@${size} → This PC`);
+      if (view === 'icons' && size === 96) {
+        await page.waitForFunction(() => window.__fpIconsIdle());
+        await windowShot(app, page, 'thispc-after-icons96');
+      }
+    }
+
+    // Icons@96, scrolled → This PC by every other way in.
+    // The breadcrumb's This PC root (from a drive root, where the whole path
+    // fits; a long path scrolls its leading crumbs under the fade).
+    await openScrolled(driveRoot, 'icons', 96);
+    await page.click('#breadcrumb .fp-breadcrumb__crumb[data-path="thispc:"]');
+    await expectAtTop(base, 'breadcrumb root');
+    // Alt+Up from a drive root.
+    await openScrolled(driveRoot, 'icons', 96);
+    await page.locator('#list-scroll').focus();
+    await page.keyboard.press('Alt+ArrowUp');
+    await expectAtTop(base, 'Alt+Up from a drive root');
+    // Back.
+    await openScrolled(bulk, 'icons', 96);
+    await page.click('#btn-back');
+    await expectAtTop(base, 'Back');
+    // Forward onto This PC from an icon view.
+    await page.click('#btn-back');
+    await expect(page.locator('#list-scroll')).toBeVisible();
+    await settled(page);
+    await page.evaluate(() => setView('icons', 96));
+    await scrollListingToEnd(page);
+    await page.click('#btn-forward');
+    await expectAtTop(base, 'Forward');
+    // A tab switch to a tab at This PC.
+    const pcTab = await page.evaluate(() => tabs.activeId);
+    await page.evaluate(() => { const t = createTab({ screen: 'home', label: 'Home' }); activateTab(t.id); });
+    await openScrolled(bulk, 'icons', 96);
+    await page.click(`.fp-tab[data-tab-id="${pcTab}"]`);
+    await expectAtTop(base, 'tab switch');
+
+    // The reverse: This PC → a folder in each view gets the whole pane back,
+    // its first row at the top (List keeps more than one row per column).
+    for (const [view, size] of VIEWS) {
+      await page.click('[data-action="thispc-open"]');
+      await expect(page.locator('#thispc-view')).toBeVisible();
+      await settled(page);
+      await page.evaluate((p) => loadDirectory(p), bulk);
+      await settled(page);
+      await page.evaluate(([v, s]) => setView(v, s), [view, size]);
+      const at = await listingPlacement(page);
+      const what = `This PC → ${view}@${size}`;
+      expect(at.thispcBoxes, what).toBe(0);
+      expect(at.listBottom, what).toBe(0);
+      expect(at.listHeightShare, what).toBeGreaterThan(0.85);
+      expect(at.rowTop, what).toBeGreaterThanOrEqual(0);
+      expect(at.rowTop, what).toBeLessThan(16);
+      if (view === 'list') expect(Number(at.listRows), what).toBeGreaterThan(5);
+    }
+
+    // App zoom 1.5 in an 800 px window: the same, against a baseline at that
+    // size and zoom.
+    await app.evaluate(({ BrowserWindow }) => { BrowserWindow.getAllWindows()[0].setSize(800, 600); });
+    await setZoom(app, page, 1.5);
+    await openScrolled(bulk, 'details', null);
+    await page.click('[data-action="thispc-open"]');
+    await expect(page.locator('#thispc-view')).toBeVisible();
+    await settled(page);
+    const small = await thisPcPlacement(page);
+    expect(small).toMatchObject({ listBoxes: 0, viewTop: 0, viewBottom: 0, scrollTop: 0 });
+    for (const [view, size] of VIEWS) {
+      await openScrolled(bulk, view, size);
+      await page.click('[data-action="thispc-open"]');
+      await expectAtTop(small, `zoom 1.5 / 800 px: ${view}@${size} → This PC`);
+      if (view === 'icons' && size === 96) {
+        await page.waitForFunction(() => window.__fpIconsIdle());
+        await windowShot(app, page, 'thispc-after-icons96-zoom150-800');
+      }
+    }
+  } finally {
+    await app.close();
+  }
+  expectNoErrors(errors);
+});
