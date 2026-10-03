@@ -393,7 +393,11 @@ test('§1: one header bar — identity card, tabs, drag region and caption butto
     let g = await headerGeo(page);
     expectOneBar(g, 'expanded');
     expect(near(g.card.left, 0) && near(g.card.width, g.sidebar.width), `card = sidebar width (${g.card.width} vs ${g.sidebar.width})`).toBe(true);
-    expect(near(g.firstTab.left, g.main.left), 'the first tab starts at the content pane').toBe(true);
+    // …a small inset off the seam (Task 8 Q6: flush on it, the tab's edge
+    // drew a 1 px step beside the sidebar's divider).
+    const inset = await page.evaluate(() => parseFloat(getComputedStyle(document.getElementById('tabbar')).paddingLeft));
+    expect(inset, 'the strip has a leading inset').toBeGreaterThan(0);
+    expect(near(g.firstTab.left, g.main.left + inset), 'the first tab starts an inset into the content pane').toBe(true);
     await windowShot(app, page, 'addendum-header-expanded-dark');
 
     // It tracks a resized sidebar.
@@ -401,7 +405,7 @@ test('§1: one header bar — identity card, tabs, drag region and caption butto
     await frames(page);
     g = await headerGeo(page);
     expect(near(g.sidebar.width, 320) && near(g.card.width, 320), `card tracks a 320px sidebar (${g.card.width})`).toBe(true);
-    expect(near(g.firstTab.left, g.main.left)).toBe(true);
+    expect(near(g.firstTab.left, g.main.left + inset)).toBe(true);
     await page.evaluate(() => setSidebarWidthVar(savedSidebarWidth()));
 
     // Collapsed: the card never collapses to the rail; it keeps its natural
@@ -653,6 +657,11 @@ test('§1: the tab fade follows the strip width; tabs keep drag room at 150%/200
     await expect.poll(fade, 'collapsed: the strip widened, the fade goes').toEqual({ clipped: false, faded: false });
     await page.keyboard.press('Control+b');
     await expect(page.locator('#sidebar')).not.toHaveClass(/fp-sidebar--collapsed/);
+    // Narrowed again, the strip scrolls the active (last) tab back into view
+    // (Task 8 Q4) — nothing is left to its right, so no fade until the strip
+    // is scrolled back to the start.
+    await expect.poll(fade, 'expanded again: the active tab is in view').toEqual({ clipped: false, faded: false });
+    await page.evaluate(() => { document.getElementById('tabbar').scrollLeft = 0; });
     await expect.poll(fade, 'expanded again: the fade is back').toEqual({ clipped: true, faded: true });
 
     // Drag room: at every zoom the tabs (and the "+") stay at least 12 screen

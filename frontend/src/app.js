@@ -456,9 +456,10 @@ function createTab({ screen = 'home', path = null, history = [], historyIndex = 
   };
   tabs.list.push(record);
   const el = createTabElement(record);
+  // The "+" lives after the strip, not in it (Task 8 Q4): a new tab is
+  // simply the strip's last child.
   const tabbar = document.getElementById('tabbar');
-  const newTabBtn = document.getElementById('btn-new-tab');
-  if (tabbar) tabbar.insertBefore(el, newTabBtn);
+  if (tabbar) tabbar.appendChild(el);
   initTabDrag(el);
   updateTabbarOverflow();
   tabEnterMotion(el);
@@ -580,6 +581,16 @@ function scrollTabIntoView(id) {
     el.scrollIntoView({ inline: 'nearest', block: 'nearest' });
   }
   updateTabbarOverflow();
+}
+
+/** Scrolls the strip, if it must, so the active tab is whole and clear of
+ * the overflow fade (the strip's scroll-padding reserves the fade's width,
+ * styles.css .fp-tabbar). No-op when it already is. */
+function keepActiveTabInView() {
+  const tabbar = document.getElementById('tabbar');
+  const el = tabbar && tabbar.querySelector('.fp-tab.fp-tab--active');
+  if (!el || tabbar.scrollWidth <= tabbar.clientWidth) return;
+  el.scrollIntoView({ inline: 'nearest', block: 'nearest' });
 }
 
 /** Tab ids in the order they appear in the strip — the DOM is the authority on
@@ -4887,8 +4898,12 @@ function initTabbarScroll() {
   // header's identity card follows the sidebar (collapse, expand, a resize
   // drag) and the device name — so the fade watches the strip itself.
   // (updateTabbarOverflow only toggles a mask: no layout, no observer loop.)
-  if (typeof ResizeObserver === 'function') new ResizeObserver(updateTabbarOverflow).observe(tabbar);
-  else window.addEventListener('resize', updateTabbarOverflow);
+  // A strip that narrows keeps the active tab in view too (Task 8 Q4): it
+  // is never left under the fade or scrolled off by a resize. (Scrolling
+  // changes no size, so this cannot loop.)
+  const onResize = () => { keepActiveTabInView(); updateTabbarOverflow(); };
+  if (typeof ResizeObserver === 'function') new ResizeObserver(onResize).observe(tabbar);
+  else window.addEventListener('resize', onResize);
   // Tablist keyboard model (pass 2 #158): the active tab is the single tab
   // stop (roving tabindex, createTabElement/activateTab), Arrow keys move
   // along the strip, Home/End jump to its ends, Delete closes.

@@ -59,12 +59,14 @@
           <svg class="fp-icon fp-icon--10" aria-hidden="true"><use href="#fp-close"></use></svg>
         </span>
       </div>
-      <!-- New tab button: the plain "+" in a 28px ghost square, centred
-           with the tabs (Stage 2D §6.1; .fp-tab-new in styles.css) -->
-      <button class="fp-icon-btn fp-tab-new" id="btn-new-tab" data-action="new-tab" title="New tab (Ctrl+T)" aria-label="New tab">
-        <svg class="fp-icon fp-icon--16" aria-hidden="true"><use href="#fp-add"></use></svg>
-      </button>
     </div>
+
+    <!-- New tab button: the plain "+" in a 28px ghost square, centred
+         with the tabs (Stage 2D §6.1; .fp-tab-new in styles.css). Outside
+         the scrolling strip, so it never scrolls away or under the fade. -->
+    <button class="fp-icon-btn fp-tab-new" id="btn-new-tab" data-action="new-tab" title="New tab (Ctrl+T)" aria-label="New tab">
+      <svg class="fp-icon fp-icon--16" aria-hidden="true"><use href="#fp-add"></use></svg>
+    </button>
 
     <div class="fp-header__drag" aria-hidden="true"></div>
 

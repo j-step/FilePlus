@@ -275,6 +275,14 @@
   --header-pad-y:       6px;  /* least room above/below a tab, the "+" or the logo */
   --identity-logo:     28px;  /* the card's logo (CSS px; capped to fit the bar) */
   --caption-glyph:     10px;  /* the caption buttons' glyphs (CSS px) */
+  /* Tabs (Task 8 Q4-Q6, CSS px like their text): as wide as their title up
+     to --tab-max-w, all shrinking alike to --tab-min-w when the bar is
+     crowded, then the strip scrolls under its --tabbar-fade. The strip
+     starts --tabbar-inset in from the card's edge, off the sidebar seam. */
+  --tab-max-w:        200px;
+  --tab-min-w:         80px;
+  --tabbar-fade:       24px;
+  --tabbar-inset:      var(--s-8);
   --caption-close-bg:  #C42B1C; /* Windows' close-button red (both themes) */
   --caption-close-fg:  #FFFFFF;
   --h-toolbar:      48px;
@@ -4862,10 +4870,15 @@ body.is-dragging .fp-oscroll { pointer-events: none; }
 
 /* ── Tab strip (A.1.2; in the header bar since addendum §1) ─────────────────
    As wide as its tabs, shrinking (then scrolling under the overflow fade)
-   once the bar runs out of room; the header's drag region takes the rest.
-   Its first tab starts at the card's right edge, which is the content
-   pane's left edge while the sidebar is expanded. The space above the tabs
-   stays a drag region; the tabs and the "+" are no-drag. */
+   once the bar runs out of room; the "+" sits just after it, outside the
+   scrolling strip, so it is always on screen (Task 8 Q4), and the header's
+   drag region takes the rest. Its first tab starts --tabbar-inset in from
+   the card's right edge (the content pane's left edge while the sidebar is
+   expanded): sitting exactly on that seam, the tab's own edge drew a 1 px
+   step beside the sidebar's divider (Task 8 Q6). The space above the tabs
+   stays a drag region; the tabs and the "+" are no-drag. The scroll
+   padding keeps a tab scrolled into view (the active one) clear of the
+   overflow fade on the right. */
 .fp-tabbar {
   position: relative;          /* the underline bar (.fp-tab-slider) */
   flex: 0 1 auto;
@@ -4873,8 +4886,9 @@ body.is-dragging .fp-oscroll { pointer-events: none; }
   background: transparent;
   display: flex;
   align-items: flex-end;
-  padding: 0;                  /* flush left — first tab snaps to the card's edge */
-  gap: 0;                      /* tabs sit edge-to-edge; no gap before first tab */
+  padding: 0 0 0 var(--tabbar-inset);
+  scroll-padding-inline: var(--tabbar-inset) var(--tabbar-fade);
+  gap: 0;                      /* tabs sit edge-to-edge (each keeps a 2px margin) */
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: none;
@@ -4891,7 +4905,7 @@ body.is-dragging .fp-oscroll { pointer-events: none; }
   align-self: flex-end;
   width: min(28px, var(--header-fit-h));
   height: min(28px, var(--header-fit-h));
-  margin-left: 2px;
+  margin-left: var(--s-2);
   -webkit-app-region: no-drag;
 }
 
@@ -4925,13 +4939,15 @@ body.is-dragging .fp-oscroll { pointer-events: none; }
   letter-spacing: var(--track-body);
   color: var(--text-secondary);
   white-space: nowrap;
-  /* Uniform-shrink model: each tab targets 240px, but every tab shares the
-     shrink uniformly when the row gets crowded, down to a 80px minimum. The
-     header's drag region after the strip absorbs leftover width when tabs
-     are at their natural max, so a single tab does NOT stretch the bar. */
-  flex: 0 1 240px;
-  min-width: 80px;
-  max-width: 240px;
+  /* Explorer / Chrome model (Task 8 Q5): with room, a tab is as wide as its
+     title (max-content, the label capped so the tab stops at --tab-max-w);
+     crowded, every tab gets the same share (basis 0, equal grow), a short
+     one never more than its title needs, down to --tab-min-w — so the
+     active tab never shrinks more than the rest. The strip itself is only
+     as wide as that (the header's drag region takes the leftover). */
+  flex: 1 1 0;
+  min-width: var(--tab-min-w);
+  max-width: max-content;
   cursor: default;
   transition: background var(--motion-instant) var(--ease-standard),
               color var(--motion-instant) var(--ease-standard),
@@ -4959,6 +4975,9 @@ body.is-dragging .fp-oscroll { pointer-events: none; }
   line-height: min(20px, calc(var(--header-fit-h) - 1px));
   text-overflow: ellipsis;
   white-space: nowrap;
+  /* What a --tab-max-w tab leaves its title: the padding, the 14px icon, the
+     two gaps, the 16px close button and the 1px borders. */
+  max-width: calc(var(--tab-max-w) - var(--s-8) - var(--s-10) - 14px - 2 * var(--s-6) - 16px - 2px);
 }
 .fp-tab__close {
   width: 16px; height: 16px;
@@ -6224,8 +6243,8 @@ button.fp-pill:hover {
    ::before/::after it used to be, because a pseudo-element inside a scroll
    container scrolls away with the content it is supposed to be fading. */
 .fp-tabbar--overflow {
-  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent 100%);
-  mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent 100%);
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - var(--tabbar-fade)), transparent 100%);
+  mask-image: linear-gradient(to right, #000 calc(100% - var(--tabbar-fade)), transparent 100%);
 }
 
 /* A.17 #11 — Inspector preview fail (already commented inline in HTML) */

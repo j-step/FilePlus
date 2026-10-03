@@ -274,3 +274,131 @@ test('Q16: the toolbar overflow button draws the horizontal "more" glyph, not th
   }
   expect(errors).toEqual([]);
 });
+
+// ── Q4 / Q5 / Q6: the tab strip ──────────────────────────────────────────────
+/** Geometry of the header's tab strip, the "+" and every tab. */
+const stripGeo = (page) => page.evaluate(() => {
+  const strip = document.getElementById('tabbar');
+  const s = strip.getBoundingClientRect();
+  const fade = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--tabbar-fade')) || 24;
+  const plus = document.getElementById('btn-new-tab');
+  const p = plus.getBoundingClientRect();
+  const hit = document.elementFromPoint(p.left + p.width / 2, p.top + p.height / 2);
+  const clippedRight = strip.scrollWidth - strip.clientWidth - strip.scrollLeft > 1;
+  const tabsEls = [...strip.querySelectorAll('.fp-tab')];
+  const active = strip.querySelector('.fp-tab--active').getBoundingClientRect();
+  return {
+    scrolls: strip.scrollWidth > strip.clientWidth + 1,
+    // Whole, and clear of the fade while there is more to its right.
+    activeVisible: active.left >= s.left - 0.5 && active.right <= s.right + 0.5
+      && (!clippedRight || active.right <= s.right - fade + 0.5),
+    plusOutsideStrip: !strip.contains(plus),
+    plusOnScreen: !!hit && (hit === plus || plus.contains(hit)) && p.right <= innerWidth,
+    widths: tabsEls.map((t) => Math.round(t.getBoundingClientRect().width * 10) / 10),
+    labelWidths: tabsEls.map((t) => Math.round(t.querySelector('.fp-tab__label').getBoundingClientRect().width * 10) / 10),
+    activeIndex: tabsEls.findIndex((t) => t.classList.contains('fp-tab--active')),
+  };
+});
+
+test('Q4: with many tabs at 800 px (100/150/200%), the active tab is whole and clear of the fade, the "+" always on screen, every tab the same width', async () => {
+  const { app, page, errors } = await launchApp();
+  try {
+    await setWindow(app, page, 800, 600);
+    for (let i = 0; i < 11; i++) await page.locator('#btn-new-tab').click();
+    const bad = [];
+    for (const z of [1, 1.5, 2]) {
+      await setZoom(app, page, z);
+      await frames(page, 3);
+      for (const which of ['last', 'middle', 'first']) {
+        await page.evaluate((w) => {
+          const order = tabsInStripOrder();
+          activateTab(order[w === 'last' ? order.length - 1 : w === 'first' ? 0 : Math.floor(order.length / 2)]);
+        }, which);
+        await frames(page);
+        const g = await stripGeo(page);
+        if (!g.scrolls) bad.push(`@${z} ${which}: expected the strip to scroll`);
+        if (!g.activeVisible) bad.push(`@${z} ${which}: active tab not fully visible`);
+        if (!g.plusOutsideStrip || !g.plusOnScreen) bad.push(`@${z} ${which}: "+" not on screen (${g.plusOutsideStrip}/${g.plusOnScreen})`);
+        const w0 = g.widths[0];
+        if (g.widths.some((w) => Math.abs(w - w0) > 1)) bad.push(`@${z} ${which}: uneven tabs ${g.widths}`);
+        const l0 = g.labelWidths[0];
+        if (g.labelWidths.some((w) => Math.abs(w - l0) > 1)) bad.push(`@${z} ${which}: uneven labels ${g.labelWidths}`);
+      }
+      // A window narrowing under a scrolled strip keeps the active tab in view.
+      if (z === 1) {
+        await page.evaluate(() => activateTab(tabsInStripOrder().slice(-1)[0]));
+        // (800 is the window's minimum: a wider sidebar narrows the strip.)
+        await page.evaluate(() => setSidebarWidthVar(380));
+        await frames(page, 3);
+        const g = await stripGeo(page);
+        if (!g.activeVisible) bad.push('narrowed: active tab not fully visible');
+        await page.evaluate(() => setSidebarWidthVar(savedSidebarWidth()));
+        await frames(page);
+        await windowShot(app, page, 'fixwave-q4-many-tabs-800');
+      }
+      if (z === 2) await windowShot(app, page, 'fixwave-q4-many-tabs-800-z200');
+    }
+    expect(bad).toEqual([]);
+  } finally {
+    await setZoom(app, page, 1).catch(() => {});
+    await app.close();
+  }
+  expect(errors).toEqual([]);
+});
+
+test('Q5: with room, tabs are as wide as their titles (no "Docum…"), a long title stops at the max and ellipsizes', async () => {
+  const { app, page, errors } = await launchApp();
+  try {
+    const root = (await apiGet('/fs/list/root')).path;
+    await setWindow(app, page, 1300, 800);
+    await page.evaluate((p) => openBrowserAt(p), `${root}\\_gen\\Documents`);
+    await page.waitForFunction(() => !window.__fpLoadPending && activeTab().label === 'Documents');
+    await page.evaluate(() => openNewTab());
+    await page.evaluate(() => openNewTab());
+    await page.evaluate(() => {
+      const rec = tabs.list[tabs.list.length - 1];
+      rec.label = 'Quarterly planning notes for the whole team offsite';
+      updateTabElementAppearance(rec);
+    });
+    await frames(page, 3);
+    const r = await page.evaluate(() => {
+      const maxW = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--tab-max-w'));
+      return [...document.querySelectorAll('#tabbar .fp-tab')].map((t) => {
+        const l = t.querySelector('.fp-tab__label');
+        return { text: l.textContent, cut: l.scrollWidth > l.clientWidth + 0.5, w: t.getBoundingClientRect().width, maxW };
+      });
+    });
+    expect(r.map((t) => t.text)).toEqual(['Documents', 'Home', 'Quarterly planning notes for the whole team offsite']);
+    expect(r[0].cut).toBe(false);
+    expect(r[1].cut).toBe(false);
+    expect(r[1].w).toBeLessThan(r[0].w);            // sized to the title, not a fixed width
+    expect(r[2].cut).toBe(true);                     // the long one ellipsizes…
+    expect(r[2].w).toBeLessThanOrEqual(r[2].maxW + 0.5);   // …at the max width
+    expect(r[2].w).toBeGreaterThan(r[2].maxW - 4);
+    await windowShot(app, page, 'fixwave-q5-tab-widths');
+  } finally {
+    await app.close();
+  }
+  expect(errors).toEqual([]);
+});
+
+test('Q6: the tab strip starts a small inset off the sidebar seam, its tabs bottom-aligned with the toolbar edge', async () => {
+  const { app, page, errors } = await launchApp();
+  try {
+    await setWindow(app, page, 1100, 700);
+    const r = await page.evaluate(() => {
+      const tab = document.querySelector('#tabbar .fp-tab').getBoundingClientRect();
+      const main = document.getElementById('main').getBoundingClientRect();
+      const header = document.getElementById('header').getBoundingClientRect();
+      const inset = parseFloat(getComputedStyle(document.getElementById('tabbar')).paddingLeft);
+      return { gap: tab.left - main.left, inset, bottom: Math.abs(tab.bottom - header.bottom) };
+    });
+    expect(r.inset).toBeGreaterThanOrEqual(4);
+    expect(Math.abs(r.gap - r.inset)).toBeLessThanOrEqual(1);
+    expect(r.bottom).toBeLessThanOrEqual(0.5);
+    await windowShot(app, page, 'fixwave-q6-tab-seam');
+  } finally {
+    await app.close();
+  }
+  expect(errors).toEqual([]);
+});

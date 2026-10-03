@@ -1201,14 +1201,17 @@ test('sibling sweep: status bar, inspector header, tab strip and Home header nev
       // Many tabs: the strip overflows into its fade, the + stays reachable.
       for (let i = 0; i < 9; i++) await page.keyboard.press('Control+t');
       await twoFrames(page);
+      // The "+" sits after the scrolling strip (Task 8 Q4): always on screen
+      // and hit where it is drawn, however far the strip is scrolled.
       const plus = await page.evaluate(() => {
         const strip = document.getElementById('tabbar');
-        document.getElementById('btn-new-tab').scrollIntoView({ inline: 'nearest' });
-        const b = document.getElementById('btn-new-tab').getBoundingClientRect();
-        const s = strip.getBoundingClientRect();
-        return { inside: b.right <= s.right + 1 && b.left >= s.left - 1, overflowFade: strip.classList.contains('fp-tabbar--overflow') || strip.scrollWidth <= strip.clientWidth };
+        strip.scrollLeft = 0;
+        const btn = document.getElementById('btn-new-tab');
+        const b = btn.getBoundingClientRect();
+        const hit = document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2);
+        return { inside: !strip.contains(btn) && b.right <= innerWidth && !!hit && (hit === btn || btn.contains(hit)) };
       });
-      if (!plus.inside) offenders.push(`@${z}: + button not reachable in the tab strip`);
+      if (!plus.inside) offenders.push(`@${z}: + button not on screen beside the tab strip`);
       await page.evaluate(() => activateTab(tabs.list[0].id));
       await open(page, deepDir);
       await page.locator('#list-scroll .fp-row').first().click();
