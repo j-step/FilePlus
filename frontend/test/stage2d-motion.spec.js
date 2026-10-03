@@ -320,3 +320,376 @@ test('without a launch override, startup follows the saved setting (ui.animation
   }
   expect(errors).toEqual([]);
 });
+
+// ── Task 6: the chrome motion pass (addendum §5.2 Tabs, Sidebar, Window) ─────
+// Every check acts and reads in ONE page task (page.evaluate), so "input is
+// not delayed" means what it says: the state, the DOM and the hit-testing
+// are already final in the same task the click or key ran in.
+
+/** Page-side helpers, once per launch: __fpAnims(el) lists the animations
+ * running on an element, __fpHitIs(el) says whether a click at its centre
+ * would reach it right now. */
+async function installMotionProbes(page) {
+  await page.evaluate(() => {
+    window.__fpAnims = (el, deep = false) => (el ? el.getAnimations({ subtree: deep }) : []).map((a) => ({
+      duration: a.effect.getComputedTiming().duration,
+      state: a.playState,
+      iterations: a.effect.getComputedTiming().iterations,
+    }));
+    window.__fpCenter = (el) => {
+      const r = el.getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    };
+    window.__fpHitIs = (el) => {
+      const c = window.__fpCenter(el);
+      const hit = document.elementFromPoint(c.x, c.y);
+      return !!hit && (hit === el || el.contains(hit));
+    };
+  });
+}
+
+/** Waits (polling, no sleeps) until nothing animates under `sel` (or anywhere). */
+const settled = (page, sel = null) => expect.poll(() => page.evaluate((s) => {
+  if (!s) return document.getAnimations().length;
+  const root = document.querySelector(s);
+  return root ? root.getAnimations({ subtree: true }).length : 0;
+}, sel), { timeout: 5000 }).toBe(0);
+
+test('tabs: a new tab grows in, is active and focusable at once; two "+" give two tabs', async () => {
+  const { app, page, errors } = await launchApp({ motion: true });
+  try {
+    await installMotionProbes(page);
+    const r = await page.evaluate(() => {
+      document.getElementById('btn-new-tab').click();
+      const el = document.querySelector(`.fp-tab[data-tab-id="${tabs.activeId}"]`);
+      el.focus();
+      return {
+        active: el.classList.contains('fp-tab--active') && el.getAttribute('aria-selected') === 'true',
+        focused: document.activeElement === el,
+        tabindex: el.getAttribute('tabindex'),
+        anims: window.__fpAnims(el),
+      };
+    });
+    expect(r.active).toBe(true);
+    expect(r.focused).toBe(true);
+    expect(r.tabindex).toBe('0');
+    expect(r.anims.length).toBeGreaterThan(0);
+    for (const a of r.anims) expect(a.duration).toBeLessThanOrEqual(140);
+    await settled(page, '#tabbar');
+    // Nothing is left behind: the tab has its real width again.
+    expect(await page.evaluate(() => {
+      const el = document.querySelector(`.fp-tab[data-tab-id="${tabs.activeId}"]`);
+      return [el.getBoundingClientRect().width > 80, el.style.maxWidth, document.querySelectorAll('.fp-tab-slider, .fp-tab-ghost').length];
+    })).toEqual([true, '', 0]);
+
+    // Two "+" in the same task: two tabs, the second one active, records
+    // and elements in step.
+    const two = await page.evaluate(() => {
+      const before = tabs.list.length;
+      const b = document.getElementById('btn-new-tab');
+      b.click(); b.click();
+      return {
+        added: tabs.list.length - before,
+        dom: document.querySelectorAll('.fp-tab').length === tabs.list.length,
+        activeEls: document.querySelectorAll('.fp-tab.fp-tab--active').length,
+        activeIsLast: tabs.list[tabs.list.length - 1].id === tabs.activeId,
+        activeDom: document.querySelector('.fp-tab.fp-tab--active').dataset.tabId === tabs.activeId,
+      };
+    });
+    expect(two).toEqual({ added: 2, dom: true, activeEls: 1, activeIsLast: true, activeDom: true });
+    await settled(page, '#tabbar');
+    // A real double-click on "+" (the pointer, not a script): both presses
+    // land on live controls and the strip ends consistent.
+    const plus = await page.locator('#btn-new-tab').boundingBox();
+    const n0 = await page.evaluate(() => tabs.list.length);
+    await page.mouse.dblclick(plus.x + plus.width / 2, plus.y + plus.height / 2);
+    const dbl = await page.evaluate(() => ({
+      n: tabs.list.length, dom: document.querySelectorAll('.fp-tab').length,
+      active: document.querySelectorAll('.fp-tab.fp-tab--active').length,
+      activeIsLast: tabs.list[tabs.list.length - 1].id === tabs.activeId,
+    }));
+    expect(dbl.n).toBeGreaterThan(n0);
+    expect(dbl.dom).toBe(dbl.n);
+    expect(dbl.active).toBe(1);
+    expect(dbl.activeIsLast).toBe(true);
+    await settled(page, '#tabbar');
+  } finally {
+    await app.close();
+  }
+  expect(errors).toEqual([]);
+});
+
+test('tabs: a closed tab shrinks out as an inert ghost; the next tab is active and hit at once; Ctrl+W spam ends right', async () => {
+  const { app, page, errors } = await launchApp({ motion: true });
+  try {
+    await installMotionProbes(page);
+    await page.evaluate(() => { for (let i = 0; i < 3; i++) openNewTab(); });
+    await settled(page, '#tabbar');
+    const r = await page.evaluate(() => {
+      const order = tabsInStripOrder();
+      const closing = tabs.activeId;
+      const el = document.querySelector(`.fp-tab[data-tab-id="${closing}"]`);
+      el.querySelector('.fp-tab__close').click();
+      const ghost = document.querySelector('.fp-tab-ghost');
+      const next = document.querySelector('.fp-tab.fp-tab--active');
+      const gc = window.__fpCenter(ghost);
+      const hitGhost = document.elementFromPoint(gc.x, gc.y);
+      return {
+        gone: !document.querySelector(`.fp-tab[data-tab-id="${closing}"]`),
+        order: tabsInStripOrder(), was: order,
+        ghost: {
+          inert: ghost.inert, hidden: ghost.getAttribute('aria-hidden'), pe: getComputedStyle(ghost).pointerEvents,
+          actions: ghost.querySelectorAll('[data-action]').length + (ghost.hasAttribute('data-action') ? 1 : 0),
+          isTab: ghost.classList.contains('fp-tab'), anims: window.__fpAnims(ghost),
+          hit: !!hitGhost && (hitGhost === ghost || ghost.contains(hitGhost)),
+        },
+        nextActive: next.dataset.tabId === tabs.activeId && next.getAttribute('tabindex') === '0',
+        nextHit: window.__fpHitIs(next),
+      };
+    });
+    expect(r.gone).toBe(true);
+    expect(r.order).toEqual(r.was.slice(0, -1));
+    expect(r.ghost.inert).toBe(true);
+    expect(r.ghost.hidden).toBe('true');
+    expect(r.ghost.pe).toBe('none');
+    expect(r.ghost.actions).toBe(0);
+    expect(r.ghost.isTab).toBe(false);
+    expect(r.ghost.hit).toBe(false);
+    expect(r.ghost.anims.length).toBeGreaterThan(0);
+    for (const a of r.ghost.anims) expect(a.duration).toBeLessThanOrEqual(140);
+    expect(r.nextActive).toBe(true);
+    expect(r.nextHit).toBe(true);
+    await settled(page, '#tabbar');
+    expect(await page.locator('.fp-tab-ghost').count()).toBe(0);
+
+    // Ctrl+W spam: every press closes a real tab — never a ghost — and the
+    // strip is right the moment the last one lands.
+    await page.evaluate(() => { for (let i = 0; i < 6; i++) openNewTab(); });
+    const n = await page.evaluate(() => tabs.list.length);
+    await page.locator('.fp-tab.fp-tab--active').focus();
+    for (let i = 0; i < 5; i++) await page.keyboard.press('Control+w');
+    const after = await page.evaluate(() => ({
+      n: tabs.list.length, dom: document.querySelectorAll('.fp-tab').length,
+      active: document.querySelectorAll('.fp-tab.fp-tab--active').length,
+      activeOk: document.querySelector('.fp-tab.fp-tab--active')?.dataset.tabId === tabs.activeId,
+    }));
+    expect(after).toEqual({ n: n - 5, dom: n - 5, active: 1, activeOk: true });
+    await settled(page, '#tabbar');
+    // The overflow fade agrees with the strip once the ghosts are gone.
+    expect(await page.evaluate(() => {
+      const t = document.getElementById('tabbar');
+      return [document.querySelectorAll('.fp-tab-ghost').length,
+        t.classList.contains('fp-tabbar--overflow') === (t.scrollWidth - t.clientWidth - t.scrollLeft > 1)];
+    })).toEqual([0, true]);
+  } finally {
+    await app.close();
+  }
+  expect(errors).toEqual([]);
+});
+
+test('tabs: many tabs keep the overflow fade and the active tab in view through insert and close animations', async () => {
+  const { app, page, errors } = await launchApp({ motion: true });
+  try {
+    await page.evaluate(() => { for (let i = 0; i < 14; i++) openNewTab(); });
+    await settled(page, '#tabbar');
+    const s = await page.evaluate(() => {
+      const t = document.getElementById('tabbar');
+      const active = document.querySelector('.fp-tab.fp-tab--active').getBoundingClientRect();
+      const strip = t.getBoundingClientRect();
+      return { overflowOk: t.classList.contains('fp-tabbar--overflow') === (t.scrollWidth - t.clientWidth - t.scrollLeft > 1),
+        scrolls: t.scrollWidth > t.clientWidth,
+        activeInView: active.right <= strip.right + 1 && active.left >= strip.left - 1 };
+    });
+    expect(s).toEqual({ overflowOk: true, scrolls: true, activeInView: true });
+    // Scrolled back to the start, the fade says there is more on the right.
+    await page.evaluate(() => { document.getElementById('tabbar').scrollLeft = 0; });
+    await expect(page.locator('#tabbar')).toHaveClass(/fp-tabbar--overflow/);
+    for (let i = 0; i < 12; i++) await page.evaluate(() => closeCurrentTab());
+    await settled(page, '#tabbar');
+    expect(await page.evaluate(() => {
+      const t = document.getElementById('tabbar');
+      return t.classList.contains('fp-tabbar--overflow') === (t.scrollWidth - t.clientWidth - t.scrollLeft > 1);
+    })).toBe(true);
+  } finally {
+    await app.close();
+  }
+  expect(errors).toEqual([]);
+});
+
+test('tabs: the underline slides to the newly active tab; a drop slides the reordered tabs', async () => {
+  const { app, page, errors } = await launchApp({ motion: true });
+  try {
+    await installMotionProbes(page);
+    await page.evaluate(() => { openNewTab(); openNewTab(); });
+    await settled(page, '#tabbar');
+    const r = await page.evaluate(() => {
+      const first = tabsInStripOrder()[0];
+      activateTab(first);
+      const bar = document.querySelector('.fp-tab-slider');
+      const el = document.querySelector(`.fp-tab[data-tab-id="${first}"]`);
+      return { active: el.classList.contains('fp-tab--active'), hit: window.__fpHitIs(el),
+        bar: !!bar, barAnims: window.__fpAnims(bar), pe: bar && getComputedStyle(bar).pointerEvents };
+    });
+    expect(r.active).toBe(true);
+    expect(r.hit).toBe(true);
+    expect(r.bar).toBe(true);
+    expect(r.pe).toBe('none');
+    expect(r.barAnims.length).toBe(1);
+    expect(r.barAnims[0].duration).toBeLessThanOrEqual(140);
+    await settled(page, '#tabbar');
+    expect(await page.locator('.fp-tab-slider').count()).toBe(0);
+
+    // Drag the first tab onto the right half of the last: the order is final
+    // in the same task, and the tabs that moved slide there.
+    const d = await page.evaluate(() => {
+      const els = [...document.querySelectorAll('.fp-tab')];
+      const [a, b, c] = els;
+      const dataTransfer = new DataTransfer();
+      a.dispatchEvent(new DragEvent('dragstart', { bubbles: true, dataTransfer }));
+      const rc = c.getBoundingClientRect();
+      c.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer, clientX: rc.right - 2, clientY: rc.top + 5 }));
+      const order = tabsInStripOrder();
+      const anims = window.__fpAnims(b);
+      a.dispatchEvent(new DragEvent('dragend', { bubbles: true, dataTransfer }));
+      return { lastIsA: order[order.length - 1] === a.dataset.tabId, anims };
+    });
+    expect(d.lastIsA).toBe(true);
+    expect(d.anims.length).toBe(1);
+    expect(d.anims[0].duration).toBeLessThanOrEqual(140);
+  } finally {
+    await app.close();
+  }
+  expect(errors).toEqual([]);
+});
+
+test('sidebar: collapse/expand animates, the identity card tracks it, Ctrl+B spam ends right', async () => {
+  const { app, page, errors } = await launchApp({ motion: true });
+  try {
+    const start = await page.evaluate(() => ({
+      id: document.getElementById('identity').getBoundingClientRect().width,
+      sb: document.getElementById('sidebar').getBoundingClientRect().width,
+    }));
+    // Every frame of one collapse: the card's width moves through in-between
+    // values with the sidebar's, never snapping ahead of the content pane.
+    const frames = await page.evaluate(() => new Promise((resolve) => {
+      const out = [];
+      const idEl = document.getElementById('identity');
+      toggleSidebar();
+      const same = {
+        collapsed: document.getElementById('sidebar').classList.contains('fp-sidebar--collapsed'),
+        rail: document.getElementById('header').classList.contains('fp-header--rail'),
+      };
+      const t0 = performance.now();
+      const tick = () => {
+        out.push({ id: idEl.getBoundingClientRect().width, sb: document.getElementById('sidebar').getBoundingClientRect().width });
+        if (performance.now() - t0 < 400) requestAnimationFrame(tick); else resolve({ same, out });
+      };
+      requestAnimationFrame(tick);
+    }));
+    expect(frames.same).toEqual({ collapsed: true, rail: true });
+    const end = frames.out[frames.out.length - 1];
+    expect(end.sb).toBeLessThan(start.sb);
+    const between = (v, a, b) => v < Math.max(a, b) - 1 && v > Math.min(a, b) + 1;
+    expect(frames.out.some((f) => between(f.id, start.id, end.id)), JSON.stringify(frames.out.slice(0, 8))).toBe(true);
+    expect(frames.out.some((f) => between(f.sb, start.sb, end.sb))).toBe(true);
+    for (let i = 1; i < frames.out.length; i++) expect(frames.out[i].id).toBeLessThanOrEqual(frames.out[i - 1].id + 0.5);
+    await settled(page);
+
+    // Ctrl+B spam: the class flips at every press, the widths end at the
+    // right values, nothing keeps running.
+    for (let i = 0; i < 5; i++) await page.keyboard.press('Control+b');
+    expect(await page.evaluate(() => document.getElementById('sidebar').classList.contains('fp-sidebar--collapsed'))).toBe(false);
+    await settled(page);
+    const fin = await page.evaluate(() => ({
+      id: document.getElementById('identity').getBoundingClientRect().width,
+      sb: document.getElementById('sidebar').getBoundingClientRect().width,
+      tabs: document.getElementById('tabbar').getBoundingClientRect().left,
+      pane: document.getElementById('main').getBoundingClientRect().left,
+      opacity: getComputedStyle(document.querySelector('.fp-sidebar__scroll')).opacity,
+    }));
+    expect(Math.abs(fin.id - start.id)).toBeLessThan(1);
+    expect(Math.abs(fin.sb - start.sb)).toBeLessThan(1);
+    // Expanded: the tabs begin where the content pane begins.
+    expect(Math.abs(fin.tabs - fin.pane)).toBeLessThan(1.5);
+    expect(fin.opacity).toBe('1');
+  } finally {
+    await app.close();
+  }
+  expect(errors).toEqual([]);
+});
+
+test('sidebar: This PC folds and unfolds, a folding section takes no clicks; the maximise glyph crossfades', async () => {
+  const { app, page, errors } = await launchApp({ motion: true });
+  try {
+    await installMotionProbes(page);
+    await expect.poll(() => page.locator('#sb-drives .fp-sidebar__item').count()).toBeGreaterThan(0);
+    const r = await page.evaluate(() => {
+      const body = document.getElementById('sb-drives');
+      const item = body.querySelector('.fp-sidebar__item');
+      const chev = document.querySelector('#sb-thispc .fp-sidebar__chevron');
+      // The chevron's own path, minus the config write (so no later spec
+      // starts with the section shut).
+      setThisPcOpen(false, { persist: false, animate: true });
+      return { hidden: body.hidden, inert: body.inert, itemHit: window.__fpHitIs(item),
+        anims: window.__fpAnims(body), chevAnims: window.__fpAnims(chev), expanded: chev.getAttribute('aria-expanded') };
+    });
+    expect(r.hidden).toBe(true);
+    expect(r.inert).toBe(true);
+    expect(r.itemHit).toBe(false);
+    expect(r.expanded).toBe('false');
+    expect(r.anims.length).toBe(1);
+    expect(r.anims[0].duration).toBeLessThanOrEqual(140);
+    for (const a of r.chevAnims) expect(a.duration).toBeLessThanOrEqual(100);
+    // Reopened mid-fold: open at once, clickable at once.
+    const back = await page.evaluate(() => {
+      setThisPcOpen(true, { persist: false, animate: true });
+      const body = document.getElementById('sb-drives');
+      return { hidden: body.hidden, inert: body.inert, closing: body.classList.contains('is-closing'),
+        anims: window.__fpAnims(body) };
+    });
+    expect(back).toMatchObject({ hidden: false, inert: false, closing: false });
+    expect(back.anims.length).toBe(1);
+    await settled(page, '#sidebar');
+    expect(await page.evaluate(() => window.__fpHitIs(document.querySelector('#sb-drives .fp-sidebar__item')))).toBe(true);
+
+    const g = await page.evaluate(() => {
+      setMaximizeButtonState(true);
+      const btn = document.getElementById('btn-maximize');
+      return { label: btn.getAttribute('aria-label'), href: btn.querySelector('use').getAttribute('href'),
+        anims: window.__fpAnims(btn.querySelector('svg')) };
+    });
+    expect(g.label).toBe('Restore');
+    expect(g.href).toBe('#fp-window-restore');
+    expect(g.anims.length).toBe(1);
+    expect(g.anims[0].duration).toBeLessThanOrEqual(100);
+    await page.evaluate(() => setMaximizeButtonState(false));
+  } finally {
+    await app.close();
+  }
+  expect(errors).toEqual([]);
+});
+
+test('with the switch off the chrome motion leaves nothing behind: no ghosts, bars or folding states, no animations', async () => {
+  const { app, page, errors } = await launchApp();
+  try {
+    await startSampler(page);
+    const r = await page.evaluate(() => {
+      openNewTab(); openNewTab();
+      activateTab(tabsInStripOrder()[0]);
+      closeCurrentTab();
+      toggleSidebar(); toggleSidebar();
+      setThisPcOpen(false, { persist: false, animate: true }); setThisPcOpen(true, { persist: false, animate: true });
+      setMaximizeButtonState(true); setMaximizeButtonState(false);
+      return {
+        leftovers: document.querySelectorAll('.fp-tab-ghost, .fp-tab-slider, .is-closing, [inert]').length,
+        running: document.getAnimations().length,
+      };
+    });
+    expect(r).toEqual({ leftovers: 0, running: 0 });
+    const seen = await stopSampler(page);
+    expect(seen, JSON.stringify(seen.slice(0, 5))).toEqual([]);
+  } finally {
+    await app.close();
+  }
+  expect(errors).toEqual([]);
+});

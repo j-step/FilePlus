@@ -604,6 +604,12 @@ svg { flex-shrink: 0; }
   padding: 0 var(--s-12) 0 max(0px, calc((var(--rail-w-css) - var(--identity-logo-fit)) / 2));
   overflow: clip;
   overflow-clip-margin: var(--s-4);  /* room for the name's edit chip */
+  /* Collapse / expand: the card's width eases with the sidebar's (same
+     duration and easing as .fp-sidebar and .shell), so the tabs track the
+     content pane instead of jumping ahead of it. allow-keywords lets the
+     rail state's natural (auto) width take part in the transition. */
+  interpolate-size: allow-keywords;
+  transition: width var(--motion-slow) var(--ease-out);
 }
 .fp-header--rail .fp-identity { width: auto; }
 .fp-identity .fp-identity__logo {  /* beats .fp-icon's 1em */
@@ -851,12 +857,18 @@ svg { flex-shrink: 0; }
   border-radius: var(--r-chip);
   color: var(--text-tertiary);
   cursor: pointer;
-  transition: transform var(--motion-instant) var(--ease-standard),
+  transition: transform var(--motion-fast) var(--ease-out),
               color var(--motion-instant) var(--ease-standard);
 }
 .fp-sidebar__chevron svg { width: var(--sidebar-chevron-icon); height: var(--sidebar-chevron-icon); }
 .fp-sidebar__chevron:hover { color: var(--text-primary); }
 .fp-sidebar__chevron[aria-expanded="false"] { transform: rotate(-90deg); }
+/* The drives fold away (app.js setThisPcOpen): clipped top-to-bottom only,
+   so the rail's active bar that sits left of an item is never cut. While
+   .is-closing the [hidden] section stays painted (inert) until the fold
+   ends. */
+#sb-drives { overflow-y: clip; overflow-x: visible; }
+#sb-drives.is-closing[hidden] { display: block; pointer-events: none; }
 
 #sb-tags {
   display: flex;
@@ -3763,7 +3775,9 @@ body.is-dragging .fp-oscroll { pointer-events: none; }
   grid-template-columns: var(--sidebar-w-css) 1fr;
   min-height: 0;
   overflow: hidden;
-  transition: grid-template-columns var(--motion-slow) var(--ease-standard);
+  /* Same duration and easing as .fp-sidebar's width and .fp-identity's, so the
+     column, the panel and the header card move as one. */
+  transition: grid-template-columns var(--motion-slow) var(--ease-out);
 }
 .shell.sidebar-collapsed {
   grid-template-columns: var(--rail-w-css) 1fr;
@@ -3774,7 +3788,9 @@ body.is-dragging .fp-oscroll { pointer-events: none; }
    would visibly close in and spring back on every zoom step. */
 .shell.sidebar-dragging,
 .fp-zoom-changing .shell,
-.fp-zoom-changing .fp-sidebar {
+.fp-zoom-changing .fp-sidebar,
+.fp-zoom-changing .fp-identity,
+.app:has(.fp-sidebar--dragging) .fp-identity {
   transition: none;
 }
 
@@ -4742,6 +4758,7 @@ body.is-dragging .fp-oscroll { pointer-events: none; }
    pane's left edge while the sidebar is expanded. The space above the tabs
    stays a drag region; the tabs and the "+" are no-drag. */
 .fp-tabbar {
+  position: relative;          /* the underline bar (.fp-tab-slider) */
   flex: 0 1 auto;
   min-width: 0;
   background: transparent;
@@ -4769,9 +4786,17 @@ body.is-dragging .fp-oscroll { pointer-events: none; }
   -webkit-app-region: no-drag;
 }
 
-.fp-tab {
+/* .fp-tab-ghost: the copy of a closed tab that shrinks out (app.js
+   tabExitGhost) — drawn like an inactive tab, never hit by the pointer, and
+   no-drag so a quick second click where it was cannot start a window drag
+   (or a double-click maximise) on the bar beneath. */
+.fp-tab,
+.fp-tab-ghost {
   -webkit-app-region: no-drag;
   position: relative;
+  /* Clipped sideways: a tab growing in or shrinking out (motion) never
+     spills its icon or close button over its neighbour. */
+  overflow-x: clip;
   height: min(28px, var(--header-fit-h));  /* never taller than the bar */
   padding: 0 var(--s-8) 0 var(--s-10);
   border-radius: var(--r-button) var(--r-button) 0 0;
@@ -4844,6 +4869,18 @@ body.is-dragging .fp-oscroll { pointer-events: none; }
 .fp-tab:hover .fp-tab__close,
 .fp-tab--active .fp-tab__close { opacity: 1; }
 .fp-tab__close:hover { background: var(--bg-pressed); color: var(--text-primary); }
+.fp-tab-ghost { pointer-events: none; }
+/* The active-tab underline while it slides to the newly active tab (app.js
+   tabUnderlineMotion): the same 2 px accent the active tab draws, laid on
+   the strip's bottom edge and moved by transform only. */
+.fp-tab-slider {
+  position: absolute;
+  bottom: 0;
+  height: 2px;
+  background: var(--accent);
+  transform-origin: left center;
+  pointer-events: none;
+}
 
 /* ── Shell: handle fp-sidebar--collapsed ─────────────────────────────────── */
 .shell.fp-sidebar--collapsed,

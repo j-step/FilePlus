@@ -155,6 +155,68 @@ function fpSetMotion(on, { persist = true } = {}) {
   if (persist) saveSetting('ui.animations', on);
 }
 
+/** Cancels the fpAnimate() animation in slot `key` on `el`, if one runs. */
+function fpCancelAnimation(el, key = 'default') {
+  const slots = el && _fpAnimationsByEl.get(el);
+  const anim = slots && slots.get(key);
+  if (!anim) return;
+  slots.delete(key);
+  _fpLiveAnimations.delete(anim);
+  anim.cancel();
+}
+
+/** Calls `fn` once, when `anim` finishes or is cancelled — at once when
+ * there is no animation (motion off). */
+function fpAfter(anim, fn) {
+  if (!anim) { fn(); return; }
+  let done = false;
+  const once = () => { if (!done) { done = true; fn(); } };
+  anim.addEventListener('finish', once);
+  anim.addEventListener('cancel', once);
+}
+
+/**
+ * The exit half of rule 1 (§5.1): `el`'s state has already left — it is
+ * closed, hidden, no longer in any count — and this only keeps it painted
+ * while `keyframes` play. For that time it carries `cls` (CSS keeps it on
+ * screen with pointer-events off) and is inert, so it never takes a click,
+ * a key or focus. `done` runs when the exit ends, at once with motion off;
+ * fpCancelExit() (a new open) ends it early without calling `done`.
+ */
+function fpPlayExit(el, keyframes, { cls = '', done = null, ...opts } = {}) {
+  if (!el) return null;
+  fpCancelExit(el);
+  const token = { cls };
+  el._fpExit = token;
+  if (cls) el.classList.add(cls);
+  el.inert = true;
+  const anim = fpAnimate(el, keyframes, { ...opts, key: 'exit' });
+  fpAfter(anim, () => {
+    if (el._fpExit !== token) return;
+    el._fpExit = null;
+    if (cls) el.classList.remove(cls);
+    el.inert = false;
+    if (done) done();
+  });
+  return anim;
+}
+
+/** Ends a running fpPlayExit on `el` at once (its `done` never runs): the
+ * element is being opened again. */
+function fpCancelExit(el) {
+  const token = el && el._fpExit;
+  if (!token) return;
+  el._fpExit = null;
+  if (token.cls) el.classList.remove(token.cls);
+  el.inert = false;
+  fpCancelAnimation(el, 'exit');
+}
+
+/** True while `el` is playing an fpPlayExit (closed, still fading). */
+function fpExiting(el) {
+  return !!(el && el._fpExit);
+}
+
 // ── Screen switching ────────────────────────────────────────────────────────
 // Only screens that work today are in index.html (Home, Browser, Settings).
 // The Stage 3/4 mock-ups (File Tree, Scan, Review Bin, Everything Folder)
@@ -346,7 +408,107 @@ function createTab({ screen = 'home', path = null, history = [], historyIndex = 
   if (tabbar) tabbar.insertBefore(el, newTabBtn);
   initTabDrag(el);
   updateTabbarOverflow();
+  tabEnterMotion(el);
   return record;
+}
+
+// ── Tab strip motion (addendum §5.2 Tabs) ────────────────────────────────────
+// Decoration only (§5.1 rule 1): the record, the element, active state and
+// focus are all in place before any of this plays, and nothing here waits.
+
+/** A new tab grows in from width 0 while it fades in, and the strip makes
+ * room for it as it grows. When the strip is already scrolling under its
+ * overflow fade it only fades (growing would push the "+" and the tab past
+ * the edge mid-way, and scrollTabIntoView has to see the final width). */
+function tabEnterMotion(el) {
+  if (!fpMotionOn() || !el.isConnected) return;
+  const tabbar = el.parentElement;
+  const w = el.getBoundingClientRect().width;
+  if (!w) return;
+  if (tabbar && tabbar.scrollWidth > tabbar.clientWidth + 1) {
+    fpAnimate(el, [{ opacity: 0 }, { opacity: 1 }], { duration: 'base', key: 'enter' });
+    return;
+  }
+  const anim = fpAnimate(el, [
+    { maxWidth: '0px', minWidth: '0px', paddingLeft: '0px', paddingRight: '0px', marginRight: '0px', opacity: 0 },
+    { maxWidth: `${w}px`, opacity: 1 },
+  ], { duration: 'base', key: 'enter' });
+  // The strip's overflow (fade + the active tab scrolled into view) is
+  // measured again at the tab's real width.
+  fpAfter(anim, () => {
+    updateTabbarOverflow();
+    if (el.dataset.tabId === tabs.activeId && anim) scrollTabIntoView(tabs.activeId);
+  });
+}
+
+/** A closed tab's element is already gone (closeTabById removed it); this
+ * puts an inert copy in its place that shrinks to nothing while the
+ * neighbours close the gap, then removes itself. The copy is not a .fp-tab
+ * (no id, no data-action, no role, never focusable or clickable), so no
+ * query, click, key or count ever sees it. */
+function tabExitGhost(el, prev, parent, w) {
+  if (!fpMotionOn() || !parent || !w) return;
+  const ghost = el.cloneNode(true);
+  ghost.className = 'fp-tab-ghost';
+  for (const a of ['id', 'role', 'tabindex', 'data-tab-id', 'data-action', 'title', 'draggable', 'aria-selected', 'style']) ghost.removeAttribute(a);
+  ghost.querySelectorAll('[data-action], [role], [tabindex], [id]').forEach(n => {
+    for (const a of ['id', 'role', 'tabindex', 'data-action']) n.removeAttribute(a);
+  });
+  ghost.setAttribute('aria-hidden', 'true');
+  ghost.inert = true;
+  parent.insertBefore(ghost, prev && prev.parentNode === parent ? prev.nextSibling : parent.firstChild);
+  const anim = fpAnimate(ghost, [
+    { maxWidth: `${w}px`, minWidth: `${w}px`, opacity: 1 },
+    { maxWidth: '0px', minWidth: '0px', paddingLeft: '0px', paddingRight: '0px', marginRight: '0px', opacity: 0 },
+  ], { duration: 'fast', key: 'exit' });
+  fpAfter(anim, () => { ghost.remove(); updateTabbarOverflow(); });
+}
+
+/** The active-tab underline slides from the tab that was active to the one
+ * that is now: a transient bar starts over the old tab's underline and
+ * glides (transform only) to the new one, whose own underline is held off
+ * until the bar arrives. Nothing slides when the old tab is gone (closed)
+ * or the new one has no width yet (still growing in). */
+function tabUnderlineMotion(fromEl, toEl) {
+  if (!fpMotionOn() || !fromEl || !toEl || fromEl === toEl || !fromEl.isConnected) return;
+  const tabbar = toEl.parentElement;
+  if (!tabbar || fromEl.parentElement !== tabbar) return;
+  const to = { left: toEl.offsetLeft + 1, width: toEl.offsetWidth - 2 };
+  const from = { left: fromEl.offsetLeft + 1, width: fromEl.offsetWidth - 2 };
+  if (to.width < 1 || from.width < 1) return;
+  let bar = tabbar.querySelector(':scope > .fp-tab-slider');
+  if (!bar) {
+    bar = document.createElement('span');
+    bar.className = 'fp-tab-slider';
+    bar.setAttribute('aria-hidden', 'true');
+    tabbar.appendChild(bar);
+  }
+  bar.style.left = `${to.left}px`;
+  bar.style.width = `${to.width}px`;
+  const anim = fpAnimate(bar, [
+    { transform: `translateX(${from.left - to.left}px) scaleX(${from.width / to.width})` },
+    { transform: 'none' },
+  ], { duration: 'base', key: 'slide' });
+  // The new tab's own underline (an inset shadow) waits for the bar.
+  fpAnimate(toEl, [
+    { boxShadow: 'inset 0 0 0 transparent' },
+    { boxShadow: 'inset 0 0 0 transparent' },
+  ], { duration: 'base', key: 'underline' });
+  // A newer slide reuses the bar; only the last one takes it away.
+  bar._fpSlide = anim;
+  fpAfter(anim, () => { if (bar._fpSlide === anim) bar.remove(); });
+}
+
+/** Tab drag-reorder: the tabs the drop moved slide from where they were to
+ * where they now are (FLIP — the DOM order is already final). */
+function tabReorderMotion(before, dragged) {
+  if (!fpMotionOn()) return;
+  for (const [el, left] of before) {
+    if (el === dragged || !el.isConnected) continue;
+    const dx = left - el.getBoundingClientRect().left;
+    if (Math.abs(dx) < 1) continue;
+    fpAnimate(el, [{ transform: `translateX(${dx}px)` }, { transform: 'none' }], { duration: 'base', key: 'reorder' });
+  }
 }
 
 /**
@@ -433,13 +595,17 @@ function activateTab(id) {
   // re-run below if no results had landed yet.
   if (typeof abortSearch === 'function') abortSearch();
 
+  const outgoingEl = tabs.activeId ? document.querySelector(`.fp-tab[data-tab-id="${tabs.activeId}"]`) : null;
   tabs.activeId = id;
+  let incomingEl = null;
   document.querySelectorAll('.fp-tab').forEach(t => {
     const isActive = t.dataset.tabId === id;
+    if (isActive) incomingEl = t;
     t.classList.toggle('fp-tab--active', isActive);
     t.setAttribute('aria-selected', isActive ? 'true' : 'false');
     t.setAttribute('tabindex', isActive ? '0' : '-1');
   });
+  tabUnderlineMotion(outgoingEl, incomingEl);
 
   nav.history = incoming.history;
   nav.index = incoming.historyIndex;
@@ -727,13 +893,30 @@ function closeTabById(id) {
   // Neighbor is read off the DOM (not tabs.list's order, which drag-reorder
   // never touches) so the fallback active tab always matches what the user
   // actually sees next to the one they closed.
-  const prevEl = el?.previousElementSibling;
-  const nextEl = el?.nextElementSibling;
-  const neighborEl = (prevEl && prevEl.classList.contains('fp-tab')) ? prevEl
-                    : (nextEl && nextEl.classList.contains('fp-tab')) ? nextEl : null;
+  // (Closing ghosts and the underline bar sit between tabs for a moment
+  // while they animate: they are not tabs, so they are stepped over.)
+  const tabSibling = (start, dir) => {
+    let n = start;
+    while (n && !n.classList.contains('fp-tab')) {
+      if (!n.classList.contains('fp-tab-ghost') && !n.classList.contains('fp-tab-slider')) return null;
+      n = n[dir];
+    }
+    return n;
+  };
+  const prevEl = tabSibling(el?.previousElementSibling, 'previousElementSibling');
+  const nextEl = tabSibling(el?.nextElementSibling, 'nextElementSibling');
+  const neighborEl = prevEl || nextEl || null;
 
   tabs.list.splice(idx, 1);
-  el?.remove();
+  if (el) {
+    const parent = el.parentElement;
+    const before = el.previousSibling;
+    // Measured before it goes: the ghost takes the tab's exact width.
+    const ghostSource = fpMotionOn() ? el : null;
+    const w = ghostSource ? el.getBoundingClientRect().width : 0;
+    el.remove();
+    if (ghostSource && w) tabExitGhost(el, before, parent, w);
+  }
   // The listing is dropped (a reopened tab revalidates from scratch anyway)
   // and the stack is capped, so closed tabs never pin whole folder listings.
   _closedTabs.push({ ...record, listing: null });
@@ -1001,6 +1184,24 @@ function sidebarIconPx() {
 function toggleSidebar() {
   const isCollapsed = sidebar && sidebar.classList.contains('fp-sidebar--collapsed');
   setSidebarCollapsed(!isCollapsed);
+  sidebarToggleMotion();
+}
+
+/** Collapse / expand (addendum §5.2 Sidebar): the panel's width, the shell
+ * column and the header's identity card all ease over --motion-slow in CSS
+ * (one easing, so the tabs track the content pane's edge). The panel's
+ * contents switch layout at once (rail squares or labelled rows — the
+ * state); they are held clear for the first part of the width change and
+ * fade in once the panel is nearly its new width, so the labels never
+ * squeeze into a narrowing panel nor the rail squares slide across a wide
+ * one. A second Ctrl+B mid-way retargets the widths and restarts the fade. */
+function sidebarToggleMotion() {
+  if (!sidebar || !fpMotionOn()) return;
+  const parts = [sidebar.querySelector('.fp-sidebar__scroll'), sidebar.querySelector('.fp-sidebar__bottom'),
+    document.getElementById('btn-ask-fileplus')];
+  for (const el of parts) {
+    fpAnimate(el, [{ opacity: 0 }, { opacity: 0, offset: 0.35 }, { opacity: 1 }], { duration: 'slow', key: 'collapse' });
+  }
 }
 
 function initSidebarResize() {
@@ -3266,15 +3467,38 @@ async function setQuickAccessHidden(id, hide) {
 /** Expands/collapses the "This PC" sidebar section: rotates the chevron,
  * shows/hides #sb-drives, and (unless {persist:false}, used when restoring
  * from config at startup) saves ui.sidebar_thispc_open. */
-function setThisPcOpen(open, { persist = true } = {}) {
+function setThisPcOpen(open, { persist = true, animate = persist } = {}) {
   const chevron = document.querySelector('#sb-thispc .fp-sidebar__chevron');
   const body = document.getElementById('sb-drives');
   if (chevron) {
     chevron.setAttribute('aria-expanded', String(open));
     chevron.setAttribute('aria-label', open ? 'Collapse This PC' : 'Expand This PC');
   }
+  const wasOpen = body ? !body.hidden && !fpExiting(body) : open;
   if (body) body.hidden = !open;
   if (persist) saveSetting('ui.sidebar_thispc_open', open);
+  // The section's height eases open or shut (§5.2 Sidebar) — for a user's
+  // toggle, never the startup restore ({persist:false}, which also means
+  // animate:false). Closing keeps the drives painted (inert, .is-closing)
+  // while they fold away.
+  if (!body || !animate || wasOpen === open) return;
+  if (open) {
+    // Reopened mid-fold: grow from where the fold had got to.
+    const from = fpExiting(body) ? body.getBoundingClientRect().height : 0;
+    fpCancelExit(body);
+    const h = body.getBoundingClientRect().height;
+    if (h) fpAnimate(body, [{ height: `${from}px`, opacity: from ? 1 : 0 }, { height: `${h}px`, opacity: 1 }], { duration: 'base', key: 'fold' });
+  } else if (fpMotionOn()) {
+    // Measured while still painted (and mid-unfold, at its current height).
+    body.classList.add('is-closing');
+    const h = body.getBoundingClientRect().height;
+    body.classList.remove('is-closing');
+    fpCancelAnimation(body, 'fold');
+    if (h) {
+      fpPlayExit(body, [{ height: `${h}px`, opacity: 1 }, { height: '0px', opacity: 0 }],
+        { cls: 'is-closing', duration: 'base' });
+    }
+  }
 }
 
 // ── Overlay scrollbars (Stage 2D §9.3) ────────────────────────────────────────
@@ -3327,7 +3551,13 @@ function setMaximizeButtonState(maximized) {
   const label = maximized ? 'Restore' : 'Maximize';
   btn.setAttribute('aria-label', label);
   btn.title = label;
-  btn.querySelector('use')?.setAttribute('href', maximized ? '#fp-window-restore' : '#fp-window-maximize');
+  const use = btn.querySelector('use');
+  const href = maximized ? '#fp-window-restore' : '#fp-window-maximize';
+  if (!use || use.getAttribute('href') === href) return;
+  use.setAttribute('href', href);
+  // The new glyph fades in over the old one's place (§5.2 Window).
+  fpAnimate(btn.querySelector('svg'), [{ opacity: 0, transform: 'scale(.96)' }, { opacity: 1, transform: 'none' }],
+    { duration: 'fast', key: 'glyph' });
 }
 
 // ── Underline tab indicator (sub-tabs within screens) ─────────────��──────────
@@ -4427,7 +4657,9 @@ function initTabDrag(tab) {
     // the reference node, or already immediately before it) is not a reorder —
     // don't announce one (pass 2 #157).
     if (ref !== _dragTab && _dragTab.nextSibling !== ref) {
+      const before = [...tabbar.querySelectorAll(':scope > .fp-tab')].map(t => [t, t.getBoundingClientRect().left]);
       tabbar.insertBefore(_dragTab, ref);
+      tabReorderMotion(before, _dragTab);
       _tabDragReordered = true;
     }
     tab.classList.remove('fp-tab--drag-over-before', 'fp-tab--drag-over-after');
