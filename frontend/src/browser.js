@@ -240,7 +240,7 @@ function applyViewDom() {
  * for callers that render the listing themselves right afterwards (one
  * render per navigation, §4.2).
  */
-function setView(view, size = null, { manual = false, anchorEl = null, render = true, debounceSave = false } = {}) {
+function setView(view, size = null, { manual = false, anchorEl = null, render = true, debounceSave = false, animate = false } = {}) {
   const want = normalizeView(view, view === 'icons' ? (size ?? browserState.iconSize) : null);
   const prevView = browserState.view;
   const changed = prevView !== want.view || (want.view === 'icons' && browserState.iconSize !== want.size);
@@ -262,6 +262,9 @@ function setView(view, size = null, { manual = false, anchorEl = null, render = 
     if (typeof fpInvalidateLazyIcons === 'function') fpInvalidateLazyIcons(listScroll);
   } else if (browserState.entries && browserState.entries.length) {
     renderDirectory();
+    // §5.2 Views: a change of view kind (the View menu) crossfades; a size
+    // step inside Icons and a Ctrl+wheel step never animate (rule 4).
+    if (animate && prevView !== want.view) listFadeIn(0, { from: 0.5 });
   } else {
     syncViewMetrics();
   }
@@ -288,10 +291,15 @@ function stepView(delta, { anchorEl = null } = {}) {
 /** A View-menu / empty-area-flyout choice: 'xl' | 'large' | 'medium' (the
  * icons view at 256 / 96 / 48) or a fixed view's own name. */
 function applyViewChoice(key) {
-  if (thisPcActive()) { setThisPcLayout(thisPcLayoutForView(key)); return; }
+  if (thisPcActive()) {
+    if (setThisPcLayout(thisPcLayoutForView(key)) && listMotionOn()) {
+      fpAnimate(document.getElementById('thispc-drives'), [{ opacity: 0.5 }, { opacity: 1 }], { duration: 'base', key: 'list' });
+    }
+    return;
+  }
   const size = VIEW_NAMED_ICON_SIZES[key];
-  if (size) setView('icons', size, { manual: true });
-  else setView(key, null, { manual: true });
+  if (size) setView('icons', size, { manual: true, animate: true });
+  else setView(key, null, { manual: true, animate: true });
 }
 
 /** Where a view change leaves the listing: the anchor row and its offset
@@ -651,6 +659,8 @@ function applySort(key, dir) {
   browserState.sort = { key, dir };
   saveSetting('ui.sort', browserState.sort);
   updateSortHeaderUI();
+  const listScroll = document.getElementById('list-scroll');
+  const motionCap = listMotionCapture(listScroll);
   renderDirectory();
   // Re-rendering dropped DOM focus (the sort menu / header held it): give it to
   // the focused row (or the list) so arrow keys keep working right after a sort.
@@ -660,6 +670,17 @@ function applySort(key, dir) {
     focusedRow.scrollIntoView({ block: 'nearest' });
   } else {
     focusListContainer();
+  }
+  sortMotion(listScroll, motionCap);
+}
+
+/** §5.2 Sort: with at most LIST_MOTION_MAX_ROWS rows on screen the rows
+ * slide to their new places (FLIP) and rows new to the view fade in;
+ * otherwise — more rows on screen, a big listing — the listing crossfades. */
+function sortMotion(listScroll, cap) {
+  if (!listScroll || !listMotionOn() || thisPcActive()) return;
+  if (!cap || cap.rows.size > LIST_MOTION_MAX_ROWS || listMotionPlay(listScroll, cap, { enterFade: true }) < 0) {
+    listFadeIn(0, { from: 0.5 });
   }
 }
 
@@ -739,6 +760,9 @@ function initMarqueeSelection() {
 
   document.addEventListener('mousemove', e => {
     if (!dragging) return;
+    // Marquee selection is continuous input (§5.1 rule 4): no row fill
+    // fades while the band moves.
+    if (!_listStillHeld) holdListStill(listScroll, { held: true });
     const x = Math.min(e.clientX, startX);
     const y = Math.min(e.clientY, startY);
     const w = Math.abs(e.clientX - startX);
@@ -762,6 +786,7 @@ function initMarqueeSelection() {
   document.addEventListener('mouseup', () => {
     if (!dragging) return;
     dragging = false;
+    if (_listStillHeld) holdListStill(listScroll, { held: false });
     marqueeRect.style.display = 'none';
     // A plain click on the empty background (mousedown+mouseup with no drag
     // distance) never fires mousemove, so the rows still carry whatever
@@ -1067,6 +1092,17 @@ function commitListing(data, { absPath, addToHistory = true, restore: restoreIn 
   const prevSelection = preserveSelection ? new Set(browserState.selection) : null;
   const prevAnchor    = preserveSelection ? browserState.anchor : null;
   const prevFocus     = preserveSelection ? browserState.focus : null;
+  // Which side the new listing comes in from (§5.2), read before any of the
+  // state it depends on moves.
+  const motionDir = navMotionDir({
+    prevPath: browserState.listingTabId === tabs.activeId ? browserState.path : null,
+    prevMode: browserState.mode,
+    exiting: !!browserState._pendingExit,
+    restore: restoreIn,
+    historyIndex,
+    focusChild,
+    path: data.path,
+  });
 
   // The navigation succeeded: only now does a search on screen end, and only
   // now does a tab that was on Home (or any other screen) show the Browser —
@@ -1144,6 +1180,8 @@ function commitListing(data, { absPath, addToHistory = true, restore: restoreIn 
     listScroll.scrollLeft = restore ? (restore.scrollLeft || 0) : 0;
   }
   if (revealFocus && browserState.focus) findListRow(browserState.focus)?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  // After the single render, on top of rows that are already painted.
+  if (motionDir !== null) listFadeIn(motionDir);
 }
 
 // ── Where the user was in each folder (Back/Forward) ─────────────────────────
@@ -1410,6 +1448,27 @@ function patchDirectory(newEntries, data = null) {
   // _orderDirty: an earlier patch left a renaming row out of sorted place;
   // the row-by-row pass below puts it back once the rename has settled.
   const orderDirty = !!browserState._orderDirty && !renaming;
+
+  // Motion (§5.2 New items, Removed items, Rename): where the rows are now,
+  // for a change of at most LIST_MOTION_MAX_ROWS rows in a listing small
+  // enough; played once the DOM below is final. A rename the backend just
+  // did is a row that moves, not one out and one in.
+  const moves = takeListMoves();
+  const added = new Set(newEntries.filter(e => !oldByName.has(e.name)).map(entryPath));
+  const movedTo = new Map();      // new path -> old path
+  if (moves) {
+    const addedByNorm = new Map([...added].map(p => [fpNormalizePath(p), p]));
+    for (const o of removed) {
+      const dest = moves.get(fpNormalizePath(entryPath(o)));
+      const np = dest && addedByNorm.get(fpNormalizePath(dest));
+      if (np) { movedTo.set(np, entryPath(o)); added.delete(np); }
+    }
+  }
+  const movedFrom = new Set(movedTo.values());
+  const gone = removed.map(entryPath).filter(p => !movedFrom.has(p)).map(p => ({ path: p, node: nodeByPath.get(p) }));
+  const flux = added.size + gone.length;
+  const motionCap = domMatches && (flux || movedTo.size || orderDirty) && flux <= LIST_MOTION_MAX_ROWS
+    ? listMotionCapture(listScroll, total) : null;
   if (changes === 0 && !orderDirty && domMatches && truncatedBefore === browserState.truncated) {
     applySelectionState();
     updateStatusBar();
@@ -1459,6 +1518,7 @@ function patchDirectory(newEntries, data = null) {
     if (row) row.focus({ preventScroll: true });
     else focusListContainer();
   }
+  if (motionCap) listMotionPlay(listScroll, motionCap, { added, gone, moved: movedTo });
   onSelectionChanged();
 }
 
@@ -1653,6 +1713,204 @@ function refreshNavButtons() {
   if (up)   up.disabled   = !onBrowser || (browserState.mode !== 'search'
     && (!browserState.path || browserState.path === THISPC
       || ((browserState.isRoot || !browserState.parent) && !isDriveRootPath(browserState.path))));
+}
+
+// ── List motion (Stage 2D addendum §5.2, content) ───────────────────────────
+// Decoration only (§5.1 rule 1): every function here runs after the state,
+// the DOM, the selection and focus are already final, and plays on top
+// through fpAnimate — the next call on the same element and key cancels it,
+// and nothing waits for one to end. Per-row motion is for small changes
+// (rule 3): at most LIST_MOTION_MAX_ROWS rows animate at once, and none in a
+// listing big enough for html.fp-heavy-list (app.js) — there the listing
+// fades as a whole, one compositor-only animation on #list-scroll itself.
+// A held key (html.fp-key-repeat) animates nothing (rule 4).
+const LIST_MOTION_MAX_ROWS = 30;
+const LIST_NAV_SLIDE_PX = 6;      // a navigation's slide (spec: ≤ 6 px)
+
+/** Animations are on and no key is being held. */
+function listMotionOn() {
+  return typeof fpMotionOn === 'function' && fpMotionOn() && !fpKeyRepeating();
+}
+
+/** A listing of `n` entries is too big for per-row (or sliding) motion —
+ * app.js's html.fp-heavy-list threshold. */
+function listIsHeavy(n = (browserState.entries || []).length) {
+  return n > (typeof HEAVY_LIST_ROWS === 'number' ? HEAVY_LIST_ROWS : 300);
+}
+
+/**
+ * The whole listing fades up from `from` (§5.2 Folder navigation, Views,
+ * Sort, Search): `dir` 1 slides it in from the right (into a folder,
+ * Forward), -1 from the left (Back, Up), 0 fades only (a tab switch, a view
+ * or sort crossfade, a big listing). Rows, icons and selection are already
+ * painted underneath — this never hides a row.
+ */
+function listFadeIn(dir = 0, { from = 0.6 } = {}) {
+  const listScroll = document.getElementById('list-scroll');
+  if (!listScroll || !listMotionOn()) return null;
+  const dx = dir && !listIsHeavy() ? Math.sign(dir) * LIST_NAV_SLIDE_PX : 0;
+  const frames = dx
+    ? [{ opacity: from, transform: `translateX(${dx}px)` }, { opacity: 1, transform: 'none' }]
+    : [{ opacity: from }, { opacity: 1 }];
+  return fpAnimate(listScroll, frames, { duration: 'base', key: 'list' });
+}
+
+/** Rows of #list-scroll that are on screen: path → {row, rect}. Ghosts
+ * (no data-path) are never rows. */
+function listRowsInView(listScroll) {
+  const box = listScroll.getBoundingClientRect();
+  const out = new Map();
+  for (const row of listScroll.querySelectorAll(':scope > .fp-row[data-path]')) {
+    const r = row.getBoundingClientRect();
+    if (!r.width || r.bottom <= box.top || r.top >= box.bottom || r.right <= box.left || r.left >= box.right) continue;
+    out.set(row.dataset.path, { row, rect: r });
+  }
+  return out;
+}
+
+/** Where the on-screen rows are before a change, or null when the change
+ * gets no per-row motion (motion off, a held key, a big listing, another
+ * screen). `n` is the larger of the entry counts before and after. */
+function listMotionCapture(listScroll, n = (browserState.entries || []).length) {
+  if (!listScroll || !listMotionOn() || listIsHeavy(n) || !browserScreenActive() || thisPcActive()) return null;
+  return {
+    box: listScroll.getBoundingClientRect(),
+    top: listScroll.scrollTop,
+    left: listScroll.scrollLeft,
+    rows: listRowsInView(listScroll),
+  };
+}
+
+/**
+ * Plays a change of the listing on top of the DOM that already shows it
+ * (§5.2 New items, Removed items, Rename, Sort):
+ *  - rows still on screen slide from where they were (FLIP, transform only);
+ *  - `added` rows (paths) fade and grow in;
+ *  - `gone` rows ([{path, node}], already out of the listing) play out as
+ *    ghosts: inert, aria-hidden, pointer-events none, no data-path — never a
+ *    row to arrow keys, selection, the marquee or patchDirectory — and gone
+ *    within --motion-base;
+ *  - `moved` (new path → old path) slides a renamed row from its old place;
+ *  - `enterFade` fades rows that come into view from off-screen (a sort).
+ * More than LIST_MOTION_MAX_ROWS slides, or arrivals plus ghosts, and that
+ * part does not animate per row. Returns the number of rows that slid, or
+ * -1 when there were too many to slide.
+ */
+function listMotionPlay(listScroll, cap, { added = null, gone = [], moved = null, enterFade = false } = {}) {
+  if (!cap || !listScroll || !listMotionOn()) return 0;
+  // Reads first (one layout), writes after.
+  const box = listScroll.getBoundingClientRect();
+  const now = listRowsInView(listScroll);
+  const ox = (cap.box.left - cap.left) - (box.left - listScroll.scrollLeft);
+  const oy = (cap.box.top - cap.top) - (box.top - listScroll.scrollTop);
+  const slides = [];
+  const grows = [];
+  const fades = [];
+  for (const [path, { row, rect }] of now) {
+    if (added && added.has(path)) { grows.push(row); continue; }
+    const was = cap.rows.get((moved && moved.get(path)) || path);
+    if (!was) { if (enterFade) fades.push(row); continue; }
+    const dx = was.rect.left - rect.left - ox;
+    const dy = was.rect.top - rect.top - oy;
+    if (Math.abs(dx) >= 0.5 || Math.abs(dy) >= 0.5) slides.push([row, dx, dy]);
+  }
+  const ghosts = gone.filter(g => g && g.node && cap.rows.has(g.path));
+  const perRow = grows.length + ghosts.length <= LIST_MOTION_MAX_ROWS;
+  const slide = slides.length + fades.length <= LIST_MOTION_MAX_ROWS;
+
+  if (perRow) {
+    const ink = { x: listScroll.clientLeft, y: listScroll.clientTop };
+    for (const { path, node } of ghosts) {
+      const r = cap.rows.get(path).rect;
+      listGhost(listScroll, node, {
+        left: r.left - cap.box.left - ink.x + cap.left,
+        top: r.top - cap.box.top - ink.y + cap.top,
+        width: r.width,
+        height: r.height,
+      });
+    }
+    for (const row of grows) {
+      fpAnimate(row, [{ opacity: 0, transform: 'scale(.96)' }, { opacity: 1, transform: 'none' }],
+        { duration: 'base', key: 'flip' });
+    }
+  }
+  if (!slide) return -1;
+  for (const [row, dx, dy] of slides) {
+    fpAnimate(row, [{ transform: `translate(${dx}px, ${dy}px)` }, { transform: 'none' }],
+      { duration: 'base', key: 'flip' });
+  }
+  for (const row of fades) fpAnimate(row, [{ opacity: 0 }, { opacity: 1 }], { duration: 'base', key: 'flip' });
+  return slides.length;
+}
+
+/** A removed row's node, kept painted where it was while it fades and
+ * shrinks out (§5.2 Removed items). Everything that made it a row goes
+ * first; it sits out of flow, after the rows, and removes itself. */
+function listGhost(listScroll, node, box) {
+  for (const a of ['data-path', 'data-type', 'role', 'tabindex', 'aria-selected', 'title']) node.removeAttribute(a);
+  node.classList.remove('fp-row--selected', 'fp-row--focused', 'fp-row--active', 'fp-row--drag-target', 'fp-spring');
+  node.setAttribute('aria-hidden', 'true');
+  node.style.left = `${box.left}px`;
+  node.style.top = `${box.top}px`;
+  node.style.width = `${box.width}px`;
+  node.style.height = `${box.height}px`;
+  listScroll.appendChild(node);
+  fpPlayExit(node, [{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'scale(.96)' }],
+    { cls: 'fp-row--ghost', duration: 'fast', easing: 'in', done: () => node.remove() });
+}
+
+// A rename the backend just did (fileops.followOps → noteListMoves): the
+// next patch slides the row from its old name's place to its new one
+// instead of fading one out and another in.
+let _listMoves = null;
+const LIST_MOVES_TTL_MS = 5000;
+function noteListMoves(ops) {
+  const map = new Map();
+  for (const op of ops || []) {
+    if (op && op.op_type === 'rename' && op.src && op.dest) map.set(fpNormalizePath(op.src), String(op.dest));
+  }
+  _listMoves = map.size ? { at: Date.now(), map } : null;
+}
+function takeListMoves() {
+  const m = _listMoves;
+  _listMoves = null;
+  return m && Date.now() - m.at < LIST_MOVES_TTL_MS ? m.map : null;
+}
+
+// html-level "rows hold still": more than LIST_MOTION_MAX_ROWS rows change
+// their fill at once (Ctrl+A, a marquee drag), so no row transitions — the
+// class stays two frames, long enough for the change to be styled without
+// it, and comes off with nothing left to transition (styles.css).
+let _listStillRaf = 0;
+let _listStillHeld = false;
+function holdListStill(listScroll = document.getElementById('list-scroll'), { held = null } = {}) {
+  if (!listScroll) return;
+  if (held !== null) _listStillHeld = held;
+  listScroll.classList.add('fp-list-still');
+  cancelAnimationFrame(_listStillRaf);
+  _listStillRaf = requestAnimationFrame(() => {
+    _listStillRaf = requestAnimationFrame(() => {
+      _listStillRaf = 0;
+      if (!_listStillHeld) listScroll.classList.remove('fp-list-still');
+    });
+  });
+}
+
+/** Which way a navigation's listing slides in (§5.2 Folder navigation): 1
+ * from the right (into a folder, Forward), -1 from the left (Back, Up, out
+ * to an ancestor, out of a search), 0 a fade only (a tab switch from its
+ * cached listing, a first listing), null nothing (the same folder again). */
+function navMotionDir({ prevPath, prevMode, exiting, restore, historyIndex, focusChild, path }) {
+  if (restore) return 0;
+  if (prevMode === 'search') return exiting ? -1 : 1;
+  if (historyIndex !== null && historyIndex !== undefined) return historyIndex < nav.index ? -1 : 1;
+  if (focusChild) return -1;
+  if (!prevPath) return 0;
+  const from = fpNormalizePath(prevPath);
+  const to = fpNormalizePath(path);
+  if (from === to) return null;
+  if (prevPath !== THISPC && from.startsWith(`${to}\\`)) return -1;
+  return 1;
 }
 
 function renderDirectory(data) {
@@ -1956,8 +2214,15 @@ function showSearchPending(query, root) {
     setThisPcShown(false);
     if (typeof syncHeavyList === 'function') syncHeavyList();
   }
+  const header = document.getElementById('list-search-header');
+  const headerWasHidden = !!(header && header.hidden);
   updateSearchBreadcrumb(root);
   setSearchHeader('Searching…');
+  // §5.2 Search: the results header slides in when it appears.
+  if (headerWasHidden && listMotionOn()) {
+    fpAnimate(header, [{ opacity: 0, transform: 'translateY(-4px)' }, { opacity: 1, transform: 'none' }],
+      { duration: 'base', key: 'enter' });
+  }
   refreshNavButtons();
 }
 
@@ -2007,6 +2272,9 @@ function renderSearchResults(payload, { query = '', root = '', preserveSelection
 
   const n = browserState.entries.length;
   setSearchHeader(payload.truncated ? `First ${countLabel(n, 'result')} — refine the search` : countLabel(n, 'result'));
+  // §5.2 Search: a new result set fades in (a re-run of the same search —
+  // a refresh after an operation — does not).
+  if (!preserveSelection) listFadeIn(0);
   onSelectionChanged();
   refreshNavButtons();
 }
@@ -2107,6 +2375,32 @@ function thisPcCrumbHtml(current) {
 function updateBreadcrumb(path) {
   const crumb = document.getElementById('breadcrumb');
   if (!crumb || !path) return;
+  const before = new Set([...crumb.querySelectorAll('.fp-breadcrumb__crumb[data-path]')].map(b => b.dataset.path));
+  writeBreadcrumb(crumb, path);
+  breadcrumbMotion(crumb, before);
+}
+
+/** §5.2 Breadcrumb: crumbs that were not there before fade in (with the dot
+ * in front of them); a path that shares nothing with the last one fades in
+ * as a whole. Opacity only: the toolbar measures the path's width in this
+ * same frame (layoutToolbar), and a transform would change what it reads. */
+function breadcrumbMotion(crumb, before) {
+  if (!listMotionOn()) return;
+  const crumbs = [...crumb.querySelectorAll('.fp-breadcrumb__crumb[data-path]')];
+  const fresh = crumbs.filter(b => !before.has(b.dataset.path));
+  if (!fresh.length) return;
+  if (fresh.length === crumbs.length) {
+    fpAnimate(crumb, [{ opacity: 0.4 }, { opacity: 1 }], { duration: 'fast', key: 'enter' });
+    return;
+  }
+  for (const b of fresh) {
+    const sep = b.previousElementSibling && b.previousElementSibling.classList.contains('fp-breadcrumb__sep')
+      ? b.previousElementSibling : null;
+    for (const el of [sep, b]) if (el) fpAnimate(el, [{ opacity: 0 }, { opacity: 1 }], { duration: 'fast', key: 'enter' });
+  }
+}
+
+function writeBreadcrumb(crumb, path) {
   if (path === THISPC) { crumb.innerHTML = thisPcCrumbHtml(true); return; }
   // Split on \ or /, drop empties. First part is drive letter (e.g. "C:") — keep with backslash for nav.
   const parts = String(path).split(/[\\\/]+/).filter(Boolean);
@@ -2213,15 +2507,21 @@ function focusListContainer() {
 function applySelectionState() {
   const listScroll = document.getElementById('list-scroll');
   if (!listScroll) return;
+  // Each row's fill fades (§5.2 Rows and selection) — unless more than
+  // LIST_MOTION_MAX_ROWS of them change at once (Ctrl+A): then none does
+  // (the class lands in this same task, before the change is styled).
+  let flips = 0;
   listScroll.querySelectorAll('.fp-row[data-path]').forEach(row => {
     const path = row.dataset.path;
     const isSelected = browserState.selection.has(path);
     const isFocused = path === browserState.focus;
+    if (row.classList.contains('fp-row--selected') !== isSelected) flips++;
     row.classList.toggle('fp-row--selected', isSelected);
     row.setAttribute('aria-selected', isSelected ? 'true' : 'false');
     row.classList.toggle('fp-row--focused', isFocused);
     row.setAttribute('tabindex', isFocused ? '0' : '-1');
   });
+  if (flips > LIST_MOTION_MAX_ROWS) holdListStill(listScroll);
 }
 
 /**
@@ -2598,6 +2898,8 @@ function startInlineRename(path) {
   input.setAttribute('aria-label', 'Rename');
   nameEl.replaceWith(input);
   input.focus();
+  // §5.2 Rename: the box fades in — already focused and taking keys.
+  fpAnimate(input, [{ opacity: 0 }, { opacity: 1 }], { duration: 'fast', key: 'enter' });
 
   const dot = currentName.lastIndexOf('.');
   if (!isDir && dot > 0) input.setSelectionRange(0, dot);
@@ -2804,12 +3106,36 @@ function clipboardMarkFor(path) {
   return mode === 'cut' ? 'cut' : 'copied';
 }
 function syncClipboardMarks() {
+  const changed = [];
   document.querySelectorAll('#list-scroll .fp-row[data-path]').forEach(row => {
     const mark = clipboardMarkFor(row.dataset.path);
+    const was = row.classList.contains('fp-row--cut') ? 'cut' : (row.classList.contains('fp-row--copied') ? 'copied' : '');
+    if (was !== mark) changed.push([row, was, mark]);
     row.classList.toggle('fp-row--cut', mark === 'cut');
     row.classList.toggle('fp-row--copied', mark === 'copied');
   });
   syncClipboardStatus();
+  clipboardMarksMotion(changed);
+}
+
+/** §5.2 Cut/copy: a cut row's icon and name fade to the cut ghosting (and
+ * back), and the copy badge pops in (scale 0.9 → 1). The classes are already
+ * final; only up to LIST_MOTION_MAX_ROWS rows animate, none in a big list. */
+function clipboardMarksMotion(changed) {
+  if (!changed.length || changed.length > LIST_MOTION_MAX_ROWS || !listMotionOn() || listIsHeavy()) return;
+  const cutOpacity = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--clip-cut-opacity')) || 0.5;
+  for (const [row, was, mark] of changed) {
+    if ((was === 'cut') !== (mark === 'cut')) {
+      const [from, to] = mark === 'cut' ? [1, cutOpacity] : [cutOpacity, 1];
+      for (const el of [row.firstElementChild, row.querySelector('.fp-row__name')]) {
+        if (el) fpAnimate(el, [{ opacity: from }, { opacity: to }], { duration: 'fast', key: 'cut' });
+      }
+    }
+    if (mark === 'copied') {
+      fpAnimate(row, [{ opacity: 0, transform: 'scale(.9)' }, { opacity: 1, transform: 'none' }],
+        { duration: 'fast', key: 'badge', pseudo: '::after' });
+    }
+  }
 }
 function syncClipboardStatus() {
   const el = document.getElementById('status-clipboard');

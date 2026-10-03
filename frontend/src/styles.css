@@ -920,7 +920,8 @@ svg { flex-shrink: 0; }
   text-align: left;
   user-select: none;
   transition: background-color var(--motion-instant) var(--ease-standard),
-              color var(--motion-instant) var(--ease-standard);
+              color var(--motion-instant) var(--ease-standard),
+              box-shadow var(--motion-instant) var(--ease-standard);
 }
 /* The icon — a sprite <svg> or a Windows-mode shell <img> — whatever size
    class its markup carries. */
@@ -1236,9 +1237,20 @@ svg { flex-shrink: 0; }
   justify-content: flex-end;
 }
 .fp-breadcrumb-wrap > .fp-breadcrumb { margin-right: auto; }
+/* The leading fade grows in when the path starts to overflow (addendum
+   §5.2 Breadcrumb): --crumb-fade is a registered length, so the keyframes
+   ease it from 0 to its 24px; with animations off it is simply there. */
+@property --crumb-fade {
+  syntax: '<length>';
+  inherits: false;
+  initial-value: 24px;
+}
+@keyframes fp-crumb-fade-in { from { --crumb-fade: 0px; } }
 .fp-breadcrumb-wrap.is-overflowing {
-  -webkit-mask-image: linear-gradient(to right, transparent 0, #000 24px, #000 100%);
-          mask-image: linear-gradient(to right, transparent 0, #000 24px, #000 100%);
+  --crumb-fade: 24px;
+  -webkit-mask-image: linear-gradient(to right, transparent 0, #000 var(--crumb-fade), #000 100%);
+          mask-image: linear-gradient(to right, transparent 0, #000 var(--crumb-fade), #000 100%);
+  animation: fp-crumb-fade-in var(--motion-fast) var(--ease-out);
 }
 /* The current folder is never faded: when the wrap is too narrow for it plus
    the fade (layoutToolbar's .is-tight), the fade goes and the current crumb
@@ -1289,6 +1301,10 @@ svg { flex-shrink: 0; }
   cursor: pointer;
   font: 500 var(--t-body) var(--font-ui);
   user-select: none;
+  /* Hover and drop-target fills fade (addendum §5.2). */
+  transition: background-color var(--motion-instant) var(--ease-standard),
+              color var(--motion-instant) var(--ease-standard),
+              box-shadow var(--motion-instant) var(--ease-standard);
 }
 /* The drive crumb leads with the drive's icon (Stage 2D §4.6). */
 .fp-breadcrumb__crumb:has(> .fp-breadcrumb__icon) {
@@ -1823,7 +1839,8 @@ html[data-motion="on"] :is(.fp-button, .fp-btn, .fp-icon-btn, .fp-circle-btn, .f
   align-items: center;
   justify-content: center;
   transition: background-color var(--motion-instant) var(--ease-standard),
-              transform var(--motion-instant) var(--ease-standard);
+              transform var(--motion-instant) var(--ease-standard),
+              box-shadow var(--motion-instant) var(--ease-standard);
 }
 .fp-button--icon:hover,
 .fp-btn--icon:hover,
@@ -2852,7 +2869,8 @@ html[data-motion="on"] :is(.fp-button, .fp-btn, .fp-icon-btn, .fp-circle-btn, .f
   position: relative;
   color: var(--text-primary);
   transition: background-color var(--motion-instant) var(--ease-standard),
-              border-color var(--motion-instant) var(--ease-standard);
+              border-color var(--motion-instant) var(--ease-standard),
+              box-shadow var(--motion-instant) var(--ease-standard);
 }
 .fp-row:hover {
   background: var(--bg-raised);
@@ -4135,6 +4153,20 @@ body.is-dragging .fp-oscroll { pointer-events: none; }
    icons.js asks the shell for the px bucket of this size. 16px is only the
    value before the first listing. */
 #list-scroll { --icon-size: 16px; }
+/* List motion (addendum §5.2, browser.js listMotionPlay): the listing is the
+   containing block of the ghosts of removed rows, so they sit where the rows
+   were and scroll with them. A ghost is never a row: no data-path, inert,
+   aria-hidden, out of flow, and it takes no pointer. */
+#list-scroll { position: relative; }
+#list-scroll > .fp-row--ghost {
+  position: absolute;
+  margin: 0;
+  pointer-events: none;
+}
+/* More than 30 rows change their fill at once (Ctrl+A, a marquee drag —
+   browser.js holdListStill): none of them transitions (§5.1 rule 3/4). */
+#list-scroll.fp-list-still .fp-row,
+#list-scroll.fp-list-still .fp-row * { transition: none; }
 .list-scroll {
   flex: 1;
   overflow-y: auto;
@@ -4261,6 +4293,8 @@ body.is-dragging .fp-oscroll { pointer-events: none; }
   height: 100%;
   border-radius: inherit;
   background: var(--accent);
+  /* thispc.js fills it from 0 on show (scaleX, addendum §5.2 This PC). */
+  transform-origin: left center;
 }
 .fp-drive-card__bar-fill--full { background: var(--bad); }
 .fp-drive-card__free {
@@ -4471,7 +4505,7 @@ body.is-dragging .fp-oscroll { pointer-events: none; }
 }
 /* Nothing to flow (an empty folder, an error): a plain block, so the message
    spans the pane instead of taking one 22px cell (pass-2 #169). */
-#list-scroll[data-view="list"]:not(:has(> .fp-row)) {
+#list-scroll[data-view="list"]:not(:has(> .fp-row[data-path])) {
   display: block;
   overflow-x: hidden;
 }

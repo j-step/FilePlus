@@ -225,6 +225,22 @@ module.exports = async function globalSetup() {
   fs.writeFileSync(path.join(fin, 'Nav', 'B', 'in-b.txt'), 'b\n');
   fs.writeFileSync(path.join(fin, 'One', 'only.txt'), 'one\n');
 
+  // Stage 2D addendum Task 7 (stage2d-motion.spec.js, content motion): a
+  // folder tree to navigate (Nav), rows to delete / rename / create (Rows),
+  // a file to paste (Src), a folder to sort (Sort: names and sizes in
+  // opposite orders) and one with more than 30 rows (Many).
+  const mo = path.join(sandbox, 'Motion');
+  for (const sub of [path.join('Nav', 'Inner', 'Deepest'), 'Rows', 'Src', 'Sort', 'Many']) {
+    fs.mkdirSync(path.join(mo, sub), { recursive: true });
+  }
+  for (let i = 1; i <= 6; i++) fs.writeFileSync(path.join(mo, 'Nav', `nav-${i}.txt`), `nav ${i}\n`);
+  for (let i = 1; i <= 4; i++) fs.writeFileSync(path.join(mo, 'Nav', 'Inner', `inner-${i}.txt`), `inner ${i}\n`);
+  for (let i = 1; i <= 10; i++) fs.writeFileSync(path.join(mo, 'Rows', `row-${String(i).padStart(2, '0')}.txt`), `row ${i}\n`);
+  fs.writeFileSync(path.join(mo, 'Src', 'pasted.txt'), 'pasted\n');
+  fs.writeFileSync(path.join(mo, 'Src', 'pasted-off.txt'), 'pasted with animations off\n');
+  for (let i = 1; i <= 8; i++) fs.writeFileSync(path.join(mo, 'Sort', `sort-${i}.txt`), 'x'.repeat((9 - i) * 100));
+  for (let i = 1; i <= 45; i++) fs.writeFileSync(path.join(mo, 'Many', `many-${String(i).padStart(2, '0')}.txt`), `many ${i}\n`);
+
   const backend = spawn(PY.cmd, [...PY.pre, '-m', 'backend.api'], {
     cwd: REPO, env, stdio: 'ignore', windowsHide: true, detached: false,
   });

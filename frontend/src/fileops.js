@@ -174,6 +174,8 @@ const fileops = {
   followOps(ops) {
     // The selection (and with it the inspector) follows the same ops.
     if (typeof followSelectionOps === 'function') followSelectionOps(ops);
+    // A renamed row slides to its new place in the refresh that follows.
+    if (typeof noteListMoves === 'function') noteListMoves(ops);
     const { mode, paths } = this.clipboard;
     if (!mode || !paths.length || !ops || !ops.length) return;
     let next = paths.slice();

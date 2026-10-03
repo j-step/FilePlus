@@ -121,8 +121,10 @@ const _fpAnimationsByEl = new WeakMap();   // el -> Map(key -> Animation)
  *   fill:     'none' (default) or 'backwards' only — state lives in the DOM,
  *             never in an animation's fill, so a finished animation leaves
  *             nothing behind (anything else is treated as 'none')
+ *   pseudo:   '::before' | '::after' plays it on that pseudo-element of
+ *             `el` (a row's copy badge) instead of on `el` itself
  */
-function fpAnimate(el, keyframes, { duration = 'fast', easing = 'out', key = 'default', delay = 0, fill = 'none' } = {}) {
+function fpAnimate(el, keyframes, { duration = 'fast', easing = 'out', key = 'default', delay = 0, fill = 'none', pseudo = null } = {}) {
   if (!el) return null;
   let slots = _fpAnimationsByEl.get(el);
   const prev = slots && slots.get(key);
@@ -142,6 +144,7 @@ function fpAnimate(el, keyframes, { duration = 'fast', easing = 'out', key = 'de
     easing: t.easings[easing] || t.easings.out,
     delay: wait,
     fill: fill === 'backwards' ? 'backwards' : 'none',
+    ...(pseudo === '::before' || pseudo === '::after' ? { pseudoElement: pseudo } : {}),
   });
   if (!slots) { slots = new Map(); _fpAnimationsByEl.set(el, slots); }
   slots.set(key, anim);
