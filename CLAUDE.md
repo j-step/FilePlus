@@ -59,7 +59,11 @@ loop). No `waitForTimeout` may gate an assertion (the suite has none); wait on t
 `__fpStubHits` — or `expect.poll`. Animations follow only Settings › "Animations" (`ui.animations`)
 through `html[data-motion]` — `prefers-reduced-motion` gates nothing; JS motion uses `fpMotionOn()` /
 `fpAnimate()` and CSS the `--motion-*` / `--ease-*` tokens (`scripts/check_motion.js` enforces it).
-Tests default to motion off (`launchApp()`; `launchApp({motion: true})` turns it on).
+Tests default to motion off (`launchApp()` passes `--fp-motion=off`; `launchApp({motion: true})` turns it
+on, `{motion: null}` follows the saved setting); `waitReady` also waits for `html.fp-booting` to lift.
+Whole-window screenshots use the harness's `windowShot(app, page, name)` (capturePage: header bar and app
+zoom as on screen — `page.screenshot` crops a zoomed page); call `parkPointer(page)` first so the shot
+shows no leftover hover.
 
 ## Working protocol (spec §6)
 
@@ -97,10 +101,15 @@ April "one fix at a time" rule is retired (D10).
   which tests assert stays 0.
 - `filetypes.js` and `icons-sprite.js` are generated, not hand-edited: `filetypes.js` from
   `backend/filetypes.py` via `scripts/build_filetypes.py`; `icons-sprite.js` (the Fluent chrome
-  sprite; Stage 2D added `fp-this-pc` and `fp-window-restore`) via `scripts/build_icons.js`.
+  sprite; Stage 2D added `fp-this-pc` and `fp-window-restore`, the addendum `fp-more-horizontal`) via
+  `scripts/build_icons.js`.
   `verify.ps1`'s frontend-gates stage (3/4) runs `check_menu_cases.js` (every `cm-*` action has a
   switch case; every `data-action` in `index.html` and in `src/*.js` templates has a case or is in
-  `IN_SCOPE_ACTIONS` — no exemptions), `check_icons.js` (sprite references resolve, including
+  `IN_SCOPE_ACTIONS` — no exemptions), `check_motion.js` (every duration/easing in `styles.css` is a
+  `--motion-*` / `--ease-*` token, 200 ms ceiling; `--timer-*` only where its `TIMER_ALLOW` list says;
+  every animation under the `html[data-motion]` gate; no `prefers-reduced-motion` anywhere; JS animates
+  only through `fpAnimate`), `check_layers.js` (one `--z-*` scale on `:root`, in order; every z-index in
+  `styles.css` on it; none in `index.html` or the JS), `check_icons.js` (sprite references resolve, including
   `icons.js`'s `FP_DYNAMIC_ICON_SYMBOLS` for names passed as variables — symbol/family counts, no raw
   `<svg>` outside the sprite) and a real parity gate for `filetypes.js` only (rebuilds to
   `artifacts/` and compares the text with line endings normalised, logged as
@@ -162,8 +171,16 @@ April "one fix at a time" rule is retired (D10).
 - `thispc:` (`THISPC`, browser.js; `thisPcActive()`) is the This PC page's path. It lives in tab
   history like a folder, but it must never reach the backend: every path consumer checks it.
 - `#toolbar[data-search="full"|"collapsed"]` (it replaced `data-narrow`) is set only by
-  `layoutToolbar()` (app.js) from measured widths, never a fixed constant: the search box shrinks,
-  then folds to its magnifier, and only then does the left-anchored path overflow.
+  `layoutToolbar()` (app.js) from measured widths, never a fixed constant: the search box shrinks (280
+  → 120), then folds to its magnifier, and only then does the left-anchored path overflow
+  (`#breadcrumb-wrap.is-overflowing`; the current crumb — or the search header — never under the fade:
+  `.is-tight` ellipsizes it to `--crumb-current-max`). Opened while collapsed, the bar grows in flow and
+  pushes the path (`setSearchSlotWidth`, an `fpAnimate` width ease). When even the magnifier leaves the
+  current crumb under its ~56 px floor, the `[data-fold="1".."4"]` buttons (theme, Refresh, Inspector,
+  View/Sort) move into the "…" (See more, `#btn-toolbar-more`) menu — no button ever just vanishes. The
+  toolbar's buttons never flex-shrink: `layoutToolbar` measures them as the row's fixed part (a squeezed
+  button once starved the path). The search placeholder is shortened with "…" by `fitSearchPlaceholder`
+  (the whole text stays in `data-placeholder`, which the width math reads).
 - Mouse presses on toolbar, tab-strip and sidebar controls hand keyboard focus back to where it was
   (`initChromeMouseFocus`, Explorer's model), so Enter after a click opens the focused row.
 - Panels (sidebar, inspector, Properties, Settings, the inspector's text preview) scroll with
@@ -182,18 +199,58 @@ April "one fix at a time" rule is retired (D10).
 - Elevation is flat: borders (`--border-*`) do the work, overlays get one soft shadow
   (`--shadow-popover`/`--shadow-modal`), nothing else casts or insets. Repeating treatments become
   tokens in `:root`; accent-derived colours use `color-mix(... var(--accent) ...)`, never hardcoded
-  rgba. Stacking uses `--z-menu` / `--z-notice`; every caps section header uses `--t-section` /
+  rgba. Stacking uses the one `--z-*` scale on `:root` (base → local → raised → overlay-scroll →
+  marquee → panel-exit → header → sidebar-resize → popover → dropdown → menu → drag → scrim → modal →
+  notice; `check_layers.js`); every caps section header uses `--t-section` /
   `--track-section`. Stage 2D token families: `--sidebar-*`, `--oscroll-*`, `--view-*`, `--drive-*`,
   `--clip-cut-opacity` / `--clip-badge-size`, `--bad-wash-solid` (opaque error toast),
-  `--motion-*` / `--ease-*` / `--timer-*` (motion and timers), `--notice-bottom`, `--menu-edge`. Style spec:
+  `--motion-*` / `--ease-*` / `--timer-*` (motion and timers), `--notice-bottom`, `--menu-edge`; addendum:
+  `--h-header` / `--w-caption` / `--header-*` / `--identity-*` (header bar), `--tab-*` / `--tabbar-*`
+  (tab strip), `--row-star-size`. Style spec:
   `docs/superpowers/specs/2026-09-10-stage-1-redesign-design.md` §3–§4.
+- Header bar (addendum §1): one top row, `#header` (`--z-header`, 44 screen px at any zoom) =
+  `#identity` (logo + `#device-name`, double-click rename; sidebar-wide while expanded,
+  `.fp-header--rail` natural width over the rail) | `#tabbar` (scrolls under `.fp-tabbar--overflow`'s
+  fade, watched by a ResizeObserver that also keeps the active tab in view) | `#btn-new-tab` (outside the
+  strip, always on screen) | `.fp-header__drag` | caption buttons (`#btn-minimize` / `#btn-maximize` /
+  `#btn-close`, page buttons, not `titleBarOverlay`). There is no title bar, no separate tab row and no
+  sidebar card; the collapse toggle (`#btn-sidebar-collapse`) is in the sidebar's top row. Tabs are
+  `flex: 1 1 0; max-width: max-content` (title-wide up to `--tab-max-w`, equal shares when crowded, down
+  to `--tab-min-w`). Every control in the bar is `-webkit-app-region: no-drag`.
+- Motion (addendum §5): the only switch is Settings › Animations (`ui.animations`) → `html[data-motion=
+  "on"|"off"]` (`fpSetMotion`; decided at app.js's first line from `--fp-motion` or the localStorage
+  mirror, so nothing animates before it is known). `styles.css`'s gate gives anything not `"on"` no
+  animation and no transition. JS asks `fpMotionOn()` and animates only through `fpAnimate(el,
+  keyframes, {duration, easing, key})` (one per element+key; returns null when off); exits go through
+  `fpPlayExit` (the element is already closed: inert, `pointer-events:none`, a `*--closing` class while
+  it fades) / `fpCancelExit`; `fpAfter(anim, fn)` runs `fn` on finish or cancel (at once with none);
+  `fpCancelAnimation(el, key)`. State, DOM and focus change first; an animation never gates the next
+  input. Never use `prefers-reduced-motion`, `style.transition` or a raw `.animate()`. Durations are
+  `--motion-instant/fast/base/slow` (60/100/140/200 ms ceiling) and `--ease-*`; `--timer-*` are timers,
+  not motion. `html.fp-key-repeat` (a held key) zeroes transitions and makes `fpAnimate` instant;
+  `html.fp-heavy-list` (a listing over 300 rows, `syncHeavyList`) and the 30-row cap keep big lists from
+  animating per row; `html.fp-booting` (lifted two frames after the saved settings apply,
+  `fpEndBoot`) keeps launch from easing into the saved state. `.fp-pressed` is the press state kept by
+  hand on chrome buttons (the mouse-focus model drops `:active`).
+- Decide "is it open?" from state, never from visibility (a closing panel or scrim is still painted
+  while it fades): `setInspectorOpen` / `setThisPcOpen` (`{animate}` option), `anyScrimOpen()`,
+  `fpExiting(el)`.
+- Scrims: every `.fp-scrim` is shown and hidden only through `fpSetScrim(el, open)` (browser.js), never
+  a `display` toggle: it keeps display and `aria-hidden` in step and mirrors the open count onto
+  `html[data-scrim-open]`, which `anyScrimOpen()` and the Mica backing read (under an open scrim the
+  window gets its solid chrome, so the blur has paint everywhere). Scrims are children of `<body>` on
+  `--z-scrim`; toasts are above, the drag badge below.
+- A path that is gone is not an error: `GET /file` answers 200 `{exists: false, path}` and `GET
+  /preview` `{kind: "missing", exists: false}` (`path_guard` still runs first). Check `exists === false`;
+  never rely on a 404 there (Chromium logs a failed fetch as a console error).
 
 ## Current state
 
-Stage 2D (playtest pass 2) is landed on `stage/2d-playtest-2`, waiting for the author's merge — run
-summary `docs/superpowers/runs/2026-10-01-stage-2d.md` (Explorer view ladder, flash-free icons, app
-zoom with fixed panel widths, in-place refresh, This PC page, toolbar collapse order, menu flyouts,
-sidebar polish, unbuilt screens hidden). Earlier: `docs/superpowers/runs/2026-09-13-stage-2c.md`
+Stage 2D (playtest pass 2) and its addendum are done on `stage/2d-playtest-2` — run summary
+`docs/superpowers/runs/2026-10-01-stage-2d.md` (Explorer view ladder, flash-free icons, app zoom with
+fixed panel widths, in-place refresh, This PC page, toolbar collapse order, menu flyouts, sidebar
+polish, unbuilt screens hidden; addendum 2026-10-03: one header bar, search that pushes the path,
+one even modal blur, the This PC drop fix, a motion pass under Settings › Animations). Earlier: `docs/superpowers/runs/2026-09-13-stage-2c.md`
 (playtest pass 1), `2026-09-11-stage-2b.md` (frontend wiring) and `2026-09-11-stage-2a.md` (backend
 core). Canonical docs: `PRODUCT.md`, `docs/UI-SPEC.md` (behaviour; style superseded; Stage 2D notes
 inline), `docs/backend-integration.md` (wiring ledger), `docs/fileplus-feature-list.md` (backlog).

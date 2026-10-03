@@ -243,9 +243,18 @@ renderer no longer browses `/fs/list/root`; it only samples it for the generic-f
 **Stage 2D (2026-10-02, Task 12b).** `GET /file` and `GET /files/{id}` return `created` / `modified` as
 epoch seconds (`_epoch_dates`), like every listing; they used to ship the index's ISO strings. `GET
 /file` re-indexes a row whose size or mtime no longer matches the file (an edited file showed its old
-size, date and hash) and still 404s for a path that is gone. `GET /recent` and `GET /favorites` entries
+size, date and hash); a path that is gone answers `{exists: false}` since the addendum (below). `GET /recent` and `GET /favorites` entries
 carry `exists`, so Home dims a moved or deleted item ("Moved or deleted") and never asks `/file` about it.
 `DELETE /recent` → `{status: "cleared", removed}` empties the Recent list (Settings › Data).
+
+**Stage 2D addendum (2026-10-03, Task 7).** A path that is gone is no longer an error: `GET /file`
+answers **200 `{exists: false, path}`** instead of 404 (an item trashed while the inspector was still
+asking about it logged a 404 as a console error, which the test gate counts). `path_guard` still runs
+first, so a refused path is still refused; nothing is written. Consumers: the inspector (one item:
+"Moved or deleted"; several: a gone item is left out), and the inspector aborts a read that a newer
+selection made stale. `GET /preview` answers `{kind: "missing", exists: false}` the same way ("No
+preview"; Properties' app icon keeps its glyph). Every other `/file` or `/preview` answer carries
+`exists: true` implicitly (unchanged shape).
 
 **What.** Inspector shows hardcoded `18.7 KB`, `1 hr ago`, `Apr 22, 2026`, dash-for-hash. Real values must come from the backend.
 
@@ -256,7 +265,7 @@ carry `exists`, so Home dims a moved or deleted item ("Moved or deleted") and ne
 - Hash display formatting: render as `xxh64:<first-8-of-hex>…<last-4>` (truncated, monospace) — full hash on hover via `title` attribute.
 
 ### 3. Inspector — Preview tab (`GET /preview`)
-**Done for text/binary/too-large (Stage 2A/2B, 2026-09-11); image/pdf/audio/video/archive not built.** Bounded 4 KB text reads, `path_guard()` always.
+**Done for text/binary/too-large (Stage 2A/2B, 2026-09-11); image/pdf/audio/video/archive not built.** Bounded 4 KB text reads, `path_guard()` always. A path that is gone answers 200 `{kind: "missing", exists: false}` (Stage 2D addendum; see §2).
 
 **What.** Preview tab is a placeholder showing markdown rendered from a fake `design-brief.md`.
 
