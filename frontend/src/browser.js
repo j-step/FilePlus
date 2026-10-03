@@ -1633,6 +1633,7 @@ function clearBrowserListing() {
   browserState._pendingHistory = null;
   browserState._pendingExit = null;
   browserState._orderDirty = false;
+  if (typeof syncHeavyList === 'function') syncHeavyList();
   updateStatusBar();
   onSelectionChanged();
 }
@@ -1953,6 +1954,7 @@ function showSearchPending(query, root) {
     setListNotice('');
     // A search started from This PC shows its results in the listing.
     setThisPcShown(false);
+    if (typeof syncHeavyList === 'function') syncHeavyList();
   }
   updateSearchBreadcrumb(root);
   setSearchHeader('Searching…');

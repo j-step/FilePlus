@@ -359,6 +359,9 @@ function commitThisPc(drives, { addToHistory = true, restore = null, historyInde
 
   setThisPcShown(true);
   renderThisPC(drives);
+  // No folder rows on screen any more: a big listing left behind must not
+  // keep width motion off (html.fp-heavy-list).
+  if (typeof syncHeavyList === 'function') syncHeavyList();
   onNavigated(THISPC);
   if (historyIndex !== null && historyIndex >= 0 && historyIndex < nav.history.length) {
     nav.index = historyIndex;

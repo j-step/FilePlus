@@ -78,6 +78,7 @@
   --z-raised: 2;           /* sticky list headers; the collapsed toolbar's open search */
   --z-overlay-scroll: 5;   /* overlay scrollbar tracks (overlayscroll.js) */
   --z-marquee: 6;          /* the rubber-band selection rectangle */
+  --z-panel-exit: 7;       /* a closed panel sliding out over the list (.inspector--closing) */
   --z-header: 8;           /* the header bar (title bar + tabs, addendum §1) */
   --z-sidebar-resize: 10;  /* the sidebar's resize handle (the rail's thumb +1) */
   --z-popover: 200;        /* popovers, the Ask File+ popout, dropdowns */
@@ -5522,6 +5523,8 @@ button.fp-pill:hover {
   right: 0;
   bottom: 0;
   pointer-events: none;
+  /* Over the file list's overlay scrollbar, which it slides across. */
+  z-index: var(--z-panel-exit);
 }
 /* The last resort for a short window at high zoom: the part above the
    action row scrolls as one (overlay scrollbar); the actions stay pinned. */

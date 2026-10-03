@@ -85,7 +85,12 @@ function fpMotionMs(name) {
 function fpKeyRepeating() {
   return document.documentElement.classList.contains('fp-key-repeat');
 }
+// A modifier alone (Ctrl, Shift, Alt, Meta) auto-repeats while it is held
+// for a Ctrl+click or Shift+click — that is not a held step and changes
+// nothing (fix round 2).
+const FP_MODIFIER_KEYS = new Set(['Control', 'Shift', 'Alt', 'Meta', 'AltGraph', 'CapsLock']);
 window.addEventListener('keydown', e => {
+  if (FP_MODIFIER_KEYS.has(e.key)) return;
   document.documentElement.classList.toggle('fp-key-repeat', !!e.repeat);
 }, true);
 for (const type of ['keyup', 'blur']) {

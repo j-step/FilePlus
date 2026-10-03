@@ -27,7 +27,7 @@ const CSS_PATH = path.join(SRC, 'styles.css');
 
 // Lowest to highest. Keep in step with the :root block in styles.css.
 const SCALE = [
-  '--z-base', '--z-local', '--z-raised', '--z-overlay-scroll', '--z-marquee', '--z-header',
+  '--z-base', '--z-local', '--z-raised', '--z-overlay-scroll', '--z-marquee', '--z-panel-exit', '--z-header',
   '--z-sidebar-resize', '--z-popover', '--z-dropdown', '--z-menu', '--z-drag',
   '--z-scrim', '--z-modal', '--z-notice',
 ];

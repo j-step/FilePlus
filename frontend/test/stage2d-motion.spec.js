@@ -764,11 +764,13 @@ test('inspector: open/close slides the panel and resizes the file pane; closed m
         inert: ins.inert, hitIns: !!hit && ins.contains(hit),
         resizer: getComputedStyle(document.getElementById('resizer')).display, anims: window.__fpAnims(ins),
         position: getComputedStyle(ins).position,
+        overScrollbar: Number(getComputedStyle(ins).zIndex)
+          > Number(getComputedStyle(document.documentElement).getPropertyValue('--z-overlay-scroll')),
         prop: Object.keys(ins.getAnimations()[0].effect.getKeyframes()[0]).find((k) => !['offset', 'easing', 'composite', 'computedOffset'].includes(k)),
         listW: document.getElementById('list-pane').getBoundingClientRect().width };
     });
     expect(c).toMatchObject({ open: false, closing: true, inert: true, hitIns: false, resizer: 'none',
-      position: 'absolute', prop: 'transform' });
+      position: 'absolute', prop: 'transform', overScrollbar: true });
     expect(c.anims.length).toBe(1);
     expect(c.anims[0].duration).toBeLessThanOrEqual(140);
     // The file pane took its full width at once (fix round 1: laid out once,
@@ -1255,6 +1257,11 @@ test('key repeat (a held Ctrl+T / Ctrl+W / Ctrl+B / Ctrl+I) acts at every step a
     const r = await page.evaluate(() => {
       const press = (key, repeat) => document.body.dispatchEvent(new KeyboardEvent('keydown', {
         key, code: `Key${key.toUpperCase()}`, ctrlKey: true, repeat, bubbles: true, cancelable: true }));
+      // Ctrl held on its own (for a Ctrl+click) auto-repeats: not a held step.
+      for (let i = 0; i < 3; i++) {
+        document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Control', code: 'ControlLeft', ctrlKey: true, repeat: true, bubbles: true }));
+      }
+      const modifierHeld = document.documentElement.classList.contains('fp-key-repeat');
       // Every kind: fpAnimate, CSS transitions (the sidebar's width, the
       // shell column, the header card, a tab's fill) and CSS animations.
       const scripted = (root = document) => (root === document ? document.getAnimations() : root.getAnimations({ subtree: true })).length;
@@ -1275,8 +1282,9 @@ test('key repeat (a held Ctrl+T / Ctrl+W / Ctrl+B / Ctrl+I) acts at every step a
       const held = document.documentElement.classList.contains('fp-key-repeat');
       // The key comes up: the hold is over.
       document.body.dispatchEvent(new KeyboardEvent('keyup', { key: 'b', code: 'KeyB', ctrlKey: true, bubbles: true }));
-      return { afterT, afterW, afterI, afterB, held, released: !document.documentElement.classList.contains('fp-key-repeat') };
+      return { modifierHeld, afterT, afterW, afterI, afterB, held, released: !document.documentElement.classList.contains('fp-key-repeat') };
     });
+    expect(r.modifierHeld).toBe(false);
     expect(r.afterT).toEqual({ added: 4, running: 0 });
     expect(r.afterW).toEqual({ left: 1, ghosts: 0, running: 0 });
     expect(r.afterI).toEqual({ closing: false, running: 0 });
@@ -1390,6 +1398,16 @@ test('5,000 rows: inspector, sidebar and screen switches cost no more with motio
       // No frame of the animation that follows re-lays the listing out.
       expect(on[n].maxFrame, `${n} longest frame`).toBeLessThanOrEqual(Math.max(off[n].maxFrame * 1.3 + 17, 40));
     }
+    // Leaving the big folder for This PC lifts it too, and Ctrl+B animates.
+    await page.evaluate(() => loadDirectory(THISPC));
+    await page.waitForFunction(() => !window.__fpLoadPending && thisPcActive());
+    expect(await page.evaluate(() => {
+      const heavyOff = !document.documentElement.classList.contains('fp-heavy-list');
+      toggleSidebar();
+      const width = document.getElementById('sidebar').getAnimations().filter((a) => a.transitionProperty === 'width').length;
+      toggleSidebar();
+      return [heavyOff, width];
+    })).toEqual([true, 1]);
     expect(await page.evaluate(() => { switchScreen('home'); return document.documentElement.classList.contains('fp-heavy-list'); })).toBe(false);
   } finally {
     await app.close();
