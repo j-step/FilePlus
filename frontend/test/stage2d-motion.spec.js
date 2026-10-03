@@ -953,3 +953,283 @@ test('with the switch off, screens, the inspector and Settings change with no an
   }
   expect(errors).toEqual([]);
 });
+
+// ── Task 6: menus, popovers, dialogs, notices, buttons (addendum §5.2) ───────
+
+
+test('menus: the context menu, its flyout and the View menu scale in from their anchor; items are hit at once; close is instant', async () => {
+  const { app, page, errors } = await launchApp({ motion: true });
+  try {
+    await installMotionProbes(page);
+    const root = (await apiGet('/fs/list/root')).path;
+    await page.evaluate((p) => loadDirectory(p), root);
+    await page.waitForFunction(() => !window.__fpLoadPending);
+    const box = await page.locator('#list-scroll').boundingBox();
+    const x = Math.round(box.x + box.width - 40);
+    const y = Math.round(box.y + box.height - 30);
+    const m = await page.evaluate(({ x, y }) => {
+      // A right-click on the list's empty area, in this same task.
+      document.getElementById('list-scroll').dispatchEvent(
+        new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: x, clientY: y, button: 2 }));
+      const menu = document.getElementById('context-menu');
+      const items = [...menu.querySelectorAll('.fp-context-menu__item:not(.fp-context-menu__item--disabled)')];
+      const [ox, oy] = menu.style.transformOrigin.split(' ').map(parseFloat);
+      return { shown: contextMenuIsOpen(), anims: window.__fpAnims(menu), allHit: items.every((i) => window.__fpHitIs(i)),
+        // The origin is the pointer: the menu grows out of the click point
+        // (laid-out position plus origin, wherever the edge clamp put it).
+        originAt: [Math.round(parseFloat(menu.style.left) + ox), Math.round(parseFloat(menu.style.top) + oy)] };
+    }, { x, y });
+    expect(m.shown).toBe(true);
+    expect(m.allHit).toBe(true);
+    expect(m.anims.length).toBe(1);
+    expect(m.anims[0].duration).toBeLessThanOrEqual(100);
+    expect(Math.abs(m.originAt[0] - x)).toBeLessThanOrEqual(2);
+    expect(Math.abs(m.originAt[1] - y)).toBeLessThanOrEqual(2);
+    // A flyout (View / Sort by …) opens the same way, from its parent row's side.
+    const f = await page.evaluate(() => {
+      const parent = document.querySelector('#context-menu .fp-context-menu__item[aria-haspopup="true"]');
+      if (!parent) return null;
+      parent.click();
+      const fly = document.querySelector('.fp-context-menu--flyout');
+      const items = [...fly.querySelectorAll('.fp-context-menu__item:not(.fp-context-menu__item--disabled)')];
+      return { anims: window.__fpAnims(fly), allHit: items.every((i) => window.__fpHitIs(i)) };
+    });
+    expect(f).not.toBeNull();
+    expect(f.allHit).toBe(true);
+    expect(f.anims.length).toBe(1);
+    expect(f.anims[0].duration).toBeLessThanOrEqual(100);
+    // Close: gone in the same task, nothing fades out over the list.
+    expect(await page.evaluate(() => {
+      hideContextMenu();
+      const menu = document.getElementById('context-menu');
+      return [getComputedStyle(menu).display, menu.getAnimations().length, document.querySelectorAll('.fp-context-menu--flyout').length];
+    })).toEqual(['none', 0, 0]);
+
+    // The View menu drops from its button: origin on the top edge.
+    const v = await page.evaluate(() => {
+      document.querySelector('[data-action="open-view-menu"]').click();
+      const menu = document.getElementById('context-menu');
+      const first = menu.querySelector('.fp-context-menu__item:not(.fp-context-menu__item--disabled)');
+      return { anims: window.__fpAnims(menu), hit: window.__fpHitIs(first), oy: parseFloat(menu.style.transformOrigin.split(' ')[1]) };
+    });
+    expect(v.hit).toBe(true);
+    expect(v.anims.length).toBe(1);
+    expect(v.oy).toBe(0);
+    await page.keyboard.press('Escape');
+  } finally {
+    await app.close();
+  }
+  expect(errors).toEqual([]);
+});
+
+test('popovers: the search dropdown and Ask File+ fade and scale in within --motion-fast and take input at once', async () => {
+  const { app, page, errors } = await launchApp({ motion: true });
+  try {
+    await installMotionProbes(page);
+    const a = await page.evaluate(() => {
+      openAskPopout();
+      const pop = document.getElementById('ask-popout');
+      const input = document.getElementById('ask-input');
+      return { focused: document.activeElement === input, anims: window.__fpAnims(pop),
+        origin: getComputedStyle(pop).transformOrigin };
+    });
+    expect(a.focused).toBe(true);
+    expect(a.anims.length).toBe(1);
+    expect(a.anims[0].duration).toBeLessThanOrEqual(100);
+    expect(a.origin).toMatch(/^0px 0px/);
+    await page.keyboard.type('hi');
+    expect(await page.locator('#ask-input').inputValue()).toBe('hi');
+    await page.evaluate(() => closeAskPopout());
+
+    const root = (await apiGet('/fs/list/root')).path;
+    await page.evaluate((p) => loadDirectory(p), root);
+    await page.waitForFunction(() => !window.__fpLoadPending);
+    const s = await page.evaluate(() => {
+      openSearchDropdown();
+      const dd = document.getElementById('search-dropdown');
+      const first = dd.querySelector('button');
+      return { shown: !dd.hidden, anims: window.__fpAnims(dd), hit: window.__fpHitIs(first) };
+    });
+    expect(s.shown).toBe(true);
+    expect(s.hit).toBe(true);
+    expect(s.anims.length).toBe(1);
+    expect(s.anims[0].duration).toBeLessThanOrEqual(100);
+    await page.evaluate(() => closeSearchDropdown());
+  } finally {
+    await app.close();
+  }
+  expect(errors).toEqual([]);
+});
+
+test('dialogs: open scales in with its fields live at once; close fades scrim and backing together and the scrim takes no input', async () => {
+  const { app, page, errors } = await launchApp({ motion: true });
+  try {
+    await installMotionProbes(page);
+    const o = await page.evaluate(() => {
+      openMoreFilters();
+      const scrim = document.getElementById('search-filters-scrim');
+      const modal = document.getElementById('search-filters-modal');
+      const field = document.getElementById('search-filter-ext');
+      field.focus();
+      return { focused: document.activeElement === field, fieldHit: window.__fpHitIs(field),
+        scrim: window.__fpAnims(scrim), modal: window.__fpAnims(modal) };
+    });
+    expect(o.focused).toBe(true);
+    expect(o.fieldHit).toBe(true);
+    expect(o.scrim.length).toBe(1);
+    expect(o.modal.length).toBe(1);
+    expect(o.scrim[0].duration).toBeLessThanOrEqual(140);
+    expect(o.modal[0].duration).toBeLessThanOrEqual(140);
+    await page.keyboard.type('pdf');
+    expect(await page.locator('#search-filter-ext').inputValue()).toBe('pdf');
+    await settled(page);
+
+    const c = await page.evaluate(() => {
+      const scrim = document.getElementById('search-filters-scrim');
+      closeMoreFilters();
+      const hit = document.elementFromPoint(innerWidth / 2, innerHeight / 2);
+      return {
+        open: anyScrimOpen(), flag: document.documentElement.dataset.scrimOpen || null,
+        hidden: scrim.getAttribute('aria-hidden'), inert: scrim.inert, pe: getComputedStyle(scrim).pointerEvents,
+        hitScrim: !!hit && scrim.contains(hit), anims: window.__fpAnims(scrim),
+        backing: getComputedStyle(document.documentElement).transitionDuration,
+      };
+    });
+    expect(c).toMatchObject({ open: false, flag: null, hidden: 'true', inert: true, pe: 'none', hitScrim: false });
+    expect(c.anims.length).toBe(1);
+    // The scrim fades out exactly as long as the Mica backing behind it.
+    expect(c.anims[0].duration).toBe(100);
+    await settled(page);
+    expect(await page.evaluate(() => {
+      const scrim = document.getElementById('search-filters-scrim');
+      return [scrim.style.display, scrim.inert, scrim.classList.contains('fp-scrim--closing')];
+    })).toEqual(['none', false, false]);
+
+    // Escape closes the palette; a new open mid-fade is live at once.
+    await page.evaluate(() => openPalette());
+    await page.keyboard.press('Escape');
+    const r = await page.evaluate(() => {
+      const scrim = document.getElementById('palette-scrim');
+      const closing = scrim.classList.contains('fp-scrim--closing');
+      openPalette();
+      return { closing, open: anyScrimOpen(), inert: scrim.inert, cls: scrim.classList.contains('fp-scrim--closing'),
+        focused: document.activeElement === document.getElementById('palette-input'),
+        hit: window.__fpHitIs(document.getElementById('palette-input')) };
+    });
+    expect(r).toEqual({ closing: true, open: true, inert: false, cls: false, focused: true, hit: true });
+    await page.keyboard.press('Escape');
+    await settled(page);
+    expect(await page.evaluate(() => [document.getElementById('palette-scrim').style.display, anyScrimOpen()])).toEqual(['none', false]);
+  } finally {
+    await app.close();
+  }
+  expect(errors).toEqual([]);
+});
+
+test('notices: a new one slides up and the stack slides to make room; a dismissed one leaves inert and the rest close the gap', async () => {
+  const { app, page, errors } = await launchApp({ motion: true });
+  try {
+    await installMotionProbes(page);
+    const was = await page.evaluate(() => localStorage.getItem('fp-notifications-enabled'));
+    try {
+      await page.evaluate(() => localStorage.setItem('fp-notifications-enabled', 'on'));
+      await page.evaluate(() => showToast('first'));
+      await settled(page, '#toast-container');
+      const add = await page.evaluate(() => {
+        showToast('second', 'error');
+        const [first, second] = document.querySelectorAll('#toast-container .fp-toast');
+        return { first: window.__fpAnims(first), second: window.__fpAnims(second) };
+      });
+      expect(add.first.length).toBe(1);
+      expect(add.second.length).toBe(1);
+      for (const x of [...add.first, ...add.second]) expect(x.duration).toBeLessThanOrEqual(140);
+      await settled(page, '#toast-container');
+
+      const d = await page.evaluate(() => {
+        const [first, second] = document.querySelectorAll('#toast-container .fp-toast');
+        second.querySelector('.fp-toast__dismiss').click();
+        return { leaving: second.classList.contains('fp-notice--leaving'), inert: second.inert,
+          hit: window.__fpHitIs(second), live: document.querySelectorAll('#toast-container .fp-toast:not(.fp-notice--leaving)').length,
+          anims: window.__fpAnims(second), firstHit: window.__fpHitIs(first) };
+      });
+      expect(d).toMatchObject({ leaving: true, inert: true, hit: false, live: 1, firstHit: true });
+      expect(d.anims.length).toBe(1);
+      expect(d.anims[0].duration).toBeLessThanOrEqual(100);
+      // Gone once it has faded; the one left slides down into its place.
+      await expect.poll(() => page.locator('#toast-container .fp-toast').count()).toBe(1);
+      await settled(page, '#toast-container');
+      // The snackbar stack counts only live notices: four quick ones keep three.
+      const n = await page.evaluate(() => {
+        for (let i = 0; i < 4; i++) showSnackbar(`s${i}`, null, null);
+        return document.querySelectorAll('#snackbar-container .fp-snackbar:not(.fp-notice--leaving)').length;
+      });
+      expect(n).toBe(3);
+    } finally {
+      await page.evaluate((v) => { if (v === null) localStorage.removeItem('fp-notifications-enabled'); else localStorage.setItem('fp-notifications-enabled', v); }, was);
+    }
+  } finally {
+    await app.close();
+  }
+  expect(errors).toEqual([]);
+});
+
+test('buttons: a press scales to .97 over --motion-instant with animations on, the 1 px nudge with them off', async () => {
+  for (const motion of [true, false]) {
+    const { app, page, errors } = await launchApp({ motion });
+    try {
+      const b = await page.locator('#btn-inspector-toggle').boundingBox();
+      await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2);
+      await page.mouse.down();
+      const want = motion ? 'matrix(0.97, 0, 0, 0.97, 0, 0)' : 'matrix(1, 0, 0, 1, 0, 1)';
+      await expect.poll(() => page.evaluate(() => getComputedStyle(document.getElementById('btn-inspector-toggle')).transform)).toBe(want);
+      const dur = await page.evaluate(() => getComputedStyle(document.getElementById('btn-inspector-toggle')).transitionDuration);
+      expect(dur.split(',').every((d) => parseFloat(d) * 1000 <= 60)).toBe(true);
+      // Released off the button: no click, nothing toggled.
+      await page.mouse.move(5, b.y + 200);
+      await page.mouse.up();
+    } finally {
+      await app.close();
+    }
+    expect(errors).toEqual([]);
+  }
+});
+
+test('with the switch off, menus, dialogs, popovers and notices open and close instantly with nothing left behind', async () => {
+  const { app, page, errors } = await launchApp();
+  try {
+    const root = (await apiGet('/fs/list/root')).path;
+    await page.evaluate((p) => loadDirectory(p), root);
+    await page.waitForFunction(() => !window.__fpLoadPending);
+    await startSampler(page);
+    const was = await page.evaluate(() => localStorage.getItem('fp-notifications-enabled'));
+    const r = await page.evaluate(() => {
+      localStorage.setItem('fp-notifications-enabled', 'on');
+      document.getElementById('list-scroll').dispatchEvent(
+        new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 300, clientY: 300, button: 2 }));
+      document.querySelector('#context-menu .fp-context-menu__item[aria-haspopup="true"]')?.click();
+      hideContextMenu();
+      document.querySelector('[data-action="open-view-menu"]').click();
+      hideContextMenu();
+      openAskPopout(); closeAskPopout();
+      openSearchDropdown(); closeSearchDropdown();
+      openPalette(); closePalette();
+      openMoreFilters(); closeMoreFilters();
+      showToast('x', 'error'); showToast('y');
+      document.querySelector('#toast-container .fp-toast__dismiss').click();
+      const toasts = document.querySelectorAll('#toast-container .fp-toast').length;
+      return {
+        toasts,
+        scrims: [...document.querySelectorAll('.fp-scrim')].filter((s) => s.style.display !== 'none').length,
+        leftovers: document.querySelectorAll('.fp-scrim--closing, .fp-notice--leaving, [inert]').length,
+        running: document.getAnimations().length,
+      };
+    });
+    await page.evaluate((v) => { if (v === null) localStorage.removeItem('fp-notifications-enabled'); else localStorage.setItem('fp-notifications-enabled', v); }, was);
+    expect(r).toEqual({ toasts: 1, scrims: 0, leftovers: 0, running: 0 });
+    const seen = await stopSampler(page);
+    expect(seen, JSON.stringify(seen.slice(0, 5))).toEqual([]);
+  } finally {
+    await app.close();
+  }
+  expect(errors).toEqual([]);
+});

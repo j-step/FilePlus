@@ -681,9 +681,11 @@ svg { flex-shrink: 0; }
 }
 .fp-caption svg { width: var(--caption-glyph); height: var(--caption-glyph); }
 .fp-caption:hover { background: var(--bg-raised); color: var(--text-primary); }
-.fp-caption:active { background: var(--bg-pressed); color: var(--text-primary); }
+.fp-caption:active,
+.fp-caption.fp-pressed { background: var(--bg-pressed); color: var(--text-primary); }
 .fp-caption--close:hover,
-.fp-caption--close:active { background: var(--caption-close-bg); color: var(--caption-close-fg); }
+.fp-caption--close:active,
+.fp-caption--close.fp-pressed { background: var(--caption-close-bg); color: var(--caption-close-fg); }
 /* Keyboard focus: drawn inside, the bar's edges would cut an outset ring. */
 .fp-caption:focus-visible { outline-offset: -2px; }
 
@@ -1035,7 +1037,8 @@ svg { flex-shrink: 0; }
               transform var(--motion-instant) var(--ease-standard);
 }
 .fp-ask:hover { background: var(--accent-hover); }
-.fp-ask:active {
+.fp-ask:active,
+.fp-ask.fp-pressed {
   background: var(--accent-press);
   transform: translateY(1px);
   transition-duration: var(--motion-instant);
@@ -1436,6 +1439,9 @@ svg { flex-shrink: 0; }
   border-radius: var(--r-card);
   box-shadow: var(--shadow-popover);
   z-index: var(--z-dropdown);
+  /* Opens under the bar's right edge (addendum §5.2 Menus & popovers). */
+  animation: fp-popover-in var(--motion-fast) var(--ease-out);
+  transform-origin: top right;
 }
 .fp-search-dd__section {
   display: flex;
@@ -1540,11 +1546,12 @@ svg { flex-shrink: 0; }
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  animation: fp-palette-in var(--motion-fast) var(--ease-out);
+  animation: fp-palette-in var(--motion-base) var(--ease-out);
 }
+/* Dialogs (addendum §5.2): fade and scale up from 0.97 over --motion-base. */
 @keyframes fp-palette-in {
-  from { opacity: 0; transform: translateY(4px); }
-  to   { opacity: 1; transform: translateY(0); }
+  from { opacity: 0; transform: scale(.97); }
+  to   { opacity: 1; transform: none; }
 }
 .fp-palette__input {
   height: 44px;
@@ -1682,7 +1689,6 @@ svg { flex-shrink: 0; }
 /* Remove default padding from confirmation modal (handled per-section) */
 #modal { padding: 0; overflow: hidden; }
 
-@keyframes fp-fade-in { from { opacity: 0; } to { opacity: 1; } }
 
 /* -----------------------------------------------------------------------------
    12. BUTTONS (Section 17)
@@ -1724,8 +1730,18 @@ svg { flex-shrink: 0; }
   cursor: not-allowed;
 }
 .fp-button:disabled:active, .fp-btn:disabled:active { transform: none; }
-.fp-button:active, .fp-btn:active {
+/* .fp-pressed: the same press, kept by app.js initPressFeedback where the
+   chrome's focus model costs the button its :active. */
+.fp-button:active, .fp-btn:active,
+.fp-button.fp-pressed, .fp-btn.fp-pressed {
   transform: translateY(1px);
+}
+/* Press feedback with animations on (addendum §5.2 Buttons): a pressed
+   button shrinks a touch — scale .97 over the --motion-instant transform
+   transition each of these already has — instead of the 1 px nudge it gets
+   with them off. Disabled buttons do nothing on press either way. */
+html[data-motion="on"] :is(.fp-button, .fp-btn, .fp-icon-btn, .fp-circle-btn, .fp-ask):is(:active, .fp-pressed):not(:disabled):not([aria-disabled="true"]) {
+  transform: scale(.97);
 }
 
 .fp-button--primary, .fp-btn--primary {
@@ -1786,7 +1802,8 @@ svg { flex-shrink: 0; }
   background: var(--bg-raised);
   color: var(--text-primary);
 }
-.fp-button--ghost:active, .fp-btn--ghost:active {
+.fp-button--ghost:active, .fp-btn--ghost:active,
+.fp-button--ghost.fp-pressed, .fp-btn--ghost.fp-pressed {
   background: var(--bg-pressed);
 }
 
@@ -1815,7 +1832,10 @@ svg { flex-shrink: 0; }
 }
 .fp-button--icon:active,
 .fp-btn--icon:active,
-.fp-icon-btn:active {
+.fp-icon-btn:active,
+.fp-button--icon.fp-pressed,
+.fp-btn--icon.fp-pressed,
+.fp-icon-btn.fp-pressed {
   background: var(--bg-pressed);
   transform: translateY(1px);
 }
@@ -1904,7 +1924,8 @@ svg { flex-shrink: 0; }
   box-shadow: none;
   color: var(--text-primary);
 }
-.fp-circle-btn:active {
+.fp-circle-btn:active,
+.fp-circle-btn.fp-pressed {
   background: var(--bg-pressed);
   transform: translateY(1px);
   transition-duration: var(--motion-instant);
@@ -2664,10 +2685,15 @@ svg { flex-shrink: 0; }
   min-width: 180px;
   z-index: var(--z-popover);
   animation: fp-popover-in var(--motion-fast) var(--ease-out);
+  /* Popovers open below their anchor's left edge: they grow from there. */
+  transform-origin: top left;
 }
+/* Menus and popovers (addendum §5.2): fade in while scaling up from 0.97,
+   about their anchor (transform-origin), over --motion-fast. Closing is
+   instant. */
 @keyframes fp-popover-in {
-  from { opacity: 0; transform: translateY(3px); }
-  to   { opacity: 1; transform: translateY(0); }
+  from { opacity: 0; transform: scale(.97); }
+  to   { opacity: 1; transform: none; }
 }
 
 /* === Ask File+ popout (Task 15, design spec §9) ===
@@ -2742,8 +2768,8 @@ svg { flex-shrink: 0; }
   animation: fp-modal-in var(--motion-base) var(--ease-out);
 }
 @keyframes fp-modal-in {
-  from { opacity: 0; transform: translateY(6px); }
-  to   { opacity: 1; transform: translateY(0); }
+  from { opacity: 0; transform: scale(.97); }
+  to   { opacity: 1; transform: none; }
 }
 .fp-modal__header {
   display: flex;
@@ -3428,10 +3454,15 @@ body.is-dragging { cursor: default; }
   cursor: pointer;
   font: 500 var(--t-body) var(--font-ui);
 }
+/* Notices slide up and fade in (addendum §5.2 Notices). */
 @keyframes fp-toast-in {
-  from { opacity: 0; transform: translateX(12px); }
-  to   { opacity: 1; transform: translateX(0); }
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: none; }
 }
+/* A dismissed notice while it fades and drops away (app.js dismissNotice):
+   never hit, inert, out of the stack's count. */
+.fp-snackbar.fp-notice--leaving,
+.fp-toast.fp-notice--leaving { pointer-events: none; }
 
 /* -----------------------------------------------------------------------------
    27. TRAY POPOUT (Section 31)
@@ -5249,6 +5280,9 @@ button.fp-pill:hover {
   -webkit-app-region: no-drag;
   animation: fp-modal-scrim-in var(--motion-fast) var(--ease-out);
 }
+/* Closed, fading out with its dialog (browser.js fpSetScrim): never hit,
+   inert, out of every count — the window behind is live at once. */
+.fp-scrim.fp-scrim--closing { pointer-events: none; }
 
 /* ── Context menu (extends fp-popover) ───────────────────────────────────── */
 .fp-context-menu {
@@ -5260,7 +5294,9 @@ button.fp-pill:hover {
   box-shadow: var(--shadow-popover);
   padding: var(--s-4);
   z-index: var(--z-menu);
-  animation: fp-fade-in var(--motion-fast) var(--ease-out);
+  /* Its open motion is app.js menuOpenMotion (fpAnimate): it scales from
+     the pointer or anchor, which only JS knows, and replays when a menu
+     that is already open is opened again elsewhere. */
 }
 /* The items' own scroller. A menu taller than the window (a folder menu at
    the 500px minimum height, high app zoom) scrolls inside its frame instead
@@ -5365,6 +5401,7 @@ button.fp-pill:hover {
   padding: var(--s-4);
   z-index: var(--z-popover);
   animation: fp-popover-in var(--motion-fast) var(--ease-out);
+  transform-origin: top left;
 }
 
 /* ── Snackbar / Toast — canonical definitions moved to Section 26 ─────────── */

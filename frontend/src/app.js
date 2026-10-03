@@ -1216,7 +1216,7 @@ function sidebarToggleMotion() {
   const parts = [sidebar.querySelector('.fp-sidebar__scroll'), sidebar.querySelector('.fp-sidebar__bottom'),
     document.getElementById('btn-ask-fileplus')];
   for (const el of parts) {
-    fpAnimate(el, [{ opacity: 0 }, { opacity: 0, offset: 0.35 }, { opacity: 1 }], { duration: 'slow', key: 'collapse' });
+    fpAnimate(el, [{ opacity: 0 }, { opacity: 0, offset: 0.35 }, { opacity: 1 }], { duration: 'slow', easing: 'standard', key: 'collapse' });
   }
 }
 
@@ -2627,10 +2627,26 @@ function showContextMenu(x, y, items, opts = {}) {
     top = y;
   }
   const edge = menuEdgePx();
-  contextMenu.style.left = `${Math.max(0, Math.min(left, vw - w - edge))}px`;
-  contextMenu.style.top  = `${Math.max(0, Math.min(top, vh - h - edge))}px`;
+  const placedLeft = Math.max(0, Math.min(left, vw - w - edge));
+  const placedTop = Math.max(0, Math.min(top, vh - h - edge));
+  contextMenu.style.left = `${placedLeft}px`;
+  contextMenu.style.top  = `${placedTop}px`;
   cmSyncScrollCue(cmScroller(contextMenu));
   armContextMenuScrollClose();
+  // Grows out of the pointer (or the anchor button's bottom-left), wherever
+  // the edge clamp put the menu.
+  const ar = opts.anchor ? opts.anchor.getBoundingClientRect() : null;
+  menuOpenMotion(contextMenu, (ar ? ar.left : x) - placedLeft, (ar ? ar.bottom : y) - placedTop, w, h);
+}
+
+/** Menus and flyouts (§5.2 Menus & popovers): fade in while scaling up from
+ * 0.97 about (ox, oy) — the point they open from — over --motion-fast. The
+ * items are where they will stay (a 3 % scale) and take clicks and keys at
+ * once; closing is instant. */
+function menuOpenMotion(menu, ox, oy, w, h) {
+  if (!fpMotionOn()) return;
+  menu.style.transformOrigin = `${Math.round(Math.max(0, Math.min(w, ox)))}px ${Math.round(Math.max(0, Math.min(h, oy)))}px`;
+  fpAnimate(menu, [{ opacity: 0, transform: 'scale(.97)' }, { opacity: 1, transform: 'none' }], { duration: 'fast', key: 'open' });
 }
 
 /** --menu-edge: the gap a menu or popover keeps from the window edge (CSS
@@ -2768,6 +2784,8 @@ function openContextFlyout(item, btn, depth, ctx, focusFirst) {
   const top = Math.max(0, Math.min(rr.top - 5, vh - h - edge));
   menu.style.left = `${Math.max(0, left)}px`;
   menu.style.top = `${top}px`;
+  // From the side it opened on, level with the parent row.
+  menuOpenMotion(menu, left >= pr.right - 3 ? 0 : w, rr.top - top, w, h);
   cmSyncScrollCue(cmScroller(menu));
   if (focusFirst) cmFocusableItems(menu)[0]?.focus();
 }
@@ -2862,7 +2880,11 @@ function buildContextMenuItems(menuEl, items, ctx, depth) {
 function hideContextMenu() {
   clearTimeout(cmTimer);
   closeContextFlyouts(0);
-  if (contextMenu) contextMenu.style.display = 'none';
+  if (contextMenu) {
+    contextMenu.style.display = 'none';
+    // Closing is instant: an open motion still playing goes with it.
+    fpCancelAnimation(contextMenu, 'open');
+  }
 }
 
 /** Closes the menu because an item was activated (mouse or keyboard) and gives
@@ -3007,16 +3029,54 @@ function showSnackbar(message, undoLabel, onUndo) {
     const btn = document.createElement('button');
     btn.className = 'fp-snackbar__undo fp-btn fp-btn--ghost fp-btn--sm';
     btn.textContent = undoLabel;
-    btn.addEventListener('click', () => { onUndo?.(); el.remove(); });
+    btn.addEventListener('click', () => { onUndo?.(); dismissNotice(el); });
     el.appendChild(btn);
   }
   const prog = document.createElement('div');
   prog.className = 'fp-snackbar__progress';
   el.appendChild(prog);
+  const before = noticePlaces(container);
   container.appendChild(el);
   capNoticeStack(container, '.fp-snackbar');
+  noticeSlide(container, before);
   // --timer-snackbar is also its progress bar's duration (styles.css).
-  setTimeout(() => el.remove(), fpMotionMs('--timer-snackbar'));
+  setTimeout(() => dismissNotice(el), fpMotionMs('--timer-snackbar'));
+}
+
+// ── Notice motion (addendum §5.2 Notices) ────────────────────────────────────
+// A new notice slides up and fades in (its CSS animation); the ones already
+// stacked slide to their new places instead of jumping (FLIP); a dismissed
+// one is out of every count and every hit test at once (.fp-notice--leaving,
+// inert) while it fades and drops away, then leaves and the rest slide into
+// the gap. With animations off a dismissed notice is removed on the spot.
+
+/** Where each notice in `container` sits now (the FLIP "first"). */
+function noticePlaces(container) {
+  return fpMotionOn() ? [...container.children].map(el => [el, el.getBoundingClientRect().top]) : [];
+}
+
+/** Slides every notice that moved since `before` from its old place. */
+function noticeSlide(container, before) {
+  for (const [el, top] of before) {
+    if (el.parentElement !== container) continue;
+    const dy = top - el.getBoundingClientRect().top;
+    if (Math.abs(dy) < 0.5) continue;
+    fpAnimate(el, [{ transform: `translateY(${dy}px)` }, { transform: 'none' }], { duration: 'base', key: 'stack' });
+  }
+}
+
+/** Takes a snackbar or toast away (its timer, its ✕, Undo, the stack cap). */
+function dismissNotice(el) {
+  if (!el || !el.isConnected || fpExiting(el)) return;
+  fpPlayExit(el, [{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'translateY(8px)' }], {
+    cls: 'fp-notice--leaving', duration: 'fast', easing: 'in',
+    done: () => {
+      const container = el.parentElement;
+      const before = container ? noticePlaces(container) : [];
+      el.remove();
+      if (container) noticeSlide(container, before);
+    },
+  });
 }
 
 // At most this many snackbars / toasts show at once (pass 2 #62/#63). An
@@ -3030,10 +3090,11 @@ function showSnackbar(message, undoLabel, onUndo) {
 // after a pause --timer-toast-resume (styles.css, read through fpMotionMs).
 const NOTICE_MAX = 3;
 function capNoticeStack(container, sel, isKeep = () => false) {
-  let items = [...container.querySelectorAll(sel)];
+  // A notice already on its way out no longer counts.
+  let items = [...container.querySelectorAll(`${sel}:not(.fp-notice--leaving)`)];
   while (items.length > NOTICE_MAX) {
     const victim = items.find(el => !isKeep(el)) || items[0];
-    victim.remove();
+    dismissNotice(victim);
     items = items.filter(el => el !== victim);
   }
 }
@@ -3043,7 +3104,7 @@ function capNoticeStack(container, sel, isKeep = () => false) {
 function scheduleNoticeRemoval(el, ms, pausable) {
   let remaining = ms;
   let started = performance.now();
-  let timer = setTimeout(() => el.remove(), ms);
+  let timer = setTimeout(() => dismissNotice(el), ms);
   if (!pausable) return;
   const pause = () => {
     if (!timer) return;
@@ -3052,10 +3113,10 @@ function scheduleNoticeRemoval(el, ms, pausable) {
     remaining -= performance.now() - started;
   };
   const resume = () => {
-    if (timer || !el.isConnected || el.matches(':hover') || el.contains(document.activeElement)) return;
+    if (timer || !el.isConnected || fpExiting(el) || el.matches(':hover') || el.contains(document.activeElement)) return;
     started = performance.now();
     remaining = Math.max(remaining, fpMotionMs('--timer-toast-resume'));
-    timer = setTimeout(() => el.remove(), remaining);
+    timer = setTimeout(() => dismissNotice(el), remaining);
   };
   el.addEventListener('pointerenter', pause);
   el.addEventListener('focusin', pause);
@@ -3081,12 +3142,14 @@ function showToast(message, variant = '') {
     btn.textContent = '✕';
     btn.title = 'Dismiss';
     btn.setAttribute('aria-label', 'Dismiss');
-    btn.addEventListener('click', () => el.remove());
+    btn.addEventListener('click', () => dismissNotice(el));
     el.appendChild(btn);
   }
+  const before = noticePlaces(container);
   container.appendChild(el);
   capNoticeStack(container, '.fp-toast', t => t.classList.contains('fp-toast--error'));
-  if (el.isConnected) {
+  noticeSlide(container, before);
+  if (el.isConnected && !fpExiting(el)) {
     scheduleNoticeRemoval(el, fpMotionMs(variant === 'error' ? '--timer-toast-error' : '--timer-toast'), variant === 'error');
   }
 }
@@ -4775,6 +4838,33 @@ function initChromeMouseFocus() {
   for (const type of ['mouseup', 'pointerup', 'dragstart', 'dragend']) document.addEventListener(type, endPress, true);
 }
 
+// ── Press feedback (addendum §5.2 Buttons & toggles) ─────────────────────────
+// A pressed button shows it (styles.css: the pressed fill, and with
+// animations on a quick scale to .97). On the chrome — header bar, toolbar,
+// sidebar — the mouse-focus model above hands focus back during the press,
+// and Chromium then drops :active from the button itself (only its icon
+// keeps it), so the press never showed there. .fp-pressed is the same state
+// kept by hand: on from the primary button's press until it comes up, is
+// cancelled, or the pointer leaves the button.
+const PRESSABLE = '.fp-btn, .fp-button, .fp-icon-btn, .fp-circle-btn, .fp-ask, .fp-caption';
+function initPressFeedback() {
+  document.addEventListener('pointerdown', e => {
+    if (e.button !== 0) return;
+    const btn = e.target instanceof Element ? e.target.closest(PRESSABLE) : null;
+    if (!btn || btn.disabled || btn.getAttribute('aria-disabled') === 'true') return;
+    btn.classList.add('fp-pressed');
+    const release = () => {
+      btn.classList.remove('fp-pressed');
+      document.removeEventListener('pointerup', release, true);
+      document.removeEventListener('pointercancel', release, true);
+      btn.removeEventListener('pointerleave', release);
+    };
+    document.addEventListener('pointerup', release, true);
+    document.addEventListener('pointercancel', release, true);
+    btn.addEventListener('pointerleave', release);
+  }, true);
+}
+
 // ── Keyboard shortcuts ────────────────────────────────────────────────────────
 document.addEventListener('keydown', e => {
   // Ctrl+R / F5 — refresh in place (Stage 2D §7.1). There is no Electron menu
@@ -5035,6 +5125,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   initSearch();
   initToolbarLayout();
   initChromeMouseFocus();
+  initPressFeedback();
   // Tab strip: wheel-to-scrollLeft, the overflow hint, and the tablist's own
   // keyboard model (pass 2 #156/#158). The seed tab is already in the DOM, so
   // this also has to run after seedInitialTab().

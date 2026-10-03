@@ -2916,9 +2916,29 @@ const _fpOpenScrims = new Set();
 /** Shows (`open` true) or hides the scrim element `el`. */
 function fpSetScrim(el, open) {
   if (!el) return;
-  el.style.display = open ? 'flex' : 'none';
-  if (open) { el.removeAttribute('aria-hidden'); _fpOpenScrims.add(el); }
-  else { el.setAttribute('aria-hidden', 'true'); _fpOpenScrims.delete(el); }
+  if (open) {
+    // Opened again while still fading out: simply open (live, not inert).
+    fpCancelExit(el);
+    el.style.display = 'flex';
+    el.removeAttribute('aria-hidden');
+    _fpOpenScrims.add(el);
+  } else {
+    const shown = _fpOpenScrims.has(el) && el.style.display !== 'none';
+    el.setAttribute('aria-hidden', 'true');
+    _fpOpenScrims.delete(el);
+    // Closed is closed at once — out of the count, no longer modal, never
+    // hit (.fp-scrim--closing, inert) — while scrim and dialog fade out
+    // together over --motion-fast, the same time the Mica backing below
+    // takes to go (addendum §5.2 Dialogs). Off: hidden on the spot.
+    if (shown && fpMotionOn()) {
+      fpPlayExit(el, [{ opacity: 1 }, { opacity: 0 }], {
+        cls: 'fp-scrim--closing', duration: 'fast', easing: 'out',
+        done: () => { el.style.display = 'none'; },
+      });
+    } else if (!fpExiting(el)) {
+      el.style.display = 'none';
+    }
+  }
   const html = document.documentElement;
   if (_fpOpenScrims.size) html.dataset.scrimOpen = String(_fpOpenScrims.size);
   else delete html.dataset.scrimOpen;
