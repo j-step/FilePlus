@@ -811,6 +811,7 @@ test('fold counts are kept per mode: folding the bar back restores the rest stat
     await twoFrames(page);
     const opened = await state(page);
     expect(invariants(opened, 'band opened')).toEqual([]);
+    expect(before.folded).toEqual([]);
     expect(opened.folded.length).toBeGreaterThan(0);          // the case under test: opening folds
     await page.evaluate(() => document.activeElement.blur());
     await twoFrames(page);
@@ -849,6 +850,84 @@ test('folding the bar never clips its open dropdown: the dropdown closes first (
     await page.waitForFunction(() => !document.getElementById('search-slot').getAnimations().length);
     await expect(page.locator('#search-collapsed')).toBeVisible();
   } finally {
+    await app.close();
+  }
+  expect(errors).toEqual([]);
+});
+
+test('motion on, cramped bar: while the opened bar eases back the "…" holds its buttons and nothing is covered; then the rest-mode buttons return (fix round 3)', async () => {
+  const { page, app, errors } = await launchApp({ motion: true });
+  try {
+    const root = (await apiGet('/fs/list/root')).path;
+    await page.evaluate(() => setInspectorOpen(false, { persist: false }));
+    await setSize(app, page, 800, 700);
+    await open(page, [root, ...DEEP].join('\\'));
+    // A width where nothing folds at rest but opening the bar folds buttons.
+    const found = await page.evaluate(async () => {
+      const raf = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      for (let sb = 240; sb <= 480; sb += 2) {
+        document.documentElement.style.setProperty('--sidebar-w-screen', `${sb}px`);
+        await raf();
+        const l = window.__fpToolbarLayout;
+        const restFolds = document.querySelectorAll('#toolbar > [data-fold].is-folded').length;
+        if (document.getElementById('toolbar').dataset.search === 'collapsed' && restFolds === 0
+          && l.free < l.floor + 80) return sb;
+      }
+      return null;
+    });
+    expect(found).not.toBeNull();
+    await page.waitForFunction(() => !document.getAnimations().length);
+    const before = await state(page);
+    expect(invariants(before, 'rest')).toEqual([]);
+    await page.locator('#search-collapsed').click();
+    await page.waitForFunction(() => !document.getElementById('search-slot').getAnimations().length);
+    const opened = await state(page);
+    expect(invariants(opened, 'opened')).toEqual([]);
+    expect(opened.folded.length).toBeGreaterThan(0);          // the case under test
+    // Fold back, sampling every frame of the ease.
+    const frames = await page.evaluate(async () => {
+      const slot = document.getElementById('search-slot');
+      const tb = document.getElementById('toolbar');
+      closeSearchDropdown();
+      document.activeElement.blur();
+      const out = [];
+      while (slot.getAnimations().length) {
+        const covered = [...tb.querySelectorAll('.fp-icon-btn, #search-collapsed')]
+          .filter((b) => b.getClientRects().length && getComputedStyle(b).visibility !== 'hidden')
+          .filter((b) => {
+            const bb = b.getBoundingClientRect();
+            const hit = document.elementFromPoint(bb.x + bb.width / 2, bb.y + bb.height / 2);
+            return !hit || hit.closest('button') !== b;
+          }).map((b) => b.id || b.className);
+        out.push({
+          w: Math.round(slot.getBoundingClientRect().width),
+          more: document.getElementById('btn-toolbar-more').getClientRects().length > 0,
+          covered,
+          overflow: tb.scrollWidth > tb.clientWidth + 1,
+          folded: [...tb.querySelectorAll(':scope > [data-fold]')].filter((el) => !el.getClientRects().length).map((el) => el.id),
+        });
+        await new Promise((r) => requestAnimationFrame(r));
+      }
+      return out;
+    });
+    expect(frames.length).toBeGreaterThan(0);                 // the ease ran and was sampled
+    for (const [i, f] of frames.entries()) {
+      expect(f.more, `frame ${i} (${f.w}px): "…" gone mid-ease`).toBe(true);
+      expect(f.covered, `frame ${i} (${f.w}px)`).toEqual([]);
+      expect(f.overflow, `frame ${i} (${f.w}px): row overflows`).toBe(false);
+      // The opened bar's folds are held until it is the magnifier again.
+      expect(f.folded, `frame ${i} (${f.w}px): buttons came back mid-ease`).toEqual(opened.folded);
+    }
+    // Settled: the rest-mode buttons are back, exactly as before opening.
+    await page.waitForFunction(() => !document.getAnimations().length);
+    await twoFrames(page);
+    const after = await state(page);
+    expect(invariants(after, 'folded back')).toEqual([]);
+    expect(after.folded).toEqual(before.folded);
+    expect(after.moreShown).toBe(before.moreShown);
+    expect(await page.evaluate(() => window.__fpToolbarLayout.open)).toBe(0);
+  } finally {
+    await page.evaluate(() => document.documentElement.style.setProperty('--sidebar-w-screen', '240px')).catch(() => {});
     await app.close();
   }
   expect(errors).toEqual([]);

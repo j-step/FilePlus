@@ -1282,6 +1282,8 @@ function setSearchSlotWidth(slot, sw, to, animate) {
   const end = () => {
     if (_searchSlotEase !== rec) return;     // retargeted: the new ease owns the bar
     _searchSlotEase = null;
+    // A fold-back has ended: the buttons it held folded may come back.
+    if (rec.to < rec.from && !sw?.classList.contains('fp-search--expanded')) _toolbarFolds.open = 0;
     sw?.classList.remove('fp-search--sizing', 'fp-search--folding');
     layoutToolbar();
   };
@@ -1422,9 +1424,6 @@ function layoutToolbar({ animate = false } = {}) {
     - (n > 0 ? moreW + gap : 0);
   let fold = 0;
   if (mode) {
-    // Folded back and settled: the opened count is spent, so the next
-    // opening starts its own hysteresis from nothing.
-    if (mode === 'rest' && !_searchSlotEase) _toolbarFolds.open = 0;
     const was = _toolbarFolds[mode];
     while (fold < foldables.length && availWith(fold) - need < (fold < was ? TOOLBAR_HYSTERESIS : 0)) fold++;
     _toolbarFolds[mode] = fold;
@@ -1456,6 +1455,11 @@ function layoutToolbar({ animate = false } = {}) {
   // row would overflow for the length of the ease.
   const ease = _searchSlotEase;
   if (ease && ease.to < ease.from) fold = Math.max(fold, _toolbarFolds.open);
+  // Folded back and settled (no ease, or none left to hold for): the opened
+  // count is spent, so the next opening starts its own hysteresis from
+  // nothing. Only now — the hold above must still read it while the bar
+  // eases back.
+  else if (mode === 'rest') _toolbarFolds.open = 0;
   foldables.forEach((f, i) => f.el.classList.toggle('is-folded', i < fold));
   if (more) more.hidden = fold === 0;
   if (fold) toolbar.dataset.fold = String(fold);
