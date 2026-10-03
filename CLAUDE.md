@@ -261,6 +261,24 @@ worktree gets its own empty sandbox with no cross-worktree collisions; `.env` ca
 `FILEPLUS_ROOT` (or its older name `FILEPLUS_SANDBOX_PATH` -- one setting, two names; setting both to
 different folders stops the backend from starting).
 
+## Git and GitHub are Claude's job
+
+JJ does not use git, VS Code's Source Control panel or GitHub, and does not want to. All of it —
+branches, staging, commits, merges, pushes, keeping the working tree clean — is Claude's
+responsibility. Never ask JJ to run a git command or click anything in Source Control; if an action
+is blocked (e.g. a push the permission check refuses), say plainly what is needed in one step.
+
+- `C:\Dev\FilePlus` also holds JJ's personal files that are not part of FilePlus: `Servers/`
+  (~140,000 files of game-server worlds), `SETUP_PROMPT.md`, the
+  `FilePlus Playtest Feedback*.md` notes. They are ignored through `.git/info/exclude` (local only,
+  never committed). Never delete, move, stage or commit them.
+- Stage files by name (`git add -- <path>`), never `git add -A`, `git add .` or `git commit -a`, and
+  check `git diff --cached --name-only` before every commit.
+- Avoid `git checkout`/`git switch` in this folder: switching branches deletes files that are tracked
+  on one branch and not the other. Use a worktree (`.worktrees/`) for other branches.
+- After any git work, `git status` here should be empty. If VS Code shows thousands of changes,
+  something stopped being ignored — fix the ignore rules; don't stage anything.
+
 ## Development workflow
 
 JJ (the owner) is not a programmer. The harness tests, reviews and verifies the work; JJ only
