@@ -190,13 +190,19 @@ function rowByName(page, name) {
 }
 
 /** Pins `paths` as sidebar folders (POST /pins, as the app's own Pin does)
- * and re-renders the sidebar; resolves to an async undo that unpins them.
+ * and re-renders the sidebar; resolves to an async undo that unpins the ones
+ * it pinned. A path that was already pinned is left alone, both ways (POST
+ * /pins returns an existing pin as is, so undoing it would unpin something
+ * this helper never added).
  * For tests that need the sidebar to overflow: since the one-row header bar
  * (addendum §1) a 500 px window (its minimum height) no longer makes the
  * default sidebar scroll. */
 async function pinFolders(page, paths) {
+  const key = (p) => String(p).toLowerCase();
+  const existing = new Set((await apiGet('/pins')).map((pin) => key(pin.path)));
   const ids = [];
   for (const p of paths) {
+    if (existing.has(key(p))) continue;
     const r = await fetch(`${API}/pins`, {
       method: 'POST', headers: apiHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ path: p, label: p.split(/[\\/]/).pop() }),

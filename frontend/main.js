@@ -219,8 +219,8 @@ function createWindow() {
     rendererLog.info(`--- page loaded: ${mainWindow.webContents.getURL().replace(/^file:\/\/\/?/, '')}`);
   });
   mainWindow.on('unresponsive', () => mainLog.warn('window unresponsive'));
-  // The frameless titlebar's maximize button turns into Restore while the
-  // window is maximized, however it got there (the button, a titlebar
+  // The header bar's maximize caption button turns into Restore while the
+  // window is maximized, however it got there (the button, a header-bar
   // double-click, Win+Up, a snap) — pass 2 #174. win-is-maximized answers
   // the renderer's first ask at startup.
   const sendMaximized = () => {

@@ -271,6 +271,7 @@
   --w-caption:         46px;  /* a Windows caption button's width */
   --header-drag-min:   46px;  /* empty bar always left to grab the window by */
   --identity-name-max: 220px; /* the device name ellipsizes past this */
+  --header-pad-y:       6px;  /* least room above/below a tab, the "+" or the logo */
   --identity-logo:     28px;  /* the card's logo (CSS px; capped to fit the bar) */
   --caption-glyph:     10px;  /* the caption buttons' glyphs (CSS px) */
   --caption-close-bg:  #C42B1C; /* Windows' close-button red (both themes) */
@@ -314,10 +315,12 @@
                              calc(100vw - (var(--file-area-min) + var(--w-inspector-min) * var(--inspector-open)) / var(--app-zoom))));
   --rail-w-css:      calc(var(--w-sidebar-collapsed) / var(--app-zoom));
   /* The header bar in CSS px (its screen size over the zoom), and what
-     fits in it: a tab, the "+" and the logo never outgrow the bar at the
-     top zoom steps (200 % leaves it 22 CSS px tall). */
+     fits in it: a tab, the "+" and the logo are never taller than the bar
+     minus --header-pad-y screen px above and below, so at every zoom
+     (200 % leaves the bar 22 CSS px tall) there is drag room above the
+     tabs and the bar keeps its balance. */
   --h-header-css:    calc(var(--h-header) / var(--app-zoom));
-  --header-fit-h:    calc(var(--h-header-css) - 2px);
+  --header-fit-h:    calc((var(--h-header) - 2 * var(--header-pad-y)) / var(--app-zoom));
   /* The sidebar resize handle straddles the panel's edge: this much on each
      side of it, all of it taking the pointer (.fp-sidebar clips only past
      the handle's outer half). */
@@ -591,7 +594,7 @@ svg { flex-shrink: 0; }
    logo sits centred over the rail's icons in both states. The card's empty
    space and the logo stay a drag region; only the name is a control. */
 .fp-identity {
-  --identity-logo-fit: min(var(--identity-logo), calc(var(--h-header-css) - 6px));
+  --identity-logo-fit: min(var(--identity-logo), var(--header-fit-h));
   flex: none;
   width: var(--sidebar-w-css);
   min-width: 0;
@@ -765,15 +768,17 @@ svg { flex-shrink: 0; }
   margin: var(--s-6) var(--sidebar-pad-x) var(--s-4);
 }
 .fp-sidebar__top .fp-ask { flex: 1 1 auto; margin: 0; }
-.fp-sidebar__toggle { flex: none; order: 1; }  /* after Ask File+ (it leads the markup) */
+.fp-sidebar__toggle { flex: none; }
 .fp-sidebar--collapsed .fp-sidebar__top {
   flex-direction: column;
   align-self: stretch;
   margin: var(--s-4) 0;
 }
 .fp-sidebar--collapsed .fp-sidebar__top .fp-ask { flex: none; margin: 0; }
-/* Above the rail's icons, its markup place; no wider than a rail square. */
-.fp-sidebar--collapsed .fp-sidebar__toggle { order: 0; max-width: calc(100% - 2 * var(--oscroll-hot)); }
+/* Above the rail's icons (setSidebarCollapsed moves it before Ask File+ in
+   the markup, so the Tab order is the drawn order); no wider than a rail
+   square. */
+.fp-sidebar--collapsed .fp-sidebar__toggle { max-width: calc(100% - 2 * var(--oscroll-hot)); }
 
 /* Section headers (Quick Access / This PC / Tags / System — Stage 2D §9.1):
    the shared --t-section type. Sections are separated by .fp-sidebar__divider
@@ -4801,7 +4806,12 @@ body.is-dragging .fp-oscroll { pointer-events: none; }
   flex: 1 1 0;            /* fills space between icon and the close (X) button */
   min-width: 0;           /* allow ellipsis truncation when text > available */
   text-align: left;       /* short labels hug the icon, not the centerline */
-  overflow: hidden;
+  /* Clipped sideways only (for the ellipsis): at the top zooms the tab is
+     shorter than a 20px line, so the line shrinks with it and the glyphs
+     may overhang it by a hair rather than be cut. */
+  overflow-x: clip;
+  overflow-y: visible;
+  line-height: min(20px, calc(var(--header-fit-h) - 1px));
   text-overflow: ellipsis;
   white-space: nowrap;
 }

@@ -101,19 +101,18 @@
            visible shell only; it opens #ask-popout, nothing is wired to a
            model until Stage 3. Its label hides and the pill shrinks to an
            icon-only square when collapsed (.fp-sidebar--collapsed .fp-ask).
-           setSidebarCollapsed() swaps the toggle's chevron and tooltip.
-           The toggle comes first in the markup (and the Tab order, as the
-           old card's collapse button did); expanded, CSS shows it after
-           Ask File+. -->
+           setSidebarCollapsed() swaps the toggle's chevron and tooltip,
+           and moves it before Ask File+ on the rail (drawn above it) and
+           back after it when expanded, so the Tab order is the drawn order. -->
       <div class="fp-sidebar__top">
-        <button class="fp-icon-btn fp-sidebar__toggle" id="btn-sidebar-collapse"
-                data-action="toggle-sidebar" title="Collapse sidebar (Ctrl+B)" aria-label="Collapse sidebar">
-          <svg class="fp-icon fp-icon--16" aria-hidden="true"><use href="#fp-chevron-left"></use></svg>
-        </button>
         <button class="fp-ask" id="btn-ask-fileplus" data-action="ask-open"
                 title="Ask File+ (Ctrl+J)">
           <svg class="fp-icon fp-icon--16" aria-hidden="true"><use href="#fp-sparkle"></use></svg>
           <span class="fp-ask__label">Ask File+</span>
+        </button>
+        <button class="fp-icon-btn fp-sidebar__toggle" id="btn-sidebar-collapse"
+                data-action="toggle-sidebar" title="Collapse sidebar (Ctrl+B)" aria-label="Collapse sidebar">
+          <svg class="fp-icon fp-icon--16" aria-hidden="true"><use href="#fp-chevron-left"></use></svg>
         </button>
       </div>
 

@@ -432,8 +432,9 @@ test('sidebar items and panel tabs show a keyboard focus ring (pass-2 #173); the
       probe.remove();
       return c;
     });
-    // Keyboard: from the Ask File+ pill, Tab lands on Home.
-    await page.locator('#btn-ask-fileplus').focus();
+    // Keyboard: from the top row's last stop (the collapse toggle, drawn
+    // after Ask File+ since addendum §1), Tab lands on Home.
+    await page.locator('#btn-sidebar-collapse').focus();
     await page.keyboard.press('Tab');
     const ring = await page.evaluate(() => {
       const a = document.activeElement;

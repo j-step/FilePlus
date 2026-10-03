@@ -638,3 +638,95 @@ test('§1: at 800 px and at 150% zoom nothing in the bar clips; many tabs scroll
   }
   expectNoErrors(errors);
 });
+
+// §1 review round 1: the overflow fade follows the strip's own width (a
+// sidebar collapse or drag resizes it with no window resize); the tabs leave
+// drag room above them at every zoom; the sidebar top row's Tab order is the
+// order it is drawn in.
+test('§1: the tab fade follows the strip width; tabs keep drag room at 150%/200%; the top row tabs in visual order', async () => {
+  const { app, page, errors } = await launchApp();
+  try {
+    await setDeviceName(page, "JJ's PC");
+    await page.evaluate(() => {
+      if (document.getElementById('sidebar').classList.contains('fp-sidebar--collapsed')) toggleSidebar();
+    });
+    const sizeWas = await app.evaluate(({ BrowserWindow }) => {
+      const w = BrowserWindow.getAllWindows()[0];
+      const was = w.getSize();
+      w.setSize(800, 600);
+      return was;
+    });
+    await page.waitForFunction(() => innerWidth <= 800);
+    // Five tabs: clipped beside the expanded sidebar's card, room to spare
+    // beside the rail's narrower card.
+    for (let i = 0; i < 4; i++) await page.locator('#btn-new-tab').click();
+    await page.evaluate(() => { document.getElementById('tabbar').scrollLeft = 0; });
+    const fade = () => page.evaluate(() => {
+      const s = document.getElementById('tabbar');
+      return { clipped: s.scrollWidth - s.clientWidth - s.scrollLeft > 1, faded: s.classList.contains('fp-tabbar--overflow') };
+    });
+    await expect.poll(fade).toEqual({ clipped: true, faded: true });
+    await page.keyboard.press('Control+b');
+    await expect(page.locator('#sidebar')).toHaveClass(/fp-sidebar--collapsed/);
+    await expect.poll(fade, 'collapsed: the strip widened, the fade goes').toEqual({ clipped: false, faded: false });
+    await page.keyboard.press('Control+b');
+    await expect(page.locator('#sidebar')).not.toHaveClass(/fp-sidebar--collapsed/);
+    await expect.poll(fade, 'expanded again: the fade is back').toEqual({ clipped: true, faded: true });
+
+    // Drag room: at every zoom the tabs (and the "+") stay at least 12 screen
+    // px below the window's top edge, inside the bar, their labels uncut.
+    const zoomTo = async (z) => {
+      await app.evaluate(({ BrowserWindow }, f) => BrowserWindow.getAllWindows()[0].webContents.setZoomFactor(f), z);
+      await page.waitForFunction((f) => Math.abs(parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--app-zoom')) - f) < 0.001
+        && !window.__fpZoomBusy, z);
+      await frames(page);
+    };
+    for (const z of [1, 1.5, 2]) {
+      await zoomTo(z);
+      const room = await page.evaluate(() => {
+        const h = document.getElementById('header').getBoundingClientRect();
+        return [...document.querySelectorAll('#tabbar .fp-tab, #btn-new-tab')].map((el) => {
+          const r = el.getBoundingClientRect();
+          const label = el.querySelector('.fp-tab__label');
+          const lr = label?.getBoundingClientRect();
+          return { above: r.top - h.top, below: h.bottom - r.bottom, labelInBar: !lr || (lr.top >= h.top && lr.bottom <= h.bottom + 0.5) };
+        });
+      });
+      for (const r of room) {
+        expect(r.above * z, `@${z}: drag room above a tab`).toBeGreaterThanOrEqual(11.5);
+        expect(r.below, `@${z}: the tab sits inside the bar`).toBeGreaterThanOrEqual(-0.5);
+        expect(r.labelInBar, `@${z}: the label stays inside the bar`).toBe(true);
+      }
+      expectOneBar(await headerGeo(page), `tab room @${z}`);
+      if (z === 2) await windowShot(app, page, 'addendum-header-800-zoom-200');
+    }
+    await zoomTo(1);
+    await app.evaluate(({ BrowserWindow }, [w, h]) => BrowserWindow.getAllWindows()[0].setSize(w, h), sizeWas);
+
+    // Tab order = visual order: expanded, Ask File+ then the toggle; on the
+    // rail, the toggle (drawn above) then Ask File+.
+    const tabFrom = async (id) => {
+      await page.evaluate((i) => document.getElementById(i).focus(), id);
+      await page.keyboard.press('Tab');
+      return page.evaluate(() => document.activeElement?.id);
+    };
+    expect(await tabFrom('btn-ask-fileplus')).toBe('btn-sidebar-collapse');
+    expect(await tabFrom('btn-sidebar-collapse')).toBe('nav-home');
+    const drawn = () => page.evaluate(() => {
+      const t = document.getElementById('btn-sidebar-collapse').getBoundingClientRect();
+      const a = document.getElementById('btn-ask-fileplus').getBoundingClientRect();
+      return t.top >= a.bottom - 0.5 ? 'ask-above' : t.left >= a.right - 0.5 ? 'ask-left' : t.bottom <= a.top + 0.5 ? 'toggle-above' : 'other';
+    });
+    expect(await drawn()).toBe('ask-left');
+    await page.evaluate(() => toggleSidebar());
+    expect(await drawn()).toBe('toggle-above');
+    expect(await tabFrom('btn-sidebar-collapse')).toBe('btn-ask-fileplus');
+    expect(await tabFrom('btn-ask-fileplus')).toBe('nav-home');
+    await page.evaluate(() => toggleSidebar());
+    expect(await drawn()).toBe('ask-left');
+  } finally {
+    await page.evaluate(() => localStorage.removeItem('fp-device-name')).catch(() => {});
+    await app.close();
+  }
+  expectNoErrors(errors);
+});

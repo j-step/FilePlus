@@ -966,6 +966,13 @@ function setSidebarCollapsed(collapsed) {
   // .fp-header--rail. The top-row toggle points the way it will move.
   document.getElementById('header')?.classList.toggle('fp-header--rail', collapsed);
   if (btnSidebarCollapse) {
+    // Tab order = the order the row is drawn in: Ask File+ then the toggle
+    // beside it when expanded; the toggle above Ask File+ on the rail.
+    const ask = document.getElementById('btn-ask-fileplus');
+    if (ask && ask.parentElement === btnSidebarCollapse.parentElement) {
+      if (collapsed) ask.before(btnSidebarCollapse);
+      else ask.after(btnSidebarCollapse);
+    }
     const label = collapsed ? 'Expand sidebar' : 'Collapse sidebar';
     btnSidebarCollapse.title = `${label} (Ctrl+B)`;
     btnSidebarCollapse.setAttribute('aria-label', label);
@@ -4221,7 +4228,12 @@ function initTabbarScroll() {
     tabbar.scrollLeft += delta;
   }, { passive: false });
   tabbar.addEventListener('scroll', updateTabbarOverflow);
-  window.addEventListener('resize', updateTabbarOverflow);
+  // The strip's own width changes without any window resize too — the
+  // header's identity card follows the sidebar (collapse, expand, a resize
+  // drag) and the device name — so the fade watches the strip itself.
+  // (updateTabbarOverflow only toggles a mask: no layout, no observer loop.)
+  if (typeof ResizeObserver === 'function') new ResizeObserver(updateTabbarOverflow).observe(tabbar);
+  else window.addEventListener('resize', updateTabbarOverflow);
   // Tablist keyboard model (pass 2 #158): the active tab is the single tab
   // stop (roving tabindex, createTabElement/activateTab), Arrow keys move
   // along the strip, Home/End jump to its ends, Delete closes.

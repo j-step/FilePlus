@@ -65,7 +65,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   minimize:    () => ipcRenderer.send('win-minimize'),
   maximize:    () => ipcRenderer.send('win-maximize'),
   close:       () => ipcRenderer.send('win-close'),
-  // Maximize state for the titlebar's Maximize / Restore button (pass 2 #174).
+  // Maximize state for the header bar's Maximize / Restore button (pass 2 #174).
   isMaximized: () => ipcRenderer.sendSync('win-is-maximized'),
   onMaximizedChange: (fn) => ipcRenderer.on('win-maximized', (_e, maximized) => fn(!!maximized)),
   openMain:    () => ipcRenderer.send('open-main'),
