@@ -1160,20 +1160,22 @@ function initDeviceName() {
 //   1. the search bar shrinks from its preferred width (280, or wider while
 //      chips and text need it, up to 60% of the free space) to its 120 min —
 //      it fills the space up to the end of the path (addendum §2 ruling);
-//   2. it collapses fully to the 28px magnifier, which keeps the field's
-//      lighter fill (styles.css);
+//   2. it collapses fully to the magnifier, an --h-input square that keeps
+//      the field's lighter fill (styles.css);
 //   3. only then does the path overflow: #breadcrumb-wrap.is-overflowing
 //      right-anchors it under the leading fade, current folder in view;
 //   4. the current folder's crumb is never squeezed below a readable
 //      TOOLBAR_CRUMB_FLOOR (it ellipsizes, .is-tight, down to that): when
-//      even the magnifier leaves it less, the lowest-priority buttons fold
-//      away (#toolbar > [data-fold="1".."4"]: theme, refresh, inspector
-//      toggle, View/Sort), back again with the same 24px hysteresis.
+//      even the magnifier leaves it less, the lowest-priority buttons move
+//      into the "…" (See more) button (#toolbar > [data-fold="1".."4"]:
+//      theme, refresh, inspector toggle, View/Sort), back again with the
+//      same 24px hysteresis. Nothing ever just vanishes.
 // Opened while collapsed (the magnifier, Ctrl+F, a tag chip), the bar grows
-// IN FLOW — never over the path — to its preferred width or what is left
-// beside the current folder's floor, pushing the path left (it caves in
-// further under the fade); folding back runs the same width ease in reverse
-// (setSearchSlotWidth). Both are instant with animations off.
+// IN FLOW — never over the path — to its preferred width, giving way to
+// keep the current folder's name whole, then to its floor, then down to
+// TOOLBAR_SEARCH_GIVE before anything folds; it pushes the path left (it
+// caves in further under the fade). Folding back runs the same width ease
+// in reverse (setSearchSlotWidth). Both are instant with animations off.
 // Every decision uses the path's MEASURED natural width against the free
 // space — never a fixed constant — so a short path keeps a full search bar
 // on a narrow window and a deep one collapses it on a wide window. Nothing
@@ -1188,7 +1190,7 @@ function initDeviceName() {
 // changes and the end of a width ease — never per frame.
 const TOOLBAR_SEARCH_PREFERRED = 280;
 const TOOLBAR_SEARCH_MIN       = 120;
-const TOOLBAR_SEARCH_COLLAPSED = 28;
+const TOOLBAR_SEARCH_GIVE      = 80;    // opened while collapsed, it gives way to this before buttons fold
 const TOOLBAR_SEARCH_GROW_MAX  = 0.6;   // share of the free space content may grow the bar to
 const TOOLBAR_CRUMB_FLOOR      = 56;    // the current folder's readable minimum (an ellipsized name)
 const TOOLBAR_HYSTERESIS       = 24;
@@ -1261,6 +1263,44 @@ function setSearchSlotWidth(slot, sw, to, animate) {
   anim.addEventListener('cancel', end);
 }
 
+// Buttons folded into the "…" menu, per mode (step 4 above).
+const _toolbarFolds = { rest: 0, open: 0 };
+
+let _toolbarCollapsedW = 0;
+/** The folded magnifier's size: an --h-input square (styles.css). */
+function toolbarCollapsedW() {
+  if (!_toolbarCollapsedW) {
+    const v = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--h-input'));
+    _toolbarCollapsedW = Number.isFinite(v) && v > 0 ? v : 30;
+  }
+  return _toolbarCollapsedW;
+}
+
+/** The "…" (See more) button's menu: the toolbar actions folded away, with
+ * their icons — View and Sort as the same flyouts their buttons open, the
+ * inspector toggle with its on/off check (Explorer's command-bar overflow). */
+function openToolbarMoreMenu(anchor) {
+  const folded = new Set([...document.querySelectorAll('#toolbar > [data-fold].is-folded')].map((el) => el.dataset.fold));
+  const items = [];
+  if (folded.has('2')) items.push({ label: 'Refresh', action: 'refresh-directory', kbd: 'F5', icon: icon('refresh', 'fp-icon--14') });
+  if (folded.has('4')) {
+    items.push({ label: 'View', icon: icon('view-grid', 'fp-icon--14'), items: VIEW_MENU_ITEMS });
+    items.push({ label: 'Sort', icon: icon('sort', 'fp-icon--14'), items: SORT_MENU_ITEMS });
+  }
+  if (folded.has('3')) {
+    items.push({ label: 'Inspector', action: 'toggle-inspector', kbd: 'Ctrl+I', icon: icon('inspector', 'fp-icon--14'),
+      checked: () => !!document.getElementById('inspector')?.classList.contains('inspector--open') });
+  }
+  if (folded.has('1')) {
+    // The theme button's own glyph (applyTheme keeps it on the current theme).
+    const glyph = document.querySelector('#btn-theme svg')?.cloneNode(true);
+    if (glyph) glyph.setAttribute('class', 'fp-icon fp-icon--14');
+    items.push({ label: 'Toggle theme', action: 'toggle-theme', icon: glyph ? glyph.outerHTML : '' });
+  }
+  if (!items.length) return;
+  showContextMenu(0, 0, items, { anchor, ctx: menuContext() });
+}
+
 let _layoutToolbarDepth = 0;
 function layoutToolbar({ animate = false } = {}) {
   const toolbar = document.getElementById('toolbar');
@@ -1268,6 +1308,7 @@ function layoutToolbar({ animate = false } = {}) {
   const crumbs = document.getElementById('breadcrumb');
   const slot = document.getElementById('search-slot');
   const sw = document.getElementById('search-wrap');
+  const more = document.getElementById('btn-toolbar-more');
   if (!toolbar || !wrap || !crumbs || !slot) return;
   const width = toolbar.getBoundingClientRect().width;
   if (!width) return;                     // not laid out (hidden window)
@@ -1278,6 +1319,7 @@ function layoutToolbar({ animate = false } = {}) {
   let visible = 0;
   const foldables = [];
   for (const child of toolbar.children) {
+    if (child === more) continue;         // the "…" is accounted for by the folds below
     if (child === wrap || child === slot) { visible++; continue; }
     const order = Number(child.dataset.fold) || 0;
     const folded = child.classList.contains('is-folded');
@@ -1301,8 +1343,22 @@ function layoutToolbar({ animate = false } = {}) {
   // itself, so a capped crumb can never read as "fits" and flip back.
   const label = current ? (current.querySelector('.fp-breadcrumb__label') || current) : null;
   const hidden = label ? Math.max(0, label.scrollWidth - label.clientWidth) : 0;
-  const crumbNatural = Math.max(crumbs.scrollWidth, crumbs.getBoundingClientRect().width) + hidden;
-  const currentNatural = current ? current.getBoundingClientRect().width + hidden : crumbNatural;
+  let crumbNatural = Math.max(crumbs.scrollWidth, crumbs.getBoundingClientRect().width) + hidden;
+  let currentNatural = current ? current.getBoundingClientRect().width + hidden : crumbNatural;
+  // Measured through the cap, the hidden part is whole px (scrollWidth −
+  // clientWidth) while the uncapped crumb is fractional: up to 1px apart,
+  // which made the opened bar's width (it gives way to the name) differ by
+  // 1px between the capped and uncapped passes — a ResizeObserver loop. So
+  // the uncapped measure is kept on the crumb and used while it is capped,
+  // unless the two disagree by more than rounding (fonts loaded, say).
+  if (current) {
+    const kept = current._fpNatural;
+    if (!wrap.classList.contains('is-tight')) current._fpNatural = { crumbs: crumbNatural, current: currentNatural };
+    else if (kept && Math.abs(kept.current - currentNatural) <= 2 && Math.abs(kept.crumbs - crumbNatural) <= 2) {
+      crumbNatural = kept.crumbs;
+      currentNatural = kept.current;
+    }
+  }
 
   const room = free - crumbNatural;       // what the search may take beside the whole path
   const wasCollapsed = toolbar.dataset.search === 'collapsed';
@@ -1320,24 +1376,41 @@ function layoutToolbar({ animate = false } = {}) {
   const expanded = collapsed && !!sw && sw.classList.contains('fp-search--expanded');
 
   // Step 4: the current folder keeps its readable floor beside the search
-  // (the magnifier, or the opened bar at its minimum); the low-priority
-  // buttons fold, in order, only as far as that needs.
+  // (the magnifier, or the opened bar given way down to TOOLBAR_SEARCH_GIVE);
+  // only when that is still short do the low-priority buttons leave the row,
+  // in order, into the "…" (See more) button that takes the first folded
+  // slot — so folding one button alone gains nothing, and they never vanish
+  // (their actions live on in its menu, openToolbarMoreMenu). The count is
+  // kept per mode (at rest / opened) so the 24px hysteresis of one never
+  // leaks into the other: folding the bar back restores the rest count.
+  const collapsedW = toolbarCollapsedW();
   const floor = Math.min(currentNatural, crumbNatural, TOOLBAR_CRUMB_FLOOR);
-  const need = collapsed ? floor + (expanded ? TOOLBAR_SEARCH_MIN : TOOLBAR_SEARCH_COLLAPSED) : -Infinity;
-  const wasFolded = Number(toolbar.dataset.fold) || 0;
-  const availWith = (n) => foldables.slice(0, n).reduce((sum, f) => sum + f.w + gap, free);
+  const mode = !collapsed ? null : (expanded ? 'open' : 'rest');
+  const need = mode === 'open' ? floor + TOOLBAR_SEARCH_GIVE : floor + collapsedW;
+  const moreW = (more && more.getBoundingClientRect().width) || more?._fpFoldW || foldables[0]?.w || collapsedW;
+  if (more && moreW) more._fpFoldW = moreW;
+  const availWith = (n) => foldables.slice(0, n).reduce((sum, f) => sum + f.w + gap, free)
+    - (n > 0 ? moreW + gap : 0);
   let fold = 0;
-  while (fold < foldables.length && availWith(fold) - need < (fold < wasFolded ? TOOLBAR_HYSTERESIS : 0)) fold++;
+  if (mode) {
+    const was = _toolbarFolds[mode];
+    while (fold < foldables.length && availWith(fold) - need < (fold < was ? TOOLBAR_HYSTERESIS : 0)) fold++;
+    _toolbarFolds[mode] = fold;
+  } else {
+    _toolbarFolds.rest = 0;
+    _toolbarFolds.open = 0;
+  }
 
   let slotW;
   if (!collapsed) slotW = Math.floor(Math.min(preferred, room));
-  else if (!expanded) slotW = TOOLBAR_SEARCH_COLLAPSED;
+  else if (!expanded) slotW = collapsedW;
   else {
     // Opened in flow: its preferred width, but it gives way (down to its
-    // minimum) to keep the current folder's name whole; only below that does
-    // the name ellipsize, down to its floor.
+    // minimum) to keep the current folder's name whole; below that the name
+    // ellipsizes down to its floor, and then the bar gives way further, to
+    // TOOLBAR_SEARCH_GIVE, before anything folds.
     const keepWhole = availWith(fold) - Math.ceil(currentNatural) - 1;
-    slotW = Math.max(TOOLBAR_SEARCH_COLLAPSED, Math.floor(Math.min(preferred,
+    slotW = Math.max(collapsedW, Math.floor(Math.min(preferred,
       Math.max(TOOLBAR_SEARCH_MIN, keepWhole), availWith(fold) - floor)));
   }
 
@@ -1347,11 +1420,13 @@ function layoutToolbar({ animate = false } = {}) {
   // come back only once it is the magnifier again (the ease's end), or the
   // row would overflow for the length of the ease.
   const ease = _searchSlotEase;
-  if (ease && ease.to < ease.from) fold = Math.max(fold, wasFolded);
+  if (ease && ease.to < ease.from) fold = Math.max(fold, _toolbarFolds.open);
   foldables.forEach((f, i) => f.el.classList.toggle('is-folded', i < fold));
+  if (more) more.hidden = fold === 0;
   if (fold) toolbar.dataset.fold = String(fold);
   else delete toolbar.dataset.fold;
   const avail = availWith(fold);
+  window.__fpToolbarLayout = { free, floor, fold, rest: _toolbarFolds.rest, open: _toolbarFolds.open, collapsedW };
 
   // The path is laid out for the narrowest the wrap gets while the bar
   // eases (its final width when growing, its start when folding), so it
@@ -3510,7 +3585,7 @@ document.addEventListener('click', e => {
       if (document.getElementById('toolbar')?.dataset.search !== 'collapsed') {
         focusSearchInput({ keepDropdownClosed: true });
       } else {
-        // The × just folded away with the overlay: focus goes back to the
+        // The × just folded away with the bar: focus goes back to the
         // list, never left on a hidden button.
         const row = browserState.focus ? findListRow(browserState.focus) : null;
         if (row) row.focus({ preventScroll: true });
@@ -4111,6 +4186,9 @@ document.addEventListener('click', e => {
     // ── View / Sort toolbar menus (Task 10) ─────────────────────────────
     case 'open-view-menu':
       showContextMenu(0, 0, VIEW_MENU_ITEMS, { anchor: btn, ctx: menuContext() });
+      break;
+    case 'open-toolbar-more':
+      openToolbarMoreMenu(btn);
       break;
     case 'open-sort-menu':
       showContextMenu(0, 0, SORT_MENU_ITEMS, { anchor: btn, ctx: menuContext() });

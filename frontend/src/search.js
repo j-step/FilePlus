@@ -1109,6 +1109,9 @@ function maybeCollapseSearchBar() {
   if (searchState.text.trim() || searchState.chips.length) return;
   const wrap = document.getElementById('search-wrap');
   if (!wrap || !wrap.classList.contains('fp-search--expanded')) return;
+  // The folding bar clips its content (.fp-search--folding) — its own
+  // dropdown included, which hangs below it: never fold with it open.
+  if (document.getElementById('toolbar')?.dataset.search === 'collapsed') closeSearchDropdown();
   wrap.classList.remove('fp-search--expanded');
   if (typeof layoutToolbar === 'function') layoutToolbar({ animate: true });
 }

@@ -210,9 +210,10 @@
       <!-- ═════════════════════════════════════════════════════════
            A.1.4  TOOLBAR  (48px)
            Back/Forward/Up | Breadcrumb (flex-grow) | Search | View seg | Inspector toggle
-           data-fold="1..4": the order the low-priority buttons fold away in
-           when even the folded search leaves the current folder less than its
-           readable floor (app.js layoutToolbar, addendum §2) — theme first.
+           data-fold="1..4": the order the low-priority buttons move into the
+           "…" (See more) button when even the folded search leaves the
+           current folder less than its readable floor (app.js layoutToolbar,
+           addendum §2) — theme first.
       ══════════════════════════════════════════════════════════════ -->
       <div class="fp-toolbar" id="toolbar" data-search="full">
 
@@ -265,7 +266,7 @@
              BEFORE the input, Discord-style, and the text after them is the
              name query. The SLOT is the toolbar's flex child: app.js's
              layoutToolbar() sizes it (280 preferred, more for long content,
-             120 minimum) or folds it to the 28px magnifier, which keeps the
+             120 minimum) or folds it to the magnifier, which keeps the
              field's fill (#toolbar[data-search="collapsed"], Stage 2D §6.2,
              addendum §2). Opened while collapsed, the slot grows in flow and
              pushes the path left; it never covers it. -->
@@ -328,6 +329,15 @@
              <html data-theme="dark"> above. -->
         <button class="fp-icon-btn" id="btn-theme" data-fold="1" data-action="toggle-theme" title="Toggle theme">
           <svg class="fp-icon fp-icon--16" aria-hidden="true"><use href="#fp-theme-dark"></use></svg>
+        </button>
+
+        <!-- "…" See more (Explorer's command-bar overflow): shown only while
+             buttons are folded (data-fold, app.js layoutToolbar), in the
+             first folded slot; its menu lists the folded actions
+             (openToolbarMoreMenu). -->
+        <button class="fp-icon-btn" id="btn-toolbar-more" data-action="open-toolbar-more"
+                title="See more" aria-label="See more" aria-haspopup="true" hidden>
+          <svg class="fp-icon fp-icon--16" aria-hidden="true"><use href="#fp-more"></use></svg>
         </button>
 
       </div><!-- /.fp-toolbar -->

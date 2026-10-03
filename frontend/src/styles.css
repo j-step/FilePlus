@@ -1071,8 +1071,8 @@ svg { flex-shrink: 0; }
    is the toolbar's flex child; app.js's layoutToolbar() measures the path's
    natural width against the free space and writes the slot's width as
    --search-slot-w: 280 preferred (more when chips and text need it), down to
-   120, and below that #toolbar[data-search="collapsed"] folds it to the 28px
-   magnifier. Only after that does the path overflow (.is-overflowing, §9).
+   120, and below that #toolbar[data-search="collapsed"] folds it to the
+   --h-input magnifier. Only after that does the path overflow (.is-overflowing, §9).
    Opened while collapsed, the slot grows IN FLOW and pushes the path left;
    fpAnimate eases that width (app.js setSearchSlotWidth). The bar itself
    always fills its slot. */
@@ -1100,16 +1100,19 @@ svg { flex-shrink: 0; }
 /* The button groups never move or clip; the two flexible children (path and
    search slot) are the only things layoutToolbar() resizes — except that,
    when even the magnifier leaves the current folder less than its readable
-   floor, the lowest-priority buttons ([data-fold], theme first) fold away. */
+   floor, the lowest-priority buttons ([data-fold], theme first) move into
+   the "…" (See more) button, whose menu carries their actions. */
 #toolbar > * { min-width: 0; }
 #toolbar > [data-fold].is-folded { display: none !important; }
-/* Collapsed: a 28px square like its toolbar neighbours, but it keeps the
-   field's lighter fill and edge (.fp-search) — it reads as the search
-   control and breaks up the row of plain icon buttons (addendum §2). */
+#btn-toolbar-more[hidden] { display: none; }
+/* Collapsed: an --h-input square (the field's own height, so folding never
+   snaps it) that keeps the field's lighter fill and edge (.fp-search) — it
+   reads as the search control and breaks up the row of plain icon buttons
+   (addendum §2). */
 #toolbar[data-search="collapsed"] .fp-toolbar__search:not(.fp-search--expanded):not(.fp-search--folding) {
   flex: 0 0 auto;
-  width: 28px;
-  height: 28px;
+  width: var(--h-input);
+  height: var(--h-input);
   padding: 0;
   justify-content: center;
 }
@@ -1121,8 +1124,8 @@ svg { flex-shrink: 0; }
 }
 .fp-search__collapsed {
   display: none;
-  width: 26px;
-  height: 26px;
+  width: calc(var(--h-input) - 2px);    /* inside the 1px edge */
+  height: calc(var(--h-input) - 2px);
   padding: 0;
   border: none;
   border-radius: var(--r-sm);

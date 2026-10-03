@@ -15,8 +15,10 @@
 //   it; it folds back on blur/Escape when empty. Instant with motion off.
 // - The current folder's crumb is readable in every state: at least
 //   CRUMB_FLOOR wide (or whole), ellipsized with a tooltip when cut. When
-//   even the folded search leaves it less, the lowest-priority buttons fold
-//   away (theme, refresh, inspector toggle, View/Sort — in that order).
+//   even the folded search (or the opened one, given way to 80 px) leaves it
+//   less, the lowest-priority buttons move into the "…" (See more) button
+//   (theme, refresh, inspector toggle, View/Sort — in that order); its menu
+//   carries their actions. Nothing just vanishes.
 // - Keys on a focused toolbar control act on that control, never the list.
 // - Sibling sweep (spec §12, fixed-constant layout row): status bar,
 //   inspector header, tab strip and the Home header at the narrowest window
@@ -32,6 +34,7 @@ const SEARCH_PREFERRED = 280;
 const SEARCH_MIN = 120;      // addendum §2 ruling (was 180)
 const CRUMB_FLOOR = 56;      // the current crumb's readable minimum (app.js TOOLBAR_CRUMB_FLOOR)
 const INPUT_MIN = 40;        // a bar holding text still shows a usable input
+const SEARCH_GIVE = 80;      // opened while collapsed, the bar gives way to this before buttons fold
 const DEEP = ['Deep', 'Client-Projects', 'Northwind-Archive', 'Quarterly-Reports', 'Finance-Review',
   'Year-End-Closing', 'Supporting-Files', 'Scanned-Receipts', 'Final-Approved'];
 
@@ -111,6 +114,8 @@ const state = (page) => page.evaluate(() => {
     fieldFill,
     folded: foldable.filter((el) => el.getClientRects().length === 0).map((el) => el.id || el.dataset.fold),
     foldable: foldable.length,
+    moreShown: document.getElementById('btn-toolbar-more').getClientRects().length > 0,
+    hInput: parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--h-input')),
     curNatural: cur ? cur.getBoundingClientRect().width + (lab ? Math.max(0, lab.scrollWidth - lab.clientWidth) : 0) : 0,
     masked: mask !== 'none',
     curTruncated: !!lab && lab.scrollWidth > lab.clientWidth + 1,
@@ -154,7 +159,9 @@ function invariants(s, label) {
   } else if (!s.expanded) {
     if (!s.magShown) bad.push('collapsed without a magnifier');
     if (s.inputShown) bad.push('collapsed search still shows a partial input');
-    if (s.sw.w > 28.5) bad.push(`collapsed search ${s.sw.w}px`);
+    // An --h-input square: the field's own height, so folding never snaps.
+    if (s.sw.w > s.hInput + 0.5) bad.push(`collapsed search ${s.sw.w}px wide`);
+    if (Math.abs(s.sw.h - s.hInput) > 0.5) bad.push(`collapsed search ${s.sw.h}px tall, not ${s.hInput}`);
     // It keeps the field's lighter fill and edge: it reads as the search
     // control, not one more ghost button (addendum §2).
     if (s.swBg !== s.fieldFill) bad.push(`collapsed magnifier lost the field fill: ${s.swBg} vs ${s.fieldFill}`);
@@ -163,9 +170,15 @@ function invariants(s, label) {
     // Expanded from collapsed: in flow, beside the path — never over it.
     if (s.sw.x < s.wrap.r - 0.5) bad.push(`expanded search overlaps the path: ${s.sw.x} < ${s.wrap.r}`);
     if (s.magShown) bad.push('magnifier shown while expanded');
-    if (s.sw.w < SEARCH_MIN - 0.5 && s.folded.length < s.foldable) bad.push(`expanded search narrower than ${SEARCH_MIN}: ${s.sw.w}`);
+    if (s.sw.w < SEARCH_GIVE - 0.5 && s.folded.length < s.foldable) bad.push(`expanded search narrower than ${SEARCH_GIVE}: ${s.sw.w}`);
     if (s.sw.w >= SEARCH_MIN - 0.5) inputOk('expanded');
+    else if (!s.inputShown || s.inputW < 24) bad.push(`expanded (given way): input ${s.inputW}`);
   }
+  // Buttons never vanish: anything folded lives in the "…" menu, and the
+  // "…" shows only then.
+  if (s.folded.length && !s.moreShown) bad.push(`folded ${s.folded} without the "…" button`);
+  if (!s.folded.length && s.moreShown) bad.push('"…" shown with nothing folded');
+  if (s.folded.length && s.folded.length < 2) bad.push('one button folded alone (the "…" takes its slot: no gain)');
   // The current folder is readable in every state: whole, or at least
   // CRUMB_FLOOR wide (an ellipsized name, never squeezed to nothing).
   if (s.cur && s.cur.w + 1 < Math.min(s.curNatural, CRUMB_FLOOR)) bad.push(`current crumb squeezed: ${s.cur.w} < ${Math.min(s.curNatural, CRUMB_FLOOR)}`);
@@ -472,10 +485,11 @@ test('collapsed and expanded at 1400/1100/900/800 px and 100/150 %: invariants h
     const root = (await apiGet('/fs/list/root')).path;
     const deepDir = [root, ...DEEP].join('\\');
     const offenders = [];
+    // Returns what was folded into the "…" in each state it saw.
     const check = async (label, shotName) => {
       const folded = await state(page);
       offenders.push(...invariants(folded, `${label} folded`));
-      if (folded.search !== 'collapsed') return;
+      if (folded.search !== 'collapsed') return { rest: folded.folded, open: [], back: folded.folded };
       if (shotName) await windowShot(app, page, `${shotName}-collapsed`);
       await page.evaluate(() => focusSearchInput({ keepDropdownClosed: true }));
       await twoFrames(page);
@@ -488,6 +502,9 @@ test('collapsed and expanded at 1400/1100/900/800 px and 100/150 %: invariants h
       const back = await state(page);
       offenders.push(...invariants(back, `${label} folded again`));
       if (back.expanded) offenders.push(`${label}: did not fold back on blur`);
+      // Per-mode fold counts: folding back restores the rest state exactly.
+      if (back.folded.join() !== folded.folded.join()) offenders.push(`${label}: folded ${back.folded} after fold-back, ${folded.folded} before`);
+      return { rest: folded.folded, open: opened.folded, back: back.folded };
     };
     await page.evaluate(() => setInspectorOpen(false, { persist: false }));
     for (const z of [1, 1.5]) {
@@ -498,6 +515,20 @@ test('collapsed and expanded at 1400/1100/900/800 px and 100/150 %: invariants h
         await check(`${w}px @${z}`, `toolbar-search-${w}-zoom${Math.round(z * 100)}`);
       }
     }
+    // Inspector open. At the default 1200×800 nothing folds at 100 % or
+    // 125 %, at rest or opened; at 150 % anything folded is in the "…" menu
+    // (the invariants check that), never just gone.
+    await page.evaluate(() => setInspectorOpen(true, { persist: false }));
+    for (const [w, z] of [[1200, 1], [1200, 1.25], [1200, 1.5], [1100, 1.5]]) {
+      await setZoom(app, page, z);
+      await setSize(app, page, w, 800);
+      await open(page, deepDir);
+      const seen = await check(`${w}px @${z} inspector open`, `toolbar-search-${w}-zoom${Math.round(z * 100)}-inspector`);
+      if (w === 1200 && z < 1.5) {
+        if (seen.rest.length || seen.open.length || seen.back.length) offenders.push(`1200 @${z} inspector open folded ${JSON.stringify(seen)}`);
+      }
+    }
+    await page.evaluate(() => setInspectorOpen(false, { persist: false }));
     // The pre-existing edge (Stage 2D Task 7 review): a saved 280 px sidebar,
     // a 900 px window and 200 % zoom left the current crumb 0 px wide.
     await setZoom(app, page, 1);
@@ -576,7 +607,7 @@ test('expand/fold animates the bar width over --motion-base (ease-out) with moti
       await settled(page);
       let s = await state(page);
       expect(invariants(s, `motion ${motion} folded`)).toEqual([]);
-      expect(s.sw.w).toBeLessThanOrEqual(28.5);
+      expect(s.sw.w).toBeLessThanOrEqual(s.hInput + 0.5);
       // Interrupted: expand and blur in the same task, then expand and blur
       // again one frame in — it ends folded, never at a half width.
       await page.evaluate(() => {
@@ -591,7 +622,7 @@ test('expand/fold animates the bar width over --motion-base (ease-out) with moti
       s = await state(page);
       expect(invariants(s, `motion ${motion} interrupted`)).toEqual([]);
       expect(s.expanded).toBe(false);
-      expect(s.sw.w).toBeLessThanOrEqual(28.5);
+      expect(s.sw.w).toBeLessThanOrEqual(s.hInput + 0.5);
       expect(await page.evaluate(() => document.getElementById('search-wrap').className)).not.toMatch(/fp-search--(folding|sizing)/);
       // ...and expand-and-stay lands on the same width as before. The ease
       // never feeds the layout back into itself: a handful of passes (the
@@ -615,6 +646,186 @@ test('expand/fold animates the bar width over --motion-base (ease-out) with moti
     }
     expect(errors).toEqual([]);
   }
+});
+
+test('folded buttons live in the "…" (See more) menu: icons, View/Sort flyouts, the inspector check, every action works (addendum §2, fix round 1)', async () => {
+  const { page, app, errors } = await launchApp();
+  try {
+    const root = (await apiGet('/fs/list/root')).path;
+    const deepDir = [root, ...DEEP].join('\\');
+    await page.evaluate(() => {
+      setInspectorOpen(false, { persist: false });
+      document.documentElement.style.setProperty('--sidebar-w-screen', '480px');
+    });
+    await setSize(app, page, 800, 700);
+    await open(page, deepDir);
+    // Opened in this cramped bar, everything folds (the bar takes the row).
+    await page.evaluate(() => focusSearchInput({ keepDropdownClosed: true }));
+    await twoFrames(page);
+    let s = await state(page);
+    expect(invariants(s, 'cramped opened')).toEqual([]);
+    expect(s.folded.length).toBe(s.foldable);
+    await page.evaluate(() => { closeSearchDropdown(); document.activeElement.blur(); });
+    await twoFrames(page);
+    s = await state(page);
+    expect(invariants(s, 'cramped rest')).toEqual([]);
+    expect(s.folded.length).toBeGreaterThanOrEqual(2);
+    expect(s.moreShown).toBe(true);
+    // The "…" sits where the first folded button was: the end of the row.
+    expect(await page.evaluate(() => {
+      const shown = [...document.getElementById('toolbar').children].filter((c) => c.getClientRects().length);
+      return shown[shown.length - 1].id;
+    })).toBe('btn-toolbar-more');
+    await windowShot(app, page, 'toolbar-more-button');
+
+    const openMore = async () => {
+      await page.locator('#btn-toolbar-more').click();
+      await expect(page.locator('#context-menu')).toBeVisible();
+    };
+    const labels = () => page.evaluate(() => [...document.querySelectorAll('#context-menu .fp-context-menu__item')]
+      .map((b) => ({ label: b.dataset.menuLabel, icon: !!b.querySelector('svg:not(.fp-context-menu__chevron)'), checked: !!b.querySelector('.fp-context-menu__check svg') })));
+    await openMore();
+    const items = await labels();
+    const byFold = { 'btn-theme': 'Toggle theme', 'btn-refresh': 'Refresh', 'btn-inspector-toggle': 'Inspector', 'toolbar-view-sort': 'View' };
+    for (const id of s.folded) expect(items.map((i) => i.label)).toContain(byFold[id]);
+    expect(items.length).toBe(s.folded.length + (s.folded.includes('toolbar-view-sort') ? 1 : 0));
+    for (const it of items) expect(it.icon, `${it.label} has an icon`).toBe(true);
+    await windowShot(app, page, 'toolbar-more-menu');
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#context-menu')).toBeHidden();
+
+    // Fold everything (the sidebar wider still is not possible: open the bar
+    // with text so it stays open) — then every entry is there to try.
+    await page.locator('#search-collapsed').click();
+    await page.keyboard.type('zz');
+    await page.keyboard.press('Escape');
+    await page.evaluate(() => document.activeElement.blur());
+    await twoFrames(page);
+    s = await state(page);
+    expect(s.folded.length).toBe(s.foldable);
+    await openMore();
+    const all = await labels();
+    expect(all.map((i) => i.label)).toEqual(['Refresh', 'View', 'Sort', 'Inspector', 'Toggle theme']);
+    expect(all.find((i) => i.label === 'Inspector').checked).toBe(false);   // its on/off state
+    // View: the same flyout the View button opens; picking Details applies it.
+    await page.locator('#context-menu [data-menu-label="View"]').click();
+    const flyout = page.locator('.fp-context-menu--flyout');
+    await expect(flyout).toBeVisible();
+    await expect(flyout.locator('[data-menu-label="Details"]')).toBeVisible();
+    await expect(flyout.locator('[data-menu-label="Show hidden files"]')).toBeVisible();
+    await flyout.locator('[data-menu-label="List"]').click();
+    await expect.poll(() => page.evaluate(() => viewMenuKey())).toBe('list');
+    // Sort: the Sort button's flyout.
+    await openMore();
+    await page.locator('#context-menu [data-menu-label="Sort"]').click();
+    await expect(page.locator('.fp-context-menu--flyout [data-menu-label="Size"]')).toBeVisible();
+    await page.locator('.fp-context-menu--flyout [data-menu-label="Size"]').click();
+    await expect.poll(() => page.evaluate(() => browserState.sort.key)).toBe('size');
+    // Inspector: toggles, and the menu shows it on next time.
+    await openMore();
+    await page.locator('#context-menu [data-menu-label="Inspector"]').click();
+    await expect.poll(() => page.evaluate(() => document.getElementById('inspector').classList.contains('inspector--open'))).toBe(true);
+    await twoFrames(page);
+    if (await page.locator('#btn-toolbar-more').isVisible() && (await state(page)).folded.includes('btn-inspector-toggle')) {
+      await openMore();
+      expect((await labels()).find((i) => i.label === 'Inspector').checked).toBe(true);
+      await page.keyboard.press('Escape');
+    }
+    await page.evaluate(() => setInspectorOpen(false, { persist: false }));
+    await twoFrames(page);
+    // Theme: toggles the theme.
+    const theme0 = await page.evaluate(() => document.documentElement.dataset.theme);
+    await openMore();
+    await page.locator('#context-menu [data-menu-label="Toggle theme"]').click();
+    await expect.poll(() => page.evaluate(() => document.documentElement.dataset.theme)).not.toBe(theme0);
+    await page.evaluate(() => toggleTheme());
+    // Refresh: re-lists the folder.
+    const renders = await page.evaluate(() => window.__fpRenderCount || 0);
+    await openMore();
+    await page.locator('#context-menu [data-menu-label="Refresh"]').click();
+    await expect.poll(() => page.evaluate(() => window.__fpLoadPending === 0 && (window.__fpRenderCount || 0) > 0)).toBe(true);
+    expect(await page.evaluate(() => window.__fpLoadPending)).toBe(0);
+    void renders;
+    await page.evaluate(() => clearSearch());
+  } finally {
+    await page.evaluate(() => document.documentElement.style.setProperty('--sidebar-w-screen', '240px')).catch(() => {});
+    await app.close();
+  }
+  expect(errors).toEqual([]);
+});
+
+test('fold counts are kept per mode: folding the bar back restores the rest state, even inside the hysteresis band (fix round 1)', async () => {
+  const { page, app, errors } = await launchApp();
+  try {
+    const root = (await apiGet('/fs/list/root')).path;
+    await page.evaluate(() => setInspectorOpen(false, { persist: false }));
+    await setSize(app, page, 800, 700);
+    await open(page, [root, ...DEEP].join('\\'));
+    // Narrow the bar from the sidebar until the free room sits in the band
+    // [need, need + 24): no fold at rest, but one that would never come back
+    // if the opened bar's fold count leaked into the rest state.
+    const band = await page.evaluate(async () => {
+      const raf = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      for (let sb = 240; sb <= 480; sb += 2) {
+        document.documentElement.style.setProperty('--sidebar-w-screen', `${sb}px`);
+        await raf();
+        const l = window.__fpToolbarLayout;
+        const need = l.floor + l.collapsedW;
+        if (document.getElementById('toolbar').dataset.search === 'collapsed' && l.free >= need && l.free < need + 24) {
+          return { sb, free: l.free, need };
+        }
+      }
+      return null;
+    });
+    expect(band).not.toBeNull();
+    const before = await state(page);
+    expect(invariants(before, 'band rest')).toEqual([]);
+    expect(before.folded).toEqual([]);
+    await page.evaluate(() => focusSearchInput({ keepDropdownClosed: true }));
+    await twoFrames(page);
+    const opened = await state(page);
+    expect(invariants(opened, 'band opened')).toEqual([]);
+    expect(opened.folded.length).toBeGreaterThan(0);          // the case under test: opening folds
+    await page.evaluate(() => document.activeElement.blur());
+    await twoFrames(page);
+    const after = await state(page);
+    expect(invariants(after, 'band folded back')).toEqual([]);
+    expect(after.folded).toEqual(before.folded);
+  } finally {
+    await page.evaluate(() => document.documentElement.style.setProperty('--sidebar-w-screen', '240px')).catch(() => {});
+    await app.close();
+  }
+  expect(errors).toEqual([]);
+});
+
+test('folding the bar never clips its open dropdown: the dropdown closes first (fix round 1)', async () => {
+  const { page, app, errors } = await launchApp({ motion: true });
+  try {
+    const root = (await apiGet('/fs/list/root')).path;
+    await page.evaluate(() => setInspectorOpen(false, { persist: false }));
+    await setSize(app, page, 1100, 760);
+    await open(page, [root, ...DEEP].join('\\'));
+    expect((await state(page)).search).toBe('collapsed');
+    await page.locator('#search-collapsed').click();
+    await expect(page.locator('#search-dropdown')).toBeVisible();
+    // A clear that folds the bar while its dropdown is open (the in-bar ×
+    // takes focus from the input, whose blur leaves the dropdown alone).
+    await page.keyboard.type('q');
+    await expect(page.locator('#search-dropdown')).toBeVisible();
+    const atFold = await page.evaluate(() => {
+      document.getElementById('search-clear-inline').focus();
+      clearSearch();
+      const wrap = document.getElementById('search-wrap');
+      return { folding: wrap.classList.contains('fp-search--folding'), ddOpen: !document.getElementById('search-dropdown').hidden, expanded: wrap.classList.contains('fp-search--expanded') };
+    });
+    expect(atFold.expanded).toBe(false);
+    expect(atFold.ddOpen).toBe(false);
+    await page.waitForFunction(() => !document.getElementById('search-slot').getAnimations().length);
+    await expect(page.locator('#search-collapsed')).toBeVisible();
+  } finally {
+    await app.close();
+  }
+  expect(errors).toEqual([]);
 });
 
 test('every zoom step, inspector closed and open: search is never partially visible, the collapse order holds (§5, §6.2)', async () => {
@@ -660,6 +871,21 @@ test('a screen-name crumb (Settings) that has to ellipsize settles: no layout lo
     await page.evaluate(() => setInspectorOpen(true, { persist: false }));
     await page.evaluate(() => switchScreen('settings'));
     await twoFrames(page);
+    const idleCheck = () => page.evaluate(async () => {
+      let runs = 0;
+      let loops = 0;
+      const orig = window.layoutToolbar;
+      window.layoutToolbar = function (...a) { runs++; return orig.apply(this, a); };
+      const onErr = (e) => { if (/ResizeObserver loop/.test(e.message)) loops++; };
+      window.addEventListener('error', onErr);
+      for (let i = 0; i < 12; i++) await new Promise((r) => requestAnimationFrame(r));
+      window.layoutToolbar = orig;
+      window.removeEventListener('error', onErr);
+      return { runs, loops };
+    });
+    // The original configuration (800 × 600, 150 %, inspector open) settles.
+    expect(await idleCheck()).toEqual({ runs: 0, loops: 0 });
+    expect(invariants(await state(page), 'settings 800 @1.5 inspector open')).toEqual([]);
     // The current crumb now keeps a readable floor (addendum §2: buttons fold
     // before it goes below it), so where it is cut-but-readable depends on
     // the run's fonts: widen the sidebar until it is (inspector closed, so
