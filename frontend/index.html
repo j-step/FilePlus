@@ -1101,7 +1101,7 @@
 <!-- ══════════════════════════════════════════════════════════════════════════
      A.11.1  COMMAND PALETTE  (Ctrl+K)
      Container: bg-raised + border-subtle + 10px radius + highlight-top + shadow-modal
-     Backdrop scrim: rgba(0,0,0,0.4) + blur
+     Backdrop scrim: the one .fp-scrim (--scrim-bg + --scrim-blur)
      Open animation: dur-fast fade + translateY(4px) ease-out
 ══════════════════════════════════════════════════════════════════════════ -->
 <div class="fp-scrim" id="palette-scrim" aria-hidden="true" style="display:none">
@@ -1187,10 +1187,10 @@
 <!-- ══════════════════════════════════════════════════════════════════════════
      A.11.2  TAG CANVAS OVERLAY
      820×540 centered modal. bg-raised + border-strong + 10px radius + highlight-top + shadow-modal
-     Backdrop: rgba(0,0,0,0.5) + stronger blur
+     Backdrop: the one .fp-scrim (--scrim-bg + --scrim-blur), like every modal
      Close: Escape + click outside
 ══════════════════════════════════════════════════════════════════════════ -->
-<div class="fp-scrim fp-scrim--strong" id="tag-canvas-scrim" aria-hidden="true" style="display:none">
+<div class="fp-scrim" id="tag-canvas-scrim" aria-hidden="true" style="display:none">
   <div class="fp-modal fp-modal--tag-canvas" id="tag-canvas" role="dialog" aria-modal="true" aria-label="Tag Canvas">
 
     <!-- Task 15 / D2C-3: still a Stage 3 placeholder. The header (title +

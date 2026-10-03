@@ -53,6 +53,10 @@ if ($LASTEXITCODE -ne 0) { Write-Host 'check_icons failed' -ForegroundColor Red;
 # switch, prefers-reduced-motion gates nothing, JS animates only via fpAnimate.
 node scripts/check_motion.js
 if ($LASTEXITCODE -ne 0) { Write-Host 'check_motion failed' -ForegroundColor Red; exit 1 }
+# check_layers: one z-index scale (--z-* tokens on :root, in order); every
+# z-index in styles.css is on it; none in index.html or the JS (addendum §3).
+node scripts/check_layers.js
+if ($LASTEXITCODE -ne 0) { Write-Host 'check_layers failed' -ForegroundColor Red; exit 1 }
 
 # filetypes parity: frontend/src/filetypes.js is generated from
 # backend/filetypes.py (scripts/build_filetypes.py); tests/test_filetypes.py

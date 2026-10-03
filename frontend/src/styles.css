@@ -69,11 +69,33 @@
   --shadow-popover: 0 8px 24px rgba(0, 0, 0, 0.30);
   --shadow-modal:   0 16px 48px rgba(0, 0, 0, 0.40);
   --shadow-window:  none;
-  /* Snackbars and toasts: above panels and the modal scrims (1000), below
-     the drag badge (1200). */
+  /* ---------- Layers: the one z-index scale (addendum §3) ----------
+     Every z-index in this file is one of these (scripts/check_layers.js
+     enforces it; `calc(var(--z-x) + n)` may lift one step inside a tier, never
+     past the next). Lowest to highest: */
+  --z-base: 0;             /* the bottom of a component's own stack */
+  --z-local: 1;            /* one above a sibling inside a component */
+  --z-raised: 2;           /* sticky list headers; the collapsed toolbar's open search */
+  --z-overlay-scroll: 5;   /* overlay scrollbar tracks (overlayscroll.js) */
+  --z-marquee: 6;          /* the rubber-band selection rectangle */
+  --z-header: 8;           /* the header bar (title bar + tabs, addendum §1) */
+  --z-sidebar-resize: 10;  /* the sidebar's resize handle (the rail's thumb +1) */
+  --z-popover: 200;        /* popovers, the Ask File+ popout, dropdowns */
+  --z-dropdown: 300;       /* the search dropdown (its overlay bar +1) */
+  --z-menu: 600;           /* context menus; each flyout one above its parent */
+  --z-tooltip: 700;
+  --z-drag: 800;           /* the drag badge that follows the pointer */
+  /* The modal scrim: one full-window layer at <body> level, above every
+     layer above, so it blurs and dims all of them evenly. */
+  --z-scrim: 1000;
+  --z-modal: 1010;         /* the dialog a scrim serves (its child: above it by construction) */
+  /* Snackbars and toasts: above the scrim and its dialog, so an error raised
+     from a dialog is readable. */
   --z-notice: 1100;
-  /* Context menus; each flyout one above its parent menu. */
-  --z-menu: 600;
+
+  /* The scrim's dim and blur, one treatment for every modal surface. */
+  --scrim-bg: rgba(0, 0, 0, 0.45);
+  --scrim-blur: blur(4px);
   /* Snackbar / toast stacks sit this far above the window's bottom edge
      (clear of the status bar). */
   --notice-bottom: 40px;
@@ -332,6 +354,7 @@
 }
 
 [data-theme="light"] {
+  --scrim-bg: rgba(0, 0, 0, 0.30);
   --bg-backdrop: #F4F4F5;
   --bg-chrome:   #F4F4F5;
   --bg-content:  #FFFFFF;
@@ -446,6 +469,13 @@ html[data-mica="on"] .app,
 html[data-mica="on"] .shell { background: transparent; }
 html[data-mica="on"] .fp-titlebar,
 html[data-mica="on"] .fp-sidebar { background: transparent; }
+/* While a modal scrim is up the window gets its solid chrome back (addendum
+   §3). Chromium draws a backdrop-filter's blurred copy OVER the backdrop, so
+   where the backdrop is transparent (the Mica title bar and sidebar) the
+   sharp text stayed visible through the blur. With an opaque root the blur
+   has real paint everywhere and the whole window reads the same under the
+   scrim. Every scrim opener removes aria-hidden; every closer puts it back. */
+html[data-mica="on"]:has(> body > .fp-scrim:not([aria-hidden="true"])) { background: var(--bg-chrome); }
 
 button, input, select, textarea {
   font: inherit;
@@ -614,7 +644,7 @@ svg { flex-shrink: 0; }
   bottom: 0;
   width: 6px;
   cursor: ew-resize;
-  z-index: 10;
+  z-index: var(--z-sidebar-resize);
   background: transparent;
   transition: background-color var(--motion-fast) var(--ease-out);
 }
@@ -1021,7 +1051,7 @@ svg { flex-shrink: 0; }
   top: 50%;
   margin-top: calc(var(--h-input) / -2);
   width: var(--search-overlay-w, 280px);
-  z-index: 2;
+  z-index: var(--z-raised);
   background: var(--bg-raised);
 }
 .fp-search__collapsed {
@@ -1315,7 +1345,7 @@ svg { flex-shrink: 0; }
   border: 1px solid var(--border-mid);
   border-radius: var(--r-card);
   box-shadow: var(--shadow-popover);
-  z-index: 300;
+  z-index: var(--z-dropdown);
 }
 .fp-search-dd__section {
   display: flex;
@@ -1547,13 +1577,6 @@ svg { flex-shrink: 0; }
   line-height: 1.6;
 }
 
-/* Stronger scrim for tag canvas */
-.fp-scrim--strong {
-  background: rgba(0, 0, 0, 0.5);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-}
-
 /* Tag canvas modal size */
 .fp-modal--tag-canvas {
   width: 820px;
@@ -1569,13 +1592,6 @@ svg { flex-shrink: 0; }
 /* Remove default padding from confirmation modal (handled per-section) */
 #modal { padding: 0; overflow: hidden; }
 
-.fp-palette__backdrop {
-  position: fixed; inset: 0;
-  background: rgba(0, 0, 0, 0.4);
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
-  animation: fp-fade-in var(--motion-fast) var(--ease-out);
-}
 @keyframes fp-fade-in { from { opacity: 0; } to { opacity: 1; } }
 
 /* -----------------------------------------------------------------------------
@@ -1985,7 +2001,7 @@ svg { flex-shrink: 0; }
   font: 500 var(--t-body) var(--font-ui);
   cursor: pointer;
   position: relative;
-  z-index: 1;
+  z-index: var(--z-local);
   transition: color var(--motion-fast) var(--ease-out);
   user-select: none;
 }
@@ -2547,7 +2563,7 @@ svg { flex-shrink: 0; }
   box-shadow: var(--shadow-popover);
   padding: var(--s-4);
   min-width: 180px;
-  z-index: 200;
+  z-index: var(--z-popover);
   animation: fp-popover-in var(--motion-fast) var(--ease-out);
 }
 @keyframes fp-popover-in {
@@ -2556,8 +2572,8 @@ svg { flex-shrink: 0; }
 }
 
 /* === Ask File+ popout (Task 15, design spec §9) ===
-   Extends .fp-popover (chrome + z-index 200 — above the sidebar, below every
-   modal's 1000+). Positioned via JS (openAskPopout() in app.js) at the
+   Extends .fp-popover (chrome + --z-popover — above the sidebar, below every
+   modal scrim). Positioned via JS (openAskPopout() in app.js) at the
    sidebar button's bottom-left, the same getBoundingClientRect() anchor
    technique showContextMenu() uses for the View/Sort toolbar dropdowns. No
    AI is wired yet: the Send button stays permanently disabled (Stage 3). */
@@ -2612,18 +2628,6 @@ svg { flex-shrink: 0; }
   gap: var(--s-8);
 }
 
-.fp-modal-scrim {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.45);
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1000;
-  animation: fp-modal-scrim-in var(--motion-fast) var(--ease-out);
-}
 @keyframes fp-modal-scrim-in {
   from { opacity: 0; }
   to   { opacity: 1; }
@@ -2841,7 +2845,7 @@ svg { flex-shrink: 0; }
   position: fixed;
   left: -9999px;
   top: -9999px;
-  z-index: 1200;
+  z-index: var(--z-drag);
   display: flex;
   align-items: center;
   gap: var(--s-6);
@@ -3019,7 +3023,7 @@ body.is-dragging { cursor: default; }
   align-items: center;
   position: sticky;
   top: 0;
-  z-index: 2;
+  z-index: var(--z-raised);
 }
 .fp-list-header--sticky { background: var(--bg-chrome); }
 .fp-list-header__col {
@@ -3127,7 +3131,7 @@ body.is-dragging { cursor: default; }
   font: 400 var(--t-small) var(--font-ui);
   pointer-events: none;
   white-space: nowrap;
-  z-index: 200;
+  z-index: var(--z-tooltip);
   animation: fp-tooltip-in var(--motion-fast) var(--ease-standard);
 }
 .fp-tooltip svg, .fp-tooltip .icon { width: 12px; height: 12px; }
@@ -3238,7 +3242,7 @@ body.is-dragging { cursor: default; }
 /* The two notice stacks. Each notice is an ordinary flex item, so several
    at once stack instead of painting on one spot (pass 2 #62). They sit above
    every panel AND above the modal scrims (an error raised from a dialog is
-   still read), below only the drag badge. */
+   still read): the top of the --z-* scale. */
 #snackbar-container,
 #toast-container {
   position: fixed;
@@ -3540,7 +3544,7 @@ body.is-dragging { cursor: default; }
    column reaches the content. It stays under a panel's resize handle. */
 .fp-oscroll {
   position: absolute;
-  z-index: 5;
+  z-index: var(--z-overlay-scroll);
   opacity: 0;
   touch-action: none;
   transition: opacity var(--motion-base) var(--ease-standard);
@@ -3548,8 +3552,8 @@ body.is-dragging { cursor: default; }
   -webkit-app-region: no-drag;
 }
 .fp-oscroll.is-visible { opacity: 1; }
-/* The search dropdown's bar sits over the dropdown (z-index 300). */
-#search-dropdown + .fp-oscroll { z-index: 301; }
+/* The search dropdown's bar sits one step over the dropdown itself. */
+#search-dropdown + .fp-oscroll { z-index: calc(var(--z-dropdown) + 1); }
 .fp-oscroll.is-none { display: none; }
 body.is-dragging .fp-oscroll { pointer-events: none; }
 .fp-oscroll__thumb {
@@ -3990,7 +3994,7 @@ body.is-dragging .fp-oscroll { pointer-events: none; }
   flex-shrink: 0;
   position: sticky;
   top: 0;
-  z-index: 1;
+  z-index: var(--z-raised);
   /* Rows wider than the pane scroll sideways in #list-scroll; the header's
      columns follow by --list-scroll-x (browser.js initViewLayout), clipped
      here (pass 2 #177). */
@@ -4484,7 +4488,7 @@ body.is-dragging .fp-oscroll { pointer-events: none; }
   border: 1px solid var(--accent-edge);
   border-radius: var(--r-chip);
   pointer-events: none;
-  z-index: 50;
+  z-index: var(--z-marquee);
 }
 
 /* Sort chevron active state on any sortable column (A.3.1) */
@@ -4633,90 +4637,6 @@ body.is-dragging .fp-oscroll { pointer-events: none; }
 .statusbar__backend[data-state="offline"] .statusbar__backend-dot,
 .statusbar__backend[data-state="error"]   .statusbar__backend-dot { background: var(--bad); }
 .statusbar__backend[data-state="ok"] .statusbar__backend-label { color: var(--good); }
-
-/* =============================================================================
-   45. COMMAND PALETTE
-   ============================================================================= */
-.scrim {
-  position: fixed;
-  inset: 0;
-  background: rgba(10, 8, 16, 0.55);
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  padding-top: 15vh;
-  z-index: 1000;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity var(--motion-base) var(--ease-standard);
-}
-.scrim.open {
-  opacity: 1;
-  pointer-events: all;
-}
-.palette {
-  width: 560px;
-  max-width: calc(100vw - var(--s-32));
-  background: var(--bg-raised);
-  border: 1px solid var(--border-mid);
-  border-radius: var(--r-modal);
-  box-shadow: var(--shadow-modal);
-  overflow: hidden;
-  transform: translateY(-8px);
-  transition: transform var(--motion-base) var(--ease-out);
-}
-.scrim.open .palette { transform: translateY(0); }
-.palette__search {
-  display: flex;
-  align-items: center;
-  gap: var(--s-10);
-  padding: 0 var(--s-16);
-  height: 48px;
-  border-bottom: 1px solid var(--border-subtle);
-}
-.palette__icon { flex-shrink: 0; color: var(--text-tertiary); }
-.palette__input {
-  flex: 1;
-  background: none;
-  border: none;
-  outline: none;
-  font: 400 var(--t-read) var(--font-ui);
-  color: var(--text-primary);
-}
-.palette__input::placeholder { color: var(--text-tertiary); }
-.palette__esc {
-  font: 500 var(--t-small) var(--font-ui);
-  color: var(--text-tertiary);
-  background: var(--bg-pressed);
-  border-radius: var(--r-chip);
-  padding: 2px 6px;
-  flex-shrink: 0;
-}
-.palette__results { padding: var(--s-6) 0; max-height: 320px; overflow-y: auto; }
-.palette__group-label {
-  padding: var(--s-6) var(--s-16) var(--s-2);
-  font: 500 var(--t-micro) var(--font-ui);
-  color: var(--text-tertiary);
-  text-transform: uppercase;
-  letter-spacing: var(--track-caps);
-}
-.palette__item {
-  display: flex;
-  align-items: center;
-  gap: var(--s-10);
-  width: 100%;
-  height: 34px;
-  padding: 0 var(--s-16);
-  background: transparent;
-  border: none;
-  color: var(--text-secondary);
-  font: 400 var(--t-body) var(--font-ui);
-  cursor: pointer;
-  text-align: left;
-  transition: background var(--motion-fast) var(--ease-standard), color var(--motion-fast) var(--ease-standard);
-}
-.palette__item:hover { background: var(--accent-wash); color: var(--text-primary); }
-.palette__item svg { color: var(--text-tertiary); flex-shrink: 0; }
 
 /* =============================================================================
    47. TRAY EXTENDED CLASSES
@@ -5047,7 +4967,7 @@ body.is-dragging .fp-oscroll { pointer-events: none; }
   --oscroll-w: 2px;
   --oscroll-w-hot: 3px;
 }
-.fp-sidebar--collapsed .fp-oscroll { pointer-events: none; z-index: 11; }
+.fp-sidebar--collapsed .fp-oscroll { pointer-events: none; z-index: calc(var(--z-sidebar-resize) + 1); }
 .fp-sidebar--collapsed .fp-oscroll__thumb { pointer-events: auto; }
 body.is-dragging .fp-sidebar--collapsed .fp-oscroll__thumb { pointer-events: none; }
 .fp-sidebar--collapsed .fp-sidebar__scroll {
@@ -5236,19 +5156,24 @@ button.fp-pill:hover {
   flex-shrink: 0;
 }
 /* ── Scrim ────────────────────────────────────────────────────────────────── */
+/* Every modal surface (confirm / conflict modal, Properties, More filters, the
+   command palette, the Tag Canvas) opens on one of these: a direct child of
+   <body>, outside #app, so no stacking context in the app can lift anything
+   above it. It covers the whole window (title bar and its window controls
+   included: no-drag, so a click there reaches the scrim, not the OS). */
 .fp-scrim {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.45);
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
+  background: var(--scrim-bg);
+  backdrop-filter: var(--scrim-blur);
+  -webkit-backdrop-filter: var(--scrim-blur);
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 1000;
+  z-index: var(--z-scrim);
+  -webkit-app-region: no-drag;
   animation: fp-modal-scrim-in var(--motion-fast) var(--ease-out);
 }
-[data-theme="light"] .fp-scrim { background: rgba(0, 0, 0, 0.30); }
 
 /* ── Context menu (extends fp-popover) ───────────────────────────────────── */
 .fp-context-menu {
@@ -5363,7 +5288,7 @@ button.fp-pill:hover {
   border-radius: var(--r-card);
   box-shadow: var(--shadow-popover);
   padding: var(--s-4);
-  z-index: 200;
+  z-index: var(--z-popover);
   animation: fp-popover-in var(--motion-fast) var(--ease-out);
 }
 
@@ -6260,7 +6185,7 @@ button.fp-pill:hover {
    fanned out of the folder's mouth. The folder body is lifted above them so
    they read as being INSIDE it — a folder tile must still say "folder"
    first, and its contents second. */
-.fp-thumb-box--peeked > .fp-icon { position: relative; z-index: 1; }
+.fp-thumb-box--peeked > .fp-icon { position: relative; z-index: var(--z-local); }
 .fp-thumb--mini {
   inset: auto;
   left: 50%;
@@ -6268,7 +6193,7 @@ button.fp-pill:hover {
   margin: 0;
   width: 40%;
   height: 40%;
-  z-index: 0;
+  z-index: var(--z-base);
   object-fit: cover;
   outline: none;
   border: 1px solid var(--border-subtle);
