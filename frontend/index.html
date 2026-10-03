@@ -210,6 +210,9 @@
       <!-- ═════════════════════════════════════════════════════════
            A.1.4  TOOLBAR  (48px)
            Back/Forward/Up | Breadcrumb (flex-grow) | Search | View seg | Inspector toggle
+           data-fold="1..4": the order the low-priority buttons fold away in
+           when even the folded search leaves the current folder less than its
+           readable floor (app.js layoutToolbar, addendum §2) — theme first.
       ══════════════════════════════════════════════════════════════ -->
       <div class="fp-toolbar" id="toolbar" data-search="full">
 
@@ -252,7 +255,7 @@
 
         <!-- Refresh: re-lists the current folder (no index run), keeps
              selection by path and scroll position, spins while in flight -->
-        <button class="fp-icon-btn" id="btn-refresh"
+        <button class="fp-icon-btn" id="btn-refresh" data-fold="2"
                 data-action="refresh-directory" title="Refresh (F5)">
           <svg class="fp-icon fp-icon--16" aria-hidden="true"><use href="#fp-refresh"></use></svg>
         </button>
@@ -262,15 +265,15 @@
              BEFORE the input, Discord-style, and the text after them is the
              name query. The SLOT is the toolbar's flex child: app.js's
              layoutToolbar() sizes it (280 preferred, more for long content,
-             180 minimum) or folds it to the 28px magnifier
-             (#toolbar[data-search="collapsed"], Stage 2D §6.2). Opened while
-             collapsed, the bar overlays the path from inside the slot, so
-             nothing reflows. -->
+             120 minimum) or folds it to the 28px magnifier, which keeps the
+             field's fill (#toolbar[data-search="collapsed"], Stage 2D §6.2,
+             addendum §2). Opened while collapsed, the slot grows in flow and
+             pushes the path left; it never covers it. -->
         <div class="fp-toolbar__search-slot" id="search-slot">
         <div class="fp-search fp-toolbar__search" id="search-wrap">
           <!-- Collapsed stand-in: the whole bar folds into this button under
                #toolbar[data-search="collapsed"]; clicking it (or Ctrl+F)
-               opens the bar as an overlay (search.js expandSearchBar). -->
+               opens the bar again, in flow (search.js expandSearchBar). -->
           <button class="fp-search__collapsed" id="search-collapsed"
                   data-action="focus-search" title="Search files" aria-label="Search files">
             <svg class="fp-icon fp-icon--14" aria-hidden="true"><use href="#fp-search"></use></svg>
@@ -284,8 +287,8 @@
                  role="combobox" aria-expanded="false" aria-controls="search-dropdown" />
           <!-- In-bar clear (Explorer's model): shown whenever the bar holds
                text or chips (.fp-search--has-content, search.js), so a search
-               always has a one-click exit — also when the collapsed bar's
-               overlay covers the path's "Search in … ×" (Stage 2D §6.2). -->
+               always has a one-click exit — also when the path's "Search in
+               … ×" is caved in beside the opened collapsed bar (§6.2). -->
           <button type="button" class="fp-search__clear" id="search-clear-inline"
                   data-action="search-clear-inline" title="Clear search" aria-label="Clear search">
             <svg class="fp-icon fp-icon--10" aria-hidden="true"><use href="#fp-close"></use></svg>
@@ -303,7 +306,7 @@
              the old List/Grid segmented toggle. Both open the shared
              #context-menu anchored below the button (showContextMenu's
              {anchor} option) from VIEW_MENU_ITEMS/SORT_MENU_ITEMS (app.js). -->
-        <div style="display:flex;gap:2px;flex-shrink:0">
+        <div id="toolbar-view-sort" data-fold="4" style="display:flex;gap:2px;flex-shrink:0">
           <button class="fp-icon-btn" id="btn-view-menu"
                   data-action="open-view-menu" title="View" aria-haspopup="true">
             <svg class="fp-icon fp-icon--16" aria-hidden="true"><use href="#fp-view-grid"></use></svg>
@@ -315,7 +318,7 @@
         </div>
 
         <!-- Inspector toggle -->
-        <button class="fp-icon-btn" id="btn-inspector-toggle"
+        <button class="fp-icon-btn" id="btn-inspector-toggle" data-fold="3"
                 data-action="toggle-inspector" title="Toggle inspector (Ctrl+I)">
           <svg class="fp-icon fp-icon--16" aria-hidden="true"><use href="#fp-inspector"></use></svg>
         </button>
@@ -323,7 +326,7 @@
         <!-- Theme toggle (keep from old toolbar). Icon tracks the resolved
              theme (applyTheme swaps the <use> href); static default matches
              <html data-theme="dark"> above. -->
-        <button class="fp-icon-btn" id="btn-theme" data-action="toggle-theme" title="Toggle theme">
+        <button class="fp-icon-btn" id="btn-theme" data-fold="1" data-action="toggle-theme" title="Toggle theme">
           <svg class="fp-icon fp-icon--16" aria-hidden="true"><use href="#fp-theme-dark"></use></svg>
         </button>
 

@@ -1153,28 +1153,44 @@ function initDeviceName() {
   });
 }
 
-// ── Toolbar layout (Stage 2D §6.2) ─────────────────────────────────
+// ── Toolbar layout (Stage 2D §6.2, addendum §2) ────────────────────
 // The path and the search bar share the bar. The path starts at the left
 // (right after the nav group) and grows rightward. As the bar narrows, or
 // the path grows, the order is fixed:
 //   1. the search bar shrinks from its preferred width (280, or wider while
-//      chips and text need it, up to 60% of the free space) to its 180 min;
-//   2. it collapses fully to the 28px magnifier;
+//      chips and text need it, up to 60% of the free space) to its 120 min —
+//      it fills the space up to the end of the path (addendum §2 ruling);
+//   2. it collapses fully to the 28px magnifier, which keeps the field's
+//      lighter fill (styles.css);
 //   3. only then does the path overflow: #breadcrumb-wrap.is-overflowing
-//      right-anchors it under the leading fade, current folder in view.
+//      right-anchors it under the leading fade, current folder in view;
+//   4. the current folder's crumb is never squeezed below a readable
+//      TOOLBAR_CRUMB_FLOOR (it ellipsizes, .is-tight, down to that): when
+//      even the magnifier leaves it less, the lowest-priority buttons fold
+//      away (#toolbar > [data-fold="1".."4"]: theme, refresh, inspector
+//      toggle, View/Sort), back again with the same 24px hysteresis.
+// Opened while collapsed (the magnifier, Ctrl+F, a tag chip), the bar grows
+// IN FLOW — never over the path — to its preferred width or what is left
+// beside the current folder's floor, pushing the path left (it caves in
+// further under the fade); folding back runs the same width ease in reverse
+// (setSearchSlotWidth). Both are instant with animations off.
 // Every decision uses the path's MEASURED natural width against the free
 // space — never a fixed constant — so a short path keeps a full search bar
 // on a narrow window and a deep one collapses it on a wide window. Nothing
 // measured depends on the mode it decides (the two flexible children are
-// excluded from `fixed`, the gap never changes), so it cannot oscillate; the
-// 24px hysteresis keeps a window drag across the threshold from flickering.
+// excluded from `fixed`, a folded button counts with its last measured
+// width, the gap never changes), so it cannot oscillate; the 24px hysteresis
+// keeps a window drag across a threshold from flickering. Mid-ease widths
+// never feed a decision: the slot's target is computed, not measured, and
+// the path is laid out for the narrowest width the ease passes through.
 // Runs from a ResizeObserver (toolbar and path), a MutationObserver on the
-// crumbs, updateBreadcrumb(), every zoom change, font loads and search
-// content changes — never per frame.
+// crumbs, updateBreadcrumb(), every zoom change, font loads, search content
+// changes and the end of a width ease — never per frame.
 const TOOLBAR_SEARCH_PREFERRED = 280;
-const TOOLBAR_SEARCH_MIN       = 180;
+const TOOLBAR_SEARCH_MIN       = 120;
 const TOOLBAR_SEARCH_COLLAPSED = 28;
 const TOOLBAR_SEARCH_GROW_MAX  = 0.6;   // share of the free space content may grow the bar to
+const TOOLBAR_CRUMB_FLOOR      = 56;    // the current folder's readable minimum (an ellipsized name)
 const TOOLBAR_HYSTERESIS       = 24;
 const TOOLBAR_FADE             = 24;    // the path's leading fade (styles.css .is-overflowing)
 
@@ -1201,12 +1217,57 @@ function searchContentWidth() {
     + iconW + gap + chipsW + text + clear;
 }
 
+// The search slot's running width ease ({anim, from, to}), or null.
+let _searchSlotEase = null;
+
+/**
+ * Gives the search slot its width. The target is the DOM truth and is set at
+ * once (--search-slot-w); with `animate` (an expand or fold the user asked
+ * for, never a resize or typing) and animations on, fpAnimate eases the
+ * rendered width from wherever it is now — mid-ease included, so a fold
+ * right after an expand retargets instead of queueing — over --motion-base.
+ * While it runs, the bar carries .fp-search--sizing (its content may shrink
+ * past its minimum) and, folding, .fp-search--folding (it keeps the field's
+ * look until it is the magnifier again). When the ease ends or is cancelled
+ * layoutToolbar() runs once more so the path settles on the final width.
+ */
+function setSearchSlotWidth(slot, sw, to, animate) {
+  const prev = _searchSlotEase;
+  if (prev && prev.to === to) return;          // already easing there
+  const from = slot.getBoundingClientRect().width;
+  slot.style.setProperty('--search-slot-w', `${to}px`);
+  _searchSlotEase = null;
+  const anim = animate && Math.abs(from - to) >= 1
+    ? fpAnimate(slot, [{ width: `${from}px` }, { width: `${to}px` }], { duration: 'base', easing: 'out', key: 'search-slot' })
+    : null;
+  if (!anim) {
+    if (prev) prev.anim.cancel();
+    sw?.classList.remove('fp-search--sizing', 'fp-search--folding');
+    return;
+  }
+  const rec = { anim, from, to };
+  _searchSlotEase = rec;
+  if (sw) {
+    sw.classList.add('fp-search--sizing');
+    sw.classList.toggle('fp-search--folding', to < from && !sw.classList.contains('fp-search--expanded'));
+  }
+  const end = () => {
+    if (_searchSlotEase !== rec) return;     // retargeted: the new ease owns the bar
+    _searchSlotEase = null;
+    sw?.classList.remove('fp-search--sizing', 'fp-search--folding');
+    layoutToolbar();
+  };
+  anim.addEventListener('finish', end);
+  anim.addEventListener('cancel', end);
+}
+
 let _layoutToolbarDepth = 0;
-function layoutToolbar() {
+function layoutToolbar({ animate = false } = {}) {
   const toolbar = document.getElementById('toolbar');
   const wrap = document.getElementById('breadcrumb-wrap');
   const crumbs = document.getElementById('breadcrumb');
   const slot = document.getElementById('search-slot');
+  const sw = document.getElementById('search-wrap');
   if (!toolbar || !wrap || !crumbs || !slot) return;
   const width = toolbar.getBoundingClientRect().width;
   if (!width) return;                     // not laid out (hidden window)
@@ -1215,15 +1276,23 @@ function layoutToolbar() {
   const gap = parseFloat(style.columnGap) || 0;
   let fixed = 0;
   let visible = 0;
+  const foldables = [];
   for (const child of toolbar.children) {
     if (child === wrap || child === slot) { visible++; continue; }
-    const w = child.getBoundingClientRect().width;
+    const order = Number(child.dataset.fold) || 0;
+    const folded = child.classList.contains('is-folded');
+    // A folded button counts with the width it had, so folding it never
+    // changes the free space it was folded for.
+    const w = folded ? (child._fpFoldW || 0) : child.getBoundingClientRect().width;
+    if (order && !folded && w) child._fpFoldW = w;
     if (!w) continue;
     visible++;
     fixed += w;
+    if (order) foldables.push({ el: child, order, w });
   }
+  foldables.sort((a, b) => a.order - b.order);
   const padding = (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0);
-  // The room the path and the search slot share.
+  // The room the path and the search slot share, with every button shown.
   const free = width - padding - fixed - gap * Math.max(0, visible - 1);
   // The path's natural width — with back whatever an ellipsized current
   // crumb (.is-tight below) is hiding, so that cap never feeds back here.
@@ -1233,50 +1302,86 @@ function layoutToolbar() {
   const label = current ? (current.querySelector('.fp-breadcrumb__label') || current) : null;
   const hidden = label ? Math.max(0, label.scrollWidth - label.clientWidth) : 0;
   const crumbNatural = Math.max(crumbs.scrollWidth, crumbs.getBoundingClientRect().width) + hidden;
+  const currentNatural = current ? current.getBoundingClientRect().width + hidden : crumbNatural;
 
   const room = free - crumbNatural;       // what the search may take beside the whole path
   const wasCollapsed = toolbar.dataset.search === 'collapsed';
   const collapsed = room < TOOLBAR_SEARCH_MIN + (wasCollapsed ? TOOLBAR_HYSTERESIS : 0);
   const preferred = Math.max(TOOLBAR_SEARCH_PREFERRED,
     Math.min(Math.ceil(searchContentWidth()), Math.floor(free * TOOLBAR_SEARCH_GROW_MAX)));
-  const slotW = collapsed ? TOOLBAR_SEARCH_COLLAPSED : Math.floor(Math.min(preferred, room));
 
-  if (collapsed && !wasCollapsed) {
-    // A bar that is in use when the toolbar collapses stays open as the
-    // overlay rather than vanishing from under the caret (search.js).
-    const sw = document.getElementById('search-wrap');
-    const inUse = (sw && sw.contains(document.activeElement))
+  if (collapsed && !wasCollapsed && sw) {
+    // A bar that is in use when the toolbar collapses stays open (in flow)
+    // rather than vanishing from under the caret; one that is not folds.
+    const inUse = sw.contains(document.activeElement)
       || (typeof searchState !== 'undefined' && (searchState.text.trim() || searchState.chips.length));
-    if (inUse && typeof expandSearchBar === 'function') expandSearchBar();
+    sw.classList.toggle('fp-search--expanded', !!inUse);
   }
+  const expanded = collapsed && !!sw && sw.classList.contains('fp-search--expanded');
+
+  // Step 4: the current folder keeps its readable floor beside the search
+  // (the magnifier, or the opened bar at its minimum); the low-priority
+  // buttons fold, in order, only as far as that needs.
+  const floor = Math.min(currentNatural, crumbNatural, TOOLBAR_CRUMB_FLOOR);
+  const need = collapsed ? floor + (expanded ? TOOLBAR_SEARCH_MIN : TOOLBAR_SEARCH_COLLAPSED) : -Infinity;
+  const wasFolded = Number(toolbar.dataset.fold) || 0;
+  const availWith = (n) => foldables.slice(0, n).reduce((sum, f) => sum + f.w + gap, free);
+  let fold = 0;
+  while (fold < foldables.length && availWith(fold) - need < (fold < wasFolded ? TOOLBAR_HYSTERESIS : 0)) fold++;
+
+  let slotW;
+  if (!collapsed) slotW = Math.floor(Math.min(preferred, room));
+  else if (!expanded) slotW = TOOLBAR_SEARCH_COLLAPSED;
+  else {
+    // Opened in flow: its preferred width, but it gives way (down to its
+    // minimum) to keep the current folder's name whole; only below that does
+    // the name ellipsize, down to its floor.
+    const keepWhole = availWith(fold) - Math.ceil(currentNatural) - 1;
+    slotW = Math.max(TOOLBAR_SEARCH_COLLAPSED, Math.floor(Math.min(preferred,
+      Math.max(TOOLBAR_SEARCH_MIN, keepWhole), availWith(fold) - floor)));
+  }
+
   toolbar.dataset.search = collapsed ? 'collapsed' : 'full';
-  if (!collapsed) slot.style.setProperty('--search-slot-w', `${slotW}px`);
-  // The overlay grows leftward from the slot up to the path's left edge.
-  const overlayW = Math.floor(Math.min(preferred, free - gap));
-  slot.style.setProperty('--search-overlay-w', `${Math.max(TOOLBAR_SEARCH_COLLAPSED, overlayW)}px`);
+  setSearchSlotWidth(slot, sw, slotW, animate);
+  // While the bar folds back it is still wide: buttons it had folded away
+  // come back only once it is the magnifier again (the ease's end), or the
+  // row would overflow for the length of the ease.
+  const ease = _searchSlotEase;
+  if (ease && ease.to < ease.from) fold = Math.max(fold, wasFolded);
+  foldables.forEach((f, i) => f.el.classList.toggle('is-folded', i < fold));
+  if (fold) toolbar.dataset.fold = String(fold);
+  else delete toolbar.dataset.fold;
+  const avail = availWith(fold);
+
+  // The path is laid out for the narrowest the wrap gets while the bar
+  // eases (its final width when growing, its start when folding), so it
+  // never flips mid-ease; the ease's end re-runs this for the final width.
+  const widest = ease ? Math.max(ease.from, ease.to) : slotW;
+  const wrapW = Math.max(0, Math.floor(avail - widest));
   // The path overflows only when it does not fit beside what the slot takes.
-  const overflowing = crumbNatural > free - slotW + 0.5;
+  const overflowing = crumbNatural > wrapW + 0.5;
   wrap.classList.toggle('is-overflowing', overflowing);
-  // A separator under the fade has lost the crumb before it: alone at the
-  // path's left edge it read as a stray "·" (Task 14 Q12).
-  const wrapLeft = wrap.getBoundingClientRect().left;
-  crumbs.querySelectorAll('.fp-breadcrumb__sep').forEach((sep) => {
-    sep.classList.toggle('is-orphan', overflowing && sep.getBoundingClientRect().left < wrapLeft + TOOLBAR_FADE);
-  });
   // The current folder is never under the fade: when the wrap cannot hold it
   // plus the 24px fade, the fade goes and the crumb ellipsizes to the wrap.
-  const wrapW = Math.max(0, Math.floor(free - slotW));
-  const currentW = current ? current.getBoundingClientRect().width + hidden : 0;
-  const tight = overflowing && currentW + TOOLBAR_FADE > wrapW;
+  const tight = overflowing && currentNatural + TOOLBAR_FADE > wrapW;
   wrap.classList.toggle('is-tight', tight);
   wrap.style.setProperty('--crumb-current-max', `${wrapW}px`);
   if (current) {
     if (tight) current.title = label ? label.textContent : current.textContent;
     else current.removeAttribute('title');
   }
-  // The Filters/History dropdown hangs leftward from the bar's right edge;
-  // on a narrow bar it must not run past the toolbar's left edge, where the
-  // main column clips it (styles.css .fp-search-dd).
+  // A separator under the fade has lost the crumb before it: alone at the
+  // path's left edge it read as a stray "·" (Task 14 Q12). Overflowing, the
+  // path is right-anchored, so where a separator lands is its distance from
+  // the path's end, measured inside the path (no mid-ease geometry).
+  const pathEnd = crumbs.getBoundingClientRect().right;
+  crumbs.querySelectorAll('.fp-breadcrumb__sep').forEach((sep) => {
+    sep.classList.toggle('is-orphan', overflowing && wrapW - (pathEnd - sep.getBoundingClientRect().left) < TOOLBAR_FADE);
+  });
+  // The Filters/History dropdown hangs leftward from the bar's right edge
+  // (which no ease moves); on a narrow bar it must not run past the
+  // toolbar's left edge, where the main column clips it (styles.css
+  // .fp-search-dd).
   const ddRoom = slot.getBoundingClientRect().right - toolbar.getBoundingClientRect().left - 4;
   slot.style.setProperty('--search-dd-room', `${Math.max(0, Math.floor(ddRoom))}px`);
   // …and it hangs no lower than the status bar: styles.css caps its height at
@@ -3400,7 +3505,7 @@ document.addEventListener('click', e => {
       break;
     case 'search-clear-inline':
       // The bar's own ×: clears and, on a full bar, leaves the caret in it
-      // (Explorer); on a collapsed bar the empty overlay folds away.
+      // (Explorer); on a collapsed bar the emptied bar folds away.
       clearSearch();
       if (document.getElementById('toolbar')?.dataset.search !== 'collapsed') {
         focusSearchInput({ keepDropdownClosed: true });
@@ -4312,7 +4417,7 @@ document.addEventListener('keydown', e => {
   // ⌘K / Ctrl+K — command palette
   if ((e.metaKey || e.ctrlKey) && e.key === 'k') { e.preventDefault(); openPalette(); }
   // Ctrl+F — the search bar (Explorer's key). In the collapsed toolbar it
-  // opens as the overlay over the path (Stage 2D §6.2). Not behind a dialog.
+  // opens in flow, pushing the path left (addendum §2). Not behind a dialog.
   // Never from another text field (inline rename, Ask File+, Settings):
   // Ctrl+F there belongs to that field.
   if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && (e.key === 'f' || e.key === 'F')) {

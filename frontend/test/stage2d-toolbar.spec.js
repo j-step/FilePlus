@@ -4,11 +4,19 @@
 //   ghost button, vertically centred with the tabs, styled by a class.
 // - The breadcrumb starts at the LEFT of the bar (right after the nav group)
 //   and grows rightward. As the bar narrows or the path grows, the search box
-//   first shrinks from 280 to 180, then collapses fully to the magnifier, and
-//   only then does the path overflow — at which point it right-anchors so the
-//   current folder stays visible and the start caves in under the fade.
-// - The collapsed magnifier (or Ctrl+F) opens search as an overlay over the
-//   path without reflowing it; it folds back on blur/Escape when empty.
+//   first shrinks from 280 to 120 (addendum §2: it fills the space up to the
+//   end of the path), then collapses fully to the magnifier, and only then
+//   does the path overflow — at which point it right-anchors so the current
+//   folder stays visible and the start caves in under the fade.
+// - The collapsed magnifier keeps the search field's lighter fill (addendum
+//   §2), so it reads as the search control, not one more ghost button.
+// - The collapsed magnifier (or Ctrl+F) opens search IN FLOW (addendum §2):
+//   the bar grows over --motion-base and pushes the path left, never covers
+//   it; it folds back on blur/Escape when empty. Instant with motion off.
+// - The current folder's crumb is readable in every state: at least
+//   CRUMB_FLOOR wide (or whole), ellipsized with a tooltip when cut. When
+//   even the folded search leaves it less, the lowest-priority buttons fold
+//   away (theme, refresh, inspector toggle, View/Sort — in that order).
 // - Keys on a focused toolbar control act on that control, never the list.
 // - Sibling sweep (spec §12, fixed-constant layout row): status bar,
 //   inspector header, tab strip and the Home header at the narrowest window
@@ -21,7 +29,9 @@ const { launchApp, apiGet, SHOTS } = require('./harness/app');
 test.setTimeout(240_000);
 
 const SEARCH_PREFERRED = 280;
-const SEARCH_MIN = 180;
+const SEARCH_MIN = 120;      // addendum §2 ruling (was 180)
+const CRUMB_FLOOR = 56;      // the current crumb's readable minimum (app.js TOOLBAR_CRUMB_FLOOR)
+const INPUT_MIN = 40;        // a bar holding text still shows a usable input
 const DEEP = ['Deep', 'Client-Projects', 'Northwind-Archive', 'Quarterly-Reports', 'Finance-Review',
   'Year-End-Closing', 'Supporting-Files', 'Scanned-Receipts', 'Final-Approved'];
 
@@ -87,7 +97,21 @@ const state = (page) => page.evaluate(() => {
   const wcs = getComputedStyle(wrap);
   const mask = wcs.webkitMaskImage || wcs.maskImage || 'none';
   const lab = cur ? cur.querySelector('.fp-breadcrumb__label') : null;
+  // The search field's own fill, resolved the way the browser paints it.
+  const probe = document.createElement('div');
+  probe.style.background = 'var(--bg-raised)';
+  document.body.appendChild(probe);
+  const fieldFill = getComputedStyle(probe).backgroundColor;
+  probe.remove();
+  const swcs = getComputedStyle(sw);
+  const foldable = [...tb.querySelectorAll(':scope > [data-fold]')];
   return {
+    swBg: swcs.backgroundColor,
+    swBorder: swcs.borderTopColor,
+    fieldFill,
+    folded: foldable.filter((el) => el.getClientRects().length === 0).map((el) => el.id || el.dataset.fold),
+    foldable: foldable.length,
+    curNatural: cur ? cur.getBoundingClientRect().width + (lab ? Math.max(0, lab.scrollWidth - lab.clientWidth) : 0) : 0,
     masked: mask !== 'none',
     curTruncated: !!lab && lab.scrollWidth > lab.clientWidth + 1,
     curEllipsis: !!lab && getComputedStyle(lab).textOverflow === 'ellipsis',
@@ -114,16 +138,37 @@ function invariants(s, label) {
   if (s.search !== 'full' && s.search !== 'collapsed') bad.push(`data-search=${s.search}`);
   if (s.narrowAttr) bad.push('stale data-narrow');
   if (s.of && s.search === 'full') bad.push('path overflowing while search is full');
+  // The input: an empty bar shows its whole placeholder; one holding text or
+  // chips still has a usable input beside them and the clear ×.
+  const inputOk = (where) => {
+    if (!s.inputShown) bad.push(`${where}: no input`);
+    else if (!s.hasContent && s.inputW + 1 < s.placeholderW) bad.push(`${where}: placeholder cut: input ${s.inputW} < ${s.placeholderW}`);
+    else if (s.hasContent && s.inputW < INPUT_MIN) bad.push(`${where}: input ${s.inputW} < ${INPUT_MIN}`);
+  };
   if (s.search === 'full') {
     if (s.sw.w < SEARCH_MIN - 0.5) bad.push(`full search narrower than ${SEARCH_MIN}: ${s.sw.w}`);
     if (s.sw.w > SEARCH_PREFERRED + 0.5 && !s.hasContent) bad.push(`empty full search wider than ${SEARCH_PREFERRED}: ${s.sw.w}`);
-    if (!s.inputShown || s.inputW + 1 < s.placeholderW) bad.push(`placeholder cut: input ${s.inputW} < ${s.placeholderW}`);
+    inputOk('full');
     if (s.magShown) bad.push('magnifier shown while full');
+    if (s.folded.length) bad.push(`buttons folded while search is full: ${s.folded}`);
   } else if (!s.expanded) {
     if (!s.magShown) bad.push('collapsed without a magnifier');
     if (s.inputShown) bad.push('collapsed search still shows a partial input');
     if (s.sw.w > 28.5) bad.push(`collapsed search ${s.sw.w}px`);
+    // It keeps the field's lighter fill and edge: it reads as the search
+    // control, not one more ghost button (addendum §2).
+    if (s.swBg !== s.fieldFill) bad.push(`collapsed magnifier lost the field fill: ${s.swBg} vs ${s.fieldFill}`);
+    if (/rgba\(\d+, \d+, \d+, 0\)|transparent/.test(s.swBorder)) bad.push('collapsed magnifier has no edge');
+  } else {
+    // Expanded from collapsed: in flow, beside the path — never over it.
+    if (s.sw.x < s.wrap.r - 0.5) bad.push(`expanded search overlaps the path: ${s.sw.x} < ${s.wrap.r}`);
+    if (s.magShown) bad.push('magnifier shown while expanded');
+    if (s.sw.w < SEARCH_MIN - 0.5 && s.folded.length < s.foldable) bad.push(`expanded search narrower than ${SEARCH_MIN}: ${s.sw.w}`);
+    if (s.sw.w >= SEARCH_MIN - 0.5) inputOk('expanded');
   }
+  // The current folder is readable in every state: whole, or at least
+  // CRUMB_FLOOR wide (an ellipsized name, never squeezed to nothing).
+  if (s.cur && s.cur.w + 1 < Math.min(s.curNatural, CRUMB_FLOOR)) bad.push(`current crumb squeezed: ${s.cur.w} < ${Math.min(s.curNatural, CRUMB_FLOOR)}`);
   if (!s.of && s.crumbNatural > s.wrap.w + 1) bad.push(`path clipped without is-overflowing: ${s.crumbNatural}>${s.wrap.w}`);
   if (!s.of && s.first && s.first.x - s.wrap.x > 12) bad.push(`path not left-anchored: ${s.first.x - s.wrap.x}`);
   // The current folder is always readable: its crumb lies wholly inside the
@@ -277,17 +322,23 @@ test('path grows from the left; search shrinks then collapses BEFORE the path ca
     // (expands again). Driven by the sidebar width so the step is exact.
     await setSize(app, page, 1400, 800);
     await open(page, driveRoot);
-    const collapseAt = await page.evaluate(async () => {
+    const { collapseAt, lastFull } = await page.evaluate(async () => {
       const raf = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
       const tb = document.getElementById('toolbar');
+      let last = null;
       for (let sb = 240; sb <= 900; sb += 2) {
         document.documentElement.style.setProperty('--sidebar-w-screen', `${sb}px`);
         await raf();
-        if (tb.dataset.search === 'collapsed') return sb;
+        if (tb.dataset.search === 'collapsed') return { collapseAt: sb, lastFull: last };
+        last = document.getElementById('search-wrap').getBoundingClientRect().width;
       }
-      return null;
+      return { collapseAt: null, lastFull: last };
     });
     expect(collapseAt).not.toBeNull();
+    // It used the room up to the end of the path before folding: the last
+    // full width is the 120 minimum (within one 2 px step), not 180 (§2).
+    expect(lastFull).toBeGreaterThanOrEqual(SEARCH_MIN - 0.5);
+    expect(lastFull).toBeLessThan(SEARCH_MIN + 4);
     const at = async (sb) => {
       await page.evaluate((v) => document.documentElement.style.setProperty('--sidebar-w-screen', `${v}px`), sb);
       await twoFrames(page);
@@ -304,7 +355,7 @@ test('path grows from the left; search shrinks then collapses BEFORE the path ca
   expect(errors).toEqual([]);
 });
 
-test('narrowest bar: collapsed + overflowing, current folder visible; Ctrl+F / magnifier open an overlay that never reflows the path (§6.2)', async () => {
+test('narrowest bar: collapsed + overflowing, current folder visible; Ctrl+F / magnifier expand the bar in flow, pushing the path left (§6.2, addendum §2)', async () => {
   const { page, app, errors } = await launchApp();
   try {
     const root = (await apiGet('/fs/list/root')).path;
@@ -325,6 +376,17 @@ test('narrowest bar: collapsed + overflowing, current folder visible; Ctrl+F / m
     const crumbRects = () => page.evaluate(() =>
       [...document.querySelectorAll('#breadcrumb > *')].map((c) => { const b = c.getBoundingClientRect(); return [Math.round(b.x), Math.round(b.width)]; }));
     const before = await crumbRects();
+    // The expanded bar is in flow: beside the path, which it pushed left —
+    // the current folder ends where the bar begins and is still readable.
+    const pushed = (st, label) => {
+      expect(invariants(st, label)).toEqual([]);
+      expect(st.expanded).toBe(true);
+      expect(st.search).toBe('collapsed');                    // the mode itself does not change
+      expect(st.inputShown).toBe(true);
+      expect(st.sw.x).toBeGreaterThanOrEqual(st.wrap.r - 0.5); // search ∩ path = ∅
+      expect(st.cur.r).toBeLessThanOrEqual(st.sw.x + 0.5);
+      expect(st.cur.w + 1).toBeGreaterThanOrEqual(Math.min(st.curNatural, CRUMB_FLOOR));
+    };
 
     // Ctrl+F (renderer-handled; there is no application menu).
     await page.locator('#list-scroll .fp-row').first().click();
@@ -332,14 +394,11 @@ test('narrowest bar: collapsed + overflowing, current folder visible; Ctrl+F / m
     await expect(page.locator('#search-input')).toBeFocused();
     await twoFrames(page);
     s = await state(page);
-    expect(s.expanded).toBe(true);
-    expect(s.search).toBe('collapsed');                      // the mode itself does not change
-    expect(s.inputShown).toBe(true);
+    pushed(s, 'narrow Ctrl+F');
     expect(s.inputW + 1).toBeGreaterThanOrEqual(s.placeholderW);
-    expect(s.sw.x).toBeGreaterThanOrEqual(s.wrap.x - 1);     // the overlay stays over the path
-    expect(await crumbRects()).toEqual(before);               // and never reflows it
-    await windowShot(app, page, 'toolbar-narrow-search-overlay');
-    // The overlay's own dropdown (filters incl. the This PC scope) is usable.
+    expect(await crumbRects()).not.toEqual(before);           // the path moved over
+    await windowShot(app, page, 'toolbar-narrow-search-expanded');
+    // The bar's own dropdown (filters incl. the This PC scope) is usable.
     await expect(page.locator('#search-dropdown')).toBeVisible();
     // ...and never runs past the toolbar's left edge (the main column clips there).
     const dd = await page.evaluate(() => {
@@ -354,25 +413,30 @@ test('narrowest bar: collapsed + overflowing, current folder visible; Ctrl+F / m
     await page.keyboard.press('Escape');                      // closes the dropdown, empty bar folds
     await expect(page.locator('#search-collapsed')).toBeVisible();
     await expect(page.locator('#search-input')).toBeHidden();
-    expect(await crumbRects()).toEqual(before);
+    await twoFrames(page);
+    expect(await crumbRects()).toEqual(before);               // and the path comes back exactly
+    expect(invariants(await state(page), 'narrow folded again')).toEqual([]);
 
-    // The magnifier does the same, and a typed query keeps the overlay open on blur.
+    // The magnifier does the same, and a typed query keeps the bar open on blur.
     await page.locator('#search-collapsed').click();
     await expect(page.locator('#search-input')).toBeFocused();
-    expect(await crumbRects()).toEqual(before);
+    await twoFrames(page);
+    pushed(await state(page), 'narrow magnifier');
     await page.keyboard.type('deep');
     await page.keyboard.press('Escape');                      // closes the dropdown; text keeps it open
     await page.evaluate(() => document.activeElement.blur());
     await twoFrames(page);
     await expect(page.locator('#search-wrap')).toHaveClass(/fp-search--expanded/);
-    expect(await crumbRects()).toEqual(before);
+    pushed(await state(page), 'narrow typed + blurred');
     await page.evaluate(() => clearSearch());
     await expect(page.locator('#search-wrap')).not.toHaveClass(/fp-search--expanded/);
     await expect(page.locator('#search-collapsed')).toBeVisible();
+    await twoFrames(page);
+    expect(await crumbRects()).toEqual(before);
 
-    // An ACTIVE search on the collapsed bar: the overlay covers the path's
-    // "Search in … ×", so the bar carries its own clear ×. One click ends
-    // the search, brings the listing back and folds the overlay.
+    // An ACTIVE search on the collapsed bar: the bar carries its own clear ×
+    // (the path's "Search in … ×" may be caved in beside it). One click ends
+    // the search, brings the listing back and folds the bar.
     await page.locator('#search-collapsed').click();
     await page.keyboard.type('deep');
     await page.keyboard.press('Enter');
@@ -400,6 +464,157 @@ test('narrowest bar: collapsed + overflowing, current folder visible; Ctrl+F / m
     await app.close();
   }
   expect(errors).toEqual([]);
+});
+
+test('collapsed and expanded at 1400/1100/900/800 px and 100/150 %: invariants hold, the path is pushed not covered; 280 px sidebar at 200 % keeps the current crumb readable (addendum §2)', async () => {
+  const { page, app, errors } = await launchApp();
+  try {
+    const root = (await apiGet('/fs/list/root')).path;
+    const deepDir = [root, ...DEEP].join('\\');
+    const offenders = [];
+    const check = async (label, shotName) => {
+      const folded = await state(page);
+      offenders.push(...invariants(folded, `${label} folded`));
+      if (folded.search !== 'collapsed') return;
+      if (shotName) await windowShot(app, page, `${shotName}-collapsed`);
+      await page.evaluate(() => focusSearchInput({ keepDropdownClosed: true }));
+      await twoFrames(page);
+      const opened = await state(page);
+      offenders.push(...invariants(opened, `${label} expanded`));
+      if (!opened.expanded) offenders.push(`${label}: Ctrl+F did not expand`);
+      if (shotName) await windowShot(app, page, `${shotName}-expanded`);
+      await page.evaluate(() => document.activeElement?.blur());
+      await twoFrames(page);
+      const back = await state(page);
+      offenders.push(...invariants(back, `${label} folded again`));
+      if (back.expanded) offenders.push(`${label}: did not fold back on blur`);
+    };
+    await page.evaluate(() => setInspectorOpen(false, { persist: false }));
+    for (const z of [1, 1.5]) {
+      await setZoom(app, page, z);
+      for (const w of [1400, 1100, 900, 800]) {
+        await setSize(app, page, w, 800);
+        await open(page, deepDir);
+        await check(`${w}px @${z}`, `toolbar-search-${w}-zoom${Math.round(z * 100)}`);
+      }
+    }
+    // The pre-existing edge (Stage 2D Task 7 review): a saved 280 px sidebar,
+    // a 900 px window and 200 % zoom left the current crumb 0 px wide.
+    await setZoom(app, page, 1);
+    await page.evaluate(() => document.documentElement.style.setProperty('--sidebar-w-screen', '280px'));
+    await setSize(app, page, 900, 700);
+    await setZoom(app, page, 2);
+    for (const dir of [deepDir, `${root}\\Views`]) {
+      await open(page, dir);
+      await check(`edge 900/280 @2 ${path.basename(dir)}`, dir === deepDir ? 'toolbar-edge-900-sb280-zoom200' : null);
+    }
+    // ...and with the sidebar at its 480 px maximum on the 800 px minimum window.
+    await setZoom(app, page, 1);
+    await page.evaluate(() => document.documentElement.style.setProperty('--sidebar-w-screen', '480px'));
+    await setSize(app, page, 800, 700);
+    await open(page, deepDir);
+    await check('edge 800/480', 'toolbar-edge-800-sb480');
+    expect(offenders).toEqual([]);
+  } finally {
+    await page.evaluate(() => document.documentElement.style.setProperty('--sidebar-w-screen', '240px')).catch(() => {});
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.setZoomFactor(1)).catch(() => {});
+    await app.close();
+  }
+  expect(errors).toEqual([]);
+});
+
+test('expand/fold animates the bar width over --motion-base (ease-out) with motion on, instantly with it off; interruptible (addendum §2, §5.1)', async () => {
+  const settled = (page) => page.waitForFunction(() => {
+    const slot = document.getElementById('search-slot');
+    return !document.getAnimations().some((a) => a.effect && a.effect.target
+      && (a.effect.target === slot || slot.contains(a.effect.target)));
+  });
+  for (const motion of [true, false]) {
+    const { page, app, errors } = await launchApp({ motion });
+    try {
+      const root = (await apiGet('/fs/list/root')).path;
+      await setSize(app, page, 1100, 760);
+      await page.evaluate(() => setInspectorOpen(false, { persist: false }));
+      await open(page, [root, ...DEEP].join('\\'));
+      expect((await state(page)).search).toBe('collapsed');
+      const tokens = await page.evaluate(() => {
+        const cs = getComputedStyle(document.documentElement);
+        return { base: parseFloat(cs.getPropertyValue('--motion-base')), ease: cs.getPropertyValue('--ease-out').trim() };
+      });
+      // Expand: the state is there at once (focus, class), the width eases.
+      const p0 = await page.evaluate(() => {
+        document.getElementById('search-collapsed').click();
+        const slot = document.getElementById('search-slot');
+        return {
+          focused: document.activeElement?.id === 'search-input',
+          expanded: document.getElementById('search-wrap').classList.contains('fp-search--expanded'),
+          w: slot.getBoundingClientRect().width,
+          anims: document.getAnimations()
+            .filter((a) => a.effect && a.effect.target === slot)
+            .map((a) => ({ d: a.effect.getComputedTiming().duration, e: a.effect.getTiming().easing })),
+        };
+      });
+      expect(p0.focused).toBe(true);
+      expect(p0.expanded).toBe(true);
+      if (motion) {
+        expect(p0.anims.length).toBe(1);
+        expect(p0.anims[0].d).toBeGreaterThan(0);
+        expect(p0.anims[0].d).toBeLessThanOrEqual(tokens.base);
+        const norm = (e) => e.replace(/\s/g, '').replace(/(^|[^\d])0\./g, '$1.');
+        expect(norm(p0.anims[0].e)).toBe(norm(tokens.ease));
+      } else {
+        expect(p0.anims).toEqual([]);
+        expect(p0.w).toBeGreaterThanOrEqual(SEARCH_MIN - 0.5);   // already at its final width
+      }
+      await settled(page);
+      const open1 = await state(page);
+      expect(invariants(open1, `motion ${motion} expanded`)).toEqual([]);
+      const fullW = open1.sw.w;
+      // Fold (the dropdown closed first, as a click elsewhere does): instant
+      // state, eased width back to the 28 px magnifier.
+      await page.evaluate(() => { closeSearchDropdown(); document.activeElement.blur(); });
+      await settled(page);
+      let s = await state(page);
+      expect(invariants(s, `motion ${motion} folded`)).toEqual([]);
+      expect(s.sw.w).toBeLessThanOrEqual(28.5);
+      // Interrupted: expand and blur in the same task, then expand and blur
+      // again one frame in — it ends folded, never at a half width.
+      await page.evaluate(() => {
+        document.getElementById('search-collapsed').click();
+        closeSearchDropdown();
+        document.activeElement.blur();
+      });
+      await page.evaluate(() => document.getElementById('search-collapsed').click());
+      await page.evaluate(() => new Promise((r) => requestAnimationFrame(r)));
+      await page.evaluate(() => { closeSearchDropdown(); document.activeElement.blur(); });
+      await settled(page);
+      s = await state(page);
+      expect(invariants(s, `motion ${motion} interrupted`)).toEqual([]);
+      expect(s.expanded).toBe(false);
+      expect(s.sw.w).toBeLessThanOrEqual(28.5);
+      expect(await page.evaluate(() => document.getElementById('search-wrap').className)).not.toMatch(/fp-search--(folding|sizing)/);
+      // ...and expand-and-stay lands on the same width as before. The ease
+      // never feeds the layout back into itself: a handful of passes (the
+      // click, the observers, the ease's end), not one per frame.
+      await page.evaluate(() => {
+        window.__tbRuns = 0;
+        window.__tbOrig = window.layoutToolbar;
+        window.layoutToolbar = function (...a) { window.__tbRuns++; return window.__tbOrig.apply(this, a); };
+        document.getElementById('search-collapsed').click();
+      });
+      await settled(page);
+      await twoFrames(page);
+      const runs = await page.evaluate(() => { window.layoutToolbar = window.__tbOrig; return window.__tbRuns; });
+      expect(runs).toBeLessThanOrEqual(4);
+      s = await state(page);
+      expect(Math.abs(s.sw.w - fullW)).toBeLessThanOrEqual(1);
+      await page.evaluate(() => { closeSearchDropdown(); document.activeElement.blur(); });
+      await settled(page);
+    } finally {
+      await app.close();
+    }
+    expect(errors).toEqual([]);
+  }
 });
 
 test('every zoom step, inspector closed and open: search is never partially visible, the collapse order holds (§5, §6.2)', async () => {
@@ -445,6 +660,23 @@ test('a screen-name crumb (Settings) that has to ellipsize settles: no layout lo
     await page.evaluate(() => setInspectorOpen(true, { persist: false }));
     await page.evaluate(() => switchScreen('settings'));
     await twoFrames(page);
+    // The current crumb now keeps a readable floor (addendum §2: buttons fold
+    // before it goes below it), so where it is cut-but-readable depends on
+    // the run's fonts: widen the sidebar until it is (inspector closed, so
+    // the sidebar is what takes the room).
+    await page.evaluate(() => setInspectorOpen(false, { persist: false }));
+    const cutAt = await page.evaluate(async () => {
+      const raf = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      for (let sb = 240; sb <= 480; sb += 2) {
+        document.documentElement.style.setProperty('--sidebar-w-screen', `${sb}px`);
+        await raf();
+        const lab = document.querySelector('#breadcrumb .fp-breadcrumb__crumb--current .fp-breadcrumb__label');
+        if (lab && lab.scrollWidth > lab.clientWidth + 1) return sb;
+      }
+      return null;
+    });
+    expect(cutAt).not.toBeNull();
+    await twoFrames(page);
     const idle = await page.evaluate(async () => {
       let runs = 0;
       let loops = 0;
@@ -464,6 +696,7 @@ test('a screen-name crumb (Settings) that has to ellipsize settles: no layout lo
     expect(s.curEllipsis).toBe(true);    // …with an ellipsis…
     expect(s.curTitle).toBe('Settings'); // …and the full name as its tooltip
   } finally {
+    await page.evaluate(() => document.documentElement.style.setProperty('--sidebar-w-screen', '240px')).catch(() => {});
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.setZoomFactor(1)).catch(() => {});
     await app.close();
   }

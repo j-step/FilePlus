@@ -1087,24 +1087,30 @@ function resumeSearchForTab(snapshot, tabId) {
   runSearch({ pushHistory: false });
 }
 
-// ── Collapsed-toolbar overlay ─────────────────────────────────────────────────
+// ── Collapsed toolbar: the bar opens in flow ─────────────────────────────────
 // When the path needs the room (app.js's layoutToolbar sets
 // #toolbar[data-search="collapsed"], Stage 2D §6.2) the bar folds into a
 // single magnifier button. Clicking it (the data-action="focus-search" button
-// inside the bar) or Ctrl+F opens it again as an overlay over the path, which
-// never reflows; leaving it with nothing typed and no chips folds it back.
+// inside the bar) or Ctrl+F opens it again IN FLOW (addendum §2): the bar
+// grows over --motion-base and pushes the path left — never covers it;
+// leaving it with nothing typed and no chips folds it back the same way.
+// The class is the state and flips at once; layoutToolbar({animate}) only
+// eases the width on top (instant with animations off).
 function expandSearchBar() {
   const wrap = document.getElementById('search-wrap');
   if (!wrap || wrap.classList.contains('fp-search--expanded')) return;
   wrap.classList.add('fp-search--expanded');
   // Its chips are measurable only now (display:none while folded): the
-  // overlay's width is re-derived from them (app.js, §6.2).
-  if (typeof layoutToolbar === 'function') layoutToolbar();
+  // bar's width is re-derived from them (app.js, §6.2).
+  if (typeof layoutToolbar === 'function') layoutToolbar({ animate: true });
 }
 
 function maybeCollapseSearchBar() {
   if (searchState.text.trim() || searchState.chips.length) return;
-  document.getElementById('search-wrap')?.classList.remove('fp-search--expanded');
+  const wrap = document.getElementById('search-wrap');
+  if (!wrap || !wrap.classList.contains('fp-search--expanded')) return;
+  wrap.classList.remove('fp-search--expanded');
+  if (typeof layoutToolbar === 'function') layoutToolbar({ animate: true });
 }
 
 // ── Wiring ────────────────────────────────────────────────────────────────────
@@ -1130,7 +1136,7 @@ function initSearch() {
     // dropdown belongs to that element's own data-action, and must not be
     // intercepted (or have the panel re-rendered out from under it).
     // The in-bar clear × likewise: its click clears and, on a collapsed bar,
-    // folds the overlay — focusing the input first would hold it open.
+    // folds the opened bar — focusing the input first would hold it open.
     if (e.target.closest('.fp-search-chip, #search-dropdown, .fp-search__clear')) return;
     if (e.target !== input) { e.preventDefault(); focusSearchInput(); }
     openSearchDropdown();

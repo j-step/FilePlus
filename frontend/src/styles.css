@@ -1067,13 +1067,15 @@ svg { flex-shrink: 0; }
   flex: 1;
   min-width: 0;
 }
-/* Path and search share the bar (Stage 2D §6.2). The search SLOT is the
-   toolbar's flex child; app.js's layoutToolbar() measures the path's natural
-   width against the free space and writes the slot's width as
+/* Path and search share the bar (Stage 2D §6.2, addendum §2). The search SLOT
+   is the toolbar's flex child; app.js's layoutToolbar() measures the path's
+   natural width against the free space and writes the slot's width as
    --search-slot-w: 280 preferred (more when chips and text need it), down to
-   180, and below that #toolbar[data-search="collapsed"] folds it to the 28px
+   120, and below that #toolbar[data-search="collapsed"] folds it to the 28px
    magnifier. Only after that does the path overflow (.is-overflowing, §9).
-   The bar itself always fills its slot. */
+   Opened while collapsed, the slot grows IN FLOW and pushes the path left;
+   fpAnimate eases that width (app.js setSearchSlotWidth). The bar itself
+   always fills its slot. */
 .fp-toolbar__search-slot {
   flex: 0 0 auto;
   width: var(--search-slot-w, 280px);
@@ -1088,38 +1090,34 @@ svg { flex-shrink: 0; }
   position: relative;
   overflow: visible;
 }
+/* While the width eases (.fp-search--sizing) the content may shrink past its
+   resting minimum instead of spilling over the next button; folding back
+   (.fp-search--folding) the bar keeps the field's look, clipped, until it is
+   the magnifier again. */
+.fp-search--sizing .fp-search__input { min-width: 0; }
+.fp-search--folding { overflow: hidden; }
 
 /* The button groups never move or clip; the two flexible children (path and
-   search slot) are the only things layoutToolbar() resizes. */
+   search slot) are the only things layoutToolbar() resizes — except that,
+   when even the magnifier leaves the current folder less than its readable
+   floor, the lowest-priority buttons ([data-fold], theme first) fold away. */
 #toolbar > * { min-width: 0; }
-/* Collapsed: a 28px icon button, exactly like its toolbar neighbours. */
-#toolbar[data-search="collapsed"] .fp-toolbar__search-slot { width: 28px; }
-#toolbar[data-search="collapsed"] .fp-toolbar__search:not(.fp-search--expanded) {
+#toolbar > [data-fold].is-folded { display: none !important; }
+/* Collapsed: a 28px square like its toolbar neighbours, but it keeps the
+   field's lighter fill and edge (.fp-search) — it reads as the search
+   control and breaks up the row of plain icon buttons (addendum §2). */
+#toolbar[data-search="collapsed"] .fp-toolbar__search:not(.fp-search--expanded):not(.fp-search--folding) {
   flex: 0 0 auto;
   width: 28px;
+  height: 28px;
   padding: 0;
-  border-color: transparent;
-  background: transparent;
   justify-content: center;
 }
-#toolbar[data-search="collapsed"] .fp-toolbar__search:not(.fp-search--expanded) .fp-search__icon,
-#toolbar[data-search="collapsed"] .fp-toolbar__search:not(.fp-search--expanded) .fp-search__chips,
-#toolbar[data-search="collapsed"] .fp-toolbar__search:not(.fp-search--expanded) .fp-search__input,
-#toolbar[data-search="collapsed"] .fp-toolbar__search:not(.fp-search--expanded) .fp-search__clear {
+#toolbar[data-search="collapsed"] .fp-toolbar__search:not(.fp-search--expanded):not(.fp-search--folding) .fp-search__icon,
+#toolbar[data-search="collapsed"] .fp-toolbar__search:not(.fp-search--expanded):not(.fp-search--folding) .fp-search__chips,
+#toolbar[data-search="collapsed"] .fp-toolbar__search:not(.fp-search--expanded):not(.fp-search--folding) .fp-search__input,
+#toolbar[data-search="collapsed"] .fp-toolbar__search:not(.fp-search--expanded):not(.fp-search--folding) .fp-search__clear {
   display: none;
-}
-/* Opened while collapsed (the magnifier, Ctrl+F, a tag chip): an overlay that
-   grows LEFTWARD from the slot over the path. The slot keeps its 28px, so
-   the path underneath never reflows. --search-overlay-w is set by
-   layoutToolbar() (the preferred width, capped at the path's left edge). */
-#toolbar[data-search="collapsed"] .fp-toolbar__search.fp-search--expanded {
-  position: absolute;
-  right: 0;
-  top: 50%;
-  margin-top: calc(var(--h-input) / -2);
-  width: var(--search-overlay-w, 280px);
-  z-index: var(--z-raised);
-  background: var(--bg-raised);
 }
 .fp-search__collapsed {
   display: none;
@@ -1127,17 +1125,19 @@ svg { flex-shrink: 0; }
   height: 26px;
   padding: 0;
   border: none;
-  border-radius: var(--r-icon-btn);
+  border-radius: var(--r-sm);
   background: transparent;
   color: var(--text-secondary);
   cursor: pointer;
   align-items: center;
   justify-content: center;
+  transition: background-color var(--motion-instant) var(--ease-standard),
+              color var(--motion-instant) var(--ease-standard);
 }
-#toolbar[data-search="collapsed"] .fp-toolbar__search:not(.fp-search--expanded) .fp-search__collapsed {
+#toolbar[data-search="collapsed"] .fp-toolbar__search:not(.fp-search--expanded):not(.fp-search--folding) .fp-search__collapsed {
   display: inline-flex;
 }
-.fp-search__collapsed:hover { background: var(--bg-raised); color: var(--text-primary); }
+.fp-search__collapsed:hover { background: var(--bg-pressed); color: var(--text-primary); }
 
 /* -----------------------------------------------------------------------------
    8. APPROVALS PILL (Section 13)
@@ -1199,17 +1199,21 @@ svg { flex-shrink: 0; }
    Once the search bar has collapsed and the path still does not fit,
    layoutToolbar() adds .is-overflowing: the path pins to the RIGHT edge, so
    the START of it caves in under the leading fade and the folder you are
-   actually in stays visible. */
+   actually in stays visible. The anchoring itself is continuous, not a
+   switch: the wrapper ends-aligns and the path's auto right margin takes any
+   spare room, so a path that fits sits at the left and one that does not
+   (no spare room: the auto margin is 0) at the right — which is what lets
+   the opening search bar push it smoothly (addendum §2). */
 .fp-breadcrumb-wrap {
   flex: 1 1 0;
   min-width: 0;
   overflow: hidden;
   display: flex;
   align-items: center;
-  justify-content: flex-start;
-}
-.fp-breadcrumb-wrap.is-overflowing {
   justify-content: flex-end;
+}
+.fp-breadcrumb-wrap > .fp-breadcrumb { margin-right: auto; }
+.fp-breadcrumb-wrap.is-overflowing {
   -webkit-mask-image: linear-gradient(to right, transparent 0, #000 24px, #000 100%);
           mask-image: linear-gradient(to right, transparent 0, #000 24px, #000 100%);
 }
