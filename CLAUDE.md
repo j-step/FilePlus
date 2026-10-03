@@ -230,7 +230,7 @@ April "one fix at a time" rule is retired (D10).
   not motion. `html.fp-key-repeat` (a held key) zeroes transitions and makes `fpAnimate` instant;
   `html.fp-heavy-list` (a listing over 300 rows, `syncHeavyList`) and the 30-row cap keep big lists from
   animating per row; `html.fp-booting` (lifted two frames after the saved settings apply,
-  `fpEndBoot`) keeps launch from easing into the saved state. `.fp-pressed` is the press state kept by
+  `fpEndBoot`, also from a `finally` around startup) keeps launch from easing into the saved state. `.fp-pressed` is the press state kept by
   hand on chrome buttons (the mouse-focus model drops `:active`).
 - Decide "is it open?" from state, never from visibility (a closing panel or scrim is still painted
   while it fades): `setInspectorOpen` / `setThisPcOpen` (`{animate}` option), `anyScrimOpen()`,

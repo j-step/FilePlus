@@ -5226,7 +5226,7 @@ document.addEventListener('contextmenu', e => {
 });
 
 // ── Init ───────────────────────────────────────────────────────────────────────
-document.addEventListener('DOMContentLoaded', async () => {
+async function fpInitApp() {
   // Idempotent belt-and-braces: icons.js already installs the sprite
   // synchronously at parse time (see its own DOMContentLoaded fallback for
   // the case this script somehow ran before <body> existed); calling again
@@ -5421,7 +5421,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     // init with no trace at all.
     console.warn('[fp-init] startup data load failed:', err);
   }
-  fpEndBoot();   // a no-op unless the config step above threw
+  fpEndBoot();   // a no-op if the config step already lifted it
   // Startup has finished applying what it loaded (config, known folders,
   // drives, pins, tags, Quick Access). The Electron harness waits for this
   // before a test acts: acting earlier raced the config landing — a settings
@@ -5439,6 +5439,17 @@ document.addEventListener('DOMContentLoaded', async () => {
   //     INTEGRATION: POST /scan → if 409 response → showToast('Scan already running', 'warn')
   // #13 Ollama model not downloaded when classification starts → show error banner with install CTA
   //     INTEGRATION: GET /ai/status → if model_status !== 'ready' → show #banner-ai-offline
+}
+
+// Startup. Whatever happens in it — a throw anywhere, not only in the
+// config step — html.fp-booting is lifted (fpEndBoot is idempotent), so a
+// failed start can never leave the app with animations stuck off (Task 8).
+document.addEventListener('DOMContentLoaded', async () => {
+  try {
+    await fpInitApp();
+  } finally {
+    fpEndBoot();
+  }
 });
 
 /**

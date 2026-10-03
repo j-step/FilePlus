@@ -79,7 +79,7 @@
   --z-overlay-scroll: 5;   /* overlay scrollbar tracks (overlayscroll.js) */
   --z-marquee: 6;          /* the rubber-band selection rectangle */
   --z-panel-exit: 7;       /* a closed panel sliding out over the list (.inspector--closing) */
-  --z-header: 8;           /* the header bar (title bar + tabs, addendum §1) */
+  --z-header: 8;           /* the header bar (identity card, tabs, caption buttons; addendum §1) */
   --z-sidebar-resize: 10;  /* the sidebar's resize handle (the rail's thumb +1) */
   --z-popover: 200;        /* popovers, the Ask File+ popout, dropdowns */
   --z-dropdown: 300;       /* the search dropdown (its overlay bar +1) */
@@ -282,6 +282,9 @@
   --row-star-size:     12px;  /* the favourite star on an icon cell, tile or Content row */
   --tab-max-w:        200px;
   --tab-min-w:         80px;
+  --tab-icon:          14px;  /* a tab's leading icon (.fp-icon--14) */
+  --tab-close:         16px;  /* a tab's close (x) button */
+  --tab-border:         1px;  /* a tab's side borders (transparent until active) */
   --tabbar-fade:       24px;
   --tabbar-inset:      var(--s-8);
   --caption-close-bg:  #C42B1C; /* Windows' close-button red (both themes) */
@@ -4950,7 +4953,7 @@ body.is-dragging .fp-oscroll { pointer-events: none; }
      legible by CONTRAST (border + lighter fill + accent underline) instead
      of being the only tab with any chrome at all. */
   background: var(--bg-raised);
-  border: 1px solid transparent;
+  border: var(--tab-border) solid transparent;
   border-bottom: none;
   margin-right: 2px;
   display: inline-flex;
@@ -4997,12 +5000,13 @@ body.is-dragging .fp-oscroll { pointer-events: none; }
   line-height: min(20px, calc(var(--header-fit-h) - 1px));
   text-overflow: ellipsis;
   white-space: nowrap;
-  /* What a --tab-max-w tab leaves its title: the padding, the 14px icon, the
-     two gaps, the 16px close button and the 1px borders. */
-  max-width: calc(var(--tab-max-w) - var(--s-8) - var(--s-10) - 14px - 2 * var(--s-6) - 16px - 2px);
+  /* What a --tab-max-w tab leaves its title: the padding, the icon, the two
+     gaps, the close button and the two side borders. */
+  max-width: calc(var(--tab-max-w) - var(--s-8) - var(--s-10) - var(--tab-icon) - 2 * var(--s-6)
+    - var(--tab-close) - 2 * var(--tab-border));
 }
 .fp-tab__close {
-  width: 16px; height: 16px;
+  width: var(--tab-close); height: var(--tab-close);
   border-radius: var(--r-chip);
   display: inline-flex; align-items: center; justify-content: center;
   color: var(--text-tertiary);
@@ -5768,8 +5772,12 @@ button.fp-pill:hover {
 .fp-row--recent:hover { background: var(--bg-raised); --home-row-bg: var(--bg-raised); }
 .fp-row--recent:hover .fp-row__hover-actions { opacity: 1; pointer-events: all; }
 /* …and what they cover is hidden outright, not left half-showing at the
-   edge of their fade ("opened 08:0", Task 8 Q8). */
-.fp-row--recent:hover > :is(.fp-row__recent-time, .fp-row__tags) { visibility: hidden; }
+   edge of their fade ("opened 08:0", Task 8 Q8). Only on rows that have the
+   buttons (Recent; a Favorites row's "Added …" date stays), and only in a
+   pane wide enough to show them (≤ 300 px they stay out, so nothing hides). */
+@container home-pane (width > 300px) {
+  .fp-row--recent:has(> .fp-row__hover-actions):hover > :is(.fp-row__recent-time, .fp-row__tags) { visibility: hidden; }
+}
 .fp-row--recent.fp-row--selected {
   background: var(--accent-wash);
   --home-row-bg: var(--accent-wash);

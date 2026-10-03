@@ -575,3 +575,64 @@ test('Q11: the Writes detail line uses the same font and colour as the status li
   }
   expect(errors).toEqual([]);
 });
+
+// ── Re-review follow-ups ─────────────────────────────────────────────────────
+test('R2b: a startup that throws still lifts html.fp-booting (animations never stay stuck off)', async () => {
+  const { app, page, errors } = await launchApp({ motion: true });
+  try {
+    // Make the synchronous part of startup throw (restoreSidebarState reads
+    // this key outside any try).
+    await page.addInitScript(() => {
+      const real = Storage.prototype.getItem;
+      Storage.prototype.getItem = function (k) {
+        if (k === 'fp-sidebar-collapsed') throw new Error('fixwave-boot-throw');
+        return real.call(this, k);
+      };
+    });
+    await page.reload();
+    await page.waitForFunction(() => document.readyState === 'complete'
+      && !document.documentElement.classList.contains('fp-booting'), null, { timeout: 15_000 });
+    expect(await page.evaluate(() => window.__fpInitDone === true)).toBe(false);
+  } finally {
+    await app.close();
+  }
+  // The only error is the one this test caused.
+  expect(errors.length).toBeGreaterThan(0);
+  expect(errors.filter((e) => !/fixwave-boot-throw/.test(e))).toEqual([]);
+});
+
+test('Q8b: hovering a Favorites row keeps its "Added …" date (no hover buttons there); a narrow Recent pane hides nothing on hover', async () => {
+  const { app, page, errors } = await launchApp();
+  const root = (await apiGet('/fs/list/root')).path;
+  const dir = `${root}\\_gen\\Documents`;
+  try {
+    await apiSend('DELETE', '/recent');
+    for (const n of ['doc-00.txt', 'doc-01.txt']) await apiSend('POST', '/recent', { path: `${dir}\\${n}`, action: 'opened' });
+    await apiSend('POST', '/favorites', { path: `${dir}\\doc-01.txt` });
+    await page.evaluate(() => loadFavorites());
+    await setWindow(app, page, 1200, 700);
+    await page.evaluate(() => switchScreen('home'));
+    await page.locator('#home-tabs .fp-tabs__item', { hasText: 'Favorites' }).click();
+    const fav = page.locator('#home-favorites .fp-row[data-path]').first();
+    await expect(fav).toBeVisible();
+    await fav.hover();
+    expect(await fav.locator('.fp-row__recent-time').evaluate((el) => [getComputedStyle(el).visibility, el.textContent.trim().length > 0]))
+      .toEqual(['visible', true]);
+    // Recent in a pane too narrow for the buttons: the star stays on hover.
+    await page.locator('#home-tabs .fp-tabs__item', { hasText: 'Recent' }).click();
+    await setWindow(app, page, 800, 700);
+    await setZoom(app, page, 1.5);
+    const starred = page.locator('#home-recent .fp-row[data-path]', { has: page.locator('.fp-row__star') });
+    await starred.hover();
+    const r = await starred.evaluate((row) => ({
+      actions: row.querySelector('.fp-row__hover-actions').getClientRects().length > 0,
+      star: getComputedStyle(row.querySelector('.fp-row__tags')).visibility,
+    }));
+    expect(r).toEqual({ actions: false, star: 'visible' });
+  } finally {
+    await setZoom(app, page, 1).catch(() => {});
+    await apiSend('DELETE', `/favorites?path=${encodeURIComponent(`${dir}\\doc-01.txt`)}`).catch(() => {});
+    await app.close();
+  }
+  expect(errors).toEqual([]);
+});
