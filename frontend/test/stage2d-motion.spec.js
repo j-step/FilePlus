@@ -704,7 +704,7 @@ const pageFrames = (page, ms) => page.evaluate((wait) => new Promise((resolve) =
   requestAnimationFrame(tick);
 }), ms);
 
-test('screens crossfade: the new screen is live at once, the old one fades out inert, and a quick switch back is clean', async () => {
+test('screens: the new screen is live at once and fades up from half opacity; the old one is hidden at once', async () => {
   const { app, page, errors } = await launchApp({ motion: true });
   try {
     await installMotionProbes(page);
@@ -713,36 +713,31 @@ test('screens crossfade: the new screen is live at once, the old one fades out i
       const settings = document.getElementById('screen-settings');
       switchScreen('settings');
       const nav = settings.querySelector('.settings-nav__item');
+      const anim = settings.getAnimations()[0];
       return {
         active: settings.classList.contains('active'), navHit: window.__fpHitIs(nav),
-        leaving: home.classList.contains('screen--leaving'), homeInert: home.inert,
-        homePe: getComputedStyle(home).pointerEvents,
-        inAnims: window.__fpAnims(settings), outAnims: window.__fpAnims(home),
+        homeShown: getComputedStyle(home).display, homeAnims: home.getAnimations().length,
+        inAnims: window.__fpAnims(settings), from: anim && Number(anim.effect.getKeyframes()[0].opacity),
       };
     });
-    expect(r).toMatchObject({ active: true, navHit: true, leaving: true, homeInert: true, homePe: 'none' });
+    // Fix round 1: no leaving copy of the old screen is kept painted (that
+    // cost a full layout of a big listing) — it is hidden in the same task.
+    expect(r).toMatchObject({ active: true, navHit: true, homeShown: 'none', homeAnims: 0, from: 0.5 });
     expect(r.inAnims.length).toBe(1);
-    expect(r.outAnims.length).toBe(1);
-    for (const a of [...r.inAnims, ...r.outAnims]) expect(a.duration).toBeLessThanOrEqual(100);
+    expect(r.inAnims[0].duration).toBeLessThanOrEqual(100);
     await settled(page, '#screens');
-    expect(await page.evaluate(() => {
-      const home = document.getElementById('screen-home');
-      return [home.classList.contains('screen--leaving'), home.inert, getComputedStyle(home).display];
-    })).toEqual([false, false, 'none']);
 
-    // Back and forth in one task: Home is the live screen, never inert.
+    // Back and forth in one task: one live screen, the last one.
     const q = await page.evaluate(() => {
       switchScreen('home');
       switchScreen('settings');
       switchScreen('home');
       const home = document.getElementById('screen-home');
       return { active: home.classList.contains('active'), inert: home.inert,
-        leaving: home.classList.contains('screen--leaving'),
-        shown: document.querySelectorAll('.screen.active').length };
+        shown: [...document.querySelectorAll('.screen')].filter((s) => getComputedStyle(s).display !== 'none').length };
     });
-    expect(q).toEqual({ active: true, inert: false, leaving: false, shown: 1 });
+    expect(q).toEqual({ active: true, inert: false, shown: 1 });
     await settled(page, '#screens');
-    expect(await page.locator('.screen--leaving').count()).toBe(0);
   } finally {
     await app.close();
   }
@@ -767,14 +762,18 @@ test('inspector: open/close slides the panel and resizes the file pane; closed m
       const hit = document.elementFromPoint(center.x, center.y);
       return { open: ins.classList.contains('inspector--open'), closing: ins.classList.contains('inspector--closing'),
         inert: ins.inert, hitIns: !!hit && ins.contains(hit),
-        resizer: getComputedStyle(document.getElementById('resizer')).display, anims: window.__fpAnims(ins) };
+        resizer: getComputedStyle(document.getElementById('resizer')).display, anims: window.__fpAnims(ins),
+        position: getComputedStyle(ins).position,
+        prop: Object.keys(ins.getAnimations()[0].effect.getKeyframes()[0]).find((k) => !['offset', 'easing', 'composite', 'computedOffset'].includes(k)),
+        listW: document.getElementById('list-pane').getBoundingClientRect().width };
     });
-    expect(c).toMatchObject({ open: false, closing: true, inert: true, hitIns: false, resizer: 'none' });
+    expect(c).toMatchObject({ open: false, closing: true, inert: true, hitIns: false, resizer: 'none',
+      position: 'absolute', prop: 'transform' });
     expect(c.anims.length).toBe(1);
     expect(c.anims[0].duration).toBeLessThanOrEqual(140);
-    // Mid-way the file pane is between its two widths (it resizes smoothly).
-    await expect.poll(() => page.evaluate(() => document.getElementById('list-pane').getBoundingClientRect().width))
-      .toBeGreaterThan(listW0);
+    // The file pane took its full width at once (fix round 1: laid out once,
+    // not per frame); the panel slides out over its edge by transform.
+    expect(c.listW).toBeGreaterThan(listW0 + openW - 2);
     await settled(page);
     expect(await page.evaluate(() => {
       const ins = document.getElementById('inspector');
@@ -788,9 +787,11 @@ test('inspector: open/close slides the panel and resizes the file pane; closed m
       const tab = ins.querySelector('.fp-inspector__tab');
       tab.focus();
       return { open: ins.classList.contains('inspector--open'), inert: ins.inert, focused: document.activeElement === tab,
-        anims: window.__fpAnims(ins) };
+        anims: window.__fpAnims(ins), listW: document.getElementById('list-pane').getBoundingClientRect().width };
     });
     expect(o).toMatchObject({ open: true, inert: false, focused: true });
+    // The file pane is at its narrow width from the first frame.
+    expect(Math.abs(o.listW - listW0)).toBeLessThan(1);
     expect(o.anims.length).toBe(1);
     expect(o.anims[0].duration).toBeLessThanOrEqual(140);
 
@@ -804,11 +805,11 @@ test('inspector: open/close slides the panel and resizes the file pane; closed m
     const fin = await page.evaluate(() => {
       const ins = document.getElementById('inspector');
       return { open: ins.classList.contains('inspector--open'), w: ins.getBoundingClientRect().width,
-        mr: getComputedStyle(ins).marginRight, inert: ins.inert, listW: document.getElementById('list-pane').getBoundingClientRect().width };
+        tf: getComputedStyle(ins).transform, inert: ins.inert, listW: document.getElementById('list-pane').getBoundingClientRect().width };
     });
     expect(fin.open).toBe(true);
     expect(Math.abs(fin.w - openW)).toBeLessThan(1);
-    expect(fin.mr).toBe('0px');
+    expect(fin.tf).toBe('none');
     expect(fin.inert).toBe(false);
     expect(Math.abs(fin.listW - listW0)).toBeLessThan(1);
   } finally {
@@ -1184,7 +1185,19 @@ test('buttons: a press scales to .97 over --motion-instant with animations on, t
       await expect.poll(() => page.evaluate(() => getComputedStyle(document.getElementById('btn-inspector-toggle')).transform)).toBe(want);
       const dur = await page.evaluate(() => getComputedStyle(document.getElementById('btn-inspector-toggle')).transitionDuration);
       expect(dur.split(',').every((d) => parseFloat(d) * 1000 <= 60)).toBe(true);
-      // Released off the button: no click, nothing toggled.
+      // Released off the button: no click, nothing toggled, no press left.
+      await page.mouse.move(5, b.y + 200);
+      await page.mouse.up();
+      expect(await page.evaluate(() => document.querySelectorAll('.fp-pressed').length)).toBe(0);
+      // A press the window loses focus during (Alt+Tab) never sticks.
+      await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2);
+      await page.mouse.down();
+      const during = await page.evaluate(() => {
+        const was = document.getElementById('btn-inspector-toggle').classList.contains('fp-pressed');
+        window.dispatchEvent(new Event('blur'));
+        return [was, document.querySelectorAll('.fp-pressed').length];
+      });
+      expect(during).toEqual([true, 0]);
       await page.mouse.move(5, b.y + 200);
       await page.mouse.up();
     } finally {
@@ -1242,10 +1255,9 @@ test('key repeat (a held Ctrl+T / Ctrl+W / Ctrl+B / Ctrl+I) acts at every step a
     const r = await page.evaluate(() => {
       const press = (key, repeat) => document.body.dispatchEvent(new KeyboardEvent('keydown', {
         key, code: `Key${key.toUpperCase()}`, ctrlKey: true, repeat, bubbles: true, cancelable: true }));
-      // Script-driven motion (fpAnimate) — the per-step animations rule 4
-      // is about. (A tab's 60 ms fill transition just retargets.)
-      const scripted = (root = document) => (root === document ? document.getAnimations() : root.getAnimations({ subtree: true }))
-        .filter((a) => a.constructor.name === 'Animation').length;
+      // Every kind: fpAnimate, CSS transitions (the sidebar's width, the
+      // shell column, the header card, a tab's fill) and CSS animations.
+      const scripted = (root = document) => (root === document ? document.getAnimations() : root.getAnimations({ subtree: true })).length;
       const n0 = tabs.list.length;
       for (let i = 0; i < 4; i++) press('t', true);
       const afterT = { added: tabs.list.length - n0, running: scripted() };
@@ -1258,14 +1270,26 @@ test('key repeat (a held Ctrl+T / Ctrl+W / Ctrl+B / Ctrl+I) acts at every step a
       press('i', true);
       press('b', true);
       const afterB = { collapsed: document.getElementById('sidebar').classList.contains('fp-sidebar--collapsed'),
-        running: scripted(document.getElementById('sidebar')) };
+        running: scripted(document.getElementById('app')), all: scripted() };
       press('b', true);
-      return { afterT, afterW, afterI, afterB };
+      const held = document.documentElement.classList.contains('fp-key-repeat');
+      // The key comes up: the hold is over.
+      document.body.dispatchEvent(new KeyboardEvent('keyup', { key: 'b', code: 'KeyB', ctrlKey: true, bubbles: true }));
+      return { afterT, afterW, afterI, afterB, held, released: !document.documentElement.classList.contains('fp-key-repeat') };
     });
     expect(r.afterT).toEqual({ added: 4, running: 0 });
     expect(r.afterW).toEqual({ left: 1, ghosts: 0, running: 0 });
     expect(r.afterI).toEqual({ closing: false, running: 0 });
-    expect(r.afterB).toEqual({ collapsed: true, running: 0 });
+    expect(r.afterB).toEqual({ collapsed: true, running: 0, all: 0 });
+    expect([r.held, r.released]).toEqual([true, true]);
+    await settled(page);
+    // Released, a plain Ctrl+B animates the width again.
+    expect(await page.evaluate(() => {
+      toggleSidebar();
+      const w = document.getElementById('sidebar').getAnimations().filter((a) => a.transitionProperty === 'width').length;
+      toggleSidebar();
+      return w;
+    })).toBe(1);
     // The first press of a key (not a repeat) still animates.
     const first = await page.evaluate(() => {
       document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 't', code: 'KeyT', ctrlKey: true, bubbles: true, cancelable: true }));
@@ -1275,6 +1299,100 @@ test('key repeat (a held Ctrl+T / Ctrl+W / Ctrl+B / Ctrl+I) acts at every step a
   } finally {
     await app.close();
     await delConfig('ui.inspector_open');
+  }
+  expect(errors).toEqual([]);
+});
+
+test('5,000 rows: inspector, sidebar and screen switches cost no more with motion on than off (fix round 1)', async () => {
+  test.setTimeout(240_000);
+  const { app, page, errors } = await launchApp({ motion: true });
+  try {
+    const root = (await apiGet('/fs/list/root')).path;
+    await page.evaluate((p) => { setInspectorOpen(true, { persist: false }); return loadDirectory(p); }, root);
+    await page.waitForFunction(() => !window.__fpLoadPending);
+    // ~5,000 entries, generated in memory and rendered through the real path.
+    await page.evaluate(() => {
+      const now = Date.now() / 1000;
+      browserState.entries = Array.from({ length: 5000 }, (_, i) => ({
+        name: `generated-entry-${String(i).padStart(4, '0')}.txt`, ext: '.txt', is_dir: false,
+        is_hidden: false, size: 1000 + i, modified: now - i * 60, created: now - i * 60, accessed: now,
+      }));
+      setView('details', null, { manual: false });
+      renderDirectory();
+    });
+    expect(await page.locator('#list-scroll > .fp-row').count()).toBe(5000);
+    await settled(page);
+
+    // A big listing on screen turns off the per-frame width motion (the
+    // contents' fade stays); leaving the Browser lifts it.
+    const heavy = await page.evaluate(() => {
+      const on = document.documentElement.classList.contains('fp-heavy-list');
+      toggleSidebar();
+      const widths = ['shell', 'sidebar', 'identity'].map((id) => document.getElementById(id).getAnimations().length);
+      const fade = document.querySelector('.fp-sidebar__scroll').getAnimations().length;
+      toggleSidebar();
+      return { on, widths, fade };
+    });
+    expect(heavy).toEqual({ on: true, widths: [0, 0, 0], fade: 1 });
+    await settled(page);
+
+    /** Times one action in the page: the synchronous handler, the first
+     * frame after it (rendered), and the longest frame in the 350 ms after. */
+    const measure = (name) => page.evaluate(async (n) => {
+      const actions = {
+        inspectorClose: () => setInspectorOpen(false, { persist: false, animate: true }),
+        inspectorOpen: () => setInspectorOpen(true, { persist: false, animate: true }),
+        sidebarCollapse: () => toggleSidebar(),
+        sidebarExpand: () => toggleSidebar(),
+        toHome: () => switchScreen('home'),
+        toBrowser: () => switchScreen('browser'),
+      };
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      const t0 = performance.now();
+      actions[n]();
+      const sync = performance.now() - t0;
+      const first = await new Promise((r) => requestAnimationFrame(() => setTimeout(() => r(performance.now() - t0), 0)));
+      let last = performance.now();
+      let maxFrame = 0;
+      await new Promise((r) => {
+        const tick = () => {
+          const now = performance.now();
+          maxFrame = Math.max(maxFrame, now - last);
+          last = now;
+          if (now - t0 < 350) requestAnimationFrame(tick); else r();
+        };
+        requestAnimationFrame(tick);
+      });
+      return { sync, first, maxFrame };
+    }, name);
+    const names = ['inspectorClose', 'inspectorOpen', 'sidebarCollapse', 'sidebarExpand', 'toHome', 'toBrowser'];
+    const run = async (motion) => {
+      await page.evaluate((m) => fpSetMotion(m, { persist: false }), motion);
+      const best = {};
+      for (let round = 0; round < 3; round++) {
+        for (const n of names) {
+          const m = await measure(n);
+          const b = best[n] || { sync: Infinity, first: Infinity, maxFrame: Infinity };
+          best[n] = { sync: Math.min(b.sync, m.sync), first: Math.min(b.first, m.first), maxFrame: Math.min(b.maxFrame, m.maxFrame) };
+        }
+      }
+      return best;
+    };
+    const off = await run(false);
+    const on = await run(true);
+    const fmt = (o) => Object.fromEntries(Object.entries(o).map(([k, v]) => [k, Object.fromEntries(Object.entries(v).map(([a, b]) => [a, Math.round(b)]))]));
+    console.log(`5,000 rows, motion off (ms): ${JSON.stringify(fmt(off))}`);
+    console.log(`5,000 rows, motion on  (ms): ${JSON.stringify(fmt(on))}`);
+    for (const n of names) {
+      // Within ~1.3x of motion off (plus a frame of slack for timer noise).
+      expect(on[n].sync, `${n} sync`).toBeLessThanOrEqual(off[n].sync * 1.3 + 8);
+      expect(on[n].first, `${n} first frame`).toBeLessThanOrEqual(off[n].first * 1.3 + 17);
+      // No frame of the animation that follows re-lays the listing out.
+      expect(on[n].maxFrame, `${n} longest frame`).toBeLessThanOrEqual(Math.max(off[n].maxFrame * 1.3 + 17, 40));
+    }
+    expect(await page.evaluate(() => { switchScreen('home'); return document.documentElement.classList.contains('fp-heavy-list'); })).toBe(false);
+  } finally {
+    await app.close();
   }
   expect(errors).toEqual([]);
 });

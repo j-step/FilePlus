@@ -3833,6 +3833,15 @@ body.is-dragging .fp-oscroll { pointer-events: none; }
 .app:has(.fp-sidebar--dragging) .fp-identity {
   transition: none;
 }
+/* A big listing on screen (html.fp-heavy-list, app.js syncHeavyList): the
+   sidebar's width, the shell column and the header card move in one step,
+   so the file pane is laid out once rather than on every frame (the panel's
+   contents still fade in). */
+.fp-heavy-list .shell,
+.fp-heavy-list .fp-sidebar,
+.fp-heavy-list .fp-identity {
+  transition: none;
+}
 
 /* =============================================================================
    37. SIDEBAR
@@ -3875,6 +3884,7 @@ body.is-dragging .fp-oscroll { pointer-events: none; }
 /* Content row: hosts the .screens stack + the global resizer + inspector
    that lives outside any single screen so it's available across screens. */
 .content-row {
+  position: relative;   /* the closing inspector (.inspector--closing) */
   display: flex;
   flex: 1;
   min-height: 0;
@@ -3999,9 +4009,6 @@ body.is-dragging .fp-oscroll { pointer-events: none; }
   overflow: hidden;
 }
 .screen.active { display: flex; }
-/* The screen just switched away from, while it fades out under the new one
-   (app.js screenCrossfade): still painted, never hit, inert. */
-.screen.screen--leaving { display: flex; pointer-events: none; }
 
 .screen__header {
   padding: var(--s-24) var(--s-24) var(--s-12);
@@ -5504,8 +5511,18 @@ button.fp-pill:hover {
 }
 .inspector--open { display: flex; }
 /* Closed, still sliding out past the window edge (inspector.js
-   inspectorToggleMotion): painted, never hit, inert. */
-.inspector--closing { display: flex; pointer-events: none; }
+   inspectorToggleMotion): out of the layout — the file pane already has the
+   room — drawn over the pane's right edge, never hit, inert. */
+.inspector--closing {
+  display: flex;
+  /* !important: overlayscroll.js gives the panel an inline position:relative
+     (its scrollbar track's containing block); absolute serves that too. */
+  position: absolute !important;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  pointer-events: none;
+}
 /* The last resort for a short window at high zoom: the part above the
    action row scrolls as one (overlay scrollbar); the actions stay pinned. */
 .inspector__scroll {
@@ -6614,6 +6631,15 @@ html:not([data-motion="on"]) *::after {
 /* The snackbar's countdown bar is drawn by an animation; with none it would
    sit full for the snackbar's whole life, so it is not shown. */
 html:not([data-motion="on"]) .fp-snackbar__progress { display: none; }
+/* A held key (html.fp-key-repeat, app.js; §5.1 rule 4): every step lands in
+   one go — no transition starts per step, the sidebar's width included.
+   CSS animations keep running (a notice's countdown bar must not restart). */
+html.fp-key-repeat,
+html.fp-key-repeat *,
+html.fp-key-repeat *::before,
+html.fp-key-repeat *::after {
+  transition: none !important;
+}
 
 /* -----------------------------------------------------------------------------
    SETTINGS › SCAN & INDEX (Task 14, design §8.7)

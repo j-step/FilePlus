@@ -75,17 +75,22 @@ function fpMotionMs(name) {
 }
 
 // Rule 4 (§5.1): key repeat is continuous input. A held Ctrl+W, Ctrl+T,
-// Ctrl+B, Ctrl+I, arrow or Delete never starts an animation per step: the
-// task a repeated keydown runs in is marked, and every fpAnimate() in it is
-// instant (returns null, an exit finishes at once). The mark is set before
-// any other keydown listener runs (window, capture) and cleared at the next
-// task.
-let _fpKeyRepeatTask = false;
+// Ctrl+B, Ctrl+I, arrow or Delete never starts an animation per step: while
+// a repeat is active html carries .fp-key-repeat — set by the first repeated
+// keydown, before any other keydown listener runs (window, capture), and
+// cleared by the key coming up, a fresh (non-repeat) keydown, or the window
+// losing focus. Under it every fpAnimate() is instant (returns null, an exit
+// finishes at once) and styles.css's motion gate zeroes every CSS
+// transition and animation, the sidebar's width included.
+function fpKeyRepeating() {
+  return document.documentElement.classList.contains('fp-key-repeat');
+}
 window.addEventListener('keydown', e => {
-  if (!e.repeat || _fpKeyRepeatTask) return;
-  _fpKeyRepeatTask = true;
-  setTimeout(() => { _fpKeyRepeatTask = false; }, 0);
+  document.documentElement.classList.toggle('fp-key-repeat', !!e.repeat);
 }, true);
+for (const type of ['keyup', 'blur']) {
+  window.addEventListener(type, () => document.documentElement.classList.remove('fp-key-repeat'), true);
+}
 
 // Animations fpAnimate() started that may still be running: cancelled the
 // moment the switch goes off. Per element, one animation per key.
@@ -117,7 +122,7 @@ function fpAnimate(el, keyframes, { duration = 'fast', easing = 'out', key = 'de
   let slots = _fpAnimationsByEl.get(el);
   const prev = slots && slots.get(key);
   if (prev) { slots.delete(key); _fpLiveAnimations.delete(prev); prev.cancel(); }
-  if (!fpMotionOn() || _fpKeyRepeatTask || typeof el.animate !== 'function') return null;
+  if (!fpMotionOn() || fpKeyRepeating() || typeof el.animate !== 'function') return null;
   const t = fpMotionTokens();
   const ceiling = t.durations.slow;
   let ms = t.durations.fast;
@@ -731,12 +736,9 @@ function showScreenDom(id) {
   const current = document.querySelector('.screen.active');
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
   const target = document.getElementById(`screen-${id}`);
-  if (target) {
-    // Back to a screen that was still fading out: it is simply the shown one.
-    fpCancelExit(target);
-    target.classList.add('active');
-  }
-  if (current && target && current !== target) screenCrossfade(current, target);
+  if (target) target.classList.add('active');
+  if (current && target && current !== target) screenFadeIn(target);
+  syncHeavyList();
   if (id === 'home') {
     loadRecent();
     loadFavorites();
@@ -751,13 +753,25 @@ function showScreenDom(id) {
 }
 
 /** Home ↔ Browser ↔ Settings (§5.2 Screens): the new screen is already the
- * active one (it takes every click and key); the old one stays painted
- * under it for --motion-fast, inert and fading out, while the new one fades
- * in — a crossfade, so no frame is blank. */
-function screenCrossfade(from, to) {
-  if (!fpMotionOn()) return;
-  fpPlayExit(from, [{ opacity: 1 }, { opacity: 0 }], { cls: 'screen--leaving', duration: 'fast', easing: 'standard' });
-  fpAnimate(to, [{ opacity: 0 }, { opacity: 1 }], { duration: 'fast', easing: 'standard', key: 'screen' });
+ * active one (it takes every click and key) and the old one is hidden at
+ * once — keeping a full Browser listing painted under the fade cost a
+ * forced layout of thousands of rows (fix round 1). The new screen fades up
+ * from half opacity over --motion-fast, so no frame is blank. */
+function screenFadeIn(to) {
+  fpAnimate(to, [{ opacity: 0.5 }, { opacity: 1 }], { duration: 'fast', easing: 'standard', key: 'screen' });
+}
+
+/** html.fp-heavy-list: the Browser is on screen with a listing big enough
+ * that re-laying it out every frame would stutter (fix round 1). Width
+ * motion that resizes the file pane every frame — the sidebar, the shell
+ * column and the header card — is then a single step (styles.css); the
+ * fades stay. */
+const HEAVY_LIST_ROWS = 300;
+function syncHeavyList() {
+  const onBrowser = !!document.getElementById('screen-browser')?.classList.contains('active')
+    && !(typeof thisPcActive === 'function' && thisPcActive());
+  const n = typeof browserState !== 'undefined' && Array.isArray(browserState.entries) ? browserState.entries.length : 0;
+  document.documentElement.classList.toggle('fp-heavy-list', onBrowser && n > HEAVY_LIST_ROWS);
 }
 
 /**
@@ -4858,7 +4872,8 @@ function initChromeMouseFocus() {
 // and Chromium then drops :active from the button itself (only its icon
 // keeps it), so the press never showed there. .fp-pressed is the same state
 // kept by hand: on from the primary button's press until it comes up, is
-// cancelled, or the pointer leaves the button.
+// cancelled, the pointer leaves the button, or the window loses focus (an
+// Alt+Tab mid-press never delivers the pointerup).
 const PRESSABLE = '.fp-btn, .fp-button, .fp-icon-btn, .fp-circle-btn, .fp-ask, .fp-caption';
 function initPressFeedback() {
   document.addEventListener('pointerdown', e => {
@@ -4871,10 +4886,12 @@ function initPressFeedback() {
       document.removeEventListener('pointerup', release, true);
       document.removeEventListener('pointercancel', release, true);
       btn.removeEventListener('pointerleave', release);
+      window.removeEventListener('blur', release);
     };
     document.addEventListener('pointerup', release, true);
     document.addEventListener('pointercancel', release, true);
     btn.addEventListener('pointerleave', release);
+    window.addEventListener('blur', release);
   }, true);
 }
 

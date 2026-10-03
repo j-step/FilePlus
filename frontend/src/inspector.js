@@ -876,10 +876,11 @@ function setInspectorOpen(open, { persist = true, animate = persist } = {}) {
   const toggleBtn = document.getElementById('btn-inspector-toggle');
   if (!inspector) return;
   const wasOpen = inspector.classList.contains('inspector--open');
-  // Measured before the class flips: where a half-played toggle has got to.
-  const from = wasOpen !== open ? inspectorToggleFrom(inspector) : null;
+  const flips = wasOpen !== open;
+  // Read before the class flips: where a half-played toggle has got to.
+  const from = flips && animate ? inspectorToggleFrom(inspector) : null;
   inspector.classList.toggle('inspector--open', open);
-  if (from !== null) {
+  if (flips) {
     if (animate) inspectorToggleMotion(inspector, open, from);
     // An unanimated change (startup, a test) ends any half-played one.
     else { fpCancelExit(inspector); fpCancelAnimation(inspector, 'toggle'); }
@@ -894,39 +895,34 @@ function setInspectorOpen(open, { persist = true, animate = persist } = {}) {
 }
 
 // ── Inspector toggle motion (addendum §5.2 Inspector) ───────────────────────
-// The panel slides in from (or out past) the window's right edge at its full
-// width — its contents never reflow mid-way — by easing its right margin
-// between -width and 0, so the file pane beside it widens or narrows
-// smoothly. .inspector--open is already final when this plays: closing
-// keeps the panel painted under .inspector--closing (inert, never hit) until
-// it is out of sight; a toggle mid-way starts from wherever the panel is.
+// The file pane takes its new width ONCE, the moment the state flips — the
+// first frame of an open, at once on a close — and the panel slides by
+// transform only, so a big listing is never laid out again per frame (fix
+// round 1: easing the panel's margin re-laid 5,000 rows every frame).
+// Opening, the panel is in place in the layout and slides in from past the
+// window's right edge. Closing, it is out of the layout already; it stays
+// painted over the right edge of the file pane under .inspector--closing
+// (absolute, inert, never hit) while it slides out. A toggle mid-way starts
+// from wherever the panel has got to. The width itself is untouched (the
+// screen-px contract), and the resize handle follows .inspector--open.
 
-/** The panel's current right margin when a toggle is half-played (px), 0
- * when it sits fully open, or -width when it is fully closed. Only called
- * when the state is about to flip. */
+/** Where a half-played toggle has the panel (its translateX, as a CSS
+ * length), or null when it is at rest. Read before the state flips. */
 function inspectorToggleFrom(inspector) {
-  if (!fpMotionOn()) return 0;
-  const shown = inspector.classList.contains('inspector--open') || fpExiting(inspector);
-  if (!shown) return -1;   // fully closed: the open motion measures the width itself
-  return parseFloat(getComputedStyle(inspector).marginRight) || 0;
+  if (!fpMotionOn()) return null;
+  if (!fpExiting(inspector) && !inspector.getAnimations().length) return null;
+  return `${new DOMMatrixReadOnly(getComputedStyle(inspector).transform).m41}px`;
 }
 
 function inspectorToggleMotion(inspector, open, from) {
   if (!fpMotionOn()) return;
   if (open) {
     fpCancelExit(inspector);
-    fpCancelAnimation(inspector, 'toggle');
-    const w = inspector.getBoundingClientRect().width;
-    if (!w) return;
-    const start = from === -1 ? -w : from;
-    fpAnimate(inspector, [{ marginRight: `${start}px` }, { marginRight: '0px' }], { duration: 'base', key: 'toggle' });
+    fpAnimate(inspector, [{ transform: `translateX(${from ?? '100%'})` }, { transform: 'none' }],
+      { duration: 'base', key: 'toggle' });
   } else {
     fpCancelAnimation(inspector, 'toggle');
-    inspector.classList.add('inspector--closing');
-    const w = inspector.getBoundingClientRect().width;
-    inspector.classList.remove('inspector--closing');
-    if (!w) return;
-    fpPlayExit(inspector, [{ marginRight: `${from}px` }, { marginRight: `${-w}px` }],
+    fpPlayExit(inspector, [{ transform: `translateX(${from ?? '0px'})` }, { transform: 'translateX(100%)' }],
       { cls: 'inspector--closing', duration: 'base' });
   }
 }

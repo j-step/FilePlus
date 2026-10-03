@@ -1366,6 +1366,7 @@ function patchDirectory(newEntries, data = null) {
   browserState.entries = newEntries;
   browserState.fetchedAt = Date.now();
   browserState.listingGen++;
+  if (typeof syncHeavyList === 'function') syncHeavyList();
 
   const valid = new Set(newEntries.map(entryPath));
   browserState.selection = new Set([...browserState.selection].filter(p => valid.has(p)));
@@ -1656,9 +1657,11 @@ function refreshNavButtons() {
 function renderDirectory(data) {
   // On the This PC page there is no folder listing to render: a re-render
   // asked for by a sort / extension toggle repaints the cards instead.
-  if (thisPcActive()) { renderThisPC(); return; }
+  if (thisPcActive()) { renderThisPC(); if (typeof syncHeavyList === 'function') syncHeavyList(); return; }
   setThisPcShown(false);
   window.__fpRenderCount++;
+  // Before the rows land: a big listing turns off per-frame width motion.
+  if (typeof syncHeavyList === 'function') syncHeavyList();
   if (data) browserState.truncated = !!data.truncated;
   const listScroll = document.getElementById('list-scroll');
   if (!listScroll) return;
