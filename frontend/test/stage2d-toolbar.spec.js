@@ -26,7 +26,7 @@
 const { test, expect } = require('@playwright/test');
 const fs = require('fs');
 const path = require('path');
-const { launchApp, apiGet, SHOTS } = require('./harness/app');
+const { launchApp, apiGet, SHOTS, windowShot } = require('./harness/app');
 
 test.setTimeout(240_000);
 
@@ -39,25 +39,6 @@ const DEEP = ['Deep', 'Client-Projects', 'Northwind-Archive', 'Quarterly-Reports
   'Year-End-Closing', 'Supporting-Files', 'Scanned-Receipts', 'Final-Approved'];
 
 const twoFrames = (page) => page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
-
-/** Whole-window capture as the user sees it (stage2d-views.spec.js): Mica
- * off so its transparent regions don't save as white. */
-async function windowShot(app, page, name) {
-  const mica = await page.evaluate(async () => {
-    const was = document.documentElement.dataset.mica || null;
-    delete document.documentElement.dataset.mica;
-    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
-    return was;
-  });
-  try {
-    const b64 = await app.evaluate(async ({ BrowserWindow }) =>
-      (await BrowserWindow.getAllWindows()[0].webContents.capturePage()).toPNG().toString('base64'));
-    fs.mkdirSync(SHOTS, { recursive: true });
-    fs.writeFileSync(path.join(SHOTS, `${name}.png`), Buffer.from(b64, 'base64'));
-  } finally {
-    await page.evaluate((m) => { if (m) document.documentElement.dataset.mica = m; }, mica);
-  }
-}
 
 async function setSize(app, page, w, h = 760) {
   await app.evaluate(({ BrowserWindow }, s) => BrowserWindow.getAllWindows()[0].setSize(s.w, s.h), { w, h });

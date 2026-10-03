@@ -4,7 +4,7 @@
 // Q19). Fixtures: <sandbox>/Final (global-setup.js). Waits are on
 // conditions, never sleeps.
 const { test, expect } = require('@playwright/test');
-const { launchApp, shot, rowByName, apiGet } = require('./harness/app');
+const { launchApp, shot, rowByName, apiGet, windowShot } = require('./harness/app');
 
 test.setTimeout(120_000);
 
@@ -366,25 +366,6 @@ async function setZoom(app, page, z) {
   await page.waitForFunction((f) => Math.abs(window.electronAPI.getZoom() - f) < 0.001
     && typeof appZoom !== 'undefined' && Math.abs(appZoom.current - f) < 0.001 && !window.__fpZoomBusy, z);
   await frames(page);
-}
-
-/** The whole window as the user sees it (page.screenshot crops to the CSS
- * viewport under zoom), Mica flattened. */
-async function windowShot(app, page, name) {
-  const mica = await page.evaluate(async () => {
-    const was = document.documentElement.dataset.mica || null;
-    delete document.documentElement.dataset.mica;
-    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
-    return was;
-  });
-  try {
-    const b64 = await app.evaluate(async ({ BrowserWindow }) =>
-      (await BrowserWindow.getAllWindows()[0].webContents.capturePage()).toPNG().toString('base64'));
-    fs.mkdirSync(SHOTS, { recursive: true });
-    fs.writeFileSync(path.join(SHOTS, `${name}.png`), Buffer.from(b64, 'base64'));
-  } finally {
-    await page.evaluate((m) => { if (m) document.documentElement.dataset.mica = m; }, mica);
-  }
 }
 
 test('Q1/Q11/Q12/Q13/Q14/Q25: panels give the file list room; header, popout and dropdown stay inside the window', async () => {

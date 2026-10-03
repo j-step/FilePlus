@@ -184,6 +184,29 @@ async function shot(page, name) {
   return file;
 }
 
+/** Whole-window capture as the user sees it (BrowserWindow.capturePage, so
+ * the header bar and any app zoom come out as on screen — page.screenshot
+ * crops a zoomed page). Mica is flattened for the capture like shot().
+ * Saves artifacts/screenshots/<name>.png and returns its path. */
+async function windowShot(app, page, name) {
+  const mica = await page.evaluate(async () => {
+    const was = document.documentElement.dataset.mica || null;
+    delete document.documentElement.dataset.mica;
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    return was;
+  });
+  const file = path.join(SHOTS, `${name}.png`);
+  try {
+    const b64 = await app.evaluate(async ({ BrowserWindow }) =>
+      (await BrowserWindow.getAllWindows()[0].webContents.capturePage()).toPNG().toString('base64'));
+    fs.mkdirSync(SHOTS, { recursive: true });
+    fs.writeFileSync(file, Buffer.from(b64, 'base64'));
+  } finally {
+    await page.evaluate((m) => { if (m) document.documentElement.dataset.mica = m; }, mica);
+  }
+  return file;
+}
+
 /** Locator for the Browser row whose visible name is exactly `name`. */
 function rowByName(page, name) {
   const esc = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -225,4 +248,4 @@ function expectNoErrors(errors) {
   expect(errors, errors.join('\n')).toEqual([]);
 }
 
-module.exports = { FRONTEND, REPO, SHOTS, API, apiHeaders, apiGet, launchApp, waitReady, resetToDefaults, shot, rowByName, expectNoErrors, pinFolders };
+module.exports = { FRONTEND, REPO, SHOTS, API, apiHeaders, apiGet, launchApp, waitReady, resetToDefaults, shot, windowShot, rowByName, expectNoErrors, pinFolders };

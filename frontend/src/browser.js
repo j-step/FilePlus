@@ -2326,7 +2326,7 @@ function updateSearchBreadcrumb(root) {
     : (pathBaseName(root) || String(root || '') || 'this folder');
   crumb.innerHTML = `<span class="fp-breadcrumb__search">
       ${icon('search', 'fp-icon--14')}
-      <span>Search in ${escapeHtml(label)}</span>
+      <span class="fp-breadcrumb__label">Search in ${escapeHtml(label)}</span>
     </span>
     <button class="fp-icon-btn fp-icon-btn--sm fp-breadcrumb__clear" data-action="search-clear"
             title="Clear search" aria-label="Clear search">${icon('close', 'fp-icon--10')}</button>`;

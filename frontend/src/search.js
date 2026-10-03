@@ -1037,7 +1037,7 @@ function resizeSearchInput() {
   const input = document.getElementById('search-input');
   const ruler = document.getElementById('search-measure');
   if (!input || !ruler) return;
-  ruler.textContent = input.value || input.placeholder || '';
+  ruler.textContent = input.value || searchPlaceholderFull(input);
   const width = Math.ceil(ruler.getBoundingClientRect().width) + 4;
   input.style.width = `${Math.max(width, SEARCH_INPUT_MIN_CH * 7)}px`;
 }

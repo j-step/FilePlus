@@ -10,7 +10,7 @@
 const { test, expect } = require('@playwright/test');
 const fs = require('fs');
 const path = require('path');
-const { launchApp, shot, apiGet, API, apiHeaders, SHOTS } = require('./harness/app');
+const { launchApp, shot, apiGet, API, apiHeaders, SHOTS, windowShot } = require('./harness/app');
 
 test.setTimeout(300_000);
 
@@ -46,28 +46,6 @@ async function ctrlWheel(page, dy) {
   await page.mouse.wheel(0, dy);
   await page.waitForFunction((n) => window.__fpWheelSeen > n, seen);
   await page.keyboard.up('Control');
-}
-
-/** A screenshot of the whole window as the user sees it. Playwright's own
- * page.screenshot() crops to the CSS viewport under Electron zoom. Mica is
- * switched off for the capture: its regions are transparent in the page and
- * capturePage() would save them as see-through pixels (white in a viewer),
- * which is not what the window looks like. */
-async function windowShot(app, page, name) {
-  const mica = await page.evaluate(async () => {
-    const was = document.documentElement.dataset.mica || null;
-    delete document.documentElement.dataset.mica;
-    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
-    return was;
-  });
-  try {
-    const b64 = await app.evaluate(async ({ BrowserWindow }) =>
-      (await BrowserWindow.getAllWindows()[0].webContents.capturePage()).toPNG().toString('base64'));
-    fs.mkdirSync(SHOTS, { recursive: true });
-    fs.writeFileSync(path.join(SHOTS, `${name}.png`), Buffer.from(b64, 'base64'));
-  } finally {
-    await page.evaluate((m) => { if (m) document.documentElement.dataset.mica = m; }, mica);
-  }
 }
 
 async function setZoom(app, page, z) {

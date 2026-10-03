@@ -1124,6 +1124,13 @@ svg { flex-shrink: 0; }
    floor, the lowest-priority buttons ([data-fold], theme first) move into
    the "…" (See more) button, whose menu carries their actions. */
 #toolbar > * { min-width: 0; }
+/* The buttons never shrink: layoutToolbar() measures them as the fixed part
+   of the row, and a button squeezed by an overfull row (the first frame of
+   a window narrowing, before the slot is resized) read 3-4px short each —
+   the path was then given less room than it needed and its first letter
+   went under the fade while the search bar could still have shrunk
+   (Task 8 Q2). */
+#toolbar > :not(#breadcrumb-wrap):not(#search-slot) { flex-shrink: 0; }
 #toolbar > [data-fold].is-folded { display: none !important; }
 #btn-toolbar-more[hidden] { display: none; }
 /* Collapsed: an --h-input square (the field's own height, so folding never
@@ -1259,14 +1266,16 @@ svg { flex-shrink: 0; }
   -webkit-mask-image: none;
           mask-image: none;
 }
-.fp-breadcrumb-wrap.is-tight .fp-breadcrumb__crumb--current {
+.fp-breadcrumb-wrap.is-tight .fp-breadcrumb__crumb--current,
+.fp-breadcrumb-wrap.is-tight .fp-breadcrumb__search {
   display: inline-flex;
   align-items: center;
   max-width: var(--crumb-current-max, 100%);
   min-width: 0;
 }
 .fp-breadcrumb__label { white-space: nowrap; }
-.fp-breadcrumb-wrap.is-tight .fp-breadcrumb__crumb--current .fp-breadcrumb__label {
+.fp-breadcrumb-wrap.is-tight .fp-breadcrumb__crumb--current .fp-breadcrumb__label,
+.fp-breadcrumb-wrap.is-tight .fp-breadcrumb__search .fp-breadcrumb__label {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1367,6 +1376,9 @@ svg { flex-shrink: 0; }
   flex: 1 1 auto;           /* fills whatever width layoutToolbar() gave the bar */
   width: 14ch;              /* empty-state width: enough for the placeholder */
   min-width: 6ch;
+  /* A bar given way to a few characters ends its placeholder (and an
+     unfocused query) in an ellipsis, never a hard cut (Task 8 Q13). */
+  text-overflow: ellipsis;
   background: transparent;
   border: none;
   outline: none;
@@ -1554,7 +1566,7 @@ svg { flex-shrink: 0; }
 .search-filters__range { display: flex; align-items: center; gap: var(--s-6); }
 .search-filters__range .fp-input { min-width: 0; flex: 1; }
 .search-filters__dash { color: var(--text-tertiary); }
-.fp-search__input::placeholder { color: var(--text-tertiary); }
+.fp-search__input::placeholder { color: var(--text-tertiary); text-overflow: ellipsis; }
 .fp-search:focus-within .fp-search__input::placeholder { color: var(--text-secondary); }
 
 /* -----------------------------------------------------------------------------

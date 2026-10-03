@@ -1487,7 +1487,7 @@ function searchContentWidth() {
   const cs = getComputedStyle(wrap);
   const px = (v) => parseFloat(v) || 0;
   const gap = px(cs.columnGap);
-  ruler.textContent = input.value || input.placeholder || '';
+  ruler.textContent = input.value || searchPlaceholderFull(input);
   const text = Math.ceil(ruler.getBoundingClientRect().width) + 4;   // + caret
   const chipsW = chips && chips.childElementCount ? chips.scrollWidth + gap : 0;
   const icon = wrap.querySelector('.fp-search__icon');
@@ -1496,6 +1496,42 @@ function searchContentWidth() {
     ? (document.getElementById('search-clear-inline')?.offsetWidth || 20) + gap : 0;
   return px(cs.paddingLeft) + px(cs.paddingRight) + px(cs.borderLeftWidth) + px(cs.borderRightWidth)
     + iconW + gap + chipsW + text + clear;
+}
+
+/** The search bar's whole placeholder ("Search files…"): fitSearchPlaceholder
+ * may have shortened the live one, so it is kept in data-placeholder. */
+function searchPlaceholderFull(input) {
+  if (!input) return '';
+  if (input.dataset.placeholder == null) input.dataset.placeholder = input.placeholder || '';
+  return input.dataset.placeholder;
+}
+
+/** A bar that has given way below its placeholder ends it in an ellipsis
+ * ("Search f…"), never a hard cut (Task 8 Q13). CSS text-overflow cannot do
+ * it: Chromium clips the placeholder of a focused input. So the text itself
+ * is shortened to the input's width, measured off the same ruler as
+ * searchContentWidth (which reads the whole text, so this never feeds back
+ * into the bar's width). */
+function fitSearchPlaceholder() {
+  const input = document.getElementById('search-input');
+  const ruler = document.getElementById('search-measure');
+  if (!input || !ruler) return;
+  const full = searchPlaceholderFull(input);
+  const room = input.clientWidth - 2;              // the caret
+  let text = full;
+  if (room > 0) {
+    ruler.textContent = full;
+    if (ruler.getBoundingClientRect().width > room) {
+      const base = full.replace(/…$/, '');
+      let n = base.length;
+      do {
+        n--;
+        text = `${base.slice(0, n).trimEnd()}…`;
+        ruler.textContent = text;
+      } while (n > 1 && ruler.getBoundingClientRect().width > room);
+    }
+  }
+  if (input.placeholder !== text) input.placeholder = text;
 }
 
 const TOOLBAR_INPUT_FLOOR_CH = 3;        // the toolbar input's min-width (styles.css, 3ch)
@@ -1645,7 +1681,10 @@ function layoutToolbar({ animate = false } = {}) {
   const free = width - padding - fixed - gap * Math.max(0, visible - 1);
   // The path's natural width — with back whatever an ellipsized current
   // crumb (.is-tight below) is hiding, so that cap never feeds back here.
-  const current = crumbs.querySelector('.fp-breadcrumb__crumb--current');
+  // In search mode the "Search in <folder>" header is the current crumb (its
+  // clear × trails it) — Task 8 Q10.
+  const current = crumbs.querySelector('.fp-breadcrumb__crumb--current, .fp-breadcrumb__search');
+  const isSearchHead = !!current && current.classList.contains('fp-breadcrumb__search');
   // A crumb with no label span (none is built that way today) is measured
   // itself, so a capped crumb can never read as "fits" and flip back.
   const label = current ? (current.querySelector('.fp-breadcrumb__label') || current) : null;
@@ -1756,9 +1795,18 @@ function layoutToolbar({ animate = false } = {}) {
   wrap.classList.toggle('is-overflowing', overflowing);
   // The current folder is never under the fade: when the wrap cannot hold it
   // plus the 24px fade, the fade goes and the crumb ellipsizes to the wrap.
-  const tight = overflowing && currentNatural + TOOLBAR_FADE > wrapW;
+  // What follows the current crumb (the search header's clear ×) stays whole
+  // beside it, so the cap leaves it room.
+  let trailing = 0;
+  for (let el = current && current.nextElementSibling; el; el = el.nextElementSibling) {
+    const w = el.getBoundingClientRect().width;
+    if (w) trailing += w + (parseFloat(getComputedStyle(crumbs).columnGap) || 0);
+  }
+  // The search header never goes under the fade: overflowing, it ellipsizes
+  // ("Search in Final-Appr…") instead of losing its start mid-word.
+  const tight = overflowing && (isSearchHead || currentNatural + trailing + TOOLBAR_FADE > wrapW);
   wrap.classList.toggle('is-tight', tight);
-  wrap.style.setProperty('--crumb-current-max', `${wrapW}px`);
+  wrap.style.setProperty('--crumb-current-max', `${Math.max(0, wrapW - trailing)}px`);
   if (current) {
     if (tight) current.title = label ? label.textContent : current.textContent;
     else current.removeAttribute('title');
@@ -1780,6 +1828,7 @@ function layoutToolbar({ animate = false } = {}) {
   // …and it hangs no lower than the status bar: styles.css caps its height at
   // the room from here to there (Task 14 Q13).
   slot.style.setProperty('--search-dd-top', `${Math.ceil(slot.getBoundingClientRect().bottom)}px`);
+  fitSearchPlaceholder();
   // A flip changes what is measurable (chips are display:none while folded):
   // one more pass settles it.
   if (collapsed !== wasCollapsed && _layoutToolbarDepth === 0) {

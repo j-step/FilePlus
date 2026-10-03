@@ -76,6 +76,9 @@ const CHROME_ICONS = {
   // actions" affordances (Review Bin row overflow, Inspector "More actions")
   // are a vertical 3-dot kebab, not a horizontal one — substituted accordingly.
   more: 'more_vertical_20_regular.svg',
+  // The toolbar's "…" (See more) overflow button: Explorer's command bar
+  // uses a horizontal ellipsis there (Task 8 Q16).
+  'more-horizontal': 'more_horizontal_20_regular.svg',
   undo: 'arrow_undo_20_regular.svg',
   redo: 'arrow_redo_20_regular.svg',
   'new-tab': 'tab_add_20_regular.svg',

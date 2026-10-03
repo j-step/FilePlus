@@ -15,7 +15,7 @@
 // opaque backing for the blur to work on".
 const path = require('path');
 const { test, expect } = require('@playwright/test');
-const { launchApp, apiGet, shot, rowByName, expectNoErrors, SHOTS, pinFolders } = require('./harness/app');
+const { launchApp, apiGet, shot, rowByName, expectNoErrors, SHOTS, pinFolders, windowShot } = require('./harness/app');
 
 test.setTimeout(180_000);
 
@@ -335,24 +335,6 @@ const headerGeo = (page) => page.evaluate(() => {
 });
 
 const near = (a, b, tol = 1) => Math.abs(a - b) <= tol;
-
-/** The whole window as the user sees it, at any zoom (page.screenshot crops
- * a zoomed page to its CSS size), Mica flattened like shot() does. */
-async function windowShot(app, page, name) {
-  const mica = await page.evaluate(async () => {
-    const was = document.documentElement.dataset.mica || null;
-    delete document.documentElement.dataset.mica;
-    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
-    return was;
-  });
-  try {
-    const b64 = await app.evaluate(async ({ BrowserWindow }) =>
-      (await BrowserWindow.getAllWindows()[0].webContents.capturePage()).toPNG().toString('base64'));
-    require('fs').writeFileSync(path.join(SHOTS, `${name}.png`), Buffer.from(b64, 'base64'));
-  } finally {
-    await page.evaluate((m) => { if (m) document.documentElement.dataset.mica = m; }, mica);
-  }
-}
 
 /** The checks every layout (expanded, collapsed, zoomed, narrow) must pass. */
 function expectOneBar(g, ctx) {
