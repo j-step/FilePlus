@@ -772,8 +772,8 @@ function _fpSwapAfterDecode(img, url, stillWanted, after) {
  *    hit the same key) — nothing moves;
  *  - another real bitmap (a generic for a special folder, the previous
  *    bucket after a size change) — swapped after decode(), no blank frame;
- *  - the empty placeholder — painted with a 90 ms fade-in (none under
- *    reduced motion).
+ *  - the empty placeholder — painted with a --motion-fast fade-in (none
+ *    when animations are off).
  * A null answer keeps a bitmap already on screen and otherwise falls back to
  * the sprite. */
 function _fpResolveWinIcon(el, seq, rect) {

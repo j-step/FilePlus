@@ -31,7 +31,7 @@ test('a token-gated route requires X-FilePlus-Token when FILEPLUS_API_TOKEN is s
 
 test('every screen renders with no renderer errors', async () => {
   fs.mkdirSync(SHOTS, { recursive: true });
-  // launchApp (harness): reduced motion forced for the whole run (every
+  // launchApp (harness): animations off for the whole run (every
   // fade-in settles at once instead of racing a screenshot), console and
   // page errors collected — plus, at close, every error renderer.log holds
   // from the window's first line on (pass 2 #106) — and the app ready (first
@@ -1065,7 +1065,7 @@ test('every screen renders with no renderer errors', async () => {
     await expect(propsModal).toBeVisible();
     // fp-modal-in fades opacity 0 -> 1 — wait for it to fully settle before
     // any screenshot of this modal, or the shot can land mid-fade (Task 15
-    // carry-over; reducedMotion above makes this all but instant, but the
+    // carry-over; animations are off in the harness, so this is instant, but the
     // wait stays as the actual guarantee).
     await expect(propsModal).toHaveCSS('opacity', '1');
     await expect(propsModal.locator('#properties-icon svg.fp-icon use[href="#fp-ft-text"]')).toHaveCount(1);
@@ -1572,7 +1572,7 @@ test('every screen renders with no renderer errors', async () => {
 // scale independently of whatever this machine's own display scale happens
 // to be.
 test('shell bitmaps are device-pixel exact at a forced 150% scale', async () => {
-  // launchApp (harness): reduced motion forced (no fade-in racing
+  // launchApp (harness): animations off (no fade-in racing
   // Playwright's actionability checks), errors collected from the first
   // renderer line on, and the app ready — first tab seeded, /health green,
   // fonts loaded — instead of the fixed 1.5 s settle this used to sleep.

@@ -11,7 +11,7 @@ const API = `http://127.0.0.1:${process.env.FILEPLUS_PORT || 9876}`;
 test.setTimeout(180_000);
 
 test('inspector, properties and settings: pass-2 regressions', async () => {
-  // launchApp (harness): reduced motion, errors collected from the first
+  // launchApp (harness): animations off, errors collected from the first
   // renderer line on (renderer.log, read at close), app ready. Then default
   // settings, waiting for the reloaded app to be ready again — not a sleep.
   const { app, page, errors } = await launchApp();

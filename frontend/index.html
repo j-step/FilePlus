@@ -537,6 +537,20 @@
                     </label>
                   </div>
                   <div class="settings-sep"></div>
+                  <!-- ui.animations (Stage 2D addendum §5.1): the one motion
+                       switch; app.js fpSetMotion applies it at once. -->
+                  <div class="settings-row">
+                    <div class="settings-row__text">
+                      <div class="settings-row__label">Animations</div>
+                      <div class="settings-row__desc">Quick fades and slides as things open, close and move. Off makes every change instant.</div>
+                    </div>
+                    <label class="fp-toggle">
+                      <input type="checkbox" checked id="settings-animations" data-action="settings-set-animations"/>
+                      <span class="fp-toggle__track"></span>
+                      <span class="fp-toggle__thumb"></span>
+                    </label>
+                  </div>
+                  <div class="settings-sep"></div>
                   <div class="settings-row">
                     <div class="settings-row__label">Density</div>
                     <div class="fp-segmented">

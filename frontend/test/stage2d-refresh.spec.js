@@ -165,7 +165,7 @@ test('refresh in place, one render per navigation, cached tab repaint, no defaul
     })).toBe(true);
     expect(await page.evaluate(() => performance.timeOrigin)).toBe(origin0);
     // The refresh button gave its one-spin feedback and the list its dip
-    // (classes are removed again on a timer; reduced motion kills the motion).
+    // (classes are removed again on a timer; animations are off in the harness).
     await expect(page.locator('#btn-refresh')).not.toHaveClass(/is-spinning/);
     await expect(page.locator('#list-scroll')).not.toHaveClass(/is-refreshing/);
     await shot(page, 'refresh-bulk-after-ctrl-r');

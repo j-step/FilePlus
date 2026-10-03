@@ -33,9 +33,10 @@ const DRAG_THRESHOLD_PX = 6;
 // into it. 700 ms is the Finder/Explorer figure — long enough that merely
 // crossing a folder on the way somewhere else never triggers it.
 const SPRING_DELAY_MS = 700;
-// The pulse that says "descending now", played before the navigation so the
-// jump is never unexplained. Matches .fp-spring's animation duration.
-const SPRING_PULSE_MS = 250;
+// The pulse that says "descending now" (.fp-spring) plays before the
+// navigation so the jump is never unexplained. It lasts --motion-spring
+// (styles.css, read through fpMotionMs); with animations off there is no
+// pulse and no wait at all.
 
 /**
  * The whole drag, in one object. Three states, read off two fields:
@@ -278,11 +279,6 @@ function hideBadge() {
 
 // ── Spring-loaded folders ────────────────────────────────────────────────────
 
-function prefersReducedMotion() {
-  return typeof window.matchMedia === 'function'
-    && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-}
-
 /** Arms the 700 ms hover-to-descend timer for `target`. Called only when the
  *  target CHANGES, so holding still over one folder runs the timer once
  *  rather than restarting it on every pointermove. */
@@ -294,8 +290,8 @@ function beginSpring(target) {
     dragSession.springTimer = null;
     const t = dragSession.springTarget;
     if (!t || !dragSession.active) return;
-    const reduced = prefersReducedMotion();
-    if (t.el && t.el.isConnected && !reduced) {
+    const motion = fpMotionOn();
+    if (t.el && t.el.isConnected && motion) {
       t.el.classList.add('fp-spring');
     }
     dragSession.pulseTimer = setTimeout(() => {
@@ -313,7 +309,7 @@ function beginSpring(target) {
       dragSession.springTarget = null;
       if (t.kind === 'up') navUp();
       else loadDirectory(t.path);
-    }, reduced ? 0 : SPRING_PULSE_MS);
+    }, motion ? fpMotionMs('--motion-spring') : 0);
   }, SPRING_DELAY_MS);
 }
 

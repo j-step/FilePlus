@@ -130,30 +130,37 @@
   --r-tray:     8px;
   --r-pill:     999px;
 
-  /* ---------- Motion (unchanged) ---------- */
-  --dur-flash:      60ms;
-  --dur-press-down: 50ms;
-  --dur-press-up:   80ms;
-  --dur-fast:       120ms;
-  --dur-slide:      180ms;
-  /* Spring-load pulse (.fp-spring, Task 12). dragdrop.js waits exactly this
-     long after starting the pulse before it navigates — keep the two equal. */
-  --dur-spring:     250ms;
-  --dur-pulse:      400ms;
-  --dur-info:       1500ms;
-  /* Icons and thumbnails (Stage 2D §4.2/§4.4): an icon arriving into an
-     empty slot fades in, a thumbnail crossfades over its type icon. */
-  --dur-icon-in:    90ms;
+  /* ---------- Motion (Stage 2D addendum §5.1) ----------
+     Every duration and easing in this file is one of these (scripts/
+     check_motion.js enforces it). 200 ms is the ceiling. All of it runs
+     only while html[data-motion="on"] — the Settings › Personalization ›
+     "Animations" switch; the gate at the end of this file zeroes the rest.
+     fpAnimate() (app.js) reads the same tokens for JS-driven motion. */
+  --motion-instant: 60ms;    /* hover and press feedback */
+  --motion-fast:    100ms;   /* menus, tooltips, selection, icon fades */
+  --motion-base:    140ms;   /* panels, tabs, dialogs */
+  --motion-slow:    200ms;   /* the ceiling, used rarely (sidebar width) */
+  /* Spring-load pulse (.fp-spring): dragdrop.js waits exactly this long
+     after starting the pulse before it navigates (none when motion is off). */
+  --motion-spring:       var(--motion-slow);
   /* Refresh feedback (Stage 2D §7.2): one 360° spin of the toolbar icon, one
-     quick opacity dip of the list. app.js reads these two (refreshFxMs) to
-     time when the classes come off again. */
-  --dur-refresh-spin: 400ms;
-  --dur-refresh-dip:  160ms;
+     quick opacity dip of the list. app.js reads both (refreshFxMs) to time
+     when the classes come off again. */
+  --motion-refresh-spin: var(--motion-slow);
+  --motion-refresh-dip:  var(--motion-base);
   --opacity-refresh-dip: 0.55;
 
-  --ease-out:  cubic-bezier(0.16, 1, 0.3, 1);
-  --ease-snap: cubic-bezier(0.4, 0.0, 0.2, 1);
-  --ease-ui:   cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-out:      cubic-bezier(.2, .8, .2, 1);
+  --ease-in:       cubic-bezier(.4, 0, 1, 1);
+  --ease-standard: cubic-bezier(.4, 0, .2, 1);
+  --ease-linear:   linear;
+
+  /* Timers, not decoration (no ceiling; check_motion.js allows them):
+     the snackbar's life drawn as its progress bar (app.js removes the
+     snackbar a little after it), and the hover-intent wait before the
+     sidebar's resize line shows (Task 14 Q21) — kept when motion is off. */
+  --timer-snackbar:      5s;
+  --timer-resize-intent: 400ms;
 
   /* ---------- Density (unchanged) ---------- */
   --row-compact:     22px;
@@ -210,7 +217,6 @@
   --oscroll-hot:   10px;
   --oscroll-inset: 3px;      /* thumb's gap from the panel edge (clears the resize handle's inner half) */
   --oscroll-cue:   20px;     /* the top/bottom mask fade */
-  --dur-oscroll:   160ms;
   /* The sidebar scroller's right padding keeps the thumb's column (inset +
      hot width) clear of the items, so a press on an item never pages. */
   --oscroll-clear: calc(var(--oscroll-inset) + var(--oscroll-w-hot));  /* inset + column */
@@ -549,14 +555,14 @@ svg { flex-shrink: 0; }
   background: transparent;
   border: none;
   color: var(--text-secondary);
-  transition: background var(--dur-flash) var(--ease-snap),
-              color var(--dur-flash) var(--ease-snap),
-              transform var(--dur-press-up) var(--ease-snap);
+  transition: background var(--motion-instant) var(--ease-standard),
+              color var(--motion-instant) var(--ease-standard),
+              transform var(--motion-instant) var(--ease-standard);
   cursor: default;
 }
 .fp-titlebar__btn svg, .fp-titlebar__btn .icon { width: 12px; height: 12px; }
 .fp-titlebar__btn:hover { background: var(--bg-raised); color: var(--text-primary); }
-.fp-titlebar__btn:active { transform: translateY(1px); transition-duration: var(--dur-press-down); }
+.fp-titlebar__btn:active { transform: translateY(1px); transition-duration: var(--motion-instant); }
 .fp-titlebar__btn--close:hover { background: color-mix(in srgb, #C42B1C 80%, transparent); color: #fff; }
 /* Close button flush with right corner — no border-radius on right side */
 .fp-titlebar__btn[data-action="window-close"],
@@ -583,7 +589,7 @@ svg { flex-shrink: 0; }
   display: flex;
   flex-direction: column;
   position: relative;
-  transition: width var(--dur-slide) var(--ease-out);
+  transition: width var(--motion-slow) var(--ease-out);
   /* Prevent text selection during drag */
   min-width: 0;
 }
@@ -601,7 +607,7 @@ svg { flex-shrink: 0; }
   cursor: ew-resize;
   z-index: 10;
   background: transparent;
-  transition: background-color var(--dur-fast) var(--ease-out);
+  transition: background-color var(--motion-fast) var(--ease-out);
 }
 .fp-sidebar__resize-handle:hover,
 .fp-sidebar__resize-handle--active {
@@ -610,7 +616,7 @@ svg { flex-shrink: 0; }
 /* A pointer resting near the panel edge (the rail's own scrollbar sits
    there) is not asking to resize: the line shows after a short hover, and
    never on the collapsed rail unless it is being dragged (Task 14 Q21). */
-.fp-sidebar__resize-handle:hover:not(.fp-sidebar__resize-handle--active) { transition-delay: 400ms; }
+.fp-sidebar__resize-handle:hover:not(.fp-sidebar__resize-handle--active) { transition-delay: var(--timer-resize-intent); }
 .fp-sidebar--collapsed .fp-sidebar__resize-handle:hover:not(.fp-sidebar__resize-handle--active) { background: transparent; }
 
 .fp-sidebar__header {
@@ -726,8 +732,8 @@ svg { flex-shrink: 0; }
   border-radius: var(--r-chip);
   color: var(--text-tertiary);
   cursor: pointer;
-  transition: transform var(--dur-flash) var(--ease-snap),
-              color var(--dur-flash) var(--ease-snap);
+  transition: transform var(--motion-instant) var(--ease-standard),
+              color var(--motion-instant) var(--ease-standard);
 }
 .fp-sidebar__chevron svg { width: var(--sidebar-chevron-icon); height: var(--sidebar-chevron-icon); }
 .fp-sidebar__chevron:hover { color: var(--text-primary); }
@@ -779,8 +785,8 @@ svg { flex-shrink: 0; }
   position: relative;
   text-align: left;
   user-select: none;
-  transition: background-color var(--dur-flash) var(--ease-snap),
-              color var(--dur-flash) var(--ease-snap);
+  transition: background-color var(--motion-instant) var(--ease-standard),
+              color var(--motion-instant) var(--ease-standard);
 }
 /* The icon — a sprite <svg> or a Windows-mode shell <img> — whatever size
    class its markup carries. */
@@ -906,14 +912,14 @@ svg { flex-shrink: 0; }
   letter-spacing: var(--track-button);
   cursor: pointer;
   flex-shrink: 0;
-  transition: background-color var(--dur-flash) var(--ease-snap),
-              transform var(--dur-press-up) var(--ease-snap);
+  transition: background-color var(--motion-instant) var(--ease-standard),
+              transform var(--motion-instant) var(--ease-standard);
 }
 .fp-ask:hover { background: var(--accent-hover); }
 .fp-ask:active {
   background: var(--accent-press);
   transform: translateY(1px);
-  transition-duration: var(--dur-press-down);
+  transition-duration: var(--motion-instant);
 }
 .fp-ask:focus-visible {
   outline: 1px solid var(--text-on-accent);
@@ -1042,10 +1048,10 @@ svg { flex-shrink: 0; }
   color: var(--text-primary);
   font: 500 var(--t-compact) var(--font-ui);
   letter-spacing: var(--track-body);
-  transition: background var(--dur-flash) var(--ease-snap),
-              border-color var(--dur-flash) var(--ease-snap),
-              box-shadow var(--dur-flash) var(--ease-snap),
-              transform var(--dur-press-up) var(--ease-snap);
+  transition: background var(--motion-instant) var(--ease-standard),
+              border-color var(--motion-instant) var(--ease-standard),
+              box-shadow var(--motion-instant) var(--ease-standard),
+              transform var(--motion-instant) var(--ease-standard);
   cursor: default;
 }
 .fp-approvals__icon { width: 14px; height: 14px; color: var(--text-secondary); }
@@ -1057,7 +1063,7 @@ svg { flex-shrink: 0; }
 }
 .fp-approvals:active {
   transform: translateY(1px);
-  transition-duration: var(--dur-press-down);
+  transition-duration: var(--motion-instant);
 }
 .fp-approvals--active {
   background: var(--accent-wash);
@@ -1075,11 +1081,6 @@ svg { flex-shrink: 0; }
   font-variant-numeric: tabular-nums;
   letter-spacing: var(--track-mono);
   display: inline-flex; align-items: center; justify-content: center;
-}
-.fp-approvals__badge--pulse { animation: fp-pulse var(--dur-pulse) var(--ease-snap); }
-@keyframes fp-pulse {
-  0%, 100% { transform: scale(1); }
-  50%      { transform: scale(1.15); }
 }
 
 /* -----------------------------------------------------------------------------
@@ -1198,8 +1199,8 @@ svg { flex-shrink: 0; }
   align-items: center;
   gap: var(--s-6);
   min-width: 0;
-  transition: border-color var(--dur-flash) var(--ease-snap),
-              box-shadow var(--dur-flash) var(--ease-snap);
+  transition: border-color var(--motion-instant) var(--ease-standard),
+              box-shadow var(--motion-instant) var(--ease-standard);
 }
 .fp-search:hover { border-color: var(--border-mid); }
 .fp-search:focus-within {
@@ -1409,7 +1410,7 @@ svg { flex-shrink: 0; }
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  animation: fp-palette-in var(--dur-fast) var(--ease-out);
+  animation: fp-palette-in var(--motion-fast) var(--ease-out);
 }
 @keyframes fp-palette-in {
   from { opacity: 0; transform: translateY(4px); }
@@ -1563,7 +1564,7 @@ svg { flex-shrink: 0; }
   background: rgba(0, 0, 0, 0.4);
   backdrop-filter: blur(4px);
   -webkit-backdrop-filter: blur(4px);
-  animation: fp-fade-in var(--dur-fast) var(--ease-out);
+  animation: fp-fade-in var(--motion-fast) var(--ease-out);
 }
 @keyframes fp-fade-in { from { opacity: 0; } to { opacity: 1; } }
 
@@ -1587,9 +1588,9 @@ svg { flex-shrink: 0; }
   letter-spacing: var(--track-button);
   cursor: pointer;
   user-select: none;
-  transition: transform var(--dur-flash) var(--ease-snap),
-              background-color var(--dur-flash) var(--ease-snap),
-              box-shadow var(--dur-flash) var(--ease-snap);
+  transition: transform var(--motion-instant) var(--ease-standard),
+              background-color var(--motion-instant) var(--ease-standard),
+              box-shadow var(--motion-instant) var(--ease-standard);
 }
 .fp-button:focus-visible, .fp-btn:focus-visible {
   outline: 1px solid var(--accent);
@@ -1687,8 +1688,8 @@ svg { flex-shrink: 0; }
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  transition: background-color var(--dur-flash) var(--ease-snap),
-              transform var(--dur-flash) var(--ease-snap);
+  transition: background-color var(--motion-instant) var(--ease-standard),
+              transform var(--motion-instant) var(--ease-standard);
 }
 .fp-button--icon:hover,
 .fp-btn--icon:hover,
@@ -1775,10 +1776,10 @@ svg { flex-shrink: 0; }
   box-shadow: none;
   display: inline-flex; align-items: center; justify-content: center;
   color: var(--text-secondary);
-  transition: background var(--dur-flash) var(--ease-snap),
-              border-color var(--dur-flash) var(--ease-snap),
-              box-shadow var(--dur-flash) var(--ease-snap),
-              transform var(--dur-press-up) var(--ease-snap);
+  transition: background var(--motion-instant) var(--ease-standard),
+              border-color var(--motion-instant) var(--ease-standard),
+              box-shadow var(--motion-instant) var(--ease-standard),
+              transform var(--motion-instant) var(--ease-standard);
   cursor: default;
 }
 .fp-circle-btn svg, .fp-circle-btn .icon { width: 16px; height: 16px; }
@@ -1790,7 +1791,7 @@ svg { flex-shrink: 0; }
 .fp-circle-btn:active {
   background: var(--bg-pressed);
   transform: translateY(1px);
-  transition-duration: var(--dur-press-down);
+  transition-duration: var(--motion-instant);
 }
 
 /* -----------------------------------------------------------------------------
@@ -1855,12 +1856,6 @@ svg { flex-shrink: 0; }
 .fp-pill__dot--warn   { background: var(--warn); }
 .fp-pill__dot--accent { background: var(--accent); }
 .fp-pill svg, .fp-pill .icon { width: 12px; height: 12px; }
-.fp-pill--live .fp-pill__dot { animation: fp-live-pulse 600ms var(--ease-snap); }
-
-@keyframes fp-live-pulse {
-  0%, 100% { transform: scale(1); opacity: 1; }
-  50%      { transform: scale(1.4); opacity: 0.4; }
-}
 
 .fp-sparkle {
   display: inline-block;
@@ -1920,9 +1915,9 @@ svg { flex-shrink: 0; }
   border: 1px dashed var(--border-subtle);
   color: var(--text-tertiary);
   font-family: var(--font-ui);
-  transition: background var(--dur-flash) var(--ease-snap),
-              border-color var(--dur-flash) var(--ease-snap),
-              color var(--dur-flash) var(--ease-snap);
+  transition: background var(--motion-instant) var(--ease-standard),
+              border-color var(--motion-instant) var(--ease-standard),
+              color var(--motion-instant) var(--ease-standard);
 }
 .fp-chip--add:hover {
   background: var(--bg-raised);
@@ -1981,7 +1976,7 @@ svg { flex-shrink: 0; }
   cursor: pointer;
   position: relative;
   z-index: 1;
-  transition: color var(--dur-fast) var(--ease-out);
+  transition: color var(--motion-fast) var(--ease-out);
   user-select: none;
 }
 .fp-segmented__option:hover,
@@ -1995,8 +1990,8 @@ svg { flex-shrink: 0; }
   background: var(--bg-content);
   color: var(--text-primary);
   box-shadow: none;
-  transition: background-color var(--dur-slide) var(--ease-out),
-              color var(--dur-fast) var(--ease-out);
+  transition: background-color var(--motion-base) var(--ease-out),
+              color var(--motion-fast) var(--ease-out);
 }
 .fp-segmented__option:focus-visible,
 .fp-segmented__opt:focus-visible {
@@ -2025,7 +2020,7 @@ svg { flex-shrink: 0; }
   font: 500 var(--t-body) var(--font-ui);
   cursor: pointer;
   user-select: none;
-  transition: color var(--dur-fast) var(--ease-out);
+  transition: color var(--motion-fast) var(--ease-out);
 }
 .fp-tabs__item svg, .fp-tabs__item .icon { width: 14px; height: 14px; }
 .fp-tabs__item:hover { color: var(--text-primary); }
@@ -2060,8 +2055,8 @@ svg { flex-shrink: 0; }
   width: 0;
   background: var(--accent);
   border-radius: 2px;
-  transition: left var(--dur-slide) var(--ease-out),
-              width var(--dur-slide) var(--ease-out);
+  transition: left var(--motion-base) var(--ease-out),
+              width var(--motion-base) var(--ease-out);
   pointer-events: none;
 }
 
@@ -2070,8 +2065,8 @@ svg { flex-shrink: 0; }
   height: 2px;
   background: var(--accent);
   border-radius: 2px;
-  transition: left var(--dur-slide) var(--ease-out),
-              width var(--dur-slide) var(--ease-out);
+  transition: left var(--motion-base) var(--ease-out),
+              width var(--motion-base) var(--ease-out);
 }
 
 /* -----------------------------------------------------------------------------
@@ -2082,7 +2077,7 @@ svg { flex-shrink: 0; }
   cursor: ew-resize;
   background: transparent;
   flex-shrink: 0;
-  transition: background-color var(--dur-fast) var(--ease-out);
+  transition: background-color var(--motion-fast) var(--ease-out);
 }
 .fp-drag-handle:hover,
 .fp-drag-handle--active {
@@ -2108,8 +2103,8 @@ svg { flex-shrink: 0; }
   letter-spacing: var(--track-body);
   outline: none;
   box-shadow: none;
-  transition: border-color var(--dur-flash) var(--ease-snap),
-              box-shadow var(--dur-flash) var(--ease-snap);
+  transition: border-color var(--motion-instant) var(--ease-standard),
+              box-shadow var(--motion-instant) var(--ease-standard);
   width: 100%;
 }
 .fp-textarea::placeholder { color: var(--text-tertiary); }
@@ -2132,8 +2127,8 @@ svg { flex-shrink: 0; }
   border-radius: var(--r-button);
   box-shadow: none;
   font: 500 var(--t-body) var(--font-ui);
-  transition: border-color var(--dur-fast) var(--ease-out),
-              box-shadow var(--dur-fast) var(--ease-out);
+  transition: border-color var(--motion-fast) var(--ease-out),
+              box-shadow var(--motion-fast) var(--ease-out);
 }
 .fp-input::placeholder {
   color: var(--text-tertiary);
@@ -2209,7 +2204,7 @@ svg { flex-shrink: 0; }
      raised-on-raised track all but vanished on a dark card (Task 14 Q16). */
   border: 1px solid var(--text-tertiary);
   border-radius: var(--r-pill);
-  transition: background-color var(--dur-fast) var(--ease-out);
+  transition: background-color var(--motion-fast) var(--ease-out);
 }
 .fp-toggle__thumb {
   position: absolute;
@@ -2221,8 +2216,8 @@ svg { flex-shrink: 0; }
   border: none;
   border-radius: var(--r-pill);
   box-shadow: none;
-  transition: transform var(--dur-slide) var(--ease-out),
-              background-color var(--dur-fast) var(--ease-out);
+  transition: transform var(--motion-base) var(--ease-out),
+              background-color var(--motion-fast) var(--ease-out);
 }
 .fp-toggle input:checked ~ .fp-toggle__track {
   background: var(--accent);
@@ -2256,8 +2251,8 @@ svg { flex-shrink: 0; }
   border: 1px solid var(--border-mid);
   border-radius: 3px;
   color: var(--text-on-accent);
-  transition: background-color var(--dur-fast) var(--ease-out),
-              border-color var(--dur-fast) var(--ease-out);
+  transition: background-color var(--motion-fast) var(--ease-out),
+              border-color var(--motion-fast) var(--ease-out);
   cursor: pointer;
   flex-shrink: 0;
 }
@@ -2278,7 +2273,7 @@ svg { flex-shrink: 0; }
   stroke-width: 2.5;
   fill: none;
   transform: scale(0);
-  transition: transform var(--dur-fast) var(--ease-snap);
+  transition: transform var(--motion-fast) var(--ease-standard);
 }
 .fp-checkbox--checked svg,
 .fp-checkbox--indeterminate svg {
@@ -2298,8 +2293,8 @@ svg { flex-shrink: 0; }
   background: var(--bg-raised);
   border: 1px solid var(--border-mid);
   border-radius: 3px;
-  transition: background-color var(--dur-fast) var(--ease-out),
-              border-color var(--dur-fast) var(--ease-out);
+  transition: background-color var(--motion-fast) var(--ease-out),
+              border-color var(--motion-fast) var(--ease-out);
 }
 .fp-checkbox__mark::after {
   content: '';
@@ -2311,7 +2306,7 @@ svg { flex-shrink: 0; }
   border: solid var(--text-on-accent);
   border-width: 0 2px 2px 0;
   transform: scale(0) rotate(45deg);
-  transition: transform var(--dur-fast) var(--ease-snap);
+  transition: transform var(--motion-fast) var(--ease-standard);
 }
 .fp-checkbox input:checked ~ .fp-checkbox__mark {
   background: var(--accent);
@@ -2337,8 +2332,8 @@ svg { flex-shrink: 0; }
   background: var(--bg-raised);
   border: 1px solid var(--border-mid);
   border-radius: var(--r-pill);
-  transition: background-color var(--dur-fast) var(--ease-out),
-              border-color var(--dur-fast) var(--ease-out);
+  transition: background-color var(--motion-fast) var(--ease-out),
+              border-color var(--motion-fast) var(--ease-out);
   cursor: pointer;
   flex-shrink: 0;
 }
@@ -2353,7 +2348,7 @@ svg { flex-shrink: 0; }
   background: var(--text-on-accent);
   border-radius: var(--r-pill);
   transform: scale(0);
-  transition: transform var(--dur-fast) var(--ease-out);
+  transition: transform var(--motion-fast) var(--ease-out);
 }
 .fp-radio--checked {
   background: var(--accent);
@@ -2376,8 +2371,8 @@ svg { flex-shrink: 0; }
   background: var(--bg-raised);
   border: 1px solid var(--border-mid);
   border-radius: var(--r-pill);
-  transition: background-color var(--dur-fast) var(--ease-out),
-              border-color var(--dur-fast) var(--ease-out);
+  transition: background-color var(--motion-fast) var(--ease-out),
+              border-color var(--motion-fast) var(--ease-out);
 }
 .fp-radio__mark::after {
   content: '';
@@ -2390,7 +2385,7 @@ svg { flex-shrink: 0; }
   background: var(--text-on-accent);
   border-radius: var(--r-pill);
   transform: scale(0);
-  transition: transform var(--dur-fast) var(--ease-out);
+  transition: transform var(--motion-fast) var(--ease-out);
 }
 .fp-radio input:checked ~ .fp-radio__mark {
   background: var(--accent);
@@ -2470,10 +2465,10 @@ svg { flex-shrink: 0; }
   border-radius: var(--r-card);
   padding: var(--s-16);
   box-shadow: none;
-  transition: background var(--dur-flash) var(--ease-snap),
-              border-color var(--dur-flash) var(--ease-snap),
-              box-shadow var(--dur-flash) var(--ease-snap),
-              transform var(--dur-press-up) var(--ease-snap);
+  transition: background var(--motion-instant) var(--ease-standard),
+              border-color var(--motion-instant) var(--ease-standard),
+              box-shadow var(--motion-instant) var(--ease-standard),
+              transform var(--motion-instant) var(--ease-standard);
 }
 .fp-card--interactive { cursor: default; }
 .fp-card--interactive:hover {
@@ -2483,7 +2478,7 @@ svg { flex-shrink: 0; }
 }
 .fp-card--interactive:active {
   transform: translateY(1px);
-  transition-duration: var(--dur-press-down);
+  transition-duration: var(--motion-instant);
 }
 .fp-card__header {
   display: flex;
@@ -2543,7 +2538,7 @@ svg { flex-shrink: 0; }
   padding: var(--s-4);
   min-width: 180px;
   z-index: 200;
-  animation: fp-popover-in var(--dur-fast) var(--ease-out);
+  animation: fp-popover-in var(--motion-fast) var(--ease-out);
 }
 @keyframes fp-popover-in {
   from { opacity: 0; transform: translateY(3px); }
@@ -2592,9 +2587,9 @@ svg { flex-shrink: 0; }
   text-align: left;
   white-space: normal;
   cursor: pointer;
-  transition: background-color var(--dur-flash) var(--ease-snap),
-              border-color var(--dur-flash) var(--ease-snap),
-              color var(--dur-flash) var(--ease-snap);
+  transition: background-color var(--motion-instant) var(--ease-standard),
+              border-color var(--motion-instant) var(--ease-standard),
+              color var(--motion-instant) var(--ease-standard);
 }
 .fp-ask-popout__example:hover {
   background: var(--bg-pressed);
@@ -2617,7 +2612,7 @@ svg { flex-shrink: 0; }
   align-items: center;
   justify-content: center;
   z-index: 1000;
-  animation: fp-modal-scrim-in var(--dur-fast) var(--ease-out);
+  animation: fp-modal-scrim-in var(--motion-fast) var(--ease-out);
 }
 @keyframes fp-modal-scrim-in {
   from { opacity: 0; }
@@ -2631,7 +2626,7 @@ svg { flex-shrink: 0; }
   padding: 24px;
   min-width: 320px;
   max-width: 640px;
-  animation: fp-modal-in var(--dur-slide) var(--ease-out);
+  animation: fp-modal-in var(--motion-base) var(--ease-out);
 }
 @keyframes fp-modal-in {
   from { opacity: 0; transform: translateY(6px); }
@@ -2716,8 +2711,8 @@ svg { flex-shrink: 0; }
   user-select: none;
   position: relative;
   color: var(--text-primary);
-  transition: background-color var(--dur-flash) var(--ease-snap),
-              border-color var(--dur-flash) var(--ease-snap);
+  transition: background-color var(--motion-instant) var(--ease-standard),
+              border-color var(--motion-instant) var(--ease-standard);
 }
 .fp-row:hover {
   background: var(--bg-raised);
@@ -2815,13 +2810,12 @@ svg { flex-shrink: 0; }
   border-radius: var(--r-card);
 }
 
-/* Spring-load pulse: played on the target for 250ms immediately BEFORE the
-   navigation, so descending into a folder mid-drag is never an unexplained
-   jump. The strict prefers-reduced-motion block at the bottom of this file
-   collapses the animation; dragdrop.js additionally skips the 250ms wait
-   entirely in that case, so the navigation stays instant rather than merely
-   silent. */
-.fp-spring { animation: fp-spring var(--dur-spring) var(--ease-out); }
+/* Spring-load pulse: played on the target for --motion-spring immediately
+   BEFORE the navigation, so descending into a folder mid-drag is never an
+   unexplained jump. With animations off the motion gate at the end of this
+   file removes it and dragdrop.js skips the wait entirely, so the navigation
+   stays instant rather than merely silent. */
+.fp-spring { animation: fp-spring var(--motion-spring) var(--ease-out); }
 @keyframes fp-spring {
   0%   { transform: scale(1); }
   50%  { transform: scale(1.04); }
@@ -2864,14 +2858,6 @@ svg { flex-shrink: 0; }
 body.is-dragging,
 body.is-dragging * { user-select: none; }
 body.is-dragging { cursor: default; }
-
-.fp-row--ai-filed {
-  animation: fp-row-ai-fade 1.7s ease-out;
-}
-@keyframes fp-row-ai-fade {
-  0%   { background: var(--good-wash); box-shadow: inset 0 0 0 1px var(--good-edge); }
-  100% { background: transparent; box-shadow: none; }
-}
 
 .fp-row--folder .fp-row__icon {
   color: var(--accent);
@@ -3037,8 +3023,8 @@ body.is-dragging { cursor: default; }
   cursor: default;
   padding: 2px 6px;
   border-radius: var(--r-chip);
-  transition: background var(--dur-flash) var(--ease-snap),
-              color var(--dur-flash) var(--ease-snap);
+  transition: background var(--motion-instant) var(--ease-standard),
+              color var(--motion-instant) var(--ease-standard);
 }
 .fp-list-header__col svg { width: 10px; height: 10px; }
 .fp-list-header__col--sortable:hover {
@@ -3062,20 +3048,11 @@ body.is-dragging { cursor: default; }
   height: 100%;
   background: var(--accent);
   border-radius: var(--r-pill);
-  transition: width var(--dur-fast) linear;
+  transition: width var(--motion-fast) var(--ease-linear);
 }
 .fp-progress__fill--good { background: var(--good); }
 .fp-progress__fill--bad  { background: var(--bad); }
 
-.fp-progress--indeterminate .fp-progress__fill {
-  width: 40%;
-  background: var(--accent);
-  animation: fp-indeterminate 1500ms linear infinite;
-}
-@keyframes fp-indeterminate {
-  from { transform: translateX(-100%); }
-  to   { transform: translateX(350%); }
-}
 
 .fp-stage-list { display: flex; flex-direction: column; gap: var(--s-12); }
 .fp-stage {
@@ -3141,7 +3118,7 @@ body.is-dragging { cursor: default; }
   pointer-events: none;
   white-space: nowrap;
   z-index: 200;
-  animation: fp-tooltip-in 80ms var(--ease-snap);
+  animation: fp-tooltip-in var(--motion-fast) var(--ease-standard);
 }
 .fp-tooltip svg, .fp-tooltip .icon { width: 12px; height: 12px; }
 @keyframes fp-tooltip-in { from { opacity: 0; } to { opacity: 1; } }
@@ -3156,7 +3133,7 @@ body.is-dragging { cursor: default; }
   box-shadow: var(--shadow-popover);
   padding: var(--s-4);
   min-width: 180px;
-  animation: fp-tooltip-in 80ms var(--ease-snap);
+  animation: fp-tooltip-in var(--motion-fast) var(--ease-standard);
 }
 .fp-menu__item {
   height: 28px;
@@ -3169,8 +3146,8 @@ body.is-dragging { cursor: default; }
   align-items: center;
   gap: var(--s-10);
   cursor: default;
-  transition: background var(--dur-flash) var(--ease-snap),
-              color var(--dur-flash) var(--ease-snap);
+  transition: background var(--motion-instant) var(--ease-standard),
+              color var(--motion-instant) var(--ease-standard);
 }
 .fp-menu__item svg, .fp-menu__item .icon { width: 14px; height: 14px; color: var(--text-secondary); }
 .fp-menu__item:hover { background: var(--bg-pressed); color: var(--text-primary); }
@@ -3282,7 +3259,7 @@ body.is-dragging { cursor: default; }
   color: var(--text-primary);
   overflow: hidden;
   pointer-events: all;
-  animation: fp-snackbar-in var(--dur-fast) var(--ease-out);
+  animation: fp-snackbar-in var(--motion-fast) var(--ease-out);
 }
 @keyframes fp-snackbar-in {
   from { opacity: 0; transform: translateY(8px); }
@@ -3304,7 +3281,7 @@ body.is-dragging { cursor: default; }
   left: 0;
   height: 4px;
   background: var(--accent);
-  animation: fp-snackbar-progress 5s linear forwards;
+  animation: fp-snackbar-progress var(--timer-snackbar) var(--ease-linear) forwards;
 }
 @keyframes fp-snackbar-progress {
   from { width: 100%; }
@@ -3326,7 +3303,7 @@ body.is-dragging { cursor: default; }
   font: 500 var(--t-body) var(--font-ui);
   color: var(--text-primary);
   pointer-events: all;
-  animation: fp-toast-in var(--dur-slide) var(--ease-out);
+  animation: fp-toast-in var(--motion-base) var(--ease-out);
 }
 .fp-toast--accent { border-color: var(--accent-edge); }
 .fp-toast--action { border-color: var(--accent-edge); }
@@ -3421,11 +3398,11 @@ body.is-dragging { cursor: default; }
   justify-content: center;
   gap: var(--s-4);
   color: var(--text-secondary);
-  transition: background var(--dur-flash) var(--ease-snap),
-              border-color var(--dur-flash) var(--ease-snap),
-              box-shadow var(--dur-flash) var(--ease-snap),
-              color var(--dur-flash) var(--ease-snap),
-              transform var(--dur-press-up) var(--ease-snap);
+  transition: background var(--motion-instant) var(--ease-standard),
+              border-color var(--motion-instant) var(--ease-standard),
+              box-shadow var(--motion-instant) var(--ease-standard),
+              color var(--motion-instant) var(--ease-standard),
+              transform var(--motion-instant) var(--ease-standard);
   cursor: default;
 }
 .fp-tray__action:hover {
@@ -3436,7 +3413,7 @@ body.is-dragging { cursor: default; }
 }
 .fp-tray__action:active {
   transform: translateY(1px);
-  transition-duration: var(--dur-press-down);
+  transition-duration: var(--motion-instant);
 }
 .fp-tray__action svg,
 .fp-tray__action .icon {
@@ -3556,7 +3533,7 @@ body.is-dragging { cursor: default; }
   z-index: 5;
   opacity: 0;
   touch-action: none;
-  transition: opacity var(--dur-oscroll) ease;
+  transition: opacity var(--motion-base) var(--ease-standard);
   user-select: none;
   -webkit-app-region: no-drag;
 }
@@ -3572,8 +3549,8 @@ body.is-dragging .fp-oscroll { pointer-events: none; }
   width: var(--oscroll-w);
   border-radius: var(--r-pill);
   background: var(--scrollbar-thumb);
-  transition: width var(--dur-oscroll) ease, opacity var(--dur-oscroll) ease,
-              background-color var(--dur-oscroll) ease;
+  transition: width var(--motion-base) var(--ease-standard), opacity var(--motion-base) var(--ease-standard),
+              background-color var(--motion-base) var(--ease-standard);
 }
 .fp-oscroll:hover .fp-oscroll__thumb,
 .fp-oscroll.is-hot .fp-oscroll__thumb,
@@ -3613,9 +3590,9 @@ body.is-dragging .fp-oscroll { pointer-events: none; }
   padding: var(--s-14);
   box-shadow: var(--shadow-card);
   display: flex; flex-direction: column; gap: var(--s-8);
-  transition: background var(--dur-flash) var(--ease-snap),
-              border-color var(--dur-flash) var(--ease-snap),
-              box-shadow var(--dur-flash) var(--ease-snap);
+  transition: background var(--motion-instant) var(--ease-standard),
+              border-color var(--motion-instant) var(--ease-standard),
+              box-shadow var(--motion-instant) var(--ease-standard);
 }
 .fp-node--sm { width: 120px; }
 .fp-node--lg { width: 200px; }
@@ -3642,45 +3619,20 @@ body.is-dragging .fp-oscroll { pointer-events: none; }
   position: relative;
   overflow: hidden;
 }
-.fp-skeleton::after {
-  content: '';
-  position: absolute; inset: 0;
-  background: var(--bg-pressed);
-  animation: fp-skeleton-shimmer 1500ms ease-in-out infinite;
-}
-@keyframes fp-skeleton-shimmer {
-  from { transform: translateX(-100%); }
-  to   { transform: translateX(100%); }
-}
 .fp-skeleton--block { background: var(--bg-pressed); }
 
-/* -----------------------------------------------------------------------------
-   33. SPINNER (Section 36)
-   ----------------------------------------------------------------------------- */
-.fp-spinner {
-  width: 14px; height: 14px;
-  border: 1.5px solid currentColor;
-  border-top-color: transparent;
-  border-radius: var(--r-pill);
-  animation: fp-spin 1000ms linear infinite;
-  display: inline-block;
-}
-.fp-spinner--lg { width: 16px; height: 16px; }
+/* One full turn: the refresh button's spin (below). */
 @keyframes fp-spin { to { transform: rotate(360deg); } }
 
 /* Refresh feedback (Stage 2D §7.2) — refreshAll() adds .is-spinning to the
    toolbar button for one 360° turn and .is-refreshing to the list for one
    1 → 0.55 → 1 opacity dip, then takes both off on a timer. Both are off
-   entirely under reduced motion (block below). */
-#btn-refresh.is-spinning svg { animation: fp-spin var(--dur-refresh-spin) var(--ease-ui) 1; }
-#list-scroll.is-refreshing { animation: fp-refresh-dip var(--dur-refresh-dip) var(--ease-ui) 1; }
+   entirely when animations are off (the motion gate). */
+#btn-refresh.is-spinning svg { animation: fp-spin var(--motion-refresh-spin) var(--ease-standard) 1; }
+#list-scroll.is-refreshing { animation: fp-refresh-dip var(--motion-refresh-dip) var(--ease-standard) 1; }
 @keyframes fp-refresh-dip {
   0%, 100% { opacity: 1; }
   50%      { opacity: var(--opacity-refresh-dip); }
-}
-@media (prefers-reduced-motion: reduce) {
-  #btn-refresh.is-spinning svg,
-  #list-scroll.is-refreshing { animation: none !important; }
 }
 
 /* -----------------------------------------------------------------------------
@@ -3735,7 +3687,7 @@ body.is-dragging .fp-oscroll { pointer-events: none; }
   grid-template-columns: var(--sidebar-w-css) 1fr;
   min-height: 0;
   overflow: hidden;
-  transition: grid-template-columns var(--dur-slide) var(--ease-snap);
+  transition: grid-template-columns var(--motion-slow) var(--ease-standard);
 }
 .shell.sidebar-collapsed {
   grid-template-columns: var(--rail-w-css) 1fr;
@@ -3846,7 +3798,7 @@ body.is-dragging .fp-oscroll { pointer-events: none; }
   border: 1px solid var(--border-subtle);
   border-radius: var(--r-button);
   padding: 0 var(--s-8);
-  transition: border-color var(--dur-fast) var(--ease-snap), box-shadow var(--dur-fast) var(--ease-snap);
+  transition: border-color var(--motion-fast) var(--ease-standard), box-shadow var(--motion-fast) var(--ease-standard);
 }
 .search:focus-within {
   border-color: var(--accent-edge);
@@ -3903,7 +3855,7 @@ body.is-dragging .fp-oscroll { pointer-events: none; }
   color: var(--text-secondary);
   cursor: pointer;
   -webkit-app-region: no-drag;
-  transition: background var(--dur-fast) var(--ease-snap), color var(--dur-fast) var(--ease-snap);
+  transition: background var(--motion-fast) var(--ease-standard), color var(--motion-fast) var(--ease-standard);
 }
 .fp-wc:hover { background: var(--bg-raised); color: var(--text-primary); }
 .fp-wc:active { background: var(--bg-pressed); }
@@ -4059,7 +4011,7 @@ body.is-dragging .fp-oscroll { pointer-events: none; }
 .list-col--modified { width: 136px; min-width: 136px; text-align: right; cursor: pointer; }
 .list-col--size:hover, .list-col--modified:hover { color: var(--text-secondary); }
 .list-col--tags { min-width: 120px; flex-shrink: 0; }
-.list-col__caret { opacity: 0; transition: opacity var(--dur-fast); }
+.list-col__caret { opacity: 0; transition: opacity var(--motion-fast); }
 .fp-sortable.active .list-col__caret { opacity: 1; color: var(--text-secondary); }
 .fp-sortable.active { color: var(--text-secondary); }
 
@@ -4102,10 +4054,7 @@ body.is-dragging .fp-oscroll { pointer-events: none; }
   background: var(--bg-content);
 }
 .thispc-view[hidden] { display: none; }
-.thispc-view.is-refreshing { animation: fp-refresh-dip var(--dur-refresh-dip) var(--ease-ui) 1; }
-@media (prefers-reduced-motion: reduce) {
-  .thispc-view.is-refreshing { animation: none !important; }
-}
+.thispc-view.is-refreshing { animation: fp-refresh-dip var(--motion-refresh-dip) var(--ease-standard) 1; }
 .thispc-view__heading {
   display: flex;
   align-items: center;
@@ -4148,8 +4097,8 @@ body.is-dragging .fp-oscroll { pointer-events: none; }
   cursor: pointer;
   user-select: none;
   outline: none;
-  transition: background-color var(--dur-flash) var(--ease-snap),
-              border-color var(--dur-flash) var(--ease-snap);
+  transition: background-color var(--motion-instant) var(--ease-standard),
+              border-color var(--motion-instant) var(--ease-standard);
 }
 [data-layout="tiles"] > .fp-drive-card {
   grid-template-columns: var(--drive-icon) minmax(0, 1fr);
@@ -4549,7 +4498,7 @@ body.is-dragging .fp-oscroll { pointer-events: none; }
   background: var(--border-hairline);
   cursor: col-resize;
   flex-shrink: 0;
-  transition: background var(--dur-fast) var(--ease-snap);
+  transition: background var(--motion-fast) var(--ease-standard);
 }
 .resizer:hover, .resizer:active { background: var(--accent-edge); }
 
@@ -4582,7 +4531,7 @@ body.is-dragging .fp-oscroll { pointer-events: none; }
   cursor: pointer;
   text-transform: uppercase;
   letter-spacing: var(--track-caps);
-  transition: color var(--dur-fast), border-color var(--dur-fast);
+  transition: color var(--motion-fast), border-color var(--motion-fast);
 }
 .inspector__tab:hover { color: var(--text-secondary); }
 .inspector__tab.active { color: var(--accent); border-bottom-color: var(--accent); }
@@ -4682,7 +4631,7 @@ body.is-dragging .fp-oscroll { pointer-events: none; }
   z-index: 1000;
   opacity: 0;
   pointer-events: none;
-  transition: opacity var(--dur-slide) var(--ease-snap);
+  transition: opacity var(--motion-base) var(--ease-standard);
 }
 .scrim.open {
   opacity: 1;
@@ -4697,7 +4646,7 @@ body.is-dragging .fp-oscroll { pointer-events: none; }
   box-shadow: var(--shadow-modal);
   overflow: hidden;
   transform: translateY(-8px);
-  transition: transform var(--dur-slide) var(--ease-out);
+  transition: transform var(--motion-base) var(--ease-out);
 }
 .scrim.open .palette { transform: translateY(0); }
 .palette__search {
@@ -4747,7 +4696,7 @@ body.is-dragging .fp-oscroll { pointer-events: none; }
   font: 400 var(--t-body) var(--font-ui);
   cursor: pointer;
   text-align: left;
-  transition: background var(--dur-fast) var(--ease-snap), color var(--dur-fast) var(--ease-snap);
+  transition: background var(--motion-fast) var(--ease-standard), color var(--motion-fast) var(--ease-standard);
 }
 .palette__item:hover { background: var(--accent-wash); color: var(--text-primary); }
 .palette__item svg { color: var(--text-tertiary); flex-shrink: 0; }
@@ -4776,14 +4725,14 @@ body.is-dragging .fp-oscroll { pointer-events: none; }
   padding: var(--s-8) var(--s-14);
   border-bottom: 1px solid var(--border-hairline);
   cursor: default;
-  transition: background var(--dur-fast) var(--ease-snap);
+  transition: background var(--motion-fast) var(--ease-standard);
 }
 .fp-tray__card:hover { background: var(--bg-raised); }
 .fp-tray__card-icon { flex-shrink: 0; color: var(--text-tertiary); }
 .fp-tray__card-meta { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .fp-tray__card-name { font: 500 var(--t-body) var(--font-ui); color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .fp-tray__card-detail { font-size: 11px; color: var(--text-tertiary); }
-.fp-tray__card-actions { display: flex; gap: 2px; opacity: 0; transition: opacity var(--dur-fast); }
+.fp-tray__card-actions { display: flex; gap: 2px; opacity: 0; transition: opacity var(--motion-fast); }
 .fp-tray__card:hover .fp-tray__card-actions { opacity: 1; }
 .fp-tray__empty { padding: var(--s-32); text-align: center; font: 400 var(--t-body) var(--font-ui); color: var(--text-tertiary); }
 .fp-tray__footer {
@@ -4883,9 +4832,9 @@ body.is-dragging .fp-oscroll { pointer-events: none; }
   min-width: 80px;
   max-width: 240px;
   cursor: default;
-  transition: background var(--dur-flash) var(--ease-snap),
-              color var(--dur-flash) var(--ease-snap),
-              border-color var(--dur-flash) var(--ease-snap);
+  transition: background var(--motion-instant) var(--ease-standard),
+              color var(--motion-instant) var(--ease-standard),
+              border-color var(--motion-instant) var(--ease-standard);
 }
 .fp-tab:hover { background: var(--bg-pressed); color: var(--text-primary); }
 .fp-tab--active,
@@ -4915,9 +4864,9 @@ body.is-dragging .fp-oscroll { pointer-events: none; }
   flex-shrink: 0;
   cursor: pointer;             /* span needs explicit cursor to feel clickable */
   -webkit-app-region: no-drag; /* defensive: ensure click reaches us in tab row */
-  transition: opacity var(--dur-flash) var(--ease-snap),
-              background var(--dur-flash) var(--ease-snap),
-              color var(--dur-flash) var(--ease-snap);
+  transition: opacity var(--motion-instant) var(--ease-standard),
+              background var(--motion-instant) var(--ease-standard),
+              color var(--motion-instant) var(--ease-standard);
 }
 .fp-tab__close svg { width: 10px; height: 10px; }
 .fp-tab:hover .fp-tab__close,
@@ -5009,8 +4958,8 @@ body.is-dragging .fp-oscroll { pointer-events: none; }
   margin: var(--s-2) auto;
   border-radius: var(--r-icon-btn);
   color: var(--text-secondary);
-  transition: background-color var(--dur-flash) var(--ease-snap),
-              color var(--dur-flash) var(--ease-snap);
+  transition: background-color var(--motion-instant) var(--ease-standard),
+              color var(--motion-instant) var(--ease-standard);
 }
 .fp-sidebar--collapsed .fp-sidebar__section-head .fp-sidebar__section-icon {
   display: block;
@@ -5171,7 +5120,7 @@ body.is-dragging .fp-sidebar--collapsed .fp-oscroll__thumb { pointer-events: non
   color: var(--text-secondary);
   cursor: pointer;
   -webkit-app-region: no-drag;
-  transition: background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+  transition: background-color var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out);
 }
 .fp-sidebar--collapsed .fp-sidebar__tags-collapsed > .fp-icon:first-child { width: var(--sidebar-rail-icon); height: var(--sidebar-rail-icon); }
 .fp-sidebar--collapsed .fp-sidebar__tags-collapsed > .fp-icon + .fp-icon { display: none; }
@@ -5210,12 +5159,12 @@ body.is-dragging .fp-sidebar--collapsed .fp-oscroll__thumb { pointer-events: non
   font-variant-numeric: tabular-nums;
   letter-spacing: 0;
   cursor: pointer;
-  transition: background var(--dur-flash) var(--ease-snap),
-              color      var(--dur-flash) var(--ease-snap),
-              border-color var(--dur-flash) var(--ease-snap),
-              opacity    var(--dur-slide) var(--ease-ui);
+  transition: background var(--motion-instant) var(--ease-standard),
+              color      var(--motion-instant) var(--ease-standard),
+              border-color var(--motion-instant) var(--ease-standard),
+              opacity    var(--motion-base) var(--ease-standard);
 }
-#status-zoom-sep { transition: opacity var(--dur-slide) var(--ease-ui); }
+#status-zoom-sep { transition: opacity var(--motion-base) var(--ease-standard); }
 .fp-statusbar__zoom-pill.is-faded:not(:hover):not(:focus-visible),
 #status-zoom-sep.is-faded { opacity: 0; }
 .fp-statusbar__zoom-pill:hover {
@@ -5226,7 +5175,7 @@ body.is-dragging .fp-sidebar--collapsed .fp-oscroll__thumb { pointer-events: non
 .fp-statusbar__right { margin-left: auto; display: flex; align-items: center; gap: var(--s-8); flex-shrink: 0; }
 .fp-statusbar__sep { color: var(--text-tertiary); }
 .fp-statusbar__kbd-hints { display: flex; align-items: center; gap: var(--s-6); }
-.fp-statusbar__backend-dot { background: var(--text-tertiary); box-shadow: none; transition: background var(--dur-slide) var(--ease-out); }
+.fp-statusbar__backend-dot { background: var(--text-tertiary); box-shadow: none; transition: background var(--motion-base) var(--ease-out); }
 #status-backend[data-state="ok"]       .fp-statusbar__backend-dot { background: var(--good); }
 #status-backend[data-state="checking"] .fp-statusbar__backend-dot,
 #status-backend[data-state="unknown"]  .fp-statusbar__backend-dot,
@@ -5280,7 +5229,7 @@ button.fp-pill:hover {
   align-items: center;
   justify-content: center;
   z-index: 1000;
-  animation: fp-modal-scrim-in var(--dur-fast) var(--ease-out);
+  animation: fp-modal-scrim-in var(--motion-fast) var(--ease-out);
 }
 [data-theme="light"] .fp-scrim { background: rgba(0, 0, 0, 0.30); }
 
@@ -5294,7 +5243,7 @@ button.fp-pill:hover {
   box-shadow: var(--shadow-popover);
   padding: var(--s-4);
   z-index: var(--z-menu);
-  animation: fp-fade-in 80ms var(--ease-out);
+  animation: fp-fade-in var(--motion-fast) var(--ease-out);
 }
 /* The items' own scroller. A menu taller than the window (a folder menu at
    the 500px minimum height, high app zoom) scrolls inside its frame instead
@@ -5321,8 +5270,8 @@ button.fp-pill:hover {
   color: var(--text-primary);
   cursor: pointer;
   user-select: none;
-  transition: background var(--dur-flash) var(--ease-snap),
-              color var(--dur-flash) var(--ease-snap);
+  transition: background var(--motion-instant) var(--ease-standard),
+              color var(--motion-instant) var(--ease-standard);
 }
 /* icon child — named class and svg fallback */
 .fp-context-menu__item__icon,
@@ -5398,7 +5347,7 @@ button.fp-pill:hover {
   box-shadow: var(--shadow-popover);
   padding: var(--s-4);
   z-index: 200;
-  animation: fp-popover-in var(--dur-fast) var(--ease-out);
+  animation: fp-popover-in var(--motion-fast) var(--ease-out);
 }
 
 /* ── Snackbar / Toast — canonical definitions moved to Section 26 ─────────── */
@@ -5480,34 +5429,6 @@ button.fp-pill:hover {
 .fp-empty-state__title { font: 600 var(--t-title-sm) var(--font-ui); letter-spacing: var(--track-button); color: var(--text-primary); margin: 0; }
 .fp-empty-state__desc  { font: 400 var(--t-body) var(--font-ui); color: var(--text-secondary); max-width: 360px; line-height: 1.5; margin: 0; }
 
-/* A.17 animation — file-op flash (80ms white flash on row) */
-@keyframes fp-dur-flash {
-  0%   { background: color-mix(in oklch, white 30%, transparent); }
-  100% { background: transparent; }
-}
-.fp-row--flash {
-  animation: fp-dur-flash 80ms var(--ease-out);
-}
-
-/* A.3.1 — Tag chip fan-out stagger (120ms between each chip appearing) */
-/* Chips set --chip-delay via JS or nth-child for up to 8 chips */
-.fp-chip-group .fp-chip:nth-child(1) { animation-delay: 0ms; }
-.fp-chip-group .fp-chip:nth-child(2) { animation-delay: 120ms; }
-.fp-chip-group .fp-chip:nth-child(3) { animation-delay: 240ms; }
-.fp-chip-group .fp-chip:nth-child(4) { animation-delay: 360ms; }
-.fp-chip-group .fp-chip:nth-child(5) { animation-delay: 480ms; }
-.fp-chip-group .fp-chip:nth-child(6) { animation-delay: 600ms; }
-.fp-chip-group .fp-chip:nth-child(7) { animation-delay: 720ms; }
-.fp-chip-group .fp-chip:nth-child(8) { animation-delay: 840ms; }
-/* Fan-out animation applied to chip groups that opt in via .fp-chip-group--animate */
-@keyframes fp-chip-fan-in {
-  from { opacity: 0; transform: translateX(-4px); }
-  to   { opacity: 1; transform: translateX(0); }
-}
-.fp-chip-group--animate .fp-chip {
-  animation: fp-chip-fan-in 120ms var(--ease-out) both;
-}
-
 /* Inspector panel (docked). Its width is screen px over --app-zoom (Stage
    2D §5). One bound for it, shared with initResizer's drag clamp and the
    Settings "Inspector default width" slider (inspector.js's
@@ -5549,7 +5470,7 @@ button.fp-pill:hover {
   flex-shrink: 0;
   background: transparent;
   cursor: col-resize;
-  transition: background var(--dur-fast) var(--ease-snap);
+  transition: background var(--motion-fast) var(--ease-standard);
 }
 .resizer:hover { background: var(--accent); }
 /* No handle to see or grab while the inspector is closed (pass 2 #57). */
@@ -5721,18 +5642,18 @@ button.fp-pill:hover {
   background:
     linear-gradient(to right, transparent, var(--home-row-bg) var(--s-16)),
     linear-gradient(to right, transparent, var(--bg-content) var(--s-16));
-  transition: opacity var(--dur-fast) var(--ease-out);
+  transition: opacity var(--motion-fast) var(--ease-out);
 }
 /* Favorites star (right-most icon button on a Favorites row) */
 .fp-row__fav-star {
   flex-shrink: 0;
   color: var(--accent);
 }
-/* Unfavoriting fade-out (JS adds this class then removes the row after var(--dur-slide)) */
+/* Unfavoriting fade-out (JS adds this class then removes the row after var(--motion-base)) */
 .fp-row--unfavoriting {
   opacity: 0;
   pointer-events: none;
-  transition: opacity var(--dur-slide) var(--ease-out);
+  transition: opacity var(--motion-base) var(--ease-out);
 }
 /* Favorites drag-reorder insertion indicator (JS toggles these on dragover) */
 .fp-row--drop-before::after,
@@ -5861,7 +5782,7 @@ button.fp-pill:hover {
   cursor: pointer;
   text-align: left;
   position: relative;
-  transition: background var(--dur-fast) var(--ease-out);
+  transition: background var(--motion-fast) var(--ease-out);
 }
 /* Hover is lighter than the selected item, so only the open pane looks
    selected (Task 14 Q17: in light, a hovered "Data" matched it exactly). */
@@ -6102,7 +6023,7 @@ button.fp-pill:hover {
   border-radius: 999px;
   border: 2px solid transparent;
   cursor: pointer;
-  transition: border-color var(--dur-fast) var(--ease-out);
+  transition: border-color var(--motion-fast) var(--ease-out);
 }
 .settings-accent-swatch:hover,
 .settings-accent-swatch.active {
@@ -6136,17 +6057,6 @@ button.fp-pill:hover {
    40e. EDGE CASE STYLE CLASSES (A.17)
    ══════════════════════════════════════════════════════════════════════════════ */
 
-/* A.17 #1 — Vanished file row: strikethrough + 60% opacity + 1s fade-out */
-.fp-row--vanished {
-  opacity: 0.6;
-  text-decoration: line-through;
-  transition: opacity 1s var(--ease-out);
-  pointer-events: none;
-}
-.fp-row--vanished.fp-row--fade-out {
-  opacity: 0;
-}
-
 /* A.1.2 — Tab drag-reorder insert indicator */
 .fp-tab--drag-over-before {
   border-left: 2px solid var(--accent) !important;
@@ -6170,24 +6080,6 @@ button.fp-pill:hover {
   border: 1.5px dashed var(--accent);
   border-radius: 4px;
   pointer-events: none;
-}
-
-/* A.17 #4 — Second instance: taskbar icon pulse */
-@keyframes fp-taskbar-pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.4; }
-}
-.fp-taskbar-pulse {
-  animation: fp-taskbar-pulse 1.2s var(--ease-out) infinite;
-}
-
-/* A.17 #5 — Background scan amber pulse on tray icon */
-@keyframes fp-tray-scan-pulse {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(var(--warn-rgb, 234 179 8) / 0.6); }
-  50% { box-shadow: 0 0 0 4px rgba(var(--warn-rgb, 234 179 8) / 0); }
-}
-.fp-tray-icon--scanning {
-  animation: fp-tray-scan-pulse 2s ease-in-out infinite;
 }
 
 /* A.17 #14 - Tab bar overflow (many tabs).
@@ -6257,9 +6149,9 @@ button.fp-pill:hover {
    the tests that compare it with the requested bucket). */
 .fp-icon--win { object-fit: contain; }
 /* An icon arriving into an EMPTY slot fades in (a cache hit is painted with
-   its row, settled, and never animates). The reduced-motion block at the
-   end of this file makes it instant. */
-.fp-icon--win.fp-icon--fade-in { animation: fp-icon-in var(--dur-icon-in) var(--ease-out); }
+   its row, settled, and never animates). The motion gate at the end of
+   this file makes it instant when animations are off. */
+.fp-icon--win.fp-icon--fade-in { animation: fp-icon-in var(--motion-fast) var(--ease-out); }
 @keyframes fp-icon-in { from { opacity: 0; } to { opacity: 1; } }
 
 /* Unknown extension in FilePlus mode: the blank page icon carries the
@@ -6330,7 +6222,7 @@ button.fp-pill:hover {
      outside line clipped away (Task 14 Q24). */
   outline-offset: -1px;
   opacity: 0;
-  transition: opacity var(--dur-icon-in) var(--ease-out);
+  transition: opacity var(--motion-fast) var(--ease-out);
 }
 .fp-thumb[data-dir] { outline: none; }
 .fp-thumb--ready { opacity: 1; }
@@ -6339,12 +6231,12 @@ button.fp-pill:hover {
 /* Thumbnail arrived: the type icon has done its job and fades out under it.
    Hidden rather than removed so a re-render doesn't have to rebuild it. */
 .fp-thumb-box > .fp-thumb-box__type {
-  transition: opacity var(--dur-icon-in) var(--ease-out), visibility 0s linear 0s;
+  transition: opacity var(--motion-fast) var(--ease-out), visibility 0s var(--ease-linear) 0s;
 }
 .fp-thumb-box--has-thumb > .fp-icon {
   opacity: 0;
   visibility: hidden;
-  transition: opacity var(--dur-icon-in) var(--ease-out), visibility 0s linear var(--dur-icon-in);
+  transition: opacity var(--motion-fast) var(--ease-out), visibility 0s var(--ease-linear) var(--motion-fast);
 }
 
 /* Folder preview: up to two of the folder's own pictures (GET /fs/peek)
@@ -6644,33 +6536,32 @@ button.fp-pill:hover {
   unicode-bidi: isolate;
 }
 
-/* ── Reduced motion: see canonical block appended below (UI-SPEC §A.0) ─────── */
-
-/* === prefers-reduced-motion: strict policy per UI-SPEC §A.0 === */
-@media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    /* 0s, not the customary 0.01ms: transition-property defaults to `all`,
-       so a 0.01ms duration turns EVERY style change on EVERY element into a
-       one-frame transition whose first frame samples the OLD value — an
-       IntersectionObserver record or getBoundingClientRect() taken in that
-       frame (icons.js re-measuring a row icon after an icon-size change)
-       read the pre-change size and pinned the wrong bitmap. A 0s transition
-       never starts, which is what "instant" means; nothing in the renderer
-       waits on transitionend (pass 2, icons). */
-    transition-duration: 0s !important;
-    scroll-behavior: auto !important;
-  }
-  /* Sole exception: live-data sparkline on Scan Progress */
-  .fp-sparkline,
-  .fp-sparkline * {
-    animation-duration: revert !important;
-    transition-duration: revert !important;
-  }
+/* === The motion switch (Stage 2D addendum §5.1, decision A-2) ===
+   Settings › Personalization › "Animations" (ui.animations) sets
+   html[data-motion] to "on" or "off" (app.js fpSetMotion). Anything but "on"
+   — off, or not decided yet because app.js has not run — gets no motion at
+   all: no animation, no transition (none, not a near-zero duration: a 0.01ms
+   transition turns every style change into a one-frame transition whose
+   first frame samples the OLD value, and icons.js re-measuring a row icon in
+   that frame pinned the wrong bitmap). So nothing can animate before the
+   setting is known, and document.getAnimations() stays empty. Windows'
+   "Animation effects" setting gates nothing. */
+html:not([data-motion="on"]),
+html:not([data-motion="on"]) *,
+html:not([data-motion="on"]) *::before,
+html:not([data-motion="on"]) *::after {
+  animation: none !important;
+  transition: none !important;
+  scroll-behavior: auto !important;
 }
+/* A hover-intent wait is behaviour, not motion: the resize line still waits
+   before it shows, it just appears without fading. */
+html:not([data-motion="on"]) .fp-sidebar__resize-handle:hover:not(.fp-sidebar__resize-handle--active) {
+  transition: background-color 0s var(--ease-linear) var(--timer-resize-intent) !important;
+}
+/* The snackbar's countdown bar is drawn by an animation; with none it would
+   sit full for the snackbar's whole life, so it is not shown. */
+html:not([data-motion="on"]) .fp-snackbar__progress { display: none; }
 
 /* -----------------------------------------------------------------------------
    SETTINGS › SCAN & INDEX (Task 14, design §8.7)

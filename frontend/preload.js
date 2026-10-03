@@ -79,6 +79,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   hostname:    () => ipcRenderer.sendSync('get-hostname'),
   homeDir:     () => ipcRenderer.sendSync('get-home-dir'),
   micaAvailable: () => ipcRenderer.sendSync('mica-available'),
+  // Animations launch override: 'on' | 'off' | '' (none — follow the setting).
+  motionOverride: () => ipcRenderer.sendSync('get-motion-override'),
   // API auth token (empty string when FILEPLUS_API_TOKEN is unset)
   apiToken:    () => ipcRenderer.sendSync('get-api-token'),
   // Backend port (9876 unless FILEPLUS_PORT overrides it)

@@ -288,6 +288,15 @@ app.whenReady().then(() => {
 
   ipcMain.on('mica-available', (event) => { event.returnValue = MICA_AVAILABLE; });
 
+  // Animations launch override (Stage 2D addendum §5.3): --fp-motion=on|off
+  // decides html[data-motion] at startup instead of the saved setting. Only
+  // the test harness passes it, so every spec starts deterministic (off)
+  // unless it asks for motion; '' (no switch) leaves it to ui.animations.
+  ipcMain.on('get-motion-override', (event) => {
+    const v = app.commandLine.getSwitchValue('fp-motion');
+    event.returnValue = v === 'on' || v === 'off' ? v : '';
+  });
+
   // Settings › About / Data (Stage 2D Task 12a). The app version comes from
   // package.json through app.getVersion(); the log folder is the one this
   // process writes main.log/renderer.log to (FILEPLUS_LOG_DIR, else <repo>/logs

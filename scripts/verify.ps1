@@ -48,6 +48,11 @@ node scripts/check_menu_cases.js
 if ($LASTEXITCODE -ne 0) { Write-Host 'check_menu_cases failed' -ForegroundColor Red; exit 1 }
 node scripts/check_icons.js
 if ($LASTEXITCODE -ne 0) { Write-Host 'check_icons failed' -ForegroundColor Red; exit 1 }
+# check_motion: every duration/easing in styles.css is a --motion-*/--ease-*
+# token (200 ms ceiling), every animation sits under the html[data-motion]
+# switch, prefers-reduced-motion gates nothing, JS animates only via fpAnimate.
+node scripts/check_motion.js
+if ($LASTEXITCODE -ne 0) { Write-Host 'check_motion failed' -ForegroundColor Red; exit 1 }
 
 # filetypes parity: frontend/src/filetypes.js is generated from
 # backend/filetypes.py (scripts/build_filetypes.py); tests/test_filetypes.py

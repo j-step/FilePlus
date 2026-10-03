@@ -121,6 +121,17 @@ function applySettingsFromConfig() {
   }
   if (typeof cfg['ui.notifications'] === 'boolean') setNotificationsEnabled(cfg['ui.notifications']);
 
+  // Animations (Stage 2D addendum §5.1). Default on. The config value is the
+  // source of truth — but only a real one (a backend that could not be read
+  // leaves the boot choice, the localStorage mirror, alone), and a launch
+  // override (the test harness's --fp-motion) wins over both.
+  // {persist: false}: re-applying the value just read back never POSTs.
+  if (window.__fpConfigLoaded && !fpMotionOverride()) {
+    fpSetMotion(cfg['ui.animations'] !== false, { persist: false });
+  }
+  const animToggle = document.getElementById('settings-animations');
+  if (animToggle) animToggle.checked = fpMotionOn();
+
   // Default true — the inspector starts open unless explicitly turned off.
   // No localStorage fast-path (unlike theme/density/accent): config, or this
   // documented default, is its only source (same pattern as show_extensions/

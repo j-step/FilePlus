@@ -67,12 +67,21 @@ function loggedRendererErrors(from) {
  *    completed with undelivered notifications" is logged there, not as a
  *    pageerror). An entry the page listeners already reported is not
  *    repeated. So: assert `errors` after `await app.close()`.
+ *
+ * Animations (Stage 2D addendum §5.3) are OFF unless a test asks for them:
+ * `motion: false` (the default) launches with --fp-motion=off, `true` with
+ * --fp-motion=on, and `null` passes no switch so the app follows its saved
+ * ui.animations setting like a user's would. main.js answers the switch over
+ * IPC and app.js applies it at its first line, before the page can animate
+ * and long before waitReady() returns — every spec starts deterministic,
+ * with document.getAnimations() empty and every JS ease instant.
  */
-async function launchApp({ args = [], keepZoom = false } = {}) {
+async function launchApp({ args = [], keepZoom = false, motion = false } = {}) {
   const env = { ...process.env };
   delete env.ELECTRON_RUN_AS_NODE;
   const logFrom = fileSize(rendererLogPath());
-  const app = await electron.launch({ executablePath: require('electron'), args: [FRONTEND, ...args], cwd: FRONTEND, env });
+  const motionArgs = motion === null ? [] : [`--fp-motion=${motion ? 'on' : 'off'}`];
+  const app = await electron.launch({ executablePath: require('electron'), args: [FRONTEND, ...motionArgs, ...args], cwd: FRONTEND, env });
   const errors = [];
   const reported = []; // raw texts the page listeners saw, for de-duplication
   const listened = new Set();
@@ -106,7 +115,6 @@ async function launchApp({ args = [], keepZoom = false } = {}) {
       else errors.push(`renderer.log: ${entry}`);
     }
   };
-  await page.emulateMedia({ reducedMotion: 'reduce' });
   await waitReady(page);
   // Electron restores the page zoom from the run's shared profile, so a test
   // that died at 150 % used to start every later test at 150 % (Task 11: one

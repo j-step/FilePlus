@@ -2,7 +2,7 @@
 // Stage 2D Task 6 (spec §5, decision D2D-1): app zoom (Ctrl+= / Ctrl+- /
 // Ctrl+0). The sidebar, the inspector and the collapsed rail keep their
 // SCREEN width while everything inside them grows; each zoom step eases in
-// over ~70 ms (or is instant under reduced motion, or after the 32 ms frame
+// over ~70 ms (or is instant with animations off, or after the 32 ms frame
 // fallback); the zoom pill shows the percentage and fades 1.2 s after the
 // last change; the resize handles store screen px and both panel widths
 // survive a restart (pass-2 #176); the inspector's resize handle is gone
@@ -341,7 +341,7 @@ test('each zoom step eases in (or records the instant fallback) and the panels h
   try {
     await setZoom(app, page, 1);
     await page.evaluate(() => setInspectorOpen(true, { persist: false }));
-    await page.emulateMedia({ reducedMotion: 'no-preference' });
+    await page.evaluate(() => fpSetMotion(true, { persist: false }));
     // Per-frame sampler: the zoom the renderer has APPLIED (devicePixelRatio
     // over the display scale) and each panel's width at that zoom.
     await page.evaluate(() => {
@@ -382,8 +382,8 @@ test('each zoom step eases in (or records the instant fallback) and the panels h
     for (let i = 0; i < 3; i++) await page.keyboard.press('Control+=');
     await settled(page, 1.75);
 
-    // Reduced motion: straight to the step, no frame in between.
-    await page.emulateMedia({ reducedMotion: 'reduce' });
+    // Animations off: straight to the step, no frame in between.
+    await page.evaluate(() => fpSetMotion(false, { persist: false }));
     await page.evaluate(() => { window.__zs = []; window.__zsOn = true;
       const scale = window.devicePixelRatio / window.electronAPI.getZoom();
       const tick = () => { window.__zs.push(window.devicePixelRatio / scale); if (window.__zsOn) requestAnimationFrame(tick); };
@@ -445,7 +445,7 @@ test('one Ctrl+wheel notch is exactly one ladder step at every app zoom; resizes
     // nothing here): the next step re-reads it before it starts, so every
     // eased frame still publishes the zoom the page really applied.
     await setZoom(app, page, 1);
-    await page.emulateMedia({ reducedMotion: 'no-preference' });
+    await page.evaluate(() => fpSetMotion(true, { persist: false }));
     const sw0 = await screenW(page, '#sidebar');
     const base = await page.evaluate(() => window.devicePixelRatio);
     await page.evaluate(() => {

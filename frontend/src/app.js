@@ -5,6 +5,144 @@ const btnSidebarCollapse = document.getElementById('btn-sidebar-collapse');
 const paletteScrim       = document.getElementById('palette-scrim');
 const paletteInput       = document.getElementById('palette-input');
 
+// ── Motion: the one switch (Stage 2D addendum §5.1) ──────────────────────────
+// Settings › Personalization › "Animations" (ui.animations, default on) is the
+// only thing that turns motion on or off — Windows' "Animation effects"
+// (the reduced-motion media query) gates nothing (decision A-2). The switch
+// is html[data-motion="on"|"off"]: styles.css gives everything under anything
+// but "on" no animation and no transition, and every JS-driven animation asks
+// fpMotionOn() (fpAnimate, the zoom ease, the spring-load pulse wait).
+//
+// Decided here, at app.js's first line, before anything can animate: a launch
+// override (--fp-motion=on|off, the test harness) wins; otherwise the
+// localStorage mirror of the last applied setting, so a user who turned it
+// off sees no motion at boot either; the config value (the source of truth)
+// is applied when it loads (applySettingsFromConfig). Until this runs the
+// attribute is unset, which the CSS gate already treats as off.
+const FP_MOTION_LS_KEY = 'fp-animations';
+const FP_MOTION_DURATIONS = ['instant', 'fast', 'base', 'slow'];
+const FP_MOTION_EASINGS = ['out', 'in', 'standard'];
+const _fpMotionOverride = (() => {
+  const o = window.electronAPI?.motionOverride?.();
+  return o === 'on' || o === 'off' ? o : null;
+})();
+(function fpBootMotion() {
+  let on = true;
+  if (_fpMotionOverride) on = _fpMotionOverride === 'on';
+  else {
+    try { on = localStorage.getItem(FP_MOTION_LS_KEY) !== 'off'; } catch (_) { /* default on */ }
+  }
+  document.documentElement.dataset.motion = on ? 'on' : 'off';
+})();
+
+/** True while animations are on (html[data-motion="on"]). */
+function fpMotionOn() {
+  return document.documentElement.dataset.motion === 'on';
+}
+
+/** The launch override ('on' | 'off'), or null when the setting decides. */
+function fpMotionOverride() {
+  return _fpMotionOverride;
+}
+
+let _fpMotionTokens = null;
+/** The --motion-* durations (ms) and --ease-* curves, read once from
+ * styles.css's :root — the one source for CSS and JS motion alike. */
+function fpMotionTokens() {
+  if (_fpMotionTokens) return _fpMotionTokens;
+  const cs = getComputedStyle(document.documentElement);
+  const ms = (name, fallback) => {
+    const raw = cs.getPropertyValue(name).trim();
+    const n = parseFloat(raw);
+    if (!Number.isFinite(n)) return fallback;
+    return /ms$/.test(raw) ? n : (/s$/.test(raw) ? n * 1000 : n);
+  };
+  const fallbackMs = { instant: 60, fast: 100, base: 140, slow: 200 };
+  const durations = {};
+  for (const n of FP_MOTION_DURATIONS) durations[n] = ms(`--motion-${n}`, fallbackMs[n]);
+  const easings = {};
+  for (const n of FP_MOTION_EASINGS) easings[n] = cs.getPropertyValue(`--ease-${n}`).trim() || 'ease-out';
+  _fpMotionTokens = { durations, easings, ms };
+  return _fpMotionTokens;
+}
+
+/** A --motion-* token in ms: fpMotionMs('fast') → 100; any other custom
+ * property name ('--motion-spring') is read as given. */
+function fpMotionMs(name) {
+  const t = fpMotionTokens();
+  if (t.durations[name] != null) return t.durations[name];
+  return t.ms(name, t.durations.base);
+}
+
+// Animations fpAnimate() started that may still be running: cancelled the
+// moment the switch goes off. Per element, one animation per key.
+const _fpLiveAnimations = new Set();
+const _fpAnimationsByEl = new WeakMap();   // el -> Map(key -> Animation)
+
+/**
+ * The one way JS animates (scripts/check_motion.js rejects any other call
+ * to Element.animate). Decoration only (§5.1 rule 1): the caller has already
+ * put the state, the DOM and focus where they belong; this only plays a
+ * transition on top, and nothing may wait for it.
+ *
+ * A new call on the same element and key cancels the one before it (nothing
+ * queues). Returns the Animation, or null when animations are off (any
+ * previous one for that key is still cancelled).
+ *
+ *   duration: 'instant' | 'fast' | 'base' | 'slow' (default 'fast') or ms,
+ *             clamped to --motion-slow (the ceiling)
+ *   easing:   'out' (default) | 'in' | 'standard'
+ *   key:      names the animation slot on `el` (default 'default')
+ *   delay, fill: passed through (a stagger, a 'backwards' fade-in)
+ */
+function fpAnimate(el, keyframes, { duration = 'fast', easing = 'out', key = 'default', delay = 0, fill = 'none' } = {}) {
+  if (!el) return null;
+  let slots = _fpAnimationsByEl.get(el);
+  const prev = slots && slots.get(key);
+  if (prev) { slots.delete(key); _fpLiveAnimations.delete(prev); prev.cancel(); }
+  if (!fpMotionOn() || typeof el.animate !== 'function') return null;
+  const t = fpMotionTokens();
+  const ms = typeof duration === 'number'
+    ? Math.max(0, Math.min(duration, t.durations.slow))
+    : (t.durations[duration] != null ? t.durations[duration] : t.durations.fast);
+  const anim = el.animate(keyframes, {
+    duration: ms, easing: t.easings[easing] || t.easings.out, delay, fill,
+  });
+  if (!slots) { slots = new Map(); _fpAnimationsByEl.set(el, slots); }
+  slots.set(key, anim);
+  _fpLiveAnimations.add(anim);
+  const done = () => {
+    _fpLiveAnimations.delete(anim);
+    if (slots.get(key) === anim) slots.delete(key);
+  };
+  anim.addEventListener('finish', done);
+  anim.addEventListener('cancel', done);
+  return anim;
+}
+
+/**
+ * Turns animations on or off at once (no restart): sets html[data-motion],
+ * cancels whatever fpAnimate() still has running when it goes off, mirrors
+ * the choice to localStorage (the boot read above), syncs the Settings
+ * switch, fires `fpMotionChanged` on document ({detail: {on}}) when it
+ * changed, and, unless {persist: false}, saves ui.animations.
+ */
+function fpSetMotion(on, { persist = true } = {}) {
+  on = !!on;
+  const was = fpMotionOn();
+  document.documentElement.dataset.motion = on ? 'on' : 'off';
+  if (!on) {
+    for (const a of [..._fpLiveAnimations]) a.cancel();
+    _fpLiveAnimations.clear();
+  }
+  try { localStorage.setItem(FP_MOTION_LS_KEY, on ? 'on' : 'off'); } catch (_) { /* boot falls back to on */ }
+  const toggle = document.getElementById('settings-animations');
+  if (toggle) toggle.checked = on;
+  if (typeof zoomEaseMode === 'function') window.__fpZoomEase = zoomEaseMode();
+  if (was !== on) document.dispatchEvent(new CustomEvent('fpMotionChanged', { detail: { on } }));
+  if (persist) saveSetting('ui.animations', on);
+}
+
 // ── Screen switching ────────────────────────────────────────────────────────
 // Only screens that work today are in index.html (Home, Browser, Settings).
 // The Stage 3/4 mock-ups (File Tree, Scan, Review Bin, Everything Folder)
@@ -1423,8 +1561,8 @@ function applyTheme(mode) {
 // them grow (styles.css, --sidebar-w-screen / --inspector-w-screen).
 //
 // The step list is main.js's ZOOM_STEPS (read once over IPC). A step eases
-// in through electronAPI.zoomTo (preload.js) — unless reduced motion is on,
-// or one of the first two eased steps of the session had a frame over
+// in through electronAPI.zoomTo (preload.js) — unless animations are off
+// (fpMotionOn), or one of the first two eased steps of the session had a frame over
 // ZOOM_EASE_FRAME_LIMIT_MS (spec §5 fallback ruling), after which every step
 // is instant. window.__fpZoomEase says which mode is in effect and
 // window.__fpZoomFrames keeps the measured frame times.
@@ -1472,8 +1610,7 @@ function zoomFramesTooSlow(frames, firstOfSession) {
 }
 
 function zoomEaseMode() {
-  const reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  return (appZoom.dropped || reduced) ? 'instant' : 'eased';
+  return (appZoom.dropped || !fpMotionOn()) ? 'instant' : 'eased';
 }
 
 /** Publishes the applied zoom as --app-zoom. Panel width transitions are
@@ -2464,22 +2601,11 @@ function showToast(message, variant = '') {
 // ── Refresh (Stage 2D §7) ─────────────────────────────────────────────────────
 // One 360° spin of the toolbar icon and one quick opacity dip of the list.
 // Classes come off on a timer (not animationend), so they never stick when
-// reduced motion removes the animation.
-// Durations come from the CSS tokens (--dur-refresh-spin / --dur-refresh-dip)
-// so the timers that take the classes off can never disagree with the
-// animations; read once, on first use.
-let _refreshFxMs = null;
+// the motion gate removes the animation (animations off). Durations come
+// from the CSS tokens (--motion-refresh-spin / -dip) so the timers that take
+// the classes off can never disagree with the animations.
 function refreshFxMs() {
-  if (_refreshFxMs) return _refreshFxMs;
-  const cs = getComputedStyle(document.documentElement);
-  const ms = (name, fallback) => {
-    const raw = cs.getPropertyValue(name).trim();
-    const n = parseFloat(raw);
-    if (!Number.isFinite(n)) return fallback;
-    return /ms$/.test(raw) ? n : (/s$/.test(raw) ? n * 1000 : n);
-  };
-  _refreshFxMs = { spin: ms('--dur-refresh-spin', 400), dip: ms('--dur-refresh-dip', 160) };
-  return _refreshFxMs;
+  return { spin: fpMotionMs('--motion-refresh-spin'), dip: fpMotionMs('--motion-refresh-dip') };
 }
 const _refreshFxTimers = { spin: 0, dip: 0 };
 
@@ -3023,7 +3149,7 @@ const IN_SCOPE_ACTIONS = new Set([
   'modal-cancel', 'modal-confirm', 'modal-confirm-type',
   'settings-nav', 'settings-set-theme', 'settings-set-density', 'settings-set-accent',
   'settings-set-accent-hex', 'settings-reset-accent',
-  'settings-set-show-notifications', 'settings-toggle', 'settings-set-click-mode',
+  'settings-set-show-notifications', 'settings-set-animations', 'settings-toggle', 'settings-set-click-mode',
   'settings-set-icon-source', 'settings-quick-access-toggle', 'settings-set-backspace-deletes',
   'settings-empty-trash',
   // Settings › About / Data (Task 12a)
@@ -3911,6 +4037,10 @@ document.addEventListener('change', e => {
   if (t.dataset.action === 'settings-set-show-notifications') {
     setNotificationsEnabled(t.checked);
     saveSetting('ui.notifications', t.checked);
+    return;
+  }
+  if (t.dataset.action === 'settings-set-animations') {
+    fpSetMotion(t.checked);
     return;
   }
   if (t.dataset.action === 'settings-toggle' && t.dataset.setting === 'show-extensions') {

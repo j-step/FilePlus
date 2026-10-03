@@ -8,7 +8,7 @@ const { launchApp, resetToDefaults } = require('./harness/app');
 const API = `http://127.0.0.1:${process.env.FILEPLUS_PORT || 9876}`;
 
 test('tabs and navigation: pass-2 regressions', async () => {
-  // launchApp (harness): reduced motion, errors collected from the first
+  // launchApp (harness): animations off, errors collected from the first
   // renderer line on (renderer.log, read at close), app ready. Then default
   // settings, waiting for the reloaded app to be ready again — not a sleep.
   const { app, page, errors } = await launchApp();
