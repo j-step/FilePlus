@@ -207,6 +207,14 @@ async function windowShot(app, page, name) {
   return file;
 }
 
+/** Parks the pointer on the header's empty drag region, where nothing shows
+ * a hover state, so the next screenshot shows none (Task 8 Q17: shots used
+ * to keep the hover of whatever the test clicked last). */
+async function parkPointer(page) {
+  const b = await page.locator('#header .fp-header__drag').boundingBox();
+  if (b) await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2);
+}
+
 /** Locator for the Browser row whose visible name is exactly `name`. */
 function rowByName(page, name) {
   const esc = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -248,4 +256,4 @@ function expectNoErrors(errors) {
   expect(errors, errors.join('\n')).toEqual([]);
 }
 
-module.exports = { FRONTEND, REPO, SHOTS, API, apiHeaders, apiGet, launchApp, waitReady, resetToDefaults, shot, windowShot, rowByName, expectNoErrors, pinFolders };
+module.exports = { FRONTEND, REPO, SHOTS, API, apiHeaders, apiGet, launchApp, waitReady, resetToDefaults, shot, windowShot, parkPointer, rowByName, expectNoErrors, pinFolders };

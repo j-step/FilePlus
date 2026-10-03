@@ -2,7 +2,7 @@
 // Stage 2D addendum, Task 8 — the final fix wave (final review minors R1–R3
 // and the QA visual findings Q2–Q17). One test (or more) per item.
 const { test, expect } = require('@playwright/test');
-const { launchApp, waitReady, apiGet, API, apiHeaders, windowShot, rowByName } = require('./harness/app');
+const { launchApp, waitReady, apiGet, API, apiHeaders, windowShot, parkPointer, rowByName } = require('./harness/app');
 
 test.setTimeout(180_000);
 
@@ -397,6 +397,179 @@ test('Q6: the tab strip starts a small inset off the sidebar seam, its tabs bott
     expect(Math.abs(r.gap - r.inset)).toBeLessThanOrEqual(1);
     expect(r.bottom).toBeLessThanOrEqual(0.5);
     await windowShot(app, page, 'fixwave-q6-tab-seam');
+  } finally {
+    await app.close();
+  }
+  expect(errors).toEqual([]);
+});
+
+async function apiSend(method, route, body) {
+  const r = await fetch(`${API}${route}`, {
+    method, headers: apiHeaders(body ? { 'Content-Type': 'application/json' } : {}),
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (!r.ok) throw new Error(`${method} ${route} -> ${r.status}`);
+  return r.json().catch(() => null);
+}
+
+// ── Q7: menu shortcuts sit in one right-aligned column ───────────────────────
+test('Q7: every menu item spans the menu, so shortcuts and flyout chevrons end on one right-aligned column', async () => {
+  const { app, page, errors } = await launchApp();
+  try {
+    const root = (await apiGet('/fs/list/root')).path;
+    await setWindow(app, page, 1200, 800);
+    await page.evaluate((p) => openBrowserAt(p), `${root}\\_gen\\Documents`);
+    await page.waitForFunction(() => !window.__fpLoadPending);
+    const columns = () => page.evaluate(() => {
+      const menu = document.getElementById('context-menu');
+      const inner = menu.querySelector('.fp-context-menu__scroll') || menu;
+      const ir = inner.getBoundingClientRect();
+      const items = [...menu.querySelectorAll('.fp-context-menu__item')].filter((i) => i.getClientRects().length);
+      return {
+        itemWidths: [...new Set(items.map((i) => Math.round(i.getBoundingClientRect().width)))],
+        inner: Math.round(ir.width),
+        kbdRights: [...new Set([...menu.querySelectorAll('.fp-context-menu__kbd')].map((k) => Math.round(k.getBoundingClientRect().right)))],
+        kbdCount: menu.querySelectorAll('.fp-context-menu__kbd').length,
+        chevronRights: [...new Set([...menu.querySelectorAll('.fp-context-menu__chevron')].map((k) => Math.round(k.getBoundingClientRect().right)))],
+      };
+    });
+    // A file's menu (Cut, Copy, Paste, Rename, Delete shortcuts).
+    await rowByName(page, 'doc-00.txt').click({ button: 'right' });
+    await expect(page.locator('#context-menu')).toBeVisible();
+    let c = await columns();
+    expect(c.kbdCount).toBeGreaterThanOrEqual(4);
+    expect(c.itemWidths).toEqual([c.inner]);
+    expect(c.kbdRights.length).toBe(1);
+    await parkPointer(page);
+    await windowShot(app, page, 'fixwave-q7-context-menu');
+    await page.keyboard.press('Escape');
+    // The empty-area menu (flyout parents with chevrons, shortcuts).
+    await page.locator('#list-scroll').click({ button: 'right', position: { x: 400, y: 600 } });
+    await expect(page.locator('#context-menu')).toBeVisible();
+    c = await columns();
+    expect(c.itemWidths).toEqual([c.inner]);
+    expect(c.kbdRights.length).toBeLessThanOrEqual(1);
+    expect(c.chevronRights.length).toBeLessThanOrEqual(1);
+    if (c.kbdRights.length && c.chevronRights.length) expect(Math.abs(c.kbdRights[0] - c.chevronRights[0])).toBeLessThanOrEqual(1);
+    await page.keyboard.press('Escape');
+  } finally {
+    await app.close();
+  }
+  expect(errors).toEqual([]);
+});
+
+// ── Q8: Home's hover actions never sit on a half-shown time ──────────────────
+test('Q8: a hovered Recent row hides the time under its actions; the actions never cover the name or location (100% and 150%)', async () => {
+  const { app, page, errors } = await launchApp();
+  try {
+    const root = (await apiGet('/fs/list/root')).path;
+    const dir = `${root}\\_gen\\Documents`;
+    await apiSend('DELETE', '/recent');
+    for (const n of ['doc-00.txt', 'doc-01.txt', 'doc-02.txt']) await apiSend('POST', '/recent', { path: `${dir}\\${n}`, action: 'opened' });
+    await page.evaluate(() => switchScreen('home'));
+    const rows = page.locator('#home-recent .fp-row[data-path]');
+    await expect(rows).toHaveCount(3);
+    const bad = [];
+    for (const [w, z] of [[1200, 1], [800, 1.5], [1100, 1.5]]) {
+      await setWindow(app, page, w, 700);
+      await setZoom(app, page, z);
+      await frames(page);
+      await rows.nth(1).hover();
+      await frames(page);
+      const r = await rows.nth(1).evaluate((row) => {
+        const act = row.querySelector('.fp-row__hover-actions').getBoundingClientRect();
+        const out = [];
+        for (const sel of ['.fp-row__name', '.fp-row__recent-path', '.fp-row__recent-time', '.fp-row__tags']) {
+          const el = row.querySelector(sel);
+          if (!el || !el.getClientRects().length) continue;
+          if (getComputedStyle(el).visibility === 'hidden') continue;
+          const b = el.getBoundingClientRect();
+          if (b.width && b.right > act.left + 0.5 && b.left < act.right - 0.5) out.push(`${sel} ${Math.round(b.left)}..${Math.round(b.right)} under actions ${Math.round(act.left)}..${Math.round(act.right)}`);
+        }
+        const a = row.querySelector('.fp-row__hover-actions');
+        return { out, timeColumn: row.querySelector('.fp-row__recent-time').getClientRects().length > 0,
+          actionsShown: a.getClientRects().length > 0 && getComputedStyle(a).opacity === '1' };
+      });
+      // A pane too narrow for the time column has no room for the buttons
+      // either: they stay out (the context menu has the same actions).
+      if (r.actionsShown !== r.timeColumn) bad.push(`${w}@${z}: actions ${r.actionsShown} with time column ${r.timeColumn}`);
+      bad.push(...r.out.map((o) => `${w}@${z}: ${o}`));
+      if (w === 800) await windowShot(app, page, 'fixwave-q8-home-hover-800-z150');
+    }
+    // Not hovered, the time is back.
+    await parkPointer(page);
+    expect(await rows.nth(1).locator('.fp-row__recent-time').evaluate((el) => getComputedStyle(el).visibility)).toBe('visible');
+    expect(bad).toEqual([]);
+  } finally {
+    await setZoom(app, page, 1).catch(() => {});
+    await app.close();
+  }
+  expect(errors).toEqual([]);
+});
+
+// ── Q9: the favourite star never sits on the icon, never shifts a column ─────
+test('Q9: in Icons the star sits beside the icon box at every size; in Content every row keeps the same date/size column', async () => {
+  const { app, page, errors } = await launchApp();
+  const root = (await apiGet('/fs/list/root')).path;
+  const doc = `${root}\\Views\\short.txt`;
+  try {
+    await apiSend('POST', '/favorites', { path: doc });
+    await page.evaluate(() => loadFavorites());
+    await setWindow(app, page, 1200, 800);
+    await page.evaluate((p) => openBrowserAt(p), `${root}\\Views`);
+    await page.waitForFunction(() => !window.__fpLoadPending);
+    const bad = [];
+    for (const size of [48, 64, 96, 256]) {
+      await page.evaluate((s) => setView('icons', s), size);
+      await frames(page);
+      const g = await page.evaluate(() => {
+        const row = [...document.querySelectorAll('#list-scroll .fp-row')].find((r) => r.dataset.path.endsWith('short.txt'));
+        row.scrollIntoView({ block: 'center' });
+        const s = row.querySelector('.fp-row__star').getBoundingClientRect();
+        const box = row.firstElementChild.getBoundingClientRect();
+        const cell = row.getBoundingClientRect();
+        const overlaps = s.right > box.left + 0.5 && s.left < box.right - 0.5 && s.bottom > box.top + 0.5 && s.top < box.bottom - 0.5;
+        const inCell = s.left >= cell.left - 0.5 && s.right <= cell.right + 0.5 && s.top >= cell.top - 0.5;
+        return { overlaps, inCell, s: [s.left, s.top, s.width], box: [box.left, box.top, box.width] };
+      });
+      if (g.overlaps || !g.inCell) bad.push(`icons ${size}: ${JSON.stringify(g)}`);
+      if (size === 48) await windowShot(app, page, 'fixwave-q9-star-medium');
+    }
+    await page.evaluate(() => setView('content'));
+    await frames(page);
+    const cols = await page.evaluate(() => [...document.querySelectorAll('#list-scroll .fp-row[data-path]')]
+      .filter((r) => !r.hasAttribute('data-dir'))
+      .map((r) => ({
+        star: !!r.querySelector('.fp-row__star'),
+        meta: [...r.querySelectorAll('.fp-row__content > .fp-row__meta:not(.fp-row__meta--start)')].map((m) => Math.round(m.getBoundingClientRect().right)),
+      })));
+    const starred = cols.find((c) => c.star);
+    const plain = cols.find((c) => !c.star);
+    expect(starred, 'a starred row').toBeTruthy();
+    expect(starred.meta).toEqual(plain.meta);
+    await page.evaluate(() => [...document.querySelectorAll('#list-scroll .fp-row')].find((r) => r.dataset.path.endsWith('short.txt')).scrollIntoView({ block: 'center' }));
+    await windowShot(app, page, 'fixwave-q9-star-content');
+    expect(bad).toEqual([]);
+    await page.evaluate(() => setView('details'));
+  } finally {
+    await apiSend('DELETE', `/favorites?path=${encodeURIComponent(doc)}`).catch(() => {});
+    await app.close();
+  }
+  expect(errors).toEqual([]);
+});
+
+// ── Q11: Settings › Data › Writes, both lines one style ──────────────────────
+test('Q11: the Writes detail line uses the same font and colour as the status line above it', async () => {
+  const { app, page, errors } = await launchApp();
+  try {
+    await page.evaluate(() => switchScreen('settings'));
+    await page.locator('.settings-nav__item[data-pane="data"]').click();
+    await expect(page.locator('#settings-writes-detail')).not.toHaveText('');
+    const [a, b] = await page.evaluate(() => ['settings-writes-status', 'settings-writes-detail'].map((id) => {
+      const cs = getComputedStyle(document.getElementById(id));
+      return { font: `${cs.fontWeight} ${cs.fontSize}/${cs.lineHeight} ${cs.fontFamily}`, color: cs.color };
+    }));
+    expect(b).toEqual(a);
   } finally {
     await app.close();
   }

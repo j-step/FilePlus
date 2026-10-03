@@ -4,7 +4,7 @@
 // Q19). Fixtures: <sandbox>/Final (global-setup.js). Waits are on
 // conditions, never sleeps.
 const { test, expect } = require('@playwright/test');
-const { launchApp, shot, rowByName, apiGet, windowShot } = require('./harness/app');
+const { launchApp, shot, rowByName, apiGet, windowShot, parkPointer } = require('./harness/app');
 
 test.setTimeout(120_000);
 
@@ -589,6 +589,7 @@ test('Q9/Q15/Q16/Q17/Q23: Settings rows line up, controls never wrap, nav and ac
     const xs = await page.evaluate(() => [...document.querySelectorAll('#palette-commands .fp-palette__item')]
       .map((b) => Math.round([...b.children].find((c) => c.tagName === 'SPAN').getBoundingClientRect().left)));
     expect(new Set(xs).size).toBe(1);
+    await parkPointer(page);   // no hover on a palette row (Task 8 Q17)
     await windowShot(app, page, 'final-palette');
     await page.keyboard.press('Escape');
   } finally { await app.close(); }
@@ -614,7 +615,8 @@ test('Q10/Q20/Q21/Q24: Opens-with icon, star on the icon, a quiet collapsed rail
     await shot(page, 'final-properties-opens-with');
     await page.keyboard.press('Escape');
 
-    // Q20 — the favourite star hangs on the icon's corner in Icons view.
+    // Q20 — the favourite star hangs by the icon's corner in Icons view
+    // (Task 8 Q9: beside the icon box, never on the artwork).
     const doc = `${root}\\Views\\short.txt`;
     await apiSend('POST', '/favorites', { path: doc });
     await page.evaluate(() => loadFavorites());
@@ -626,11 +628,12 @@ test('Q10/Q20/Q21/Q24: Opens-with icon, star on the icon, a quiet collapsed rail
       const row = [...document.querySelectorAll('#list-scroll .fp-row')].find((r) => r.dataset.path.endsWith('short.txt'));
       const s = row.querySelector('.fp-row__star').getBoundingClientRect();
       const box = row.firstElementChild.getBoundingClientRect();
-      return { starRight: s.right, starTop: s.top, iconLeft: box.left, iconTop: box.top, iconW: box.width };
+      return { starLeft: s.left, starTop: s.top, iconRight: box.right, iconTop: box.top, iconW: box.width };
     });
-    // On the icon box's top-right corner (10% in, so it sits on the art).
-    expect(Math.abs(star.starRight - (star.iconLeft + star.iconW * 0.9)), JSON.stringify(star)).toBeLessThanOrEqual(2);
-    expect(star.starTop - star.iconTop, JSON.stringify(star)).toBeLessThanOrEqual(star.iconW * 0.15);
+    // Just outside the icon box's top-right corner.
+    expect(star.starLeft - star.iconRight, JSON.stringify(star)).toBeGreaterThanOrEqual(0);
+    expect(star.starLeft - star.iconRight, JSON.stringify(star)).toBeLessThanOrEqual(3);
+    expect(Math.abs(star.starTop - star.iconTop), JSON.stringify(star)).toBeLessThanOrEqual(1);
     await page.evaluate(() => [...document.querySelectorAll('#list-scroll .fp-row')].find((r) => r.dataset.path.endsWith('short.txt')).scrollIntoView({ block: 'center' }));
     await frames(page);
     await windowShot(app, page, 'final-views-icons-star');

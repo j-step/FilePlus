@@ -279,6 +279,7 @@
      to --tab-max-w, all shrinking alike to --tab-min-w when the bar is
      crowded, then the strip scrolls under its --tabbar-fade. The strip
      starts --tabbar-inset in from the card's edge, off the sidebar seam. */
+  --row-star-size:     12px;  /* the favourite star on an icon cell, tile or Content row */
   --tab-max-w:        200px;
   --tab-min-w:         80px;
   --tabbar-fade:       24px;
@@ -4598,9 +4599,30 @@ body.is-dragging .fp-oscroll { pointer-events: none; }
 }
 /* An icon cell is wider than its icon (s + 28): the star sits on the icon
    box's top-right corner, attached to the item (Task 14 Q20). */
+/* An icon cell is wider than its icon (s + 28): the star sits just outside
+   the icon box's top-right corner, in that margin, attached to the item but
+   never on the artwork (Task 8 Q9: inside the box it covered the folded
+   corner of a document icon at Medium). */
 #list-scroll[data-view="icons"] .fp-row__star {
-  top: calc(var(--s-4) + var(--icon-size, 96px) * 0.08);
-  right: calc(50% - var(--icon-size, 96px) * 0.4);
+  top: var(--s-4);
+  right: auto;
+  left: calc(50% + var(--icon-size, 96px) / 2 + 1px);
+}
+/* Content: the star has a slot of its own at the row's end, reserved on
+   every row, so a favourite's date and size line up with the rows around
+   it (Task 8 Q9). */
+#list-scroll[data-view="content"] .fp-row {
+  padding-right: calc(var(--s-12) + var(--row-star-size) + var(--s-8));
+}
+#list-scroll[data-view="content"] .fp-row__star {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: var(--s-12);
+}
+#list-scroll:is([data-view="icons"], [data-view="tiles"], [data-view="content"]) .fp-row__star .fp-icon {
+  width: var(--row-star-size);
+  height: var(--row-star-size);
 }
 #list-scroll:is([data-view="list"], [data-view="small"]) .fp-row__star { display: none; }
 
@@ -5401,6 +5423,10 @@ button.fp-pill:hover {
   display: flex;
   align-items: center;
   gap: var(--s-10);
+  /* Full menu width (a <button> otherwise shrinks to its content), so every
+     shortcut and flyout chevron ends on one right-aligned column, as in
+     Windows 11's menus (Task 8 Q7). */
+  width: 100%;
   height: 28px;
   padding: 0 var(--s-10);
   border-radius: var(--r-icon-btn);
@@ -5436,6 +5462,7 @@ button.fp-pill:hover {
 .fp-context-menu__item__kbd,
 .fp-context-menu__kbd {
   margin-left: auto;
+  padding-left: var(--s-16);    /* the least gap between a label and its shortcut */
   font: 500 11px/16px var(--font-data);
   font-variant-numeric: tabular-nums;
   color: var(--text-tertiary);
@@ -5716,7 +5743,15 @@ button.fp-pill:hover {
   min-width: min(45%, 240px);
 }
 .home-pane:not([data-view="grid"]) .fp-row--recent > .fp-row__recent-path { flex: 0 100 160px; min-width: 0; }
-.home-pane:not([data-view="grid"]) .fp-row--recent > .fp-row__recent-time { flex: 0 1 120px; min-width: 0; }
+.home-pane:not([data-view="grid"]) .fp-row--recent > .fp-row__recent-time {
+  flex: 0 1 120px;
+  /* Never narrower than the part of the hover actions that reaches past the
+     star slot (3 × 24 px buttons, their 2 px gaps and the 16 px lead-in,
+     less the row's 14 px end padding, the 16 px star slot and the gaps —
+     the s-8 offset and gap cancel), so the actions, when shown, cover the
+     time and the star and never the location (Task 8 Q8). */
+  min-width: calc(3 * 24px + 2 * var(--s-2) - var(--s-14));
+}
 /* A column too narrow to say anything goes, rather than showing a stub
    (".\", "…s\", a cut "opened"): the location below 480px of pane, the
    time below 300px — the name keeps the room (Task 14 Q8). */
@@ -5725,9 +5760,16 @@ button.fp-pill:hover {
 }
 @container home-pane (max-width: 300px) {
   .fp-row--recent > .fp-row__recent-time { display: none; }
+  /* With no time column to take their place, the hover buttons would sit on
+     the name: they stay out (the row's context menu has the same actions —
+     Task 8 Q8). */
+  .home-pane .fp-row--recent > .fp-row__hover-actions { display: none; }
 }
 .fp-row--recent:hover { background: var(--bg-raised); --home-row-bg: var(--bg-raised); }
 .fp-row--recent:hover .fp-row__hover-actions { opacity: 1; pointer-events: all; }
+/* …and what they cover is hidden outright, not left half-showing at the
+   edge of their fade ("opened 08:0", Task 8 Q8). */
+.fp-row--recent:hover > :is(.fp-row__recent-time, .fp-row__tags) { visibility: hidden; }
 .fp-row--recent.fp-row--selected {
   background: var(--accent-wash);
   --home-row-bg: var(--accent-wash);
@@ -6100,8 +6142,8 @@ button.fp-pill:hover {
   padding: var(--s-6) 0;
 }
 .settings-row__text .settings-row__desc { margin: 2px 0 0; }
-/* A secondary line (where a setting lives): smaller and quieter. */
-.settings-row__desc--detail { font-size: var(--t-small); color: var(--text-tertiary); }
+/* A secondary line (where a setting lives): the same type and colour as the
+   description above it (Task 8 Q11), shown only when it has something. */
 .settings-row__desc--detail:empty { display: none; }
 .settings-row__action {
   display: flex;

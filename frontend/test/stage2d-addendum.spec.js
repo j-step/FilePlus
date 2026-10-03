@@ -15,7 +15,7 @@
 // opaque backing for the blur to work on".
 const path = require('path');
 const { test, expect } = require('@playwright/test');
-const { launchApp, apiGet, shot, rowByName, expectNoErrors, SHOTS, pinFolders, windowShot } = require('./harness/app');
+const { launchApp, apiGet, shot, rowByName, expectNoErrors, SHOTS, pinFolders, windowShot, parkPointer } = require('./harness/app');
 
 test.setTimeout(180_000);
 
@@ -162,10 +162,11 @@ test('§3: every scrimmed surface covers the whole window above every layer and 
         expect(probe.zIndex, `${ctx}: the scrim sits on the --z-scrim layer`).toBe(
           await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--z-scrim').trim()));
         if (name === 'properties' || name === 'command palette') {
+          // One capture: with a scrim up the Mica backing is solid, so a
+          // second "-mica" capture came out byte-identical and proved nothing
+          // (Task 8 Q18); the opaqueBelow probe above is the Mica check.
+          await parkPointer(page);
           await shot(page, `addendum-scrim-${name.replace(/\s+/g, '-')}-${theme}`);
-          // Mica on, captured as is: the backing that makes the blur even is
-          // in this capture too (transparent regions would show as sharp text).
-          await page.screenshot({ path: path.join(SHOTS, `addendum-scrim-${name.replace(/\s+/g, '-')}-${theme}-mica.png`) });
         }
         await page.evaluate(close);
         await expect(page.locator(sel)).toBeHidden();
@@ -446,7 +447,9 @@ test('§1: one header bar — identity card, tabs, drag region and caption butto
     expect((await headerGeo(page)).headerBg).toBe('rgba(0, 0, 0, 0)');
     await page.evaluate(() => { delete document.documentElement.dataset.mica; });
 
-    // Light theme.
+    // Light theme. The pointer leaves the collapse toggle it just clicked, so
+    // the shots show no hover (Task 8 Q17).
+    await parkPointer(page);
     await page.evaluate(() => applyTheme('light'));
     await windowShot(app, page, 'addendum-header-expanded-light');
     await page.evaluate(() => toggleSidebar());
