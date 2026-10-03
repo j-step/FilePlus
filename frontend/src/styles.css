@@ -1095,6 +1095,10 @@ svg { flex-shrink: 0; }
    (.fp-search--folding) the bar keeps the field's look, clipped, until it is
    the magnifier again. */
 .fp-search--sizing .fp-search__input { min-width: 0; }
+/* Opened from the magnifier, the input may give way to a few characters
+   (app.js TOOLBAR_INPUT_FLOOR_CH — keep the two equal), so a bar that gave
+   way never spills its icon, text and clear × past its own edge. */
+#toolbar[data-search="collapsed"] .fp-search--expanded:not(.fp-search--sizing) .fp-search__input { min-width: 3ch; }
 .fp-search--folding { overflow: hidden; }
 
 /* The button groups never move or clip; the two flexible children (path and

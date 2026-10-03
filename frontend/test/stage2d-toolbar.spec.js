@@ -115,6 +115,21 @@ const state = (page) => page.evaluate(() => {
     folded: foldable.filter((el) => el.getClientRects().length === 0).map((el) => el.id || el.dataset.fold),
     foldable: foldable.length,
     moreShown: document.getElementById('btn-toolbar-more').getClientRects().length > 0,
+    // The bar's own content ends inside it (the dropdown and the ruler hang
+    // outside by design)…
+    swContentR: Math.max(0, ...[...sw.children]
+      .filter((c) => c.id !== 'search-dropdown' && c.id !== 'search-measure' && c.getClientRects().length)
+      .map((c) => c.getBoundingClientRect().right)),
+    // …and nothing covers a toolbar control: what is under each visible
+    // button's centre is that button.
+    overlapped: [...tb.querySelectorAll('.fp-icon-btn, #search-collapsed')]
+      .filter((b) => b.getClientRects().length && getComputedStyle(b).visibility !== 'hidden')
+      .filter((b) => {
+        const bb = b.getBoundingClientRect();
+        const hit = document.elementFromPoint(bb.x + bb.width / 2, bb.y + bb.height / 2);
+        return !hit || hit.closest('button') !== b;
+      })
+      .map((b) => b.id || b.className),
     hInput: parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--h-input')),
     curNatural: cur ? cur.getBoundingClientRect().width + (lab ? Math.max(0, lab.scrollWidth - lab.clientWidth) : 0) : 0,
     masked: mask !== 'none',
@@ -174,6 +189,8 @@ function invariants(s, label) {
     if (s.sw.w >= SEARCH_MIN - 0.5) inputOk('expanded');
     else if (!s.inputShown || s.inputW < 24) bad.push(`expanded (given way): input ${s.inputW}`);
   }
+  if (s.swContentR > s.sw.r + 0.5) bad.push(`bar content spills past its edge: ${s.swContentR} > ${s.sw.r}`);
+  if (s.overlapped.length) bad.push(`toolbar controls covered: ${s.overlapped}`);
   // Buttons never vanish: anything folded lives in the "…" menu, and the
   // "…" shows only then.
   if (s.folded.length && !s.moreShown) bad.push(`folded ${s.folded} without the "…" button`);
@@ -497,6 +514,15 @@ test('collapsed and expanded at 1400/1100/900/800 px and 100/150 %: invariants h
       offenders.push(...invariants(opened, `${label} expanded`));
       if (!opened.expanded) offenders.push(`${label}: Ctrl+F did not expand`);
       if (shotName) await windowShot(app, page, `${shotName}-expanded`);
+      // Text typed into the opened (possibly given-way) bar: icon, text and
+      // the clear × all fit inside it; nothing spills onto the buttons.
+      await page.evaluate(() => setSearchText('quarterly report draft'));
+      await twoFrames(page);
+      const typed = await state(page);
+      offenders.push(...invariants(typed, `${label} expanded + text`));
+      if (shotName) await windowShot(app, page, `${shotName}-typed`);
+      await page.evaluate(() => setSearchText(''));
+      await twoFrames(page);
       await page.evaluate(() => document.activeElement?.blur());
       await twoFrames(page);
       const back = await state(page);
@@ -602,7 +628,7 @@ test('expand/fold animates the bar width over --motion-base (ease-out) with moti
       expect(invariants(open1, `motion ${motion} expanded`)).toEqual([]);
       const fullW = open1.sw.w;
       // Fold (the dropdown closed first, as a click elsewhere does): instant
-      // state, eased width back to the 28 px magnifier.
+      // state, eased width back to the --h-input magnifier.
       await page.evaluate(() => { closeSearchDropdown(); document.activeElement.blur(); });
       await settled(page);
       let s = await state(page);

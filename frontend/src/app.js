@@ -1219,6 +1219,32 @@ function searchContentWidth() {
     + iconW + gap + chipsW + text + clear;
 }
 
+const TOOLBAR_INPUT_FLOOR_CH = 3;        // the toolbar input's min-width (styles.css, 3ch)
+
+/** The least width the bar's content fits in: its chrome, the icon, the
+ * input at its floor (a few characters), the clear × while it holds
+ * something, and the chips' gap (they shrink to nothing). The opened bar
+ * never gets less, or its content would spill over the next button. Like
+ * searchContentWidth, measured off the ruler, never off the bar itself. */
+function searchContentMin() {
+  const wrap = document.getElementById('search-wrap');
+  const ruler = document.getElementById('search-measure');
+  const chips = document.getElementById('search-chips');
+  if (!wrap || !ruler) return 0;
+  const cs = getComputedStyle(wrap);
+  const px = (v) => parseFloat(v) || 0;
+  const gap = px(cs.columnGap);
+  ruler.textContent = '0'.repeat(TOOLBAR_INPUT_FLOOR_CH);
+  const input = Math.ceil(ruler.getBoundingClientRect().width);
+  const icon = wrap.querySelector('.fp-search__icon');
+  const iconW = icon ? icon.getBoundingClientRect().width || 14 : 14;
+  const chipsGap = chips && chips.childElementCount ? gap : 0;
+  const clear = wrap.classList.contains('fp-search--has-content')
+    ? (document.getElementById('search-clear-inline')?.offsetWidth || 20) + gap : 0;
+  return Math.ceil(px(cs.paddingLeft) + px(cs.paddingRight) + px(cs.borderLeftWidth) + px(cs.borderRightWidth)
+    + iconW + gap + chipsGap + input + clear);
+}
+
 // The search slot's running width ease ({anim, from, to}), or null.
 let _searchSlotEase = null;
 
@@ -1386,13 +1412,19 @@ function layoutToolbar({ animate = false } = {}) {
   const collapsedW = toolbarCollapsedW();
   const floor = Math.min(currentNatural, crumbNatural, TOOLBAR_CRUMB_FLOOR);
   const mode = !collapsed ? null : (expanded ? 'open' : 'rest');
-  const need = mode === 'open' ? floor + TOOLBAR_SEARCH_GIVE : floor + collapsedW;
+  // Opened, the bar never gets less than its content needs (a bar holding
+  // text and the clear × needs more than the bare 80).
+  const give = mode === 'open' ? Math.max(TOOLBAR_SEARCH_GIVE, searchContentMin()) : 0;
+  const need = mode === 'open' ? floor + give : floor + collapsedW;
   const moreW = (more && more.getBoundingClientRect().width) || more?._fpFoldW || foldables[0]?.w || collapsedW;
   if (more && moreW) more._fpFoldW = moreW;
   const availWith = (n) => foldables.slice(0, n).reduce((sum, f) => sum + f.w + gap, free)
     - (n > 0 ? moreW + gap : 0);
   let fold = 0;
   if (mode) {
+    // Folded back and settled: the opened count is spent, so the next
+    // opening starts its own hysteresis from nothing.
+    if (mode === 'rest' && !_searchSlotEase) _toolbarFolds.open = 0;
     const was = _toolbarFolds[mode];
     while (fold < foldables.length && availWith(fold) - need < (fold < was ? TOOLBAR_HYSTERESIS : 0)) fold++;
     _toolbarFolds[mode] = fold;
@@ -1410,7 +1442,10 @@ function layoutToolbar({ animate = false } = {}) {
     // ellipsizes down to its floor, and then the bar gives way further, to
     // TOOLBAR_SEARCH_GIVE, before anything folds.
     const keepWhole = availWith(fold) - Math.ceil(currentNatural) - 1;
-    slotW = Math.max(collapsedW, Math.floor(Math.min(preferred,
+    // Never below its content minimum: with every button already in the
+    // "…", the path gives up the rest of its floor rather than the bar
+    // spilling its content over the buttons beside it.
+    slotW = Math.max(collapsedW, Math.ceil(searchContentMin()), Math.floor(Math.min(preferred,
       Math.max(TOOLBAR_SEARCH_MIN, keepWhole), availWith(fold) - floor)));
   }
 
