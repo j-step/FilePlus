@@ -8,7 +8,8 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 // ── Eased app zoom (Stage 2D §5) ───────────────────────────────────────────
 // A zoom step interpolates the page zoom from where it is to `target` over
-// ZOOM_EASE_MS (ease-out; 4 frames at 60 Hz), one factor per animation
+// `easeMs` (ease-out; the renderer passes --motion-zoom, styles.css, or 0
+// for an instant step when animations are off), one factor per animation
 // frame, then settles on the exact target. Every factor goes through the
 // main process's webContents.setZoomFactor (win-zoom-to), not
 // webFrame.setZoomFactor: webFrame's zoom is a Chromium *temporary* zoom
@@ -19,10 +20,10 @@ const { contextBridge, ipcRenderer } = require('electron');
 // Resolves { factor, frames, superseded }: `frames` are the rAF-to-rAF
 // durations (ms) while the ease ran, which the renderer uses to drop the
 // ease on a machine that cannot keep up (spec §5's 32 ms ruling).
-const ZOOM_EASE_MS = 70;
 const ZOOM_EASE_FIRST_STEP_MS = 1000 / 60;
 let zoomRun = 0;
-function zoomTo(target, ease) {
+function zoomTo(target, easeMs) {
+  const ease = Number.isFinite(easeMs) && easeMs > 0 ? easeMs : 0;
   const run = ++zoomRun;
   const to = Number(target);
   const settle = () => ipcRenderer.invoke('win-zoom-to', to);
@@ -49,7 +50,7 @@ function zoomTo(target, ease) {
       // frame: the first frame already moves, and a slow first frame (the
       // page's first zoom of the session can take one) never eats the ease.
       if (start === null) start = ts - ZOOM_EASE_FIRST_STEP_MS;
-      const p = Math.min(1, (ts - start) / ZOOM_EASE_MS);
+      const p = Math.min(1, (ts - start) / ease);
       const e = 1 - (1 - p) * (1 - p) * (1 - p);
       ipcRenderer.invoke('win-zoom-to', p >= 1 ? to : from + (to - from) * e).catch(() => {});
       done = p >= 1;
@@ -71,9 +72,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   hideTray:    () => ipcRenderer.send('hide-tray'),
   closeSetup:  () => ipcRenderer.send('close-setup'),
   // App zoom (Stage 2D §5): the step list lives in main.js; zoomTo eases
-  // to a factor (see above) and resolves once the main process has it.
+  // to a factor over easeMs (0 = instant; see above) and resolves once the
+  // main process has it.
   zoomSteps:   () => ipcRenderer.sendSync('win-zoom-steps'),
-  zoomTo:      (factor, ease) => zoomTo(factor, !!ease),
+  zoomTo:      (factor, easeMs) => zoomTo(factor, Number(easeMs)),
   getZoom:     () => ipcRenderer.sendSync('win-zoom-get'),
   // Host info
   hostname:    () => ipcRenderer.sendSync('get-hostname'),

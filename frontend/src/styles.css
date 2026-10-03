@@ -143,6 +143,9 @@
   /* Spring-load pulse (.fp-spring): dragdrop.js waits exactly this long
      after starting the pulse before it navigates (none when motion is off). */
   --motion-spring:       var(--motion-slow);
+  /* One app-zoom step's ease (Stage 2D §5): app.js hands it to preload.js's
+     zoomTo, which steps the page zoom once per frame over it. */
+  --motion-zoom:         var(--motion-instant);
   /* Refresh feedback (Stage 2D §7.2): one 360° spin of the toolbar icon, one
      quick opacity dip of the list. app.js reads both (refreshFxMs) to time
      when the classes come off again. */
@@ -155,11 +158,17 @@
   --ease-standard: cubic-bezier(.4, 0, .2, 1);
   --ease-linear:   linear;
 
-  /* Timers, not decoration (no ceiling; check_motion.js allows them):
-     the snackbar's life drawn as its progress bar (app.js removes the
-     snackbar a little after it), and the hover-intent wait before the
-     sidebar's resize line shows (Task 14 Q21) — kept when motion is off. */
+  /* Timers, not decoration: no ceiling, and check_motion.js lets each one
+     into CSS only where its allowlist says. app.js reads them all, so the
+     timer and what it draws share one number: a snackbar's life (also its
+     progress bar), a toast's and an error toast's life, the least time a
+     paused error toast still shows, and the hover-intent wait before the
+     sidebar's resize line shows (Task 14 Q21; a class on a timer, so it
+     holds with animations off). */
   --timer-snackbar:      5s;
+  --timer-toast:         5s;
+  --timer-toast-error:   8s;
+  --timer-toast-resume:  1.5s;
   --timer-resize-intent: 400ms;
 
   /* ---------- Density (unchanged) ---------- */
@@ -609,15 +618,16 @@ svg { flex-shrink: 0; }
   background: transparent;
   transition: background-color var(--motion-fast) var(--ease-out);
 }
-.fp-sidebar__resize-handle:hover,
+/* A pointer resting near the panel edge (the rail's own scrollbar sits
+   there) is not asking to resize: the line shows only once the pointer has
+   stayed on the handle for --timer-resize-intent (app.js adds --intent on a
+   timer, so the wait holds with animations off too), and never on the
+   collapsed rail unless it is being dragged (Task 14 Q21). */
+.fp-sidebar__resize-handle--intent,
 .fp-sidebar__resize-handle--active {
   background: var(--accent);
 }
-/* A pointer resting near the panel edge (the rail's own scrollbar sits
-   there) is not asking to resize: the line shows after a short hover, and
-   never on the collapsed rail unless it is being dragged (Task 14 Q21). */
-.fp-sidebar__resize-handle:hover:not(.fp-sidebar__resize-handle--active) { transition-delay: var(--timer-resize-intent); }
-.fp-sidebar--collapsed .fp-sidebar__resize-handle:hover:not(.fp-sidebar__resize-handle--active) { background: transparent; }
+.fp-sidebar--collapsed .fp-sidebar__resize-handle--intent:not(.fp-sidebar__resize-handle--active) { background: transparent; }
 
 .fp-sidebar__header {
   /* 88px = original 56px + 32px reclaimed from the moved tab-bar row.
@@ -4011,7 +4021,7 @@ body.is-dragging .fp-oscroll { pointer-events: none; }
 .list-col--modified { width: 136px; min-width: 136px; text-align: right; cursor: pointer; }
 .list-col--size:hover, .list-col--modified:hover { color: var(--text-secondary); }
 .list-col--tags { min-width: 120px; flex-shrink: 0; }
-.list-col__caret { opacity: 0; transition: opacity var(--motion-fast); }
+.list-col__caret { opacity: 0; transition: opacity var(--motion-fast) var(--ease-standard); }
 .fp-sortable.active .list-col__caret { opacity: 1; color: var(--text-secondary); }
 .fp-sortable.active { color: var(--text-secondary); }
 
@@ -4531,7 +4541,7 @@ body.is-dragging .fp-oscroll { pointer-events: none; }
   cursor: pointer;
   text-transform: uppercase;
   letter-spacing: var(--track-caps);
-  transition: color var(--motion-fast), border-color var(--motion-fast);
+  transition: color var(--motion-fast) var(--ease-standard), border-color var(--motion-fast) var(--ease-standard);
 }
 .inspector__tab:hover { color: var(--text-secondary); }
 .inspector__tab.active { color: var(--accent); border-bottom-color: var(--accent); }
@@ -4732,7 +4742,7 @@ body.is-dragging .fp-oscroll { pointer-events: none; }
 .fp-tray__card-meta { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .fp-tray__card-name { font: 500 var(--t-body) var(--font-ui); color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .fp-tray__card-detail { font-size: 11px; color: var(--text-tertiary); }
-.fp-tray__card-actions { display: flex; gap: 2px; opacity: 0; transition: opacity var(--motion-fast); }
+.fp-tray__card-actions { display: flex; gap: 2px; opacity: 0; transition: opacity var(--motion-fast) var(--ease-standard); }
 .fp-tray__card:hover .fp-tray__card-actions { opacity: 1; }
 .fp-tray__empty { padding: var(--s-32); text-align: center; font: 400 var(--t-body) var(--font-ui); color: var(--text-tertiary); }
 .fp-tray__footer {
@@ -6553,11 +6563,6 @@ html:not([data-motion="on"]) *::after {
   animation: none !important;
   transition: none !important;
   scroll-behavior: auto !important;
-}
-/* A hover-intent wait is behaviour, not motion: the resize line still waits
-   before it shows, it just appears without fading. */
-html:not([data-motion="on"]) .fp-sidebar__resize-handle:hover:not(.fp-sidebar__resize-handle--active) {
-  transition: background-color 0s var(--ease-linear) var(--timer-resize-intent) !important;
 }
 /* The snackbar's countdown bar is drawn by an animation; with none it would
    sit full for the snackbar's whole life, so it is not shown. */

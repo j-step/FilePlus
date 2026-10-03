@@ -56,8 +56,10 @@ the zoom to 100 % unless `keepZoom`. Assert `errors` after `await app.close()`: 
 ERROR line main.js wrote to `renderer.log`, including errors Playwright never sees (a ResizeObserver
 loop). No `waitForTimeout` may gate an assertion (the suite has none); wait on the app's signals —
 `__fpRenderCount`, `__fpLoadPending`, `__fpInspectorPending`, `__fpIconsIdle()`, `__fpZoomBusy`,
-`__fpStubHits` — or `expect.poll`. Tests run with reduced motion on, so every animation must switch
-off under `prefers-reduced-motion: reduce`.
+`__fpStubHits` — or `expect.poll`. Animations follow only Settings › "Animations" (`ui.animations`)
+through `html[data-motion]` — `prefers-reduced-motion` gates nothing; JS motion uses `fpMotionOn()` /
+`fpAnimate()` and CSS the `--motion-*` / `--ease-*` tokens (`scripts/check_motion.js` enforces it).
+Tests default to motion off (`launchApp()`; `launchApp({motion: true})` turns it on).
 
 ## Working protocol (spec §6)
 
@@ -183,7 +185,7 @@ April "one fix at a time" rule is retired (D10).
   rgba. Stacking uses `--z-menu` / `--z-notice`; every caps section header uses `--t-section` /
   `--track-section`. Stage 2D token families: `--sidebar-*`, `--oscroll-*`, `--view-*`, `--drive-*`,
   `--clip-cut-opacity` / `--clip-badge-size`, `--bad-wash-solid` (opaque error toast),
-  `--dur-refresh-*`, `--notice-bottom`, `--menu-edge`. Style spec:
+  `--motion-*` / `--ease-*` / `--timer-*` (motion and timers), `--notice-bottom`, `--menu-edge`. Style spec:
   `docs/superpowers/specs/2026-09-10-stage-1-redesign-design.md` §3–§4.
 
 ## Current state

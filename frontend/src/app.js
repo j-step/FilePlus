@@ -90,10 +90,14 @@ const _fpAnimationsByEl = new WeakMap();   // el -> Map(key -> Animation)
  * previous one for that key is still cancelled).
  *
  *   duration: 'instant' | 'fast' | 'base' | 'slow' (default 'fast') or ms,
- *             clamped to --motion-slow (the ceiling)
+ *             clamped to --motion-slow (the ceiling); an unknown name or a
+ *             NaN / negative / zero ms gets the default ('fast')
  *   easing:   'out' (default) | 'in' | 'standard'
  *   key:      names the animation slot on `el` (default 'default')
- *   delay, fill: passed through (a stagger, a 'backwards' fade-in)
+ *   delay:    ms before it starts (a stagger), clamped to 0..--motion-slow
+ *   fill:     'none' (default) or 'backwards' only — state lives in the DOM,
+ *             never in an animation's fill, so a finished animation leaves
+ *             nothing behind (anything else is treated as 'none')
  */
 function fpAnimate(el, keyframes, { duration = 'fast', easing = 'out', key = 'default', delay = 0, fill = 'none' } = {}) {
   if (!el) return null;
@@ -102,11 +106,19 @@ function fpAnimate(el, keyframes, { duration = 'fast', easing = 'out', key = 'de
   if (prev) { slots.delete(key); _fpLiveAnimations.delete(prev); prev.cancel(); }
   if (!fpMotionOn() || typeof el.animate !== 'function') return null;
   const t = fpMotionTokens();
-  const ms = typeof duration === 'number'
-    ? Math.max(0, Math.min(duration, t.durations.slow))
-    : (t.durations[duration] != null ? t.durations[duration] : t.durations.fast);
+  const ceiling = t.durations.slow;
+  let ms = t.durations.fast;
+  if (typeof duration === 'number') {
+    if (Number.isFinite(duration) && duration > 0) ms = Math.min(duration, ceiling);
+  } else if (t.durations[duration] != null) {
+    ms = t.durations[duration];
+  }
+  const wait = Number.isFinite(delay) ? Math.max(0, Math.min(delay, ceiling)) : 0;
   const anim = el.animate(keyframes, {
-    duration: ms, easing: t.easings[easing] || t.easings.out, delay, fill,
+    duration: ms,
+    easing: t.easings[easing] || t.easings.out,
+    delay: wait,
+    fill: fill === 'backwards' ? 'backwards' : 'none',
   });
   if (!slots) { slots = new Map(); _fpAnimationsByEl.set(el, slots); }
   slots.set(key, anim);
@@ -980,8 +992,28 @@ function initSidebarResize() {
 
   let dragging = false;
 
+  // Hover intent (Task 14 Q21): the line shows once the pointer has rested
+  // on the handle for --timer-resize-intent — a class on a timer, not a
+  // transition delay, so it holds the same with animations off.
+  let intentTimer = 0;
+  const clearIntent = () => {
+    clearTimeout(intentTimer);
+    intentTimer = 0;
+    handle.classList.remove('fp-sidebar__resize-handle--intent');
+  };
+  const armIntent = () => {
+    clearTimeout(intentTimer);
+    intentTimer = setTimeout(() => {
+      intentTimer = 0;
+      handle.classList.add('fp-sidebar__resize-handle--intent');
+    }, fpMotionMs('--timer-resize-intent'));
+  };
+  handle.addEventListener('pointerenter', armIntent);
+  handle.addEventListener('pointerleave', () => { if (!dragging) clearIntent(); });
+
   handle.addEventListener('pointerdown', e => {
     dragging = true;
+    clearIntent();
     handle.classList.add('fp-sidebar__resize-handle--active');
     sidebar.classList.add('fp-sidebar--dragging');
     shell.classList.add('sidebar-dragging');
@@ -1024,6 +1056,7 @@ function initSidebarResize() {
     handle.classList.remove('fp-sidebar__resize-handle--active');
     sidebar.classList.remove('fp-sidebar--dragging');
     shell.classList.remove('sidebar-dragging');
+    if (handle.matches(':hover')) armIntent();
     // Persist final width if expanded (screen px; one write per drag)
     if (!sidebar.classList.contains('fp-sidebar--collapsed')) {
       const finalWidth = sidebar.getBoundingClientRect().width * appZoom.current;
@@ -1715,7 +1748,7 @@ async function setAppZoom(target) {
   window.__fpZoomBusy = true;
   let r = null;
   try {
-    r = await api.zoomTo(t, ease);
+    r = await api.zoomTo(t, ease ? fpMotionMs('--motion-zoom') : 0);
   } catch (_e) {
     r = null;
   } finally {
@@ -2524,20 +2557,20 @@ function showSnackbar(message, undoLabel, onUndo) {
   el.appendChild(prog);
   container.appendChild(el);
   capNoticeStack(container, '.fp-snackbar');
-  setTimeout(() => el.remove(), 5200);
+  // --timer-snackbar is also its progress bar's duration (styles.css).
+  setTimeout(() => el.remove(), fpMotionMs('--timer-snackbar'));
 }
 
 // At most this many snackbars / toasts show at once (pass 2 #62/#63). An
 // error is never evicted to make room for anything but another error: the
 // oldest non-error goes first (the new one included), and only an error
 // arriving with nothing but errors on screen pushes the oldest error out.
-// An error toast leaves on its own after TOAST_ERROR_MS — long enough to read
+// An error toast leaves on its own after --timer-toast-error — long enough to read
 // a path in it, short enough that repeated failures cannot bury the window —
 // paused while the pointer or focus is on it, and has a dismiss button.
+// The lives are --timer-toast / --timer-toast-error and the least time left
+// after a pause --timer-toast-resume (styles.css, read through fpMotionMs).
 const NOTICE_MAX = 3;
-const TOAST_MS = 5000;
-const TOAST_ERROR_MS = 8000;
-const TOAST_RESUME_MIN_MS = 1500;   // after a pause, never vanish sooner than this
 function capNoticeStack(container, sel, isKeep = () => false) {
   let items = [...container.querySelectorAll(sel)];
   while (items.length > NOTICE_MAX) {
@@ -2548,7 +2581,7 @@ function capNoticeStack(container, sel, isKeep = () => false) {
 }
 /** Removes `el` after `ms`; with `pausable`, the clock stops while the
  * pointer is over it or focus is inside it, and restarts (at least
- * TOAST_RESUME_MIN_MS) once both have left. */
+ * --timer-toast-resume) once both have left. */
 function scheduleNoticeRemoval(el, ms, pausable) {
   let remaining = ms;
   let started = performance.now();
@@ -2563,7 +2596,7 @@ function scheduleNoticeRemoval(el, ms, pausable) {
   const resume = () => {
     if (timer || !el.isConnected || el.matches(':hover') || el.contains(document.activeElement)) return;
     started = performance.now();
-    remaining = Math.max(remaining, TOAST_RESUME_MIN_MS);
+    remaining = Math.max(remaining, fpMotionMs('--timer-toast-resume'));
     timer = setTimeout(() => el.remove(), remaining);
   };
   el.addEventListener('pointerenter', pause);
@@ -2595,7 +2628,9 @@ function showToast(message, variant = '') {
   }
   container.appendChild(el);
   capNoticeStack(container, '.fp-toast', t => t.classList.contains('fp-toast--error'));
-  if (el.isConnected) scheduleNoticeRemoval(el, variant === 'error' ? TOAST_ERROR_MS : TOAST_MS, variant === 'error');
+  if (el.isConnected) {
+    scheduleNoticeRemoval(el, fpMotionMs(variant === 'error' ? '--timer-toast-error' : '--timer-toast'), variant === 'error');
+  }
 }
 
 // ── Refresh (Stage 2D §7) ─────────────────────────────────────────────────────

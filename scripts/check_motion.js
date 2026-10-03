@@ -11,24 +11,29 @@
 //  2. A literal duration (other than 0) appears only in a --motion-* or
 //     --timer-* token's definition; a literal easing (cubic-bezier(),
 //     steps(), linear, ease, ease-in, ...) only in an --ease-* token's.
-//  3. Every transition* / animation* declaration uses only var(--motion-*),
-//     var(--ease-*) or var(--timer-*) for its timing: no literal
-//     durations or easings, no other custom property.
+//  3. Every transition* / animation* declaration uses only var(--motion-*)
+//     and var(--ease-*) for its timing: no literal durations or easings, no
+//     other custom property. Every comma-separated part of a `transition` /
+//     `animation` shorthand names an --ease-* token (no silent default
+//     easing). No animation repeats forever (`infinite`). A --timer-* token
+//     appears in a CSS declaration only where TIMER_ALLOW lists that
+//     (token, selector, property), and every listed use exists.
 //  4. Every @keyframes is used by some animation and every animation names a
 //     @keyframes that exists (no dead or dangling keyframes).
 //  5. The gate rule exists: html:not([data-motion="on"]) and everything in
 //     it get `animation: none !important` and `transition: none !important`.
 //     No other transition/animation declaration is !important (it could beat
-//     the gate) unless its value is `none` or the rule is itself scoped under
-//     html:not([data-motion="on"]) (a deliberate exception to the gate).
+//     the gate) unless its value is `none`.
 //  6. No `prefers-reduced-motion` in styles.css, index.html, preload.js,
 //     main.js or frontend/src/*.js.
 //  7. JS animates only through fpAnimate (app.js): no other `.animate(` call
-//     and no inline style.transition / style.animation assignment; no inline
+//     and no inline transition/animation (style.transition/animation,
+//     setProperty, cssText, setAttribute('style', …)); no inline
 //     transition/animation in index.html.
 //
-// --timer-* tokens are timers, not decoration (the snackbar's 5 s life drawn
-// as its bar, a hover-intent wait); the 200 ms ceiling does not apply to them.
+// --timer-* tokens are timers, not decoration (a notice's life, a hover-intent
+// wait); the 200 ms ceiling does not apply to them. JS reads them through
+// fpMotionMs; CSS may use one only where TIMER_ALLOW says.
 //
 // Exits 1 and prints every violation.
 const fs = require('fs');
@@ -51,7 +56,12 @@ const lineOf = (idx) => css.slice(0, idx).split('\n').length;
 const TIME_RE = /(^|[^\w.-])(\d*\.?\d+)(ms|s)(?![\w-])/g;
 const EASING_FN_RE = /\b(cubic-bezier|steps|linear)\s*\(/;
 const EASING_WORDS = new Set(['linear', 'ease', 'ease-in', 'ease-out', 'ease-in-out', 'step-start', 'step-end']);
-const ALLOWED_VAR = /^--(motion|ease|timer)-[a-z0-9-]+$/;
+const ALLOWED_VAR = /^--(motion|ease)-[a-z0-9-]+$/;
+// The only places CSS may use a --timer-* token: [token, selector, property].
+const TIMER_ALLOW = [
+  // The snackbar's countdown bar runs exactly as long as the snackbar lives.
+  ['--timer-snackbar', '.fp-snackbar__progress', 'animation'],
+];
 const ANIM_KEYWORDS = new Set(['none', 'infinite', 'normal', 'reverse', 'alternate', 'alternate-reverse',
   'forwards', 'backwards', 'both', 'running', 'paused', 'initial', 'inherit', 'unset', 'revert']);
 
@@ -140,6 +150,8 @@ for (const d of decls) {
 // ---- 3. transition / animation declarations use tokens only ----
 const TIMED = /^(transition|animation)(-duration|-delay|-timing-function)?$/;
 const usedNames = new Set();
+const timerUses = new Set();
+const normSel = (s) => s.replace(/\s+/g, ' ').replace(/'/g, '"').split(',').map((x) => x.trim());
 for (const d of decls) {
   const where = `styles.css:${lineOf(d.idx)} ${d.prop}: ${d.value}`;
   if (d.prop === 'animation' || d.prop === 'animation-name') {
@@ -151,13 +163,32 @@ for (const d of decls) {
       }
     }
   }
+  // A --timer-* token, anywhere in a rule: only an allowlisted use.
+  if (!(d.selector === ':root' && d.prop.startsWith('--'))) {
+    for (const v of d.value.matchAll(/var\(\s*(--timer-[\w-]+)/g)) {
+      const ok = TIMER_ALLOW.find(([tok, sel, prop]) => tok === v[1] && prop === d.prop && normSel(d.selector).includes(sel));
+      if (ok) timerUses.add(ok);
+      else fail(`${where}: ${v[1]} is not allowlisted for "${d.selector}" ${d.prop} (TIMER_ALLOW)`);
+    }
+  }
+  if ((d.prop === 'animation' || d.prop === 'animation-iteration-count') && /\binfinite\b/.test(d.value)) {
+    fail(`${where}: an animation that never ends — motion is a single short play (§5.1)`);
+  }
   if (!TIMED.test(d.prop)) continue;
   for (const v of d.value.matchAll(/var\(\s*(--[\w-]+)/g)) {
-    if (!ALLOWED_VAR.test(v[1])) fail(`${where}: var(${v[1]}) — timing must come from --motion-* / --ease-* / --timer-* tokens`);
+    if (!ALLOWED_VAR.test(v[1]) && !/^--timer-/.test(v[1])) fail(`${where}: var(${v[1]}) — timing must come from --motion-* / --ease-* tokens`);
   }
   const bare = d.value.replace(/var\([^)]*\)/g, ' ');
   for (const t of nonZeroTimes(bare)) fail(`${where}: literal duration ${t}`);
   for (const e of easingLiterals(bare)) fail(`${where}: literal easing ${e}`);
+  if ((d.prop === 'transition' || d.prop === 'animation') && d.value !== 'none') {
+    for (const part of d.value.split(/,(?![^(]*\))/)) {
+      if (!/var\(\s*--ease-[\w-]+\s*\)/.test(part)) fail(`${where}: "${part.trim()}" names no --ease-* token`);
+    }
+  }
+}
+for (const entry of TIMER_ALLOW) {
+  if (!timerUses.has(entry)) fail(`TIMER_ALLOW lists ${entry.join(' / ')}, which styles.css no longer uses — drop it`);
 }
 
 // ---- 4. Keyframes used and defined ----
@@ -166,7 +197,6 @@ for (const name of usedNames) if (!keyframes.has(name)) fail(`animation "${name}
 
 // ---- 5. The gate ----
 const GATE_SEL = 'html:not([data-motion="on"]) *';
-const normSel = (s) => s.replace(/\s+/g, ' ').replace(/'/g, '"').split(',').map((x) => x.trim());
 const gateDecls = decls.filter((d) => normSel(d.selector).includes(GATE_SEL));
 const hasGate = (prop) => gateDecls.some((d) => d.prop === prop && d.value === 'none' && d.important);
 if (!gateDecls.length) fail(`no gate rule for "${GATE_SEL}"`);
@@ -180,7 +210,7 @@ else {
 }
 for (const d of decls) {
   if (/^(transition|animation)/.test(d.prop) && d.important && d.value !== 'none'
-      && !gateDecls.includes(d) && !d.selector.replace(/'/g, '"').startsWith('html:not([data-motion="on"])')) {
+      && !gateDecls.includes(d)) {
     fail(`styles.css:${lineOf(d.idx)} ${d.prop}: ${d.value} !important — could override the motion gate`);
   }
 }
@@ -208,7 +238,9 @@ for (const file of jsFiles) {
     if (/\.animate\(/.test(line) && !(inFpAnimate && path.basename(file) === 'app.js')) {
       fail(`${rel}:${i + 1} calls .animate() — use fpAnimate() (app.js) so the switch and the tokens apply`);
     }
-    if (/\.style\.(transition|animation)\w*\s*=/.test(line) || /setProperty\(\s*['"](transition|animation)/.test(line)) {
+    if (/\.style\.(transition|animation)\w*\s*=/.test(line) || /setProperty\(\s*['"](transition|animation)/.test(line)
+        || /cssText\s*\+?=.*\b(transition|animation)/.test(line)
+        || /setAttribute\(\s*['"]style['"].*\b(transition|animation)/.test(line)) {
       fail(`${rel}:${i + 1} sets an inline transition/animation — use a class with token timings or fpAnimate()`);
     }
   });

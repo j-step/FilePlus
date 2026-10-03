@@ -210,6 +210,75 @@ test('fpAnimate: token durations, one animation per element and key, null and ca
   expect(errors).toEqual([]);
 });
 
+test('fpAnimate never leaves state behind: fill is none or backwards, delay and odd durations are clamped', async () => {
+  const { app, page, errors } = await launchApp({ motion: true });
+  try {
+    const r = await page.evaluate(async () => {
+      const el = document.getElementById('sidebar');
+      const timing = (a) => { const t = a.effect.getTiming(); return { duration: t.duration, delay: t.delay, fill: t.fill }; };
+      const fwd = fpAnimate(el, [{ opacity: 0.5 }, { opacity: 1 }], { duration: 'instant', fill: 'forwards', key: 'fwd' });
+      const back = fpAnimate(el, [{ opacity: 0.5 }, { opacity: 1 }], { duration: 'instant', fill: 'backwards', key: 'back' });
+      const both = fpAnimate(el, [{ opacity: 0.5 }, { opacity: 1 }], { duration: 'instant', fill: 'both', key: 'both' });
+      const out = {
+        fwd: timing(fwd), back: timing(back), both: timing(both),
+        nan: timing(fpAnimate(el, [{ opacity: 1 }, { opacity: 1 }], { duration: NaN, key: 'nan' })),
+        neg: timing(fpAnimate(el, [{ opacity: 1 }, { opacity: 1 }], { duration: -50, key: 'neg' })),
+        zero: timing(fpAnimate(el, [{ opacity: 1 }, { opacity: 1 }], { duration: 0, key: 'zero' })),
+        unknown: timing(fpAnimate(el, [{ opacity: 1 }, { opacity: 1 }], { duration: 'glacial', key: 'unknown' })),
+        longDelay: timing(fpAnimate(el, [{ opacity: 1 }, { opacity: 1 }], { duration: 'instant', delay: 5000, key: 'd1' })),
+        badDelay: timing(fpAnimate(el, [{ opacity: 1 }, { opacity: 1 }], { duration: 'instant', delay: -20, key: 'd2' })),
+      };
+      await fwd.finished;
+      // A finished animation (asked for 'forwards') is gone: nothing holds a style.
+      out.fwdAfter = document.getAnimations().includes(fwd);
+      return out;
+    });
+    expect(r).toEqual({
+      fwd: { duration: 60, delay: 0, fill: 'none' },
+      back: { duration: 60, delay: 0, fill: 'backwards' },
+      both: { duration: 60, delay: 0, fill: 'none' },
+      nan: { duration: 100, delay: 0, fill: 'none' },
+      neg: { duration: 100, delay: 0, fill: 'none' },
+      zero: { duration: 100, delay: 0, fill: 'none' },
+      unknown: { duration: 100, delay: 0, fill: 'none' },
+      longDelay: { duration: 60, delay: 200, fill: 'none' },
+      badDelay: { duration: 60, delay: 0, fill: 'none' },
+      fwdAfter: false,
+    });
+  } finally {
+    await app.close();
+  }
+  expect(errors).toEqual([]);
+});
+
+test('timers come from --timer-* tokens; the resize line waits for hover intent with animations off and never animates', async () => {
+  const { app, page, errors } = await launchApp();
+  try {
+    expect(await page.evaluate(() => ['--timer-snackbar', '--timer-toast', '--timer-toast-error', '--timer-toast-resume',
+      '--timer-resize-intent'].map((n) => fpMotionMs(n)))).toEqual([5000, 5000, 8000, 1500, 400]);
+    await startSampler(page);
+    const handle = page.locator('#sidebar-resize-handle');
+    const hb = await handle.boundingBox();
+    const t0 = await page.evaluate(() => performance.now());
+    // The handle's inner half (its outer half sits past the sidebar's clipped edge).
+    await page.mouse.move(hb.x + 1, hb.y + hb.height / 2);
+    // Not at once: the pointer has to rest there first.
+    expect(await handle.evaluate((el) => [el.classList.contains('fp-sidebar__resize-handle--intent'),
+      getComputedStyle(el).backgroundColor])).toEqual([false, 'rgba(0, 0, 0, 0)']);
+    await expect(handle).toHaveClass(/fp-sidebar__resize-handle--intent/);
+    const waited = await page.evaluate((t) => performance.now() - t, t0);
+    expect(waited).toBeGreaterThanOrEqual(390);
+    expect(await handle.evaluate((el) => getComputedStyle(el).backgroundColor)).not.toBe('rgba(0, 0, 0, 0)');
+    await page.mouse.move(600, 300);
+    await expect(handle).not.toHaveClass(/fp-sidebar__resize-handle--intent/);
+    const seen = await stopSampler(page);
+    expect(seen, JSON.stringify(seen.slice(0, 5))).toEqual([]);
+  } finally {
+    await app.close();
+  }
+  expect(errors).toEqual([]);
+});
+
 test('the Settings switch turns animations off and on at once, persists ui.animations and fires fpMotionChanged', async () => {
   const { app, page, errors } = await launchApp({ motion: true });
   try {
