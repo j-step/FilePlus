@@ -156,8 +156,8 @@ function formatRecentTime(actionAt, bucketKey) {
 // ── Row/section templates ──────────────────────────────────────────────────
 /** A Recent / Favorites item that was moved or deleted since (GET /recent's
  * and /favorites' `exists`): the row says so, and a click shows that in the
- * inspector instead of asking GET /file about a path that is gone (a 404 —
- * a console error — and a panel of dashes; Stage 2D §12 sweep). */
+ * inspector at once instead of asking GET /file about a path that is gone
+ * (it answers {exists: false}; Stage 2D §12 sweep, addendum Task 7). */
 function homeMissingAttr(entry) {
   return entry && entry.exists === false ? ' data-missing="" title="Moved or deleted"' : '';
 }

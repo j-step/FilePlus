@@ -2391,36 +2391,68 @@ test('delete at the bottom of a scrolled list: the scroll position settles in th
   expect(errors).toEqual([]);
 });
 
+/** Holds the renderer's GET /file requests in the page (window.fetch), so a
+ * read can be kept in flight across an operation; a held read honours its
+ * abort signal like a real one, and releaseHeldReads() sends it for real. */
+async function holdInspectorReads(page) {
+  await page.evaluate(() => {
+    const real = window.fetch;
+    window.__fpHeld = [];
+    window.__fpRealFetch = real;
+    window.fetch = (url, opts = {}) => {
+      if (!/\/file\?/.test(String(url))) return real(url, opts);
+      return new Promise((resolve, reject) => {
+        const held = { url, opts, resolve, reject, aborted: false };
+        window.__fpHeld.push(held);
+        if (opts.signal) {
+          opts.signal.addEventListener('abort', () => {
+            held.aborted = true;
+            reject(new DOMException('The user aborted a request.', 'AbortError'));
+          });
+        }
+      });
+    };
+  });
+}
+async function releaseHeldReads(page) {
+  await page.evaluate(() => {
+    window.fetch = window.__fpRealFetch;
+    for (const h of window.__fpHeld) if (!h.aborted) h.resolve(window.__fpRealFetch(h.url, h.opts));
+    window.__fpHeld = [];
+  });
+}
+const heldReads = (page) => page.evaluate(() => window.__fpHeld.map((h) => ({ aborted: h.aborted })));
+
 test('an item trashed while the inspector is still reading about it: no 404, no console error, the panel says it is gone', async () => {
   const { app, page, errors } = await launchApp();
-  const held = [];
-  const hold = (route) => { held.push(route); };
   try {
     const rows = `${await motionDir()}\\Rows`;
     await openFolder(page, rows);
     await page.waitForFunction(() => !window.__fpInspectorPending);
-    await page.route('**/file?**', hold);
-    await page.route('**/preview?**', hold);
+    await holdInspectorReads(page);
 
-    // 1. Through the app: select, and trash while GET /file is still out.
+    // 1. Through the app: select, and trash while GET /file is still out —
+    // the read is aborted before the trash goes, the selection moves on.
     await page.evaluate((p) => selectRow(p), `${rows}\\row-06.txt`);
-    await expect.poll(() => held.length).toBeGreaterThan(0);
+    await expect.poll(async () => (await heldReads(page)).length).toBe(1);
     await page.evaluate(() => fileops.trashSelection());
+    // (The next row, selected after the delete, has a read of its own.)
+    expect((await heldReads(page))[0].aborted).toBe(true);
     expect(await page.evaluate(() => getSelectedPaths().map((p) => p.split('\\').pop()))).not.toContain('row-06.txt');
+    await releaseHeldReads(page);
+    await page.waitForFunction(() => !window.__fpInspectorPending);
 
-    // 2. Gone behind the app's back (another program): the held read is let
-    // through after the file is gone and answers exists:false — 200, not 404.
-    const before = held.length;
+    // 2. Gone behind the app's back (another program): the read, sent once
+    // the file is gone, answers exists:false — 200, not a 404.
+    await holdInspectorReads(page);
     await page.evaluate((p) => selectRow(p), `${rows}\\row-07.txt`);
-    await expect.poll(() => held.length).toBeGreaterThan(before);
+    await expect.poll(async () => (await heldReads(page)).length).toBe(1);
     const r = await fetch(`${API}/fs/trash`, {
       method: 'POST', headers: apiHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ paths: [`${rows}\\row-07.txt`] }),
     });
     expect(r.ok).toBe(true);
-    await page.unroute('**/file?**', hold);
-    await page.unroute('**/preview?**', hold);
-    for (const route of held) await route.continue().catch(() => {});
+    await releaseHeldReads(page);
     await expect(page.locator('#inspector-kind')).toHaveText('Moved or deleted');
     await page.waitForFunction(() => !window.__fpInspectorPending);
   } finally {
@@ -2486,6 +2518,121 @@ test('icons arriving in one task: a few fade in, more than 30 land with no fade;
       return out;
     });
     expect(r).toEqual({ few: 3, many: 0, normal: 'fp-icon-in', heavy: 'none' });
+  } finally {
+    await app.close();
+  }
+  expect(errors).toEqual([]);
+});
+
+test('scroll anchoring still holds the visible rows through a width reflow: deep in Icons, toggling the inspector keeps the first visible item on screen', async () => {
+  const { app, page, errors } = await launchApp();
+  try {
+    const root = (await apiGet('/fs/list/root')).path;
+    await openFolder(page, `${root}\\Bulk`);
+    await page.evaluate(() => { setInspectorOpen(true, { persist: false }); setView('icons', 96, { manual: false }); });
+    const frames = () => page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    await frames();
+    await page.evaluate(() => {
+      const list = document.getElementById('list-scroll');
+      list.scrollTop = Math.round(list.scrollHeight * 0.6);
+    });
+    await frames();
+    const before = await page.evaluate(() => {
+      const list = document.getElementById('list-scroll');
+      return { path: firstVisibleRow(list).dataset.path, top: list.scrollTop };
+    });
+    expect(before.top).toBeGreaterThan(500);
+    // In a grid the columns change with the width, so the anchor keeps its
+    // line rather than its column: the item that was first stays on screen,
+    // in the first line or the one after it — never scrolled lines away.
+    const stillFirstLines = () => page.evaluate((path) => {
+      const list = document.getElementById('list-scroll');
+      const seen = listRowsInView(list);
+      const rects = [...seen.values()].map((v) => v.rect);
+      const top = Math.min(...rects.map((r) => r.top));
+      const next = rects.map((r) => r.top).filter((t) => t > top + 1);
+      const lineH = next.length ? Math.min(...next) - top : 1000;
+      const mine = seen.get(path);
+      return { shown: !!mine, line: mine ? Math.floor((mine.rect.top - top + 1) / lineH) : null, top: list.scrollTop };
+    }, before.path);
+    await page.evaluate(() => setInspectorOpen(false, { persist: false }));
+    await frames();
+    const closed = await stillFirstLines();
+    await page.evaluate(() => setInspectorOpen(true, { persist: false }));
+    await frames();
+    const reopened = await stillFirstLines();
+    expect(closed.top).not.toBe(before.top);
+    expect(closed.shown && closed.line <= 1).toBe(true);
+    expect(reopened.shown && reopened.line <= 1).toBe(true);
+  } finally {
+    await app.close();
+    await delConfig('ui.folder_views');
+  }
+  expect(errors).toEqual([]);
+});
+
+test('a move that cut the inspector short and then did not happen (conflict cancelled, or failed) shows the selection again in full', async () => {
+  const { app, page, errors } = await launchApp();
+  try {
+    const rows = `${await motionDir()}\\Rows`;
+    const post = (route, body) => fetch(`${API}${route}`, {
+      method: 'POST', headers: apiHeaders({ 'Content-Type': 'application/json' }), body: JSON.stringify(body),
+    });
+    expect((await post('/fs/mkdir', { dir: rows, name: 'Clash' })).ok).toBe(true);
+    expect((await post('/fs/touch', { dir: `${rows}\\Clash`, name: 'row-09.txt' })).ok).toBe(true);
+    await openFolder(page, rows);
+    await page.waitForFunction(() => !window.__fpInspectorPending);
+
+    // Select row-09 with its GET /file held, cut it and paste it into Clash:
+    // the paste aborts the read, then meets the conflict.
+    await holdInspectorReads(page);
+    await page.evaluate((p) => selectRow(p), `${rows}\\row-09.txt`);
+    await expect.poll(async () => (await heldReads(page)).length).toBe(1);
+    await page.evaluate(({ src, dest }) => {
+      fileops.setClipboard('cut', [src]);
+      window.__fpPaste = fileops.pasteInto(dest);
+    }, { src: `${rows}\\row-09.txt`, dest: `${rows}\\Clash` });
+    await expect(page.locator('#modal-scrim')).toBeVisible();
+    expect((await heldReads(page)).every((h) => h.aborted)).toBe(true);
+    await releaseHeldReads(page);
+    // Cancel: nothing moved, row-09 is still selected — and the panel is
+    // filled in for it again, not left with the read the paste aborted.
+    await page.keyboard.press('Escape');
+    await page.evaluate(() => window.__fpPaste);
+    expect(await page.evaluate(() => getSelectedPaths().map((p) => p.split('\\').pop()))).toEqual(['row-09.txt']);
+    await page.waitForFunction(() => !window.__fpInspectorPending);
+    await expect(page.locator('#inspector-filename')).toHaveText('row-09.txt');
+    await expect(page.locator('#inspector-kind')).not.toHaveText('—');
+    await expect(page.locator('#inspector-size')).not.toHaveText('—');
+
+    // The same move failing outright (the backend unreachable — no refresh
+    // follows to repaint anything): the read it aborted is made again.
+    // The panel shows a folder first (size "—"), so a half-filled panel for
+    // row-09 would be told apart from a full one.
+    await page.evaluate((p) => selectRow(p), `${rows}\\Clash`);
+    await page.waitForFunction(() => !window.__fpInspectorPending);
+    await expect(page.locator('#inspector-size')).toHaveText('—');
+    await holdInspectorReads(page);
+    await page.evaluate((p) => selectRow(p), `${rows}\\row-09.txt`);
+    await expect.poll(async () => (await heldReads(page)).length).toBeGreaterThan(0);
+    const failed = await page.evaluate(async (dest) => {
+      const fetchNow = window.fetch;
+      window.fetch = (url, opts) => (/\/fs\/move/.test(String(url))
+        ? Promise.reject(new TypeError('Failed to fetch')) : fetchNow(url, opts));
+      const aborted = () => window.__fpHeld.map((h) => h.aborted);
+      let threw = false;
+      try { await fileops.pasteInto(dest); } catch (_) { threw = true; }
+      window.fetch = fetchNow;
+      return { threw, aborted: aborted() };
+    }, `${rows}\\Clash`);
+    expect(failed.threw).toBe(true);
+    expect(failed.aborted[0]).toBe(true);
+    await releaseHeldReads(page);
+    await page.waitForFunction(() => !window.__fpInspectorPending);
+    await expect(page.locator('#inspector-filename')).toHaveText('row-09.txt');
+    await expect(page.locator('#inspector-kind')).not.toHaveText('—');
+    await expect(page.locator('#inspector-size')).not.toHaveText('—');
+    await page.evaluate(() => fileops.setClipboard(null, []));
   } finally {
     await app.close();
   }

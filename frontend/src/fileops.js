@@ -208,8 +208,13 @@ const fileops = {
     if (!mode || !paths.length || !dir) return;
     const route = mode === 'cut' ? '/fs/move' : '/fs/copy';
     if (mode === 'cut' && typeof inspectorAbortFor === 'function') inspectorAbortFor(paths);
-    const res = await this.run(mode === 'cut' ? 'Moved' : 'Copied',
-      (overridePaths, onConflict) => API.post(route, { sources: overridePaths || paths, dest: dir, on_conflict: onConflict || 'fail' }));
+    let res;
+    try {
+      res = await this.run(mode === 'cut' ? 'Moved' : 'Copied',
+        (overridePaths, onConflict) => API.post(route, { sources: overridePaths || paths, dest: dir, on_conflict: onConflict || 'fail' }));
+    } finally {
+      if (typeof inspectorResumeAfterOp === 'function') inspectorResumeAfterOp();
+    }
     // A conflict the user cancelled (resolveConflicts settles 'cancel') means
     // nothing new happened for the still-pending sources — keep the clipboard
     // so Ctrl+V can be retried instead of silently losing the cut selection.
@@ -244,7 +249,10 @@ const fileops = {
     try {
       await this.run('Deleted', (overridePaths) => API.post('/fs/trash', { paths: overridePaths || paths }));
       if (place && typeof selectAfterDelete === 'function') selectAfterDelete(place);
-    } finally { this._trashInFlight = false; }
+    } finally {
+      this._trashInFlight = false;
+      if (typeof inspectorResumeAfterOp === 'function') inspectorResumeAfterOp();
+    }
   },
 
   async newFolder(dir) {
@@ -276,7 +284,12 @@ const fileops = {
     // run() can never call fn() with those args here; a 409 falls into run()'s
     // catch and is toasted as-is via formatApiError, same as any other failure.
     if (typeof inspectorAbortFor === 'function') inspectorAbortFor([path]);
-    const res = await this.run('Renamed', () => API.post('/fs/rename', { path, new_name: newName }));
+    let res;
+    try {
+      res = await this.run('Renamed', () => API.post('/fs/rename', { path, new_name: newName }));
+    } finally {
+      if (typeof inspectorResumeAfterOp === 'function') inspectorResumeAfterOp();
+    }
     // Select (and focus) the renamed row once refreshDirectory() (inside
     // run()) has re-rendered it under its new path.
     const newPath = res && res.ops && res.ops[0] && res.ops[0].dest;
@@ -288,8 +301,12 @@ const fileops = {
     if (!paths || !paths.length || !dir) return;
     const route = copy ? '/fs/copy' : '/fs/move';
     if (!copy && typeof inspectorAbortFor === 'function') inspectorAbortFor(paths);
-    await this.run(copy ? 'Copied' : 'Moved',
-      (overridePaths, onConflict) => API.post(route, { sources: overridePaths || paths, dest: dir, on_conflict: onConflict || 'fail' }));
+    try {
+      await this.run(copy ? 'Copied' : 'Moved',
+        (overridePaths, onConflict) => API.post(route, { sources: overridePaths || paths, dest: dir, on_conflict: onConflict || 'fail' }));
+    } finally {
+      if (typeof inspectorResumeAfterOp === 'function') inspectorResumeAfterOp();
+    }
   },
 
   /**

@@ -4163,11 +4163,13 @@ body.is-dragging .fp-oscroll { pointer-events: none; }
 /* List motion (addendum §5.2, browser.js listMotionPlay): the listing is the
    containing block of the ghosts of removed rows, so they sit where the rows
    were and scroll with them. A ghost is never a row: no data-path, inert,
-   aria-hidden, out of flow, and it takes no pointer. No scroll anchoring:
-   browser.js keeps the scroll position itself (patchDirectory, the view
-   anchor), and Chromium's own anchoring put a clamped scroll back once a
-   ghost lengthened the content, so the list jumped when the ghost left. */
-#list-scroll { position: relative; overflow-anchor: none; }
+   aria-hidden, out of flow, and it takes no pointer. While a ghost plays,
+   no scroll anchoring: Chromium's anchoring put a clamped scroll back once
+   the ghost lengthened the content, so the list jumped when the ghost left
+   (browser.js clampListScroll). Otherwise anchoring stays on — it holds the
+   visible rows through width reflows (resize, inspector, sidebar, zoom). */
+#list-scroll { position: relative; }
+#list-scroll:has(> .fp-row--ghost) { overflow-anchor: none; }
 #list-scroll > .fp-row--ghost {
   position: absolute;
   margin: 0;

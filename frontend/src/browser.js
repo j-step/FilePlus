@@ -2619,7 +2619,7 @@ function selectAll() {
  * trashed one leaves the selection — the moment the operation answers, not
  * after the listing refresh that follows. Until then the selection named a
  * path that no longer existed, and any selection event in between sent the
- * inspector to GET /file for it (a 404, a console error). An item moved out
+ * inspector to GET /file for a path that was gone. An item moved out
  * of the folder on screen leaves the selection too (a search lists results
  * from anywhere, so there it follows). Same op shape and op types as
  * fileops.followOps (the clipboard's twin).

@@ -5338,8 +5338,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   // built: failNavigation / showErrorBanner in browser.js, dragdrop.js.)
   // #6  Files added to Everything Folder while tray is closed → update count badge on next open
   //     INTEGRATION: GET /ef/count on tray show event → update #tray-rb-badge
-  // #9  Inspector opened on a file that has been deleted externally → show preview fail state
-  //     INTEGRATION: GET /preview?path=... → on 404 show commented preview-fail HTML
+  // (#9, an inspector item deleted externally, is built: GET /file and
+  // /preview answer {exists: false} and the panel says "Moved or deleted".)
   // #12 Scan starts while one is already running → show toast "Scan already in progress"
   //     INTEGRATION: POST /scan → if 409 response → showToast('Scan already running', 'warn')
   // #13 Ollama model not downloaded when classification starts → show error banner with install CTA

@@ -33,13 +33,29 @@ function nextInspectorSeq() {
  * the inspector is reading about is among them, its reads stop now — the
  * operation's answer moves the selection on and the panel repaints from
  * there. An unrelated selection keeps its reads. */
+let _inspectorAbortedSeq = null;   // the sequence an operation cut short
 function inspectorAbortFor(paths) {
   const sel = typeof browserState !== 'undefined' ? browserState.selection : null;
   if (!sel || !sel.size || !paths || !paths.length) return;
   const gone = new Set(paths.map(p => fpNormalizePath(p)));
   for (const p of sel) {
-    if (gone.has(fpNormalizePath(p))) { inspectorAbortFetches(); return; }
+    if (gone.has(fpNormalizePath(p))) {
+      inspectorAbortFetches();
+      _inspectorAbortedSeq = _inspectorSeq;
+      return;
+    }
   }
+}
+
+/** After the operation inspectorAbortFor() ran for, however it ended: when
+ * nothing repainted the panel since (the operation failed, was refused, or
+ * its conflict dialog was cancelled, so the selection never moved on), the
+ * selection is shown again — never left half-filled. */
+function inspectorResumeAfterOp() {
+  if (_inspectorAbortedSeq === null) return;
+  const untouched = _inspectorAbortedSeq === _inspectorSeq;
+  _inspectorAbortedSeq = null;
+  if (untouched && typeof showInspectorForSelection === 'function') showInspectorForSelection();
 }
 /** An aborted read: what is on screen stays, whoever aborted repaints. */
 function inspectorAborted(err) { return !!err && err.name === 'AbortError'; }
@@ -408,11 +424,12 @@ async function loadInspectorPreview(path, seq) {
   const ct = res.headers.get('content-type') || '';
   if (ct.startsWith('image/')) {
     let blob;
-    try { blob = await res.blob(); } catch (_) {
+    try { blob = await res.blob(); } catch (err) {
       // Same guard as every other await here: a superseded request's decode
       // failure must not revoke the LIVE selection's blob: URL (leaving a
       // broken <img>) or repaint the box with another file's icon (pass 2 #85).
-      if (seq !== _inspectorSeq) return;
+      // An aborted read keeps what is painted (no "No preview" flash).
+      if (seq !== _inspectorSeq || inspectorAborted(err)) return;
       renderPreviewNone();
       return;
     }
@@ -434,8 +451,8 @@ async function loadInspectorPreview(path, seq) {
   }
 
   let data;
-  try { data = await res.json(); } catch (_) {
-    if (seq !== _inspectorSeq) return;   // pass 2 #85, as above
+  try { data = await res.json(); } catch (err) {
+    if (seq !== _inspectorSeq || inspectorAborted(err)) return;   // pass 2 #85, as above
     renderPreviewNone();
     return;
   }
