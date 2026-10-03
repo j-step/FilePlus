@@ -763,6 +763,26 @@ function _fpSwapAfterDecode(img, url, stillWanted, after) {
 
 // ── Windows-shell icons: Tier A (backend) then Tier B (Electron) ───────────
 
+// An icon landing in an empty slot fades in — unless more than
+// FP_ICON_FADE_MAX land in the same task (a folder's first screenful): then
+// none does (addendum §5.1 rule 3, no per-row motion for more than ~30 rows
+// at once). The decision waits for the task's last answer (a microtask), so
+// it is all of them or none, and is made before the frame is painted.
+const FP_ICON_FADE_MAX = 30;
+let _fpFadeBatch = null;
+function _fpFadeIconIn(el) {
+  if (!_fpFadeBatch) {
+    _fpFadeBatch = [];
+    queueMicrotask(() => {
+      const batch = _fpFadeBatch;
+      _fpFadeBatch = null;
+      if (batch.length > FP_ICON_FADE_MAX) return;
+      for (const e of batch) e.classList.add('fp-icon--fade-in');
+    });
+  }
+  _fpFadeBatch.push(el);
+}
+
 /** Resolves one Windows-shell <img> at the px bucket of its logical box
  * (Stage 2D §4.3; design §2): px = fpDevicePx(box). The <img> stays CSS-sized
  * to its box (the browser downsamples the bucket's bitmap).
@@ -791,7 +811,7 @@ function _fpResolveWinIcon(el, seq, rect) {
       if (generic) {
         el.src = generic;
         el.dataset.generic = '1';
-        el.classList.add('fp-icon--fade-in');
+        _fpFadeIconIn(el);
         return;
       }
       _fpWinIconFallback(el);
@@ -807,7 +827,7 @@ function _fpResolveWinIcon(el, seq, rect) {
       return;
     }
     el.src = res.url;
-    el.classList.add('fp-icon--fade-in');
+    _fpFadeIconIn(el);
   };
   const hit = _fpWinIconCache.get(key);
   if (hit !== undefined) { paint(hit); return; }

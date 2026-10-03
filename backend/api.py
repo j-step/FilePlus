@@ -415,11 +415,16 @@ async def file_meta(path: str = Query(..., description="Absolute path of the fil
 
     Unlike /files/{id}, this is addressed by filesystem path (what the
     Inspector has on hand) rather than DB id.
+
+    A path that does not exist (any more) answers 200 {"exists": false}: the
+    inspector asks about the selection while the user may already have
+    trashed or moved it, and that is an answer, not an error (a 404 is a
+    console error in the renderer). The guard still refuses what it refuses.
     """
     resolved = await aguard(path)
     exists, is_dir, st = await asyncio.to_thread(_entry_facts, resolved)
     if not exists:
-        raise HTTPException(status_code=404, detail=f"Not found: {path}")
+        return {"exists": False, "path": str(resolved)}
     if is_dir:
         return {
             "id": None,
@@ -492,7 +497,8 @@ async def preview(path: str = Query(..., description="Absolute path of the file"
     resolved = await aguard(path)
     exists, is_dir, st = await asyncio.to_thread(_entry_facts, resolved)
     if not exists:
-        raise HTTPException(status_code=404, detail=f"Not found: {path}")
+        # Gone since it was selected (see /file): an answer, not a 404.
+        return {"kind": "missing", "exists": False}
     if is_dir:
         raise HTTPException(status_code=400, detail=f"Not a file: {path}")
     ext = resolved.suffix.lower().lstrip(".")

@@ -14,7 +14,23 @@ def test_file_meta_indexes_on_demand(client, sandbox):
     r = client.get("/file", params={"path": str(p)}); assert r.status_code == 200
     body = r.json()
     assert body["filename"] == "m.md" and body["size"] == 4 and body["hash"] and body["tags"] == [] and body["kind"] == "Markdown"
-    assert client.get("/file", params={"path": str(sandbox / "nope.txt")}).status_code == 404
+
+
+def test_inspector_reads_of_a_gone_path_answer_exists_false(client, sandbox):
+    """The inspector asks about the selection while the user may already be
+    trashing it (addendum Task 7 fix round 1): a path that no longer exists is
+    an answer, not an error -- 200 {exists: false}, never a 404 that Chromium
+    logs as a console error. A path outside the guard is still refused."""
+    gone = sandbox / "nope.txt"
+    r = client.get("/file", params={"path": str(gone)})
+    assert r.status_code == 200 and r.json()["exists"] is False
+    r = client.get("/preview", params={"path": str(gone)})
+    assert r.status_code == 200 and r.json() == {"kind": "missing", "exists": False}
+    r = client.get("/files/history", params={"path": str(gone)})
+    assert r.status_code == 200 and r.json() == []
+    # A file that exists still answers with its metadata (no exists flag needed).
+    p = sandbox / "here.txt"; p.write_text("x")
+    assert client.get("/file", params={"path": str(p)}).json()["filename"] == "here.txt"
 
 
 def test_preview_text_image_binary(client, sandbox):

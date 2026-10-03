@@ -4163,8 +4163,11 @@ body.is-dragging .fp-oscroll { pointer-events: none; }
 /* List motion (addendum §5.2, browser.js listMotionPlay): the listing is the
    containing block of the ghosts of removed rows, so they sit where the rows
    were and scroll with them. A ghost is never a row: no data-path, inert,
-   aria-hidden, out of flow, and it takes no pointer. */
-#list-scroll { position: relative; }
+   aria-hidden, out of flow, and it takes no pointer. No scroll anchoring:
+   browser.js keeps the scroll position itself (patchDirectory, the view
+   anchor), and Chromium's own anchoring put a clamped scroll back once a
+   ghost lengthened the content, so the list jumped when the ghost left. */
+#list-scroll { position: relative; overflow-anchor: none; }
 #list-scroll > .fp-row--ghost {
   position: absolute;
   margin: 0;
@@ -6270,6 +6273,9 @@ button.fp-pill:hover {
    its row, settled, and never animates). The motion gate at the end of
    this file makes it instant when animations are off. */
 .fp-icon--win.fp-icon--fade-in { animation: fp-icon-in var(--motion-fast) var(--ease-out); }
+/* A big listing (html.fp-heavy-list, over 300 entries) never fades its
+   icons in one by one. */
+.fp-heavy-list .fp-icon--win.fp-icon--fade-in { animation: none; }
 @keyframes fp-icon-in { from { opacity: 0; } to { opacity: 1; } }
 
 /* Unknown extension in FilePlus mode: the blank page icon carries the

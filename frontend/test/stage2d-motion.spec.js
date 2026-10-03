@@ -1459,12 +1459,6 @@ async function installListProbes(page) {
         };
       });
     };
-    /** Resolves once the inspector has nothing in flight (a request for an
-     * item about to be trashed would 404 — a console error). */
-    window.__fpInspectorIdle = () => new Promise((resolve) => {
-      const check = () => (window.__fpInspectorPending ? setTimeout(check, 10) : resolve());
-      check();
-    });
     window.__fpRowPaths = () => [...document.querySelectorAll('#list-scroll > .fp-row[data-path]')]
       .map((r) => r.dataset.path.split('\\').pop());
     /** The rows on screen: is each icon painted, and is the row itself at
@@ -1752,7 +1746,6 @@ test('delete: the DOM and the selection change in the same task; the row leaves 
 
     const del = await page.evaluate(async (dir) => {
       selectRow(`${dir}\\row-03.txt`);
-      await __fpInspectorIdle();
       await fileops.trashSelection();
       const t0 = performance.now();
       const list = document.getElementById('list-scroll');
@@ -1792,7 +1785,6 @@ test('delete: the DOM and the selection change in the same task; the row leaves 
     // Keys act at once after a delete, and a ghost is never a row to them.
     const keys = await page.evaluate(async (dir) => {
       selectRow(`${dir}\\row-05.txt`);
-      await __fpInspectorIdle();
       await fileops.trashSelection();
       const ghost = !!document.querySelector('#list-scroll .fp-row--ghost');
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', code: 'ArrowDown', bubbles: true, cancelable: true }));
@@ -1897,7 +1889,6 @@ test('over 30 rows changing at once animate nothing per row; nor does a 5,000-ro
     // 45 rows go to the trash at once: no ghost, nothing per row.
     const many = await page.evaluate(async () => {
       selectAll();
-      await __fpInspectorIdle();
       await fileops.trashSelection();
       return { rows: __fpRowPaths().length, ghosts: document.querySelectorAll('#list-scroll .fp-row--ghost').length, anims: __fpRowAnims().length };
     });
@@ -1985,7 +1976,6 @@ test('with the switch off, navigation, sort, view, delete, paste, cut and rename
       applyViewChoice('details'); look();
       await loadDirectory(`${m}\\Rows`); look();
       selectRow(`${m}\\Rows\\row-08.txt`);
-      await __fpInspectorIdle();
       await fileops.trashSelection(); look();
       fileops.setClipboard('copy', [`${m}\\Src\\pasted-off.txt`]); look();
       await fileops.pasteInto(`${m}\\Rows`); look();
@@ -2351,6 +2341,153 @@ test('a key pressed while rows slide acts on where they land: a geometric arrow 
     await app.close();
     await delConfig('ui.sort');
     await delConfig('ui.folder_views');
+  }
+  expect(errors).toEqual([]);
+});
+
+test('delete at the bottom of a scrolled list: the scroll position settles in the same task, and nothing jumps when the ghost goes', async () => {
+  const { app, page, errors } = await launchApp({ motion: true });
+  try {
+    await installListProbes(page);
+    const many = `${await motionDir()}\\Many`;
+    await openFolder(page, many);
+    await page.evaluate(() => setView('details', null, { manual: false }));
+    await settled(page);
+    const r = await page.evaluate(async (dir) => {
+      const list = document.getElementById('list-scroll');
+      list.scrollTop = list.scrollHeight;
+      const before = list.scrollTop;
+      const last = __fpRowPaths().pop();
+      selectRow(`${dir}\\${last}`);
+      await fileops.trashSelection();
+      const ghost = list.querySelector('.fp-row--ghost');
+      // The listing's real extent, without the ghost.
+      const rows = [...list.querySelectorAll(':scope > .fp-row[data-path]')];
+      const end = rows[rows.length - 1].offsetTop + rows[rows.length - 1].offsetHeight
+        + parseFloat(getComputedStyle(list).paddingBottom || 0);
+      const max = Math.max(0, end - list.clientHeight);
+      const now = list.scrollTop;
+      const seen = [];
+      await new Promise((resolve) => {
+        const tick = () => {
+          seen.push(list.scrollTop);
+          if (!list.querySelector('.fp-row--ghost') && seen.length > 2) resolve(); else requestAnimationFrame(tick);
+        };
+        requestAnimationFrame(tick);
+      });
+      return { before, ghost: !!ghost, now, max, after: list.scrollTop, seen: [...new Set(seen)] };
+    }, many);
+    expect(r.before).toBeGreaterThan(100);
+    expect(r.ghost).toBe(true);
+    expect(Math.abs(r.now - r.max)).toBeLessThanOrEqual(1);
+    expect(r.seen).toEqual([r.now]);
+    expect(r.after).toBe(r.now);
+    // Put the row back for any later test of this folder.
+    await page.evaluate(() => fileops.undoLast());
+    await page.waitForFunction(() => !window.__fpLoadPending && browserState.entries.length === 45);
+  } finally {
+    await app.close();
+  }
+  expect(errors).toEqual([]);
+});
+
+test('an item trashed while the inspector is still reading about it: no 404, no console error, the panel says it is gone', async () => {
+  const { app, page, errors } = await launchApp();
+  const held = [];
+  const hold = (route) => { held.push(route); };
+  try {
+    const rows = `${await motionDir()}\\Rows`;
+    await openFolder(page, rows);
+    await page.waitForFunction(() => !window.__fpInspectorPending);
+    await page.route('**/file?**', hold);
+    await page.route('**/preview?**', hold);
+
+    // 1. Through the app: select, and trash while GET /file is still out.
+    await page.evaluate((p) => selectRow(p), `${rows}\\row-06.txt`);
+    await expect.poll(() => held.length).toBeGreaterThan(0);
+    await page.evaluate(() => fileops.trashSelection());
+    expect(await page.evaluate(() => getSelectedPaths().map((p) => p.split('\\').pop()))).not.toContain('row-06.txt');
+
+    // 2. Gone behind the app's back (another program): the held read is let
+    // through after the file is gone and answers exists:false — 200, not 404.
+    const before = held.length;
+    await page.evaluate((p) => selectRow(p), `${rows}\\row-07.txt`);
+    await expect.poll(() => held.length).toBeGreaterThan(before);
+    const r = await fetch(`${API}/fs/trash`, {
+      method: 'POST', headers: apiHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ paths: [`${rows}\\row-07.txt`] }),
+    });
+    expect(r.ok).toBe(true);
+    await page.unroute('**/file?**', hold);
+    await page.unroute('**/preview?**', hold);
+    for (const route of held) await route.continue().catch(() => {});
+    await expect(page.locator('#inspector-kind')).toHaveText('Moved or deleted');
+    await page.waitForFunction(() => !window.__fpInspectorPending);
+  } finally {
+    await app.close();
+  }
+  expect(errors).toEqual([]);
+});
+
+test('the view anchor is read from where rows land: a scroll anchor taken mid-slide ends the slide first', async () => {
+  const { app, page, errors } = await launchApp({ motion: true });
+  try {
+    await installListProbes(page);
+    await openFolder(page, `${await motionDir()}\\Sort`);
+    await page.evaluate(() => { setView('icons', 96, { manual: false }); applySort('name', 'asc'); });
+    await settled(page);
+    const r = await page.evaluate(() => {
+      const sliding = () => __fpRowAnims().filter((a) => a.kind === 'Animation' && a.self).length;
+      const list = document.getElementById('list-scroll');
+      applySort('size', 'asc');
+      const a0 = sliding();
+      captureScrollAnchor(list, null);
+      const a1 = sliding();
+      applySort('size', 'desc');
+      const b0 = sliding();
+      firstVisibleRow(list);
+      return [a0, a1, b0, sliding()];
+    });
+    expect(r[0]).toBeGreaterThan(0);
+    expect(r[1]).toBe(0);
+    expect(r[2]).toBeGreaterThan(0);
+    expect(r[3]).toBe(0);
+  } finally {
+    await app.close();
+    await delConfig('ui.sort');
+    await delConfig('ui.folder_views');
+  }
+  expect(errors).toEqual([]);
+});
+
+test('icons arriving in one task: a few fade in, more than 30 land with no fade; none fades under fp-heavy-list', async () => {
+  const { app, page, errors } = await launchApp({ motion: true });
+  try {
+    const r = await page.evaluate(async () => {
+      const make = (n) => Array.from({ length: n }, () => {
+        const img = document.createElement('img');
+        img.className = 'fp-icon fp-icon--win';
+        document.body.appendChild(img);
+        return img;
+      });
+      const nextTask = () => new Promise((resolve) => setTimeout(resolve, 0));
+      const faded = (els) => els.filter((e) => e.classList.contains('fp-icon--fade-in')).length;
+      const few = make(3);
+      few.forEach((e) => _fpFadeIconIn(e));
+      await nextTask();
+      const many = make(31);
+      many.forEach((e) => _fpFadeIconIn(e));
+      await nextTask();
+      const out = { few: faded(few), many: faded(many), normal: getComputedStyle(few[0]).animationName };
+      document.documentElement.classList.add('fp-heavy-list');
+      out.heavy = getComputedStyle(few[0]).animationName;
+      document.documentElement.classList.remove('fp-heavy-list');
+      [...few, ...many].forEach((e) => e.remove());
+      return out;
+    });
+    expect(r).toEqual({ few: 3, many: 0, normal: 'fp-icon-in', heavy: 'none' });
+  } finally {
+    await app.close();
   }
   expect(errors).toEqual([]);
 });

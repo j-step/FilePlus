@@ -207,6 +207,7 @@ const fileops = {
     const { mode, paths } = this.clipboard;
     if (!mode || !paths.length || !dir) return;
     const route = mode === 'cut' ? '/fs/move' : '/fs/copy';
+    if (mode === 'cut' && typeof inspectorAbortFor === 'function') inspectorAbortFor(paths);
     const res = await this.run(mode === 'cut' ? 'Moved' : 'Copied',
       (overridePaths, onConflict) => API.post(route, { sources: overridePaths || paths, dest: dir, on_conflict: onConflict || 'fail' }));
     // A conflict the user cancelled (resolveConflicts settles 'cancel') means
@@ -239,6 +240,7 @@ const fileops = {
     // selected afterwards (Explorer), so the keyboard carries on from there.
     const place = typeof deletePlace === 'function' ? deletePlace(paths) : null;
     this._trashInFlight = true;
+    if (typeof inspectorAbortFor === 'function') inspectorAbortFor(paths);
     try {
       await this.run('Deleted', (overridePaths) => API.post('/fs/trash', { paths: overridePaths || paths }));
       if (place && typeof selectAfterDelete === 'function') selectAfterDelete(place);
@@ -273,6 +275,7 @@ const fileops = {
     // raises ConflictError instead, which the API maps straight to a 409), so
     // run() can never call fn() with those args here; a 409 falls into run()'s
     // catch and is toasted as-is via formatApiError, same as any other failure.
+    if (typeof inspectorAbortFor === 'function') inspectorAbortFor([path]);
     const res = await this.run('Renamed', () => API.post('/fs/rename', { path, new_name: newName }));
     // Select (and focus) the renamed row once refreshDirectory() (inside
     // run()) has re-rendered it under its new path.
@@ -284,6 +287,7 @@ const fileops = {
   async moveTo(paths, dir, copy = false) {
     if (!paths || !paths.length || !dir) return;
     const route = copy ? '/fs/copy' : '/fs/move';
+    if (!copy && typeof inspectorAbortFor === 'function') inspectorAbortFor(paths);
     await this.run(copy ? 'Copied' : 'Moved',
       (overridePaths, onConflict) => API.post(route, { sources: overridePaths || paths, dest: dir, on_conflict: onConflict || 'fail' }));
   },

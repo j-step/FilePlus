@@ -305,6 +305,9 @@ function applyViewChoice(key) {
 /** Where a view change leaves the listing: the anchor row and its offset
  * along the scroll axis (vertical, or horizontal in List). */
 function captureScrollAnchor(listScroll, anchorEl) {
+  // Rows still sliding after a sort / paste / delete land first: the anchor
+  // is read from where they really are.
+  settleListFlips();
   const row = (anchorEl && anchorEl.closest && listScroll.contains(anchorEl) && anchorEl.closest('.fp-row[data-path]'))
     || firstVisibleRow(listScroll);
   if (!row) return null;
@@ -337,6 +340,7 @@ function restoreScrollAnchor(listScroll, anchor) {
 function firstVisibleRow(listScroll) {
   const rows = listScroll.querySelectorAll(':scope > .fp-row[data-path]');
   if (!rows.length) return null;
+  settleListFlips();
   const lr = listScroll.getBoundingClientRect();
   const horiz = browserState.view === 'list';
   let lo = 0, hi = rows.length - 1;
@@ -1264,7 +1268,7 @@ function failNavigation(err, absPath, { reqTabId, ownSearch = false, searchWasIn
   // This tab's own folder listing — or its This PC page — is on screen.
   const ownListingShown = browserState.path && browserState.listingTabId === reqTabId
     && (browserState.path === THISPC
-      || document.querySelector('#list-scroll > .fp-row, #list-scroll > .fp-empty-state'));
+      || document.querySelector('#list-scroll > .fp-row[data-path], #list-scroll > .fp-empty-state'));
   if (ownListingShown) {
     onNavigated(browserState.path);
     refreshNavButtons();
@@ -1799,6 +1803,9 @@ function listMotionCapture(listScroll, n = (browserState.entries || []).length) 
  */
 function listMotionPlay(listScroll, cap, { added = null, gone = [], moved = null, enterFade = false } = {}) {
   if (!cap || !listScroll || !listMotionOn()) return 0;
+  // The ghosts below must not hold up a scroll range the listing no longer
+  // has: clamp to the real extent first, or the list would jump when they go.
+  clampListScroll(listScroll);
   // Reads first (one layout), writes after.
   const box = listScroll.getBoundingClientRect();
   const now = listRowsInView(listScroll);
@@ -1858,6 +1865,18 @@ function settleListFlips() {
   if (!_listFlips.size) return;
   for (const row of [..._listFlips]) fpCancelAnimation(row, 'flip');
   _listFlips.clear();
+}
+
+/** Clamps #list-scroll's scroll offsets to its content without ghosts (any
+ * still playing are left out of the measure). */
+function clampListScroll(listScroll) {
+  const ghosts = [...listScroll.querySelectorAll(':scope > .fp-row--ghost')];
+  for (const g of ghosts) g.style.display = 'none';
+  const maxTop = Math.max(0, listScroll.scrollHeight - listScroll.clientHeight);
+  const maxLeft = Math.max(0, listScroll.scrollWidth - listScroll.clientWidth);
+  if (listScroll.scrollTop > maxTop) listScroll.scrollTop = maxTop;
+  if (listScroll.scrollLeft > maxLeft) listScroll.scrollLeft = maxLeft;
+  for (const g of ghosts) g.style.display = '';
 }
 
 /** A removed row's node, kept painted where it was while it fades and
@@ -3021,7 +3040,7 @@ function showInspectorForSelection() {
   if (typeof showInspectorForThisPc === 'function' && showInspectorForThisPc()) return;
   const n = browserState.selection.size;
   if (n === 0) {
-    _inspectorSeq++; // invalidate any fetch still in flight from the prior selection
+    nextInspectorSeq(); // invalidate (and abort) any fetch still in flight from the prior selection
     // updateInspector('none') renders the full empty state itself (including
     // revoking any preview blob: URL) — no separate call needed.
     updateInspector('none');

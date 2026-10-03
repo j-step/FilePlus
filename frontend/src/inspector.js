@@ -13,6 +13,36 @@
 // stale data — each async function captures its own seq and re-checks it
 // after every await before touching anything.
 let _inspectorSeq = 0;
+// Every inspector read (/file, /preview, /files/history) carries this
+// controller's signal. A new selection, an empty one, or an operation about
+// to move or trash the selection aborts what is still in flight
+// (inspectorAbortFetches) — nothing waits on an answer about an item that is
+// gone (addendum Task 7 fix round 1).
+let _inspectorCtrl = new AbortController();
+function inspectorAbortFetches() {
+  _inspectorCtrl.abort();
+  _inspectorCtrl = new AbortController();
+}
+function inspectorFetchOpts() { return { signal: _inspectorCtrl.signal }; }
+/** The next _inspectorSeq: aborts the reads the previous one started. */
+function nextInspectorSeq() {
+  inspectorAbortFetches();
+  return ++_inspectorSeq;
+}
+/** Before an operation moves, renames or trashes `paths`: if the selection
+ * the inspector is reading about is among them, its reads stop now — the
+ * operation's answer moves the selection on and the panel repaints from
+ * there. An unrelated selection keeps its reads. */
+function inspectorAbortFor(paths) {
+  const sel = typeof browserState !== 'undefined' ? browserState.selection : null;
+  if (!sel || !sel.size || !paths || !paths.length) return;
+  const gone = new Set(paths.map(p => fpNormalizePath(p)));
+  for (const p of sel) {
+    if (gone.has(fpNormalizePath(p))) { inspectorAbortFetches(); return; }
+  }
+}
+/** An aborted read: what is on screen stays, whoever aborted repaints. */
+function inspectorAborted(err) { return !!err && err.name === 'AbortError'; }
 // Inspector work still to come: an armed selection debounce (browser.js
 // onSelectionChanged) plus every showInspectorFor() / showInspectorMulti()
 // fetch chain still running. Read by the Electron tests as the "inspector
@@ -224,7 +254,7 @@ async function showInspectorFor(path) {
 }
 
 async function _showInspectorFor(path) {
-  const seq = ++_inspectorSeq;
+  const seq = nextInspectorSeq();
 
   // Optimistic header from what the row already told us — the real fetch
   // below can only confirm/replace it, never regress the UI to nothing.
@@ -236,9 +266,9 @@ async function _showInspectorFor(path) {
 
   let data;
   try {
-    data = await API.get('/file', { path });
+    data = await API.get('/file', { path }, inspectorFetchOpts());
   } catch (err) {
-    if (seq !== _inspectorSeq) return;
+    if (seq !== _inspectorSeq || inspectorAborted(err)) return;
     _inspectorFileId = null;
     updateTagInputAvailability();
     renderInspectorMeta(null);
@@ -248,6 +278,18 @@ async function _showInspectorFor(path) {
     return;
   }
   if (seq !== _inspectorSeq) return;
+  // Gone since it was selected (trashed, moved, deleted outside the app):
+  // the same panel a missing Home row gets.
+  if (data && data.exists === false) {
+    _inspectorFileId = null;
+    _inspectorHistoryPath = null;
+    updateTagInputAvailability();
+    renderInspectorMeta({ kind: 'Moved or deleted' });
+    renderTagChips([]);
+    renderPreviewNone();
+    renderInspectorHistory([]);
+    return;
+  }
 
   _inspectorFileId = data.id ?? null;
   updateTagInputAvailability();
@@ -276,7 +318,7 @@ async function _showInspectorFor(path) {
  * whose file was moved or deleted): its name and old location, "Moved or
  * deleted" as its kind, nothing fetched (Stage 2D §12 sweep). */
 function showInspectorMissing(path) {
-  _inspectorSeq++;
+  nextInspectorSeq();
   const name = basenameOf(path);
   updateInspector('single', { name, path });
   _inspectorEntry = { name, path, is_dir: false, ext: '' };
@@ -355,9 +397,9 @@ async function loadInspectorPreview(path, seq) {
   if (!el) return;
   let res;
   try {
-    res = await API.blob('/preview', { path });
-  } catch (_) {
-    if (seq !== _inspectorSeq) return;
+    res = await API.blob('/preview', { path }, inspectorFetchOpts());
+  } catch (err) {
+    if (seq !== _inspectorSeq || inspectorAborted(err)) return;
     renderPreviewNone();
     return;
   }
@@ -614,9 +656,9 @@ async function loadInspectorHistory(path, seq) {
   _inspectorHistoryPath = path;
   let rows;
   try {
-    rows = await API.get('/files/history', { path });
-  } catch (_) {
-    if (seq !== _inspectorSeq) return;
+    rows = await API.get('/files/history', { path }, inspectorFetchOpts());
+  } catch (err) {
+    if (seq !== _inspectorSeq || inspectorAborted(err)) return;
     renderInspectorHistory([]);
     return;
   }
@@ -631,7 +673,7 @@ async function reloadInspectorHistoryFor(path) {
   _inspectorHistoryPath = path;
   const seq = _inspectorSeq;
   try {
-    const rows = await API.get('/files/history', { path });
+    const rows = await API.get('/files/history', { path }, inspectorFetchOpts());
     // Same guard as the selection pipeline's own History load.
     if (seq !== _inspectorSeq || _inspectorHistoryPath !== path) return;
     renderInspectorHistory(rows);
@@ -688,7 +730,7 @@ async function inspectorUndoOp(opId, batchId) {
     // Neither the restored path nor the prior selection exists in the
     // current listing (e.g. undoing a copy/mkdir/touch sends the item to
     // .FilePlusTrash, off-screen) — nothing left to inspect.
-    _inspectorSeq++;
+    nextInspectorSeq();
     updateInspector('none');
   }
 }
@@ -709,11 +751,12 @@ async function showInspectorMulti(paths) {
 }
 
 async function _showInspectorMulti(paths) {
-  const seq = ++_inspectorSeq;
+  const seq = nextInspectorSeq();
   updateInspector('multi', { count: paths.length, totalSize: formatSize(selectionTotalSize()) });
 
   const capped = paths.slice(0, 50);
-  const results = await Promise.all(capped.map(p => API.get('/file', { path: p }).catch(() => null)));
+  const results = await Promise.all(capped.map(p => API.get('/file', { path: p }, inspectorFetchOpts())
+    .then(r => (r && r.exists === false ? null : r)).catch(() => null)));
   if (seq !== _inspectorSeq) return;
 
   const counts = new Map();
@@ -758,7 +801,7 @@ function syncInspectorToBrowserSelection() {
   const selection = (typeof browserState !== 'undefined' && browserState.selection) || null;
   const n = selection ? selection.size : 0;
   if (n === 0) {
-    _inspectorSeq++;   // invalidate any fetch still in flight
+    nextInspectorSeq();   // invalidate (and abort) any fetch still in flight
     updateInspector('none');
   } else if (n === 1) {
     showInspectorFor([...selection][0]);
@@ -772,7 +815,7 @@ function syncInspectorToBrowserSelection() {
  * "1 selected" over "No file selected"). Returns false off This PC. */
 function showInspectorForThisPc() {
   if (typeof thisPcActive !== 'function' || !thisPcActive()) return false;
-  _inspectorSeq++;   // nothing fetched here; invalidate whatever still is
+  nextInspectorSeq();   // nothing fetched here; invalidate whatever still is
   const path = thisPcSelectedPath();
   const d = path ? (thisPcState.drives || []).find(x => x.mount === path) : null;
   if (d) updateInspector('drive', d);
@@ -784,7 +827,7 @@ function showInspectorForThisPc() {
  * of its own (Settings, …): it never names the item another screen had
  * selected, and its actions are disabled (Task 14 Q2). */
 function showInspectorNeutral() {
-  _inspectorSeq++;
+  nextInspectorSeq();
   updateInspector('none');
 }
 
