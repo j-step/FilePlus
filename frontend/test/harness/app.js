@@ -141,6 +141,9 @@ async function waitReady(page) {
   await page.waitForSelector('#shell');
   await page.waitForFunction(() => typeof tabs !== 'undefined' && tabs.list && tabs.list.length > 0);
   await page.waitForFunction(() => window.__fpInitDone === true, null, { timeout: 15_000 });
+  // Launch restores saved state without motion (html.fp-booting, lifted two
+  // frames after the config applied — Task 8 R2); a motion test starts after.
+  await page.waitForFunction(() => !document.documentElement.classList.contains('fp-booting'), null, { timeout: 15_000 });
   await page.waitForFunction(async () => {
     await document.fonts.ready;
     return document.getElementById('status-backend')?.dataset.state === 'ok';

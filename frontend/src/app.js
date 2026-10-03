@@ -33,7 +33,30 @@ const _fpMotionOverride = (() => {
     try { on = localStorage.getItem(FP_MOTION_LS_KEY) !== 'off'; } catch (_) { /* default on */ }
   }
   document.documentElement.dataset.motion = on ? 'on' : 'off';
+  // Launch is not a change (Task 8 R2): the restored sidebar, theme, zoom,
+  // panel widths and inspector land in their saved state, never ease into
+  // it. html.fp-booting sits in styles.css's motion-off block and makes
+  // fpAnimate() instant until fpEndBoot() lifts it, two frames after the
+  // saved settings were applied.
+  document.documentElement.classList.add('fp-booting');
 })();
+
+/** True until the saved state has been restored at launch (fpEndBoot). */
+function fpBooting() {
+  return document.documentElement.classList.contains('fp-booting');
+}
+
+let _fpBootEnding = false;
+/** Lifts html.fp-booting two animation frames from now: the restored state
+ * has been styled and painted by then, so nothing it set can transition.
+ * Idempotent. */
+function fpEndBoot() {
+  if (_fpBootEnding) return;
+  _fpBootEnding = true;
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    document.documentElement.classList.remove('fp-booting');
+  }));
+}
 
 /** True while animations are on (html[data-motion="on"]). */
 function fpMotionOn() {
@@ -93,9 +116,13 @@ window.addEventListener('keydown', e => {
   if (FP_MODIFIER_KEYS.has(e.key)) return;
   document.documentElement.classList.toggle('fp-key-repeat', !!e.repeat);
 }, true);
-for (const type of ['keyup', 'blur']) {
-  window.addEventListener(type, () => document.documentElement.classList.remove('fp-key-repeat'), true);
-}
+const fpEndKeyRepeat = () => document.documentElement.classList.remove('fp-key-repeat');
+window.addEventListener('keyup', fpEndKeyRepeat, true);
+// The WINDOW losing focus ends a hold, not an element's blur: a held arrow
+// moves DOM focus row to row at every step, and a capture-phase listener on
+// window hears each of those element blurs too (Task 8 R1). Non-capture,
+// and only when the event's target is the window itself.
+window.addEventListener('blur', e => { if (e.target === window) fpEndKeyRepeat(); });
 
 // Animations fpAnimate() started that may still be running: cancelled the
 // moment the switch goes off. Per element, one animation per key.
@@ -129,7 +156,7 @@ function fpAnimate(el, keyframes, { duration = 'fast', easing = 'out', key = 'de
   let slots = _fpAnimationsByEl.get(el);
   const prev = slots && slots.get(key);
   if (prev) { slots.delete(key); _fpLiveAnimations.delete(prev); prev.cancel(); }
-  if (!fpMotionOn() || fpKeyRepeating() || typeof el.animate !== 'function') return null;
+  if (!fpMotionOn() || fpKeyRepeating() || fpBooting() || typeof el.animate !== 'function') return null;
   const t = fpMotionTokens();
   const ceiling = t.durations.slow;
   let ms = t.durations.fast;
@@ -5309,6 +5336,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     await loadConfig();
     applySettingsFromConfig();
     restoreSettingsPane();
+    // The saved state is all applied (sidebar, theme, zoom, panel widths,
+    // inspector): from two frames on, changes animate again.
+    fpEndBoot();
     // Before the first listing renders: iconFor() decides the special folder
     // icons (Desktop, Downloads, …) by matching a path against this map, and
     // falls back to guessing from the folder's name until it has loaded.
@@ -5327,6 +5357,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     // init with no trace at all.
     console.warn('[fp-init] startup data load failed:', err);
   }
+  fpEndBoot();   // a no-op unless the config step above threw
   // Startup has finished applying what it loaded (config, known folders,
   // drives, pins, tags, Quick Access). The Electron harness waits for this
   // before a test acts: acting earlier raced the config landing — a settings

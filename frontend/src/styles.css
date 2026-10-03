@@ -6671,11 +6671,18 @@ button.fp-pill:hover {
    first frame samples the OLD value, and icons.js re-measuring a row icon in
    that frame pinned the wrong bitmap). So nothing can animate before the
    setting is known, and document.getAnimations() stays empty. Windows'
-   "Animation effects" setting gates nothing. */
+   "Animation effects" setting gates nothing.
+   html.fp-booting (app.js fpBootMotion → fpEndBoot) is the same: launch
+   restores the saved sidebar, theme, zoom and panel widths, and that is not
+   a change to animate (Task 8 R2). */
 html:not([data-motion="on"]),
 html:not([data-motion="on"]) *,
 html:not([data-motion="on"]) *::before,
-html:not([data-motion="on"]) *::after {
+html:not([data-motion="on"]) *::after,
+html.fp-booting,
+html.fp-booting *,
+html.fp-booting *::before,
+html.fp-booting *::after {
   animation: none !important;
   transition: none !important;
   scroll-behavior: auto !important;
