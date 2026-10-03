@@ -68,8 +68,8 @@ async function tour(page) {
   await page.evaluate((r) => { loadDirectory(r); window.__fpSample(); }, root);
   await page.waitForFunction(() => !window.__fpLoadPending);
   await sample();
-  await page.evaluate(() => { setInspectorOpen(false, { persist: false }); window.__fpSample(); });
-  await page.evaluate(() => { setInspectorOpen(true, { persist: false }); window.__fpSample(); });
+  await page.evaluate(() => { setInspectorOpen(false, { persist: false, animate: true }); window.__fpSample(); });
+  await page.evaluate(() => { setInspectorOpen(true, { persist: false, animate: true }); window.__fpSample(); });
   await page.evaluate(() => { toggleSidebar(); window.__fpSample(); });
   await page.evaluate(() => { toggleSidebar(); window.__fpSample(); });
   await page.locator('#list-scroll').click({ button: 'right', position: { x: 300, y: 300 } });
@@ -682,6 +682,266 @@ test('with the switch off the chrome motion leaves nothing behind: no ghosts, ba
       setMaximizeButtonState(true); setMaximizeButtonState(false);
       return {
         leftovers: document.querySelectorAll('.fp-tab-ghost, .fp-tab-slider, .is-closing, [inert]').length,
+        running: document.getAnimations().length,
+      };
+    });
+    expect(r).toEqual({ leftovers: 0, running: 0 });
+    const seen = await stopSampler(page);
+    expect(seen, JSON.stringify(seen.slice(0, 5))).toEqual([]);
+  } finally {
+    await app.close();
+  }
+  expect(errors).toEqual([]);
+});
+
+// ── Task 6: screens, inspector, Settings (addendum §5.2) ─────────────────────
+
+/** Resolves after `ms` of animation frames have passed in the page (a
+ * frame-clock wait for the burst rules, not a test-side sleep). */
+const pageFrames = (page, ms) => page.evaluate((wait) => new Promise((resolve) => {
+  const t0 = performance.now();
+  const tick = () => (performance.now() - t0 >= wait ? resolve() : requestAnimationFrame(tick));
+  requestAnimationFrame(tick);
+}), ms);
+
+test('screens crossfade: the new screen is live at once, the old one fades out inert, and a quick switch back is clean', async () => {
+  const { app, page, errors } = await launchApp({ motion: true });
+  try {
+    await installMotionProbes(page);
+    const r = await page.evaluate(() => {
+      const home = document.getElementById('screen-home');
+      const settings = document.getElementById('screen-settings');
+      switchScreen('settings');
+      const nav = settings.querySelector('.settings-nav__item');
+      return {
+        active: settings.classList.contains('active'), navHit: window.__fpHitIs(nav),
+        leaving: home.classList.contains('screen--leaving'), homeInert: home.inert,
+        homePe: getComputedStyle(home).pointerEvents,
+        inAnims: window.__fpAnims(settings), outAnims: window.__fpAnims(home),
+      };
+    });
+    expect(r).toMatchObject({ active: true, navHit: true, leaving: true, homeInert: true, homePe: 'none' });
+    expect(r.inAnims.length).toBe(1);
+    expect(r.outAnims.length).toBe(1);
+    for (const a of [...r.inAnims, ...r.outAnims]) expect(a.duration).toBeLessThanOrEqual(100);
+    await settled(page, '#screens');
+    expect(await page.evaluate(() => {
+      const home = document.getElementById('screen-home');
+      return [home.classList.contains('screen--leaving'), home.inert, getComputedStyle(home).display];
+    })).toEqual([false, false, 'none']);
+
+    // Back and forth in one task: Home is the live screen, never inert.
+    const q = await page.evaluate(() => {
+      switchScreen('home');
+      switchScreen('settings');
+      switchScreen('home');
+      const home = document.getElementById('screen-home');
+      return { active: home.classList.contains('active'), inert: home.inert,
+        leaving: home.classList.contains('screen--leaving'),
+        shown: document.querySelectorAll('.screen.active').length };
+    });
+    expect(q).toEqual({ active: true, inert: false, leaving: false, shown: 1 });
+    await settled(page, '#screens');
+    expect(await page.locator('.screen--leaving').count()).toBe(0);
+  } finally {
+    await app.close();
+  }
+  expect(errors).toEqual([]);
+});
+
+test('inspector: open/close slides the panel and resizes the file pane; closed means closed at once; Ctrl+I spam ends right', async () => {
+  const { app, page, errors } = await launchApp({ motion: true });
+  try {
+    await installMotionProbes(page);
+    const root = (await apiGet('/fs/list/root')).path;
+    await page.evaluate((p) => { setInspectorOpen(true, { persist: false }); return loadDirectory(p); }, root);
+    await page.waitForFunction(() => !window.__fpLoadPending);
+    await settled(page);
+    const openW = await page.evaluate(() => document.getElementById('inspector').getBoundingClientRect().width);
+    const listW0 = await page.evaluate(() => document.getElementById('list-pane').getBoundingClientRect().width);
+
+    const c = await page.evaluate(() => {
+      const ins = document.getElementById('inspector');
+      const center = window.__fpCenter(ins);
+      setInspectorOpen(false, { persist: false, animate: true });
+      const hit = document.elementFromPoint(center.x, center.y);
+      return { open: ins.classList.contains('inspector--open'), closing: ins.classList.contains('inspector--closing'),
+        inert: ins.inert, hitIns: !!hit && ins.contains(hit),
+        resizer: getComputedStyle(document.getElementById('resizer')).display, anims: window.__fpAnims(ins) };
+    });
+    expect(c).toMatchObject({ open: false, closing: true, inert: true, hitIns: false, resizer: 'none' });
+    expect(c.anims.length).toBe(1);
+    expect(c.anims[0].duration).toBeLessThanOrEqual(140);
+    // Mid-way the file pane is between its two widths (it resizes smoothly).
+    await expect.poll(() => page.evaluate(() => document.getElementById('list-pane').getBoundingClientRect().width))
+      .toBeGreaterThan(listW0);
+    await settled(page);
+    expect(await page.evaluate(() => {
+      const ins = document.getElementById('inspector');
+      return [getComputedStyle(ins).display, ins.inert, ins.classList.contains('inspector--closing')];
+    })).toEqual(['none', false, false]);
+
+    // Open: the panel's controls take focus at once.
+    const o = await page.evaluate(() => {
+      const ins = document.getElementById('inspector');
+      setInspectorOpen(true, { persist: false, animate: true });
+      const tab = ins.querySelector('.fp-inspector__tab');
+      tab.focus();
+      return { open: ins.classList.contains('inspector--open'), inert: ins.inert, focused: document.activeElement === tab,
+        anims: window.__fpAnims(ins) };
+    });
+    expect(o).toMatchObject({ open: true, inert: false, focused: true });
+    expect(o.anims.length).toBe(1);
+    expect(o.anims[0].duration).toBeLessThanOrEqual(140);
+
+    // Ctrl+I spam (the real shortcut): the class follows every press and the
+    // panel lands at its full width with nothing left running.
+    await page.locator('#list-scroll').click({ position: { x: 5, y: 5 } });
+    for (let i = 0; i < 5; i++) await page.keyboard.press('Control+i');
+    expect(await page.evaluate(() => document.getElementById('inspector').classList.contains('inspector--open'))).toBe(false);
+    await page.keyboard.press('Control+i');
+    await settled(page);
+    const fin = await page.evaluate(() => {
+      const ins = document.getElementById('inspector');
+      return { open: ins.classList.contains('inspector--open'), w: ins.getBoundingClientRect().width,
+        mr: getComputedStyle(ins).marginRight, inert: ins.inert, listW: document.getElementById('list-pane').getBoundingClientRect().width };
+    });
+    expect(fin.open).toBe(true);
+    expect(Math.abs(fin.w - openW)).toBeLessThan(1);
+    expect(fin.mr).toBe('0px');
+    expect(fin.inert).toBe(false);
+    expect(Math.abs(fin.listW - listW0)).toBeLessThan(1);
+  } finally {
+    await app.close();
+    // Ctrl+I saves ui.inspector_open; put the default back for later specs.
+    await delConfig('ui.inspector_open');
+  }
+  expect(errors).toEqual([]);
+});
+
+test('inspector: a discrete selection change crossfades the content; a burst and a re-announce do not; tabs fade', async () => {
+  const { app, page, errors } = await launchApp({ motion: true });
+  try {
+    await installMotionProbes(page);
+    await page.evaluate(() => setInspectorOpen(true, { persist: false }));
+    await settled(page);
+    await page.evaluate(() => updateInspector('single', { name: 'a.txt', path: 'C:\\probe\\a.txt' }));
+    await pageFrames(page, 260);
+    const d = await page.evaluate(() => {
+      const scroll = document.getElementById('inspector-scroll');
+      updateInspector('single', { name: 'b.txt', path: 'C:\\probe\\b.txt' });
+      const first = scroll.getAnimations();
+      // Same task, another item: a burst — no second fade starts.
+      updateInspector('single', { name: 'c.txt', path: 'C:\\probe\\c.txt' });
+      const burst = scroll.getAnimations();
+      return { first: first.map((a) => a.effect.getComputedTiming().duration), sameOne: burst.length === 1 && burst[0] === first[0],
+        name: document.getElementById('inspector-filename').textContent };
+    });
+    expect(d.first).toEqual([100]);
+    expect(d.sameOne).toBe(true);
+    expect(d.name).toBe('c.txt');
+    await settled(page, '#inspector');
+    await pageFrames(page, 260);
+    // The same item announced again (a listing refresh): no fade.
+    expect(await page.evaluate(() => {
+      updateInspector('single', { name: 'c.txt', path: 'C:\\probe\\c.txt' });
+      return document.getElementById('inspector-scroll').getAnimations().length;
+    })).toBe(0);
+    // Preview / Tags / History: the pane that comes into view fades in.
+    const t = await page.evaluate(() => {
+      switchInspectorTab('tags');
+      const pane = document.querySelector('#inspector .fp-inspector__pane[data-pane="tags"]');
+      return { hidden: pane.hidden, anims: window.__fpAnims(pane) };
+    });
+    expect(t.hidden).toBe(false);
+    expect(t.anims.length).toBe(1);
+    expect(t.anims[0].duration).toBeLessThanOrEqual(100);
+    await page.evaluate(() => switchInspectorTab('preview'));
+  } finally {
+    await app.close();
+  }
+  expect(errors).toEqual([]);
+});
+
+test('Settings: a pane switch fades the new pane up; a segmented control slides its highlight; toggles slide their knob', async () => {
+  const { app, page, errors } = await launchApp({ motion: true });
+  try {
+    await installMotionProbes(page);
+    await page.evaluate(() => switchScreen('settings'));
+    await settled(page);
+    const p = await page.evaluate(() => {
+      const current = document.querySelector('.settings-nav__item--active')?.dataset.pane;
+      const next = [...document.querySelectorAll('.settings-nav__item[data-pane]')].map((b) => b.dataset.pane).find((x) => x !== current);
+      switchSettingsPane(next);
+      const pane = document.querySelector(`.settings-pane[data-pane="${next}"]`);
+      return { shown: pane.style.display !== 'none', anims: window.__fpAnims(pane), back: current };
+    });
+    expect(p.shown).toBe(true);
+    expect(p.anims.length).toBe(1);
+    expect(p.anims[0].duration).toBeLessThanOrEqual(100);
+    await page.evaluate((b) => switchSettingsPane(b), p.back);
+    await settled(page);
+
+    // A segmented control (here: density, flipped by class only — no save):
+    // the highlight travels from the old option to the new one.
+    const s = await page.evaluate(async () => {
+      const seg = document.querySelector('.fp-segmented:has([data-action="settings-set-density"])');
+      const opts = [...seg.querySelectorAll('.fp-segmented__opt')];
+      const from = opts.find((o) => o.classList.contains('active'));
+      const to = opts.find((o) => o !== from);
+      from.classList.remove('active');
+      to.classList.add('active');
+      await Promise.resolve();   // the observer's microtask
+      const glide = seg.querySelector('.fp-segmented__glide');
+      const out = { glide: !!glide, anims: window.__fpAnims(glide), pe: glide && getComputedStyle(glide).pointerEvents,
+        toHit: window.__fpHitIs(to) };
+      to.classList.remove('active');
+      from.classList.add('active');
+      return out;
+    });
+    expect(s.glide).toBe(true);
+    expect(s.pe).toBe('none');
+    expect(s.toHit).toBe(true);
+    expect(s.anims.length).toBe(1);
+    expect(s.anims[0].duration).toBeLessThanOrEqual(140);
+    await settled(page);
+    expect(await page.locator('.fp-segmented__glide').count()).toBe(0);
+    // Toggles: the knob's transform transitions within the ceiling.
+    const knob = await page.evaluate(() => {
+      const cs = getComputedStyle(document.querySelector('.fp-toggle__thumb'));
+      return { prop: cs.transitionProperty, dur: cs.transitionDuration };
+    });
+    expect(knob.prop).toContain('transform');
+    expect(parseFloat(knob.dur) * 1000).toBeLessThanOrEqual(140);
+  } finally {
+    await app.close();
+  }
+  expect(errors).toEqual([]);
+});
+
+test('with the switch off, screens, the inspector and Settings change with no animation and no leftovers', async () => {
+  const { app, page, errors } = await launchApp();
+  try {
+    await startSampler(page);
+    const r = await page.evaluate(async () => {
+      switchScreen('settings');
+      const panes = [...document.querySelectorAll('.settings-nav__item[data-pane]')].map((b) => b.dataset.pane);
+      switchSettingsPane(panes[1]); switchSettingsPane(panes[0]);
+      const seg = document.querySelector('.fp-segmented:has([data-action="settings-set-density"])');
+      const opts = [...seg.querySelectorAll('.fp-segmented__opt')];
+      const from = opts.find((o) => o.classList.contains('active'));
+      const to = opts.find((o) => o !== from);
+      from.classList.remove('active'); to.classList.add('active');
+      await Promise.resolve();
+      to.classList.remove('active'); from.classList.add('active');
+      await Promise.resolve();
+      switchScreen('home');
+      setInspectorOpen(false, { persist: false, animate: true });
+      setInspectorOpen(true, { persist: false, animate: true });
+      updateInspector('single', { name: 'x', path: 'C:\\probe\\x' });
+      switchInspectorTab('history'); switchInspectorTab('preview');
+      return {
+        leftovers: document.querySelectorAll('.screen--leaving, .inspector--closing, .fp-segmented__glide, [inert]').length,
         running: document.getAnimations().length,
       };
     });

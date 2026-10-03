@@ -183,7 +183,11 @@ function switchPropertiesTab(name) {
     t.classList.toggle('fp-tabs__item--active', t.dataset.tab === name);
   });
   modal.querySelectorAll('.properties__pane').forEach(p => {
-    p.hidden = p.dataset.pane !== name;
+    const show = p.dataset.pane === name;
+    // The tab's pane fades in when it changes (addendum §5.2, as the
+    // inspector's tabs do).
+    if (show && p.hidden) fpAnimate(p, [{ opacity: 0 }, { opacity: 1 }], { duration: 'fast', key: 'pane' });
+    p.hidden = !show;
   });
   // Keep the accent underline with the active class -- this function is also
   // called programmatically (openProperties resets to General), where no

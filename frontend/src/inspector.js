@@ -57,6 +57,7 @@ function updateInspector(mode, data = {}) {
   const inspector = document.getElementById('inspector');
   if (!inspector) return;
   syncInspectorActions();
+  inspectorContentMotion(inspector, mode, data);
 
   const singlePanes = inspector.querySelectorAll('.fp-inspector__pane:not([data-pane="multi"])');
   const multiPane   = inspector.querySelector('.fp-inspector__pane[data-pane="multi"]');
@@ -184,6 +185,29 @@ function updateInspector(mode, data = {}) {
   // 'single' leaves this to showInspectorFor, which only learns the file's
   // DB id (or null, for a folder) once GET /file answers.
   if (mode !== 'single') updateTagInputAvailability();
+}
+
+// ── Content crossfade (addendum §5.2 Inspector) ───────────────────────────────
+// A discrete change of what the panel describes (another file, a different
+// multi-selection, a drive, nothing) fades the new content up from
+// translucent — --motion-fast, no blank frame. The same item announced
+// again (every listing refresh re-announces the selection) never fades, and
+// neither does a change that lands within --motion-slow of the previous one:
+// an arrow-key burst repaints plainly until it settles.
+let _inspectorFadeKey = null;
+let _inspectorFadeAt = -Infinity;
+
+function inspectorContentMotion(inspector, mode, data) {
+  const key = mode === 'single' ? `single|${data.path || ''}`
+    : mode === 'multi' ? `multi|${data.count}`
+    : mode === 'drive' ? `drive|${data.mount || ''}` : mode;
+  const now = performance.now();
+  const burst = now - _inspectorFadeAt < fpMotionMs('slow');
+  const changed = key !== _inspectorFadeKey;
+  if (changed) { _inspectorFadeKey = key; _inspectorFadeAt = now; }
+  if (!changed || burst || !inspector.classList.contains('inspector--open')) return;
+  fpAnimate(document.getElementById('inspector-scroll'), [{ opacity: 0.35 }, { opacity: 1 }],
+    { duration: 'fast', key: 'content' });
 }
 
 // ── Single selection ──────────────────────────────────────────────────────────
@@ -847,11 +871,19 @@ function inspectorOpenWithSelected() {
 // calls this with {persist: false} on startup) plus Ctrl+I / the toolbar
 // button (via toggleInspector) are the only things that open or close the
 // panel. Selection changes (updateInspector above) never do.
-function setInspectorOpen(open, { persist = true } = {}) {
+function setInspectorOpen(open, { persist = true, animate = persist } = {}) {
   const inspector = document.getElementById('inspector');
   const toggleBtn = document.getElementById('btn-inspector-toggle');
   if (!inspector) return;
+  const wasOpen = inspector.classList.contains('inspector--open');
+  // Measured before the class flips: where a half-played toggle has got to.
+  const from = wasOpen !== open ? inspectorToggleFrom(inspector) : null;
   inspector.classList.toggle('inspector--open', open);
+  if (from !== null) {
+    if (animate) inspectorToggleMotion(inspector, open, from);
+    // An unanimated change (startup, a test) ends any half-played one.
+    else { fpCancelExit(inspector); fpCancelAnimation(inspector, 'toggle'); }
+  }
   // The panel clamp (styles.css --sidebar-w-css) leaves room for it.
   document.documentElement.style.setProperty('--inspector-open', open ? '1' : '0');
   toggleBtn?.classList.toggle('fp-icon-btn--active', open);
@@ -859,6 +891,44 @@ function setInspectorOpen(open, { persist = true } = {}) {
   // measured until now (moveTabIndicator, app.js, skips a zero-width tab).
   if (open) moveTabIndicator(inspector.querySelector('.fp-inspector__tabs'));
   if (persist && typeof saveSetting === 'function') saveSetting('ui.inspector_open', open);
+}
+
+// ── Inspector toggle motion (addendum §5.2 Inspector) ───────────────────────
+// The panel slides in from (or out past) the window's right edge at its full
+// width — its contents never reflow mid-way — by easing its right margin
+// between -width and 0, so the file pane beside it widens or narrows
+// smoothly. .inspector--open is already final when this plays: closing
+// keeps the panel painted under .inspector--closing (inert, never hit) until
+// it is out of sight; a toggle mid-way starts from wherever the panel is.
+
+/** The panel's current right margin when a toggle is half-played (px), 0
+ * when it sits fully open, or -width when it is fully closed. Only called
+ * when the state is about to flip. */
+function inspectorToggleFrom(inspector) {
+  if (!fpMotionOn()) return 0;
+  const shown = inspector.classList.contains('inspector--open') || fpExiting(inspector);
+  if (!shown) return -1;   // fully closed: the open motion measures the width itself
+  return parseFloat(getComputedStyle(inspector).marginRight) || 0;
+}
+
+function inspectorToggleMotion(inspector, open, from) {
+  if (!fpMotionOn()) return;
+  if (open) {
+    fpCancelExit(inspector);
+    fpCancelAnimation(inspector, 'toggle');
+    const w = inspector.getBoundingClientRect().width;
+    if (!w) return;
+    const start = from === -1 ? -w : from;
+    fpAnimate(inspector, [{ marginRight: `${start}px` }, { marginRight: '0px' }], { duration: 'base', key: 'toggle' });
+  } else {
+    fpCancelAnimation(inspector, 'toggle');
+    inspector.classList.add('inspector--closing');
+    const w = inspector.getBoundingClientRect().width;
+    inspector.classList.remove('inspector--closing');
+    if (!w) return;
+    fpPlayExit(inspector, [{ marginRight: `${from}px` }, { marginRight: `${-w}px` }],
+      { cls: 'inspector--closing', duration: 'base' });
+  }
 }
 
 function toggleInspector() {

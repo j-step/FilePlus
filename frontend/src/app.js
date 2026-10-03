@@ -715,9 +715,15 @@ function cachedListingFor(tab) {
 // in switchScreen(), the one caller that can tell "never loaded" from "just
 // showing what's already in #list-scroll" apart).
 function showScreenDom(id) {
+  const current = document.querySelector('.screen.active');
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
   const target = document.getElementById(`screen-${id}`);
-  if (target) target.classList.add('active');
+  if (target) {
+    // Back to a screen that was still fading out: it is simply the shown one.
+    fpCancelExit(target);
+    target.classList.add('active');
+  }
+  if (current && target && current !== target) screenCrossfade(current, target);
   if (id === 'home') {
     loadRecent();
     loadFavorites();
@@ -729,6 +735,16 @@ function showScreenDom(id) {
   if (id !== 'browser' && typeof showInspectorNeutral === 'function') showInspectorNeutral();
   // The status bar describes the screen on display (browser.js).
   if (typeof updateStatusBar === 'function') updateStatusBar();
+}
+
+/** Home ↔ Browser ↔ Settings (§5.2 Screens): the new screen is already the
+ * active one (it takes every click and key); the old one stays painted
+ * under it for --motion-fast, inert and fading out, while the new one fades
+ * in — a crossfade, so no frame is blank. */
+function screenCrossfade(from, to) {
+  if (!fpMotionOn()) return;
+  fpPlayExit(from, [{ opacity: 1 }, { opacity: 0 }], { cls: 'screen--leaving', duration: 'fast', easing: 'standard' });
+  fpAnimate(to, [{ opacity: 0 }, { opacity: 1 }], { duration: 'fast', easing: 'standard', key: 'screen' });
 }
 
 /**
@@ -3697,7 +3713,14 @@ function switchInspectorTab(name) {
   // min-height (styles.css .inspector__panes) is what keeps geometry from
   // jittering between a short pane (e.g. "Select a file") and a tall one.
   inspector.querySelectorAll('.fp-inspector__pane').forEach(p => {
-    p.hidden = p.dataset.pane !== name;
+    const show = p.dataset.pane === name;
+    // A pane that comes into view (Preview / Tags / History) fades in
+    // (§5.2 Inspector); re-applying the tab already shown does nothing.
+    if (show && p.hidden && inspector.classList.contains('inspector--open')) {
+      p.hidden = false;
+      fpAnimate(p, [{ opacity: 0 }, { opacity: 1 }], { duration: 'fast', key: 'pane' });
+    }
+    p.hidden = !show;
   });
   // Switching to a single-file pane also restores the chrome that multi mode
   // hid (updateInspector('multi') hides both) — otherwise the Inspector ends
@@ -5148,6 +5171,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   // has bound its port but not finished starting can't stall init forever.
   // Static markup only — no data needed, so a failed load cannot skip it.
   initSettingsNavSelect();
+  initSegmentedGlide();
   try {
     await loadConfig();
     applySettingsFromConfig();

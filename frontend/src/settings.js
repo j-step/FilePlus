@@ -535,7 +535,12 @@ function switchSettingsPane(pane) {
   const select = document.getElementById('settings-nav-select');
   if (select) select.value = pane;
   document.querySelectorAll('.settings-pane').forEach(p => {
-    p.style.display = p.dataset.pane === pane ? '' : 'none';
+    const show = p.dataset.pane === pane;
+    const appearing = show && p.style.display === 'none';
+    p.style.display = show ? '' : 'none';
+    // The pane that takes over fades up (addendum §5.2 Settings) — from
+    // translucent, so the content area is never blank for a frame.
+    if (appearing) fpAnimate(p, [{ opacity: 0.3 }, { opacity: 1 }], { duration: 'fast', key: 'pane' });
   });
   // Panes that show live values refresh them on every visit, whichever way
   // the pane was reached (a nav click or restoreSettingsPane).
@@ -571,6 +576,59 @@ function initSettingsNavSelect() {
   select.value = nav.querySelector('.settings-nav__item--active')?.dataset.pane || select.value;
   select.addEventListener('change', () => switchSettingsPane(select.value));
   nav.appendChild(select);
+}
+
+// ── Segmented controls: the highlight slides (addendum §5.2 Settings) ────────
+// Every way an option becomes the active one (a click, a sync from config, a
+// theme change elsewhere) only flips classes; one observer per control sees
+// the flip and slides a transient highlight from the old option to the new
+// one, holding the new option's own fill off until it arrives. Nothing
+// waits: the classes, the setting and focus are final before it plays.
+const SEGMENTED_ACTIVE = ['active', 'fp-segmented__opt--active', 'fp-segmented__option--active'];
+const segmentedIsActive = (cls) => SEGMENTED_ACTIVE.some(c => String(cls || '').split(/\s+/).includes(c));
+
+function segmentedGlide(container, fromEl, toEl) {
+  if (!fpMotionOn() || !fromEl || !toEl || !fromEl.isConnected) return;
+  if (!toEl.offsetWidth || !fromEl.offsetWidth) return;   // not on screen
+  let glide = container.querySelector(':scope > .fp-segmented__glide');
+  if (!glide) {
+    glide = document.createElement('span');
+    glide.className = 'fp-segmented__glide';
+    glide.setAttribute('aria-hidden', 'true');
+    container.prepend(glide);
+  }
+  glide.style.top = `${toEl.offsetTop}px`;
+  glide.style.height = `${toEl.offsetHeight}px`;
+  const anim = fpAnimate(glide, [
+    { left: `${fromEl.offsetLeft}px`, width: `${fromEl.offsetWidth}px` },
+    { left: `${toEl.offsetLeft}px`, width: `${toEl.offsetWidth}px` },
+  ], { duration: 'base', key: 'glide' });
+  // Both options' own fills stay off while the highlight travels (the old
+  // one would otherwise fade out in place behind it).
+  for (const el of [fromEl, toEl]) {
+    fpAnimate(el, [{ backgroundColor: 'transparent' }, { backgroundColor: 'transparent' }], { duration: 'base', key: 'glide' });
+  }
+  glide._fpGlide = anim;
+  fpAfter(anim, () => { if (glide._fpGlide === anim) glide.remove(); });
+}
+
+function initSegmentedGlide() {
+  if (typeof MutationObserver !== 'function') return;
+  for (const container of document.querySelectorAll('.fp-segmented')) {
+    new MutationObserver((records) => {
+      let from = null;
+      let to = null;
+      for (const r of records) {
+        const el = r.target;
+        if (el.parentElement !== container) continue;
+        const was = segmentedIsActive(r.oldValue);
+        const now = segmentedIsActive(el.className);
+        if (was && !now) from = el;
+        else if (!was && now) to = el;
+      }
+      if (from && to) segmentedGlide(container, from, to);
+    }).observe(container, { subtree: true, attributes: true, attributeFilter: ['class'], attributeOldValue: true });
+  }
 }
 
 /** Reopens the Settings screen on the pane last used in this window --

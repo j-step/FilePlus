@@ -2114,6 +2114,15 @@ svg { flex-shrink: 0; }
   outline: 1px solid var(--accent);
   outline-offset: 1px;
 }
+/* The active fill while it slides to the newly chosen option (settings.js
+   segmentedGlide): the active option's own fill, under the labels. */
+.fp-segmented__glide {
+  position: absolute;
+  background: var(--bg-content);
+  border-radius: var(--r-button);
+  pointer-events: none;
+  z-index: var(--z-base);
+}
 
 /* -----------------------------------------------------------------------------
    16. UNDERLINE TABS (Section 20)
@@ -3959,6 +3968,9 @@ body.is-dragging .fp-oscroll { pointer-events: none; }
   overflow: hidden;
 }
 .screen.active { display: flex; }
+/* The screen just switched away from, while it fades out under the new one
+   (app.js screenCrossfade): still painted, never hit, inert. */
+.screen.screen--leaving { display: flex; pointer-events: none; }
 
 .screen__header {
   padding: var(--s-24) var(--s-24) var(--s-12);
@@ -5454,6 +5466,9 @@ button.fp-pill:hover {
   overflow: hidden;
 }
 .inspector--open { display: flex; }
+/* Closed, still sliding out past the window edge (inspector.js
+   inspectorToggleMotion): painted, never hit, inert. */
+.inspector--closing { display: flex; pointer-events: none; }
 /* The last resort for a short window at high zoom: the part above the
    action row scrolls as one (overlay scrollbar); the actions stay pinned. */
 .inspector__scroll {
