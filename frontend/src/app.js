@@ -3702,7 +3702,11 @@ function initUnderlineTabs(container) {
     moveTabIndicator(container, tab);
     const targetPane = tab?.dataset.tab;
     container.closest('.screen')?.querySelectorAll('[data-pane]').forEach(pane => {
-      pane.style.display = pane.dataset.pane === targetPane ? '' : 'none';
+      const show = pane.dataset.pane === targetPane;
+      // A pane that comes into view fades in (§5.2 Home sub-tabs); the
+      // underline slides on its own (.fp-tabs__indicator's transition).
+      if (show && pane.style.display === 'none') fpAnimate(pane, [{ opacity: 0 }, { opacity: 1 }], { duration: 'fast', key: 'pane' });
+      pane.style.display = show ? '' : 'none';
     });
     // Home's status bar counts the visible pane.
     if (container.closest('#screen-home') && typeof updateStatusBar === 'function') updateStatusBar();

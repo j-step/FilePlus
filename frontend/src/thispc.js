@@ -359,6 +359,7 @@ function commitThisPc(drives, { addToHistory = true, restore = null, historyInde
 
   setThisPcShown(true);
   renderThisPC(drives);
+  thisPcEnterMotion({ fadeOnly: !!restore });
   // No folder rows on screen any more: a big listing left behind must not
   // keep width motion off (html.fp-heavy-list).
   if (typeof syncHeavyList === 'function') syncHeavyList();
@@ -373,6 +374,29 @@ function commitThisPc(drives, { addToHistory = true, restore = null, historyInde
   const view = document.getElementById('thispc-view');
   if (view) view.scrollTop = restore ? (restore.scrollTop || 0) : 0;
   if (hadFocus) focusThisPcCursor();
+}
+
+// §5.2 This PC: the cards fade up one after another, CARD_STAGGER_MS apart
+// (the spec's 20 ms), the delay capped so the last card still ends within
+// --motion-slow; each usage bar fills from 0 over --motion-slow. Only when
+// the page is navigated to — a refresh patches the cards and never replays
+// it, and a tab switch back to a This PC tab only fades the page.
+const THISPC_CARD_STAGGER_MS = 20;
+function thisPcEnterMotion({ fadeOnly = false } = {}) {
+  if (typeof listMotionOn !== 'function' || !listMotionOn()) return;
+  const grid = thisPcGrid();
+  if (!grid) return;
+  if (fadeOnly) {
+    fpAnimate(grid, [{ opacity: 0.6 }, { opacity: 1 }], { duration: 'base', key: 'list' });
+    return;
+  }
+  const cap = Math.max(0, fpMotionMs('slow') - fpMotionMs('base'));
+  thisPcCards().forEach((card, i) => {
+    fpAnimate(card, [{ opacity: 0, transform: 'translateY(4px)' }, { opacity: 1, transform: 'none' }],
+      { duration: 'base', delay: Math.min(i * THISPC_CARD_STAGGER_MS, cap), fill: 'backwards', key: 'enter' });
+    const fill = card.querySelector('.fp-drive-card__bar-fill');
+    if (fill) fpAnimate(fill, [{ transform: 'scaleX(0)' }, { transform: 'none' }], { duration: 'slow', key: 'fill' });
+  });
 }
 
 /** Ctrl+R / F5 / Refresh on This PC: re-reads the drives and patches the

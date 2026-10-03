@@ -257,7 +257,11 @@ function updateBadge(x, y) {
     }
   }
 
+  const appearing = badge.hidden;
   badge.hidden = false;
+  // The badge fades in once, when the drag starts (§5.2 Drag and drop); it
+  // follows the pointer with no animation (§5.1 rule 4).
+  if (appearing) fpAnimate(badge, [{ opacity: 0, transform: 'scale(.97)' }, { opacity: 1, transform: 'none' }], { duration: 'fast', key: 'enter' });
   // Offset down-right of the pointer so the badge never covers the drop
   // target itself, then clamped so it cannot push the window's scroll range
   // out near the right or bottom edge.

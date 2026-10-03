@@ -67,6 +67,7 @@ function favoritesReload() { return loadFavorites(); }
  * correct apart from one glyph. */
 function syncFavoriteStars() {
   const starHtml = `<span class="fp-row__star" title="In Favorites">${icon('star')}</span>`;
+  const popped = [];
   document.querySelectorAll('#list-scroll .fp-row[data-path], #home-recent .fp-row[data-path]').forEach(row => {
     const has = favoritesHas(row.dataset.path);
     const existing = row.querySelector('.fp-row__star');
@@ -80,7 +81,15 @@ function syncFavoriteStars() {
     if (tagsCell) tagsCell.insertAdjacentHTML('beforeend', starHtml);
     else if (sizeCell) sizeCell.insertAdjacentHTML('beforebegin', starHtml);
     else row.insertAdjacentHTML('beforeend', starHtml);
+    popped.push(row.querySelector('.fp-row__star'));
   });
+  // §5.2 Home: favouriting pops the star in (scale 0.9 → 1) — a handful of
+  // rows only; it is already in place.
+  if (popped.length <= LIST_MOTION_MAX_ROWS && typeof listMotionOn === 'function' && listMotionOn()) {
+    for (const star of popped) {
+      fpAnimate(star, [{ opacity: 0, transform: 'scale(.9)' }, { opacity: 1, transform: 'none' }], { duration: 'fast', key: 'enter' });
+    }
+  }
 }
 
 // ── Icons (hover-action buttons + favorite star) ──────────────────────────
@@ -248,6 +257,27 @@ function homeRerender(container, html) {
   const stop = stopPath ? homePaneRows(container).find(r => r.dataset.path === stopPath) : null;
   homeRovingSync(container, stop);
   if (hadFocus) (stop || homePaneRows(container)[0])?.focus({ preventScroll: true });
+  homeRowsMotion(container);
+}
+
+/** §5.2 Home: rows that are new to a pane fade in (a re-render of the same
+ * rows — Home shown again, a relative time ticking over — does not). More
+ * than 30 at once (a first paint of a long Recent list): the pane fades as a
+ * whole instead. Rows are final and focusable before this runs. */
+function homeRowsMotion(container) {
+  const rows = homePaneRows(container);
+  const prev = container._fpPaths || null;
+  container._fpPaths = new Set(rows.map(r => r.dataset.path));
+  if (typeof listMotionOn !== 'function' || !listMotionOn()) return;
+  const fresh = prev ? rows.filter(r => !prev.has(r.dataset.path)) : rows;
+  if (!fresh.length) return;
+  if (fresh.length > LIST_MOTION_MAX_ROWS) {
+    fpAnimate(container, [{ opacity: 0.6 }, { opacity: 1 }], { duration: 'base', key: 'list' });
+    return;
+  }
+  for (const r of fresh) {
+    fpAnimate(r, [{ opacity: 0, transform: 'translateY(4px)' }, { opacity: 1, transform: 'none' }], { duration: 'base', key: 'enter' });
+  }
 }
 
 /** Row text cut short by its column gets the full text as a tooltip; text

@@ -1855,6 +1855,7 @@ function listGhost(listScroll, node, box) {
   node.style.width = `${box.width}px`;
   node.style.height = `${box.height}px`;
   listScroll.appendChild(node);
+  fpCancelAnimation(node, 'flip');
   fpPlayExit(node, [{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'scale(.96)' }],
     { cls: 'fp-row--ghost', duration: 'fast', easing: 'in', done: () => node.remove() });
 }

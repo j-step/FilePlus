@@ -1429,6 +1429,13 @@ svg { flex-shrink: 0; }
   overflow: hidden;
 }
 .fp-search-chip:hover { background: var(--bg-pressed); border-color: var(--border-mid); }
+/* A chip that was removed plays out where it was (search.js
+   searchChipsMotion): out of flow, never hit. */
+.fp-search-chip--ghost {
+  position: absolute;
+  margin: 0;
+  pointer-events: none;
+}
 .fp-search-chip__key { color: var(--text-secondary); }
 .fp-search-chip__value {
   color: var(--text-primary);

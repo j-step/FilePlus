@@ -7,7 +7,7 @@
 // pulse wait) instant. The harness launches with animations off unless a
 // test asks for launchApp({ motion: true }).
 const { test, expect } = require('@playwright/test');
-const { launchApp, apiGet, API, apiHeaders } = require('./harness/app');
+const { launchApp, apiGet, API, apiHeaders, rowByName } = require('./harness/app');
 
 test.setTimeout(180_000);
 
@@ -2002,4 +2002,312 @@ test('with the switch off, navigation, sort, view, delete, paste, cut and rename
     await delConfig('ui.folder_views');
   }
   expect(errors).toEqual([]);
+});
+
+// ── Content motion, part 2 (addendum §5.2: Search, This PC, Home, Drag and
+// drop — Task 7) ─────────────────────────────────────────────────────────
+
+/** First keyframe and timing of each script animation on `el` (CSS
+ * transitions and animations left out). */
+async function installAnimProbe(page) {
+  await page.evaluate(() => {
+    window.__fpScripted = (el) => (el ? el.getAnimations() : []).filter((a) => a.constructor.name === 'Animation').map((a) => {
+      const k = a.effect.getKeyframes()[0] || {};
+      const t = a.effect.getComputedTiming();
+      return { duration: t.duration, delay: t.delay, fill: t.fill, opacity: k.opacity ?? null, transform: k.transform ?? null };
+    });
+  });
+}
+
+test('search: the results header slides in and a new result set fades in, a re-run does not; chips pop in and out as inert ghosts', async () => {
+  const { app, page, errors } = await launchApp({ motion: true });
+  try {
+    await installListProbes(page);
+    await installAnimProbe(page);
+    const rows = `${await motionDir()}\\Rows`;
+    await page.evaluate(() => setInspectorOpen(false, { persist: false }));
+    await openFolder(page, rows);
+    await settled(page);
+
+    const s = await page.evaluate(async (root) => {
+      showSearchPending('row', root);
+      const header = __fpScripted(document.getElementById('list-search-header'));
+      const payload = await API.get('/fs/search', { q: 'row', root, limit: 50 });
+      renderSearchResults(payload, { query: 'row', root });
+      const list = __fpListAnims();
+      const results = __fpRowPaths().length;
+      fpCancelAnimation(document.getElementById('list-scroll'), 'list');
+      renderSearchResults(payload, { query: 'row', root, preserveSelection: true });
+      return { header, list, results, rerun: __fpListAnims().length };
+    }, rows);
+    expect(s.header).toEqual([{ duration: 140, delay: 0, fill: 'none', opacity: '0', transform: 'translateY(-4px)' }]);
+    expect(s.list).toEqual([{ duration: 140, opacity: '0.6', transform: null }]);
+    expect(s.results).toBeGreaterThan(3);
+    expect(s.rerun).toBe(0);
+    await page.evaluate(() => exitSearchResults());
+    await page.waitForFunction(() => !window.__fpLoadPending && browserState.mode !== 'search');
+    await settled(page);
+
+    // Chips: one pops in; taken away, it plays out as a ghost outside
+    // #search-chips that nothing can hit, and is gone within --motion-fast.
+    await page.evaluate(() => focusSearchInput());
+    await settled(page);
+    const c = await page.evaluate(() => {
+      searchState.chips = [{ key: 'tag', value: 'work', label: 'work' }];
+      renderSearchChips();
+      const chip = document.querySelector('#search-chips .fp-search-chip');
+      const popIn = __fpScripted(chip);
+      const hitChip = __fpHitIs(chip);
+      searchState.chips = [];
+      renderSearchChips();
+      const ghost = document.querySelector('#search-wrap .fp-search-chip--ghost');
+      const at = ghost ? __fpCenter(ghost) : null;
+      const hit = at ? document.elementFromPoint(at.x, at.y) : null;
+      return {
+        popIn, hitChip,
+        chipsLeft: document.querySelectorAll('#search-chips > *').length,
+        ghost: ghost ? {
+          inChips: !!ghost.closest('#search-chips'), inert: ghost.inert, hidden: ghost.getAttribute('aria-hidden'),
+          action: ghost.getAttribute('data-action'), pe: getComputedStyle(ghost).pointerEvents,
+          hitGhost: !!hit && (hit === ghost || ghost.contains(hit)), out: __fpScripted(ghost),
+        } : null,
+      };
+    });
+    expect(c.popIn).toEqual([{ duration: 100, delay: 0, fill: 'none', opacity: '0', transform: 'scale(0.9)' }]);
+    expect(c.hitChip).toBe(true);
+    expect(c.chipsLeft).toBe(0);
+    expect(c.ghost).toEqual({ inChips: false, inert: true, hidden: 'true', action: null, pe: 'none', hitGhost: false,
+      out: [{ duration: 100, delay: 0, fill: 'none', opacity: '1', transform: 'none' }] });
+    await expect(page.locator('.fp-search-chip--ghost')).toHaveCount(0);
+    await page.keyboard.press('Escape');
+  } finally {
+    await app.close();
+  }
+  expect(errors).toEqual([]);
+});
+
+test('This PC: cards fade up with a capped 20 ms stagger and usage bars fill from 0; a refresh never replays it, a tab switch only fades', async () => {
+  const { app, page, errors } = await launchApp({ motion: true });
+  try {
+    await installMotionProbes(page);
+    await installAnimProbe(page);
+    await page.waitForFunction(() => Array.isArray(window.__fpDrives) && window.__fpDrives.length > 0);
+    const r = await page.evaluate(async () => {
+      const done = loadDirectory(THISPC);
+      const cards = thisPcCards();
+      const out = {
+        n: cards.length,
+        cards: cards.map((c) => __fpScripted(c)),
+        bars: cards.map((c) => __fpScripted(c.querySelector('.fp-drive-card__bar-fill'))),
+        hit: __fpHitIs(cards[0]),
+      };
+      selectThisPcCard(cards[cards.length - 1].dataset.path);
+      out.selected = thisPcState.selected === cards[cards.length - 1].dataset.path;
+      await done;
+      return out;
+    });
+    expect(r.n).toBeGreaterThan(0);
+    r.cards.forEach((a, i) => {
+      expect(a).toEqual([{ duration: 140, delay: Math.min(i * 20, 60), fill: 'backwards', opacity: '0', transform: 'translateY(4px)' }]);
+    });
+    for (const b of r.bars) expect(b).toEqual([{ duration: 200, delay: 0, fill: 'none', opacity: null, transform: 'scaleX(0)' }]);
+    expect(r.hit).toBe(true);
+    expect(r.selected).toBe(true);
+    await settled(page);
+
+    // A refresh patches the cards in place: nothing plays again.
+    expect(await page.evaluate(async () => { await refreshThisPc(); return document.getElementById('thispc-view').getAnimations({ subtree: true }).length; })).toBe(0);
+
+    // Back to a This PC tab from another one: the page only fades.
+    const pcTab = await page.evaluate(() => tabs.activeId);
+    await page.locator('#btn-new-tab').click();
+    await settled(page);
+    const sw = await page.evaluate((id) => {
+      activateTab(id);
+      const grid = document.getElementById('thispc-drives');
+      return { grid: __fpScripted(grid), cards: thisPcCards().reduce((n, c) => n + c.getAnimations({ subtree: true }).length, 0) };
+    }, pcTab);
+    expect(sw.grid).toEqual([{ duration: 140, delay: 0, fill: 'none', opacity: '0.6', transform: null }]);
+    expect(sw.cards).toBe(0);
+    await page.waitForFunction(() => !window.__fpLoadPending);
+    await settled(page);
+
+    // The View menu's layout change crossfades the page.
+    const view = await page.evaluate(() => { applyViewChoice('details'); return __fpScripted(document.getElementById('thispc-drives')); });
+    expect(view).toEqual([{ duration: 140, delay: 0, fill: 'none', opacity: '0.5', transform: null }]);
+  } finally {
+    await app.close();
+    await delConfig('ui.thispc_view');
+  }
+  expect(errors).toEqual([]);
+});
+
+test('Home: new rows fade in and the same rows again do not; the sub-tab pane fades while its underline slides; favouriting pops the star', async () => {
+  const { app, page, errors } = await launchApp({ motion: true });
+  const rows = `${await motionDir()}\\Rows`;
+  const favA = `${rows}\\row-02.txt`;
+  const favB = `${rows}\\row-04.txt`;
+  const addFav = (p) => fetch(`${API}/favorites`, {
+    method: 'POST', headers: apiHeaders({ 'Content-Type': 'application/json' }), body: JSON.stringify({ path: p }),
+  });
+  const delFav = (p) => fetch(`${API}/favorites?path=${encodeURIComponent(p)}`, { method: 'DELETE', headers: apiHeaders() });
+  try {
+    await installMotionProbes(page);
+    await installAnimProbe(page);
+    await openFolder(page, rows);
+    await settled(page);
+
+    // Favouriting a row on screen pops its star in.
+    await addFav(favA);
+    const star = await page.evaluate(async (p) => {
+      await loadFavorites();
+      return __fpScripted(findRowByPath(p).querySelector('.fp-row__star'));
+    }, favA);
+    expect(star).toEqual([{ duration: 100, delay: 0, fill: 'none', opacity: '0', transform: 'scale(0.9)' }]);
+
+    // Home › Favorites: the pane fades in and the underline slides to it.
+    await page.evaluate(() => switchScreen('home'));
+    await settled(page);
+    await page.locator('#home-tabs [data-tab="favorites"]').click();
+    const tab = await page.evaluate(() => ({
+      pane: __fpScripted(document.querySelector('#screen-home .home-pane[data-pane="favorites"]')),
+      underline: document.querySelector('#home-tabs .fp-tabs__indicator').getAnimations()
+        .map((a) => [a.transitionProperty, a.effect.getComputedTiming().duration]).sort(),
+    }));
+    expect(tab.pane).toEqual([{ duration: 100, delay: 0, fill: 'none', opacity: '0', transform: null }]);
+    expect(tab.underline).toEqual([['left', 140], ['width', 140]]);
+    await settled(page);
+
+    // A new favourite's row fades in; the row already there does not, and
+    // painting the same rows again plays nothing.
+    await addFav(favB);
+    const fresh = await page.evaluate(async ({ a, b }) => {
+      await loadFavorites();
+      const row = (p) => document.querySelector(`#home-favorites .fp-row[data-path="${CSS.escape(p)}"]`);
+      const out = { a: __fpScripted(row(a)), b: __fpScripted(row(b)), focusable: row(b).tabIndex >= -1 };
+      for (const anim of document.getAnimations()) anim.finish();
+      await loadFavorites();
+      out.again = document.getElementById('home-favorites').getAnimations({ subtree: true }).length;
+      return out;
+    }, { a: favA, b: favB });
+    expect(fresh.a).toEqual([]);
+    expect(fresh.b).toEqual([{ duration: 140, delay: 0, fill: 'none', opacity: '0', transform: 'translateY(4px)' }]);
+    expect(fresh.again).toBe(0);
+    await page.locator('#home-tabs [data-tab="recent"]').click();
+  } finally {
+    await delFav(favA).catch(() => {});
+    await delFav(favB).catch(() => {});
+    await app.close();
+  }
+  expect(errors).toEqual([]);
+});
+
+test('drag: the badge fades in once and then follows the pointer with no animation; a drop target highlight fades', async () => {
+  const { app, page, errors } = await launchApp({ motion: true });
+  try {
+    await installListProbes(page);
+    const nav = `${await motionDir()}\\Nav`;
+    await openFolder(page, nav);
+    await page.evaluate(() => setView('details', null, { manual: false }));
+    await settled(page);
+    await page.evaluate(() => {
+      const badge = document.getElementById('drag-badge');
+      const target = [...document.querySelectorAll('#list-scroll > .fp-row[data-path]')].find((r) => r.dataset.path.endsWith('\\Inner'));
+      window.__fpBadgeSeen = [];
+      window.__fpTargetSeen = [];
+      new MutationObserver(() => {
+        if (!badge.hidden) window.__fpBadgeSeen.push(badge.getAnimations().map((a) => [a.effect.getComputedTiming().duration, a.effect.getKeyframes()[0].opacity]));
+      }).observe(badge, { attributes: true, attributeFilter: ['hidden', 'style'] });
+      new MutationObserver(() => {
+        if (target.classList.contains('fp-row--drag-target')) {
+          window.__fpTargetSeen.push(target.getAnimations().map((a) => [a.transitionProperty || 'script', a.effect.getComputedTiming().duration]));
+        }
+      }).observe(target, { attributes: true, attributeFilter: ['class'] });
+    });
+    const src = await rowByName(page, 'nav-1.txt').boundingBox();
+    const dst = await rowByName(page, 'Inner').boundingBox();
+    await page.mouse.move(src.x + 40, src.y + src.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(src.x + 60, src.y + src.height / 2 + 12, { steps: 3 });
+    await page.mouse.move(dst.x + 50, dst.y + dst.height / 2, { steps: 4 });
+    const seen = await page.evaluate(() => ({ badge: window.__fpBadgeSeen, target: window.__fpTargetSeen }));
+    await page.keyboard.press('Escape');
+    await page.mouse.up();
+    expect(seen.badge.length).toBeGreaterThan(2);
+    expect(seen.badge[0]).toEqual([[100, '0']]);
+    // One fade for the whole drag: never more than that one animation.
+    for (const s of seen.badge) expect(s.length).toBeLessThanOrEqual(1);
+    expect(seen.target.length).toBeGreaterThan(0);
+    const props = Object.fromEntries(seen.target[0]);
+    expect(props['background-color']).toBeLessThanOrEqual(60);
+    expect(props['box-shadow']).toBeLessThanOrEqual(60);
+    // Cancelled: nothing moved.
+    await expect(rowByName(page, 'nav-1.txt')).toHaveCount(1);
+  } finally {
+    await app.close();
+  }
+  expect(errors).toEqual([]);
+});
+
+test('with the switch off, search chips, This PC, Home and a drag play nothing and leave no ghost', async () => {
+  const { app, page, errors } = await launchApp();
+  try {
+    await page.waitForFunction(() => Array.isArray(window.__fpDrives) && window.__fpDrives.length > 0);
+    const seen = await page.evaluate(async () => {
+      const out = [];
+      const look = () => out.push(document.getAnimations().length + document.querySelectorAll('.fp-search-chip--ghost, .fp-row--ghost').length);
+      await loadDirectory(THISPC); look();
+      await refreshThisPc(); look();
+      focusSearchInput();
+      searchState.chips = [{ key: 'tag', value: 'work', label: 'work' }];
+      renderSearchChips(); look();
+      searchState.chips = [];
+      renderSearchChips(); look();
+      switchScreen('home'); look();
+      document.querySelector('#home-tabs [data-tab="favorites"]').click(); look();
+      await loadFavorites(); look();
+      document.querySelector('#home-tabs [data-tab="recent"]').click(); look();
+      return out;
+    });
+    expect(seen).toEqual(new Array(seen.length).fill(0));
+    await page.keyboard.press('Escape');
+  } finally {
+    await app.close();
+  }
+  expect(errors).toEqual([]);
+});
+
+test('breadcrumb: the overflow fade grows in when the path starts to overflow (and is simply there with motion off)', async () => {
+  for (const motion of [true, false]) {
+    const { app, page, errors } = await launchApp({ motion });
+    try {
+      const root = (await apiGet('/fs/list/root')).path;
+      const deep = ['Client-Projects', 'Northwind-Archive', 'Quarterly-Reports', 'Finance-Review',
+        'Year-End-Closing', 'Supporting-Files', 'Scanned-Receipts', 'Final-Approved'].reduce((p, n) => `${p}\\${n}`, `${root}\\Deep`);
+      // From This PC (one short crumb): the path is not overflowing.
+      await openFolder(page, 'thispc:');
+      await expect.poll(() => page.evaluate(() => document.querySelector('.fp-breadcrumb-wrap').classList.contains('is-overflowing'))).toBe(false);
+      await page.evaluate(() => {
+        const wrap = document.querySelector('.fp-breadcrumb-wrap');
+        window.__fpCrumbSeen = null;
+        new MutationObserver((_, mo) => {
+          if (!wrap.classList.contains('is-overflowing')) return;
+          mo.disconnect();
+          window.__fpCrumbSeen = {
+            anims: wrap.getAnimations().map((a) => [a.animationName, a.effect.getComputedTiming().duration]),
+            fade: getComputedStyle(wrap).getPropertyValue('--crumb-fade').trim(),
+          };
+        }).observe(wrap, { attributes: true, attributeFilter: ['class'] });
+        return wrap.classList.contains('is-overflowing');
+      });
+      await openFolder(page, deep);
+      await expect.poll(() => page.evaluate(() => window.__fpCrumbSeen)).not.toBeNull();
+      const r = await page.evaluate(() => window.__fpCrumbSeen);
+      expect(r.anims).toEqual(motion ? [['fp-crumb-fade-in', 100]] : []);
+      if (!motion) expect(r.fade).toBe('24px');
+    } finally {
+      await app.close();
+    }
+    expect(errors).toEqual([]);
+  }
 });

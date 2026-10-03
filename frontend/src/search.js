@@ -246,6 +246,7 @@ function removeChip(i) {
 function renderSearchChips() {
   const host = document.getElementById('search-chips');
   if (!host) return;
+  const before = searchChipsBefore(host);
   host.innerHTML = searchState.chips.map((chip, i) => `
     <button type="button" class="fp-chip fp-search-chip" data-action="search-remove-chip"
             data-chip-index="${i}" title="Remove filter ${escapeHtml(chip.key)}: ${escapeHtml(chip.label)}">
@@ -258,6 +259,57 @@ function renderSearchChips() {
   resizeSearchInput();
   // Chips widen the bar's content: the toolbar re-lays out (app.js, §6.2).
   if (typeof layoutToolbar === 'function') layoutToolbar();
+  searchChipsMotion(host, before);
+}
+
+// ── Chip motion (Stage 2D addendum §5.2 Search) ──────────────────────────────
+// Chips pop in (scale 0.9 → 1, fade) and out. The chips themselves are
+// already final (state, DOM, the toolbar's layout); a chip that left plays
+// out as a ghost in #search-wrap — out of #search-chips, so no count or
+// width the toolbar measures ever sees it; inert, aria-hidden, no action.
+const searchChipId = (c) => `${c.key}\u0001${c.value}`;
+
+/** The chips on screen before a re-render, with where they were. */
+function searchChipsBefore(host) {
+  const ids = host._fpChipIds || [];
+  const on = typeof listMotionOn === 'function' && listMotionOn();
+  return [...host.children].map((el, i) => ({ id: ids[i], el, rect: on ? el.getBoundingClientRect() : null }));
+}
+
+function searchChipsMotion(host, before) {
+  const ids = searchState.chips.map(searchChipId);
+  host._fpChipIds = ids;
+  if (typeof listMotionOn !== 'function' || !listMotionOn()) return;
+  const had = new Map(before.map(b => [b.id, b]));
+  [...host.children].forEach((el, i) => {
+    const was = had.get(ids[i]);
+    if (!was) {
+      fpAnimate(el, [{ opacity: 0, transform: 'scale(.9)' }, { opacity: 1, transform: 'none' }], { duration: 'fast', key: 'enter' });
+      return;
+    }
+    // A chip that stays slides from where it was into the gap a removed or
+    // replaced one left.
+    const dx = was.rect ? was.rect.left - el.getBoundingClientRect().left : 0;
+    if (Math.abs(dx) >= 0.5) fpAnimate(el, [{ transform: `translateX(${dx}px)` }, { transform: 'none' }], { duration: 'fast', key: 'enter' });
+  });
+  const wrap = document.getElementById('search-wrap');
+  if (!wrap) return;
+  const now = new Set(ids);
+  const gone = before.filter(b => !now.has(b.id) && b.rect && b.rect.width);
+  if (!gone.length) return;
+  const box = wrap.getBoundingClientRect();
+  for (const { el, rect } of gone) {
+    for (const a of ['data-action', 'data-chip-index', 'title', 'type']) el.removeAttribute(a);
+    el.setAttribute('aria-hidden', 'true');
+    el.tabIndex = -1;
+    el.style.left = `${rect.left - box.left - wrap.clientLeft}px`;
+    el.style.top = `${rect.top - box.top - wrap.clientTop}px`;
+    el.style.width = `${rect.width}px`;
+    wrap.appendChild(el);
+    fpCancelAnimation(el, 'enter');
+    fpPlayExit(el, [{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'scale(.9)' }],
+      { cls: 'fp-search-chip--ghost', duration: 'fast', easing: 'in', done: () => el.remove() });
+  }
 }
 
 /** .fp-search--has-content shows the in-bar clear × while the bar holds text
