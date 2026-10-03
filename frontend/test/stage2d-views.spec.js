@@ -387,8 +387,19 @@ test('scroll anchoring: the item under the pointer keeps its place across a Ctrl
     await open(page, `${root}\\Bulk`, 100);
     await page.evaluate(() => setView('icons', 64, { manual: false }));
     await page.evaluate(() => { document.getElementById('list-scroll').scrollTop = 600; });
-    const lb = await page.locator('#list-scroll').boundingBox();
-    const px = lb.x + lb.width / 2, py = lb.y + lb.height / 2;
+    // The tile nearest the list's middle, pointed at its own centre (the
+    // middle itself can fall in the gap between two tiles).
+    const [px, py] = await page.evaluate(() => {
+      const lb = document.getElementById('list-scroll').getBoundingClientRect();
+      const cx = lb.left + lb.width / 2, cy = lb.top + lb.height / 2;
+      let best = null, bestD = Infinity;
+      for (const row of document.querySelectorAll('#list-scroll .fp-row[data-path]')) {
+        const r = row.getBoundingClientRect();
+        const d = Math.hypot(r.left + r.width / 2 - cx, r.top + r.height / 2 - cy);
+        if (d < bestD) { bestD = d; best = [r.left + r.width / 2, r.top + r.height / 2]; }
+      }
+      return best || [cx, cy];
+    });
     const under = await page.evaluate(([x, y]) => {
       const row = document.elementFromPoint(x, y)?.closest('.fp-row[data-path]');
       return row ? { path: row.dataset.path, top: row.getBoundingClientRect().top } : null;

@@ -101,12 +101,12 @@ async function resetZoom(app) {
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.setZoomFactor(1)).catch(() => {});
 }
 
-/** Text that clips in the toolbar, the tab strip, the sidebar and the
+/** Text that clips in the toolbar, the header bar, the sidebar and the
  * inspector's action row (a fixed-width panel whose buttons grow): wider or
  * taller than its box without an ellipsis. */
 const chromeClips = (page) => page.evaluate(() => {
   const out = [];
-  for (const root of document.querySelectorAll('.fp-toolbar, .fp-tabbar, #sidebar, .inspector__actions')) {
+  for (const root of document.querySelectorAll('.fp-toolbar, .fp-header, #sidebar, .inspector__actions')) {
     for (const el of root.querySelectorAll('*')) {
       const hasText = [...el.childNodes].some((n) => n.nodeType === 3 && n.textContent.trim());
       if (!hasText || !el.getClientRects().length) continue;

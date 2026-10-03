@@ -189,8 +189,31 @@ function rowByName(page, name) {
   });
 }
 
+/** Pins `paths` as sidebar folders (POST /pins, as the app's own Pin does)
+ * and re-renders the sidebar; resolves to an async undo that unpins them.
+ * For tests that need the sidebar to overflow: since the one-row header bar
+ * (addendum §1) a 500 px window (its minimum height) no longer makes the
+ * default sidebar scroll. */
+async function pinFolders(page, paths) {
+  const ids = [];
+  for (const p of paths) {
+    const r = await fetch(`${API}/pins`, {
+      method: 'POST', headers: apiHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ path: p, label: p.split(/[\\/]/).pop() }),
+    });
+    if (!r.ok) throw new Error(`POST /pins -> ${r.status}`);
+    const pin = await r.json();
+    if (pin && pin.id != null) ids.push(pin.id);
+  }
+  await page.evaluate(() => loadPins());
+  return async () => {
+    for (const id of ids) await fetch(`${API}/pins/${id}`, { method: 'DELETE', headers: apiHeaders() }).catch(() => {});
+    await page.evaluate(() => loadPins()).catch(() => {});
+  };
+}
+
 function expectNoErrors(errors) {
   expect(errors, errors.join('\n')).toEqual([]);
 }
 
-module.exports = { FRONTEND, REPO, SHOTS, API, apiHeaders, apiGet, launchApp, waitReady, resetToDefaults, shot, rowByName, expectNoErrors };
+module.exports = { FRONTEND, REPO, SHOTS, API, apiHeaders, apiGet, launchApp, waitReady, resetToDefaults, shot, rowByName, expectNoErrors, pinFolders };

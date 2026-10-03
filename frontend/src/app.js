@@ -961,6 +961,16 @@ function setSidebarCollapsed(collapsed) {
     setSidebarWidthVar(savedSidebarWidth());
   }
   localStorage.setItem('fp-sidebar-collapsed', collapsed ? 'on' : 'off');
+  // The header's identity card is as wide as the expanded sidebar, and keeps
+  // its natural width over the rail (addendum §1): styles.css's
+  // .fp-header--rail. The top-row toggle points the way it will move.
+  document.getElementById('header')?.classList.toggle('fp-header--rail', collapsed);
+  if (btnSidebarCollapse) {
+    const label = collapsed ? 'Expand sidebar' : 'Collapse sidebar';
+    btnSidebarCollapse.title = `${label} (Ctrl+B)`;
+    btnSidebarCollapse.setAttribute('aria-label', label);
+    btnSidebarCollapse.querySelector('use')?.setAttribute('href', collapsed ? '#fp-chevron-right' : '#fp-chevron-left');
+  }
   // The rail's This PC square has no visible label, so it gets a tooltip;
   // the expanded header shows "This PC" itself and needs none.
   const thisPcHead = document.querySelector('#sb-thispc .fp-sidebar__section-head');
@@ -1083,15 +1093,26 @@ function applySidebarWidthFromConfig() {
   if (sidebar && !sidebar.classList.contains('fp-sidebar--collapsed')) setSidebarWidthVar(w);
 }
 
-// ── Sidebar device name ───────────────────────────────────────────────────────
-// Editable label at the top of the sidebar — defaults to OS hostname, can be
-// renamed by double-clicking. The chosen name persists in localStorage.
+// ── Device name (the header bar's identity card, addendum §1) ─────────────────
+// Defaults to the OS hostname, renamed by double-clicking. The chosen name
+// persists in localStorage. It ellipsizes at --identity-name-max, so the
+// tooltip always carries the whole name.
+const DEVICE_NAME_HINT = 'Double-click to rename';
+
+/** Shows `name` as the device name, tooltip included (it does not save). */
+function setDeviceNameText(name) {
+  const el = document.getElementById('device-name');
+  if (!el) return;
+  el.textContent = name;
+  el.title = `${name}\n${DEVICE_NAME_HINT}`;
+}
+
 function initDeviceName() {
-  const el = document.getElementById('sb-device-name');
+  const el = document.getElementById('device-name');
   if (!el) return;
   const saved = localStorage.getItem('fp-device-name');
   const fallback = (window.electronAPI?.hostname?.() || 'My PC').trim() || 'My PC';
-  el.textContent = saved || fallback;
+  setDeviceNameText(saved || fallback);
 
   // The name as it stood when this edit began: Escape restores THIS, not the
   // name from app start, which threw away a rename made earlier in the
@@ -1112,8 +1133,10 @@ function initDeviceName() {
   function commit() {
     el.removeAttribute('contenteditable');
     const next = (el.textContent || '').trim().slice(0, 80) || fallback;
-    el.textContent = next;
+    setDeviceNameText(next);
     localStorage.setItem('fp-device-name', next);
+    // A long name was scrolled to its end while being typed: show its start.
+    el.scrollLeft = 0;
   }
 
   el.addEventListener('blur',    commit);
@@ -1398,11 +1421,11 @@ function openAskPopout() {
   const vw = window.innerWidth, vh = window.innerHeight;
   const edge = menuEdgePx();
   // Never over the status bar (Task 14 Q12): the popout fits between the
-  // title bar and the status bar, and scrolls inside itself when even that
+  // header bar and the status bar, and scrolls inside itself when even that
   // is too short (a 500 px window at 150 %).
   const status = document.querySelector('.fp-statusbar, #statusbar');
   const bottom = (status ? status.getBoundingClientRect().top : vh) - edge;
-  const top = Math.max(edge, document.querySelector('.fp-titlebar')?.getBoundingClientRect().bottom || edge);
+  const top = Math.max(edge, document.getElementById('header')?.getBoundingClientRect().bottom || edge);
   popout.style.maxHeight = `${Math.max(0, bottom - top)}px`;
   popout.style.left = `${Math.min(r.left, vw - popout.offsetWidth - edge)}px`;
   popout.style.top  = `${Math.max(top, Math.min(r.bottom + 6, bottom - popout.offsetHeight))}px`;
@@ -3155,7 +3178,7 @@ const IN_SCOPE_ACTIONS = new Set([
   // listed here purely so the data-action bubble to the global switch is a
   // silent no-op instead of a "not yet implemented" toast.
   'sort-by',
-  // Handled by their own listeners (the titlebar buttons by id, the Home
+  // Handled by their own listeners (the caption buttons by id, the Home
   // sub-tabs by initUnderlineTabs, the Settings theme segmented control by
   // its settings-set-theme buttons) — silent here, not a stub toast on every
   // click (pass 2 #186).
@@ -4223,7 +4246,7 @@ function initTabbarScroll() {
 }
 
 // ── Mouse presses on chrome keep keyboard focus (Explorer's model) ───────────
-// A click on a toolbar, tab-strip or sidebar control acts (its click handler
+// A click on a toolbar, header-bar or sidebar control acts (its click handler
 // runs as usual) but does not take keyboard focus from where it was — the
 // file list, usually — so the next Enter or arrow key still goes to the list
 // (Stage 2D Task 7). Done by handing focus straight back when a press
@@ -4231,7 +4254,7 @@ function initTabbarScroll() {
 // HTML5 drag sources, which a cancelled mousedown would never start. Text
 // fields (the search bar, an inline tab rename) take focus as normal. A
 // keyboard user who Tabs to a control still activates it with Enter/Space.
-const CHROME_FOCUS_REGIONS = '#toolbar, #tabbar, #sidebar';
+const CHROME_FOCUS_REGIONS = '#toolbar, #header, #sidebar';
 let _chromePressPrevFocus = undefined;
 function initChromeMouseFocus() {
   document.addEventListener('mousedown', e => {

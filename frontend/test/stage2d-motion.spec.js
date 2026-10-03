@@ -260,7 +260,7 @@ test('timers come from --timer-* tokens; the resize line waits for hover intent 
     const handle = page.locator('#sidebar-resize-handle');
     const hb = await handle.boundingBox();
     const t0 = await page.evaluate(() => performance.now());
-    // The handle's inner half (its outer half sits past the sidebar's clipped edge).
+    // The handle's inner half.
     await page.mouse.move(hb.x + 1, hb.y + hb.height / 2);
     // Not at once: the pointer has to rest there first.
     expect(await handle.evaluate((el) => [el.classList.contains('fp-sidebar__resize-handle--intent'),

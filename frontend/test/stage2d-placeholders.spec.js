@@ -200,7 +200,7 @@ test('every visible control on every screen reaches a real handler, never the st
 
     // [name, root selector the sweep looks inside, setup()]
     const contexts = [
-      ['chrome', '#titlebar, #sidebar, #tabbar, #toolbar, #statusbar', async () => {
+      ['chrome', '#header, #sidebar, #toolbar, #statusbar', async () => {
         await ensureFolder();
         await page.evaluate(() => {
           if (document.getElementById('sidebar').classList.contains('fp-sidebar--collapsed')) toggleSidebar();

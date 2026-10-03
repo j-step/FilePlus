@@ -15,7 +15,7 @@
 // opaque backing for the blur to work on".
 const path = require('path');
 const { test, expect } = require('@playwright/test');
-const { launchApp, apiGet, shot, rowByName, expectNoErrors, SHOTS } = require('./harness/app');
+const { launchApp, apiGet, shot, rowByName, expectNoErrors, SHOTS, pinFolders } = require('./harness/app');
 
 test.setTimeout(180_000);
 
@@ -55,7 +55,7 @@ async function probeScrim(page, scrimSel) {
     const points = {
       'sidebar label': centre(label),
       'sidebar section label': centre(document.querySelector('#sidebar .fp-sidebar__section-label')),
-      'title bar': centre(document.querySelector('#titlebar .fp-titlebar__brand-name')) || centre(document.getElementById('titlebar')),
+      'header bar (device name)': centre(document.getElementById('device-name')),
       'tab bar': centre(document.querySelector('#tabbar .fp-tab')) || centre(document.getElementById('tabbar')),
       'overlay scrollbar thumb': centre(visibleThumb),
       'status bar': centre(document.getElementById('statusbar')),
@@ -99,6 +99,7 @@ async function probeScrim(page, scrimSel) {
 
 test('§3: every scrimmed surface covers the whole window above every layer and blurs it evenly, Mica on', async () => {
   const { app, page, errors } = await launchApp();
+  let unpin = async () => {};
   try {
     const root = (await apiGet('/fs/list/root')).path;
     // A folder long enough to scroll, so the list has an overlay thumb.
@@ -113,8 +114,11 @@ test('§3: every scrimmed surface covers the whole window above every layer and 
       document.documentElement.dataset.mica = 'on';
       return localStorage.getItem('fp-theme') || 'system';
     });
-    // A short window, so the sidebar overflows and lays out its overlay
-    // thumb (elementFromPoint ignores the thumb's fade, not its layout).
+    // A short window and four pinned folders, so the sidebar overflows and
+    // lays out its overlay thumb (elementFromPoint ignores the thumb's fade,
+    // not its layout). The pins: since the one-row header bar (addendum §1)
+    // the default sidebar fits even the 500 px minimum height.
+    unpin = await pinFolders(page, ['Bulk', 'Views', '_gen', '_gen\\Documents'].map((n) => `${root}\\${n}`));
     const sizeWas = await app.evaluate(({ BrowserWindow }) => {
       const w = BrowserWindow.getAllWindows()[0];
       const was = w.getSize();
@@ -174,6 +178,7 @@ test('§3: every scrimmed surface covers the whole window above every layer and 
     await page.evaluate((t) => applyTheme(t), themeWas);
     await app.evaluate(({ BrowserWindow }, [w, h]) => BrowserWindow.getAllWindows()[0].setSize(w, h), sizeWas);
   } finally {
+    await unpin();
     await app.close();
   }
   expectNoErrors(errors);
@@ -273,6 +278,362 @@ test('§3: a right-click while a modal is open opens no menu and keeps the selec
     await expect(page.locator('#context-menu')).toBeVisible();
     await page.keyboard.press('Escape');
   } finally {
+    await app.close();
+  }
+  expectNoErrors(errors);
+});
+
+// ── §1 One header bar ────────────────────────────────────────────────────────
+// The identity card (big logo + device name), the tab strip, an empty drag
+// region and the Windows caption buttons share ONE top bar, 44 screen px tall
+// at any app zoom. The card is as wide as the sidebar while it is expanded
+// (the tabs start where the content pane starts) and keeps its natural width
+// over the collapsed rail — it never collapses. The sidebar's collapse toggle
+// moved into the sidebar's top row, beside Ask File+.
+
+/** Geometry of the header bar and everything that lives in it, in CSS px
+ * plus the real page zoom (screen px = CSS px × zoom). */
+const headerGeo = (page) => page.evaluate(() => {
+  const rect = (el) => {
+    if (!el) return null;
+    const r = el.getBoundingClientRect();
+    return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, width: r.width, height: r.height };
+  };
+  const header = document.getElementById('header');
+  const name = document.getElementById('device-name');
+  const region = (el) => { const cs = el && getComputedStyle(el); return cs ? (cs.webkitAppRegion || cs.getPropertyValue('-webkit-app-region')) : null; };
+  const drag = header && header.querySelector('.fp-header__drag');
+  return {
+    zoom: window.electronAPI.getZoom(),
+    win: { w: innerWidth, h: innerHeight },
+    header: rect(header),
+    headerBg: header && getComputedStyle(header).backgroundColor,
+    card: rect(document.getElementById('identity')),
+    cardInHeader: !!header?.contains(document.getElementById('identity')),
+    logo: rect(document.querySelector('#identity .fp-identity__logo')),
+    name: rect(name),
+    nameClipped: name ? name.scrollWidth > name.clientWidth + 1 : null,
+    nameEllipsis: name ? getComputedStyle(name).textOverflow : null,
+    nameTitle: name?.title,
+    tabbar: rect(document.getElementById('tabbar')),
+    tabbarInHeader: !!header?.contains(document.getElementById('tabbar')),
+    firstTab: rect(document.querySelector('#tabbar .fp-tab')),
+    newTab: rect(document.getElementById('btn-new-tab')),
+    drag: rect(drag),
+    dragRegion: region(drag),
+    noDrag: ['#device-name', '#tabbar .fp-tab', '#btn-new-tab', '#btn-minimize', '#btn-maximize', '#btn-close']
+      .map((s) => [s, region(document.querySelector(s))]),
+    caps: ['btn-minimize', 'btn-maximize', 'btn-close'].map((id) => rect(document.getElementById(id))),
+    capsInHeader: ['btn-minimize', 'btn-maximize', 'btn-close'].every((id) => header?.contains(document.getElementById(id))),
+    sidebar: rect(document.getElementById('sidebar')),
+    main: rect(document.getElementById('main')),
+    collapsed: document.getElementById('sidebar').classList.contains('fp-sidebar--collapsed'),
+    // Remnants of the old two-row chrome.
+    oldTitlebar: !!document.querySelector('#titlebar, .fp-titlebar, .fp-titlebar__brand'),
+    oldSidebarCard: !!document.querySelector('#sidebar .fp-sidebar__header, #sidebar #device-name, #sidebar .fp-sidebar__brand-mark, #btn-sidebar-expand'),
+  };
+});
+
+const near = (a, b, tol = 1) => Math.abs(a - b) <= tol;
+
+/** The whole window as the user sees it, at any zoom (page.screenshot crops
+ * a zoomed page to its CSS size), Mica flattened like shot() does. */
+async function windowShot(app, page, name) {
+  const mica = await page.evaluate(async () => {
+    const was = document.documentElement.dataset.mica || null;
+    delete document.documentElement.dataset.mica;
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    return was;
+  });
+  try {
+    const b64 = await app.evaluate(async ({ BrowserWindow }) =>
+      (await BrowserWindow.getAllWindows()[0].webContents.capturePage()).toPNG().toString('base64'));
+    require('fs').writeFileSync(path.join(SHOTS, `${name}.png`), Buffer.from(b64, 'base64'));
+  } finally {
+    await page.evaluate((m) => { if (m) document.documentElement.dataset.mica = m; }, mica);
+  }
+}
+
+/** The checks every layout (expanded, collapsed, zoomed, narrow) must pass. */
+function expectOneBar(g, ctx) {
+  const z = g.zoom;
+  expect(g.header, `${ctx}: #header exists`).toBeTruthy();
+  expect(g.oldTitlebar, `${ctx}: the old title bar is gone`).toBe(false);
+  expect(g.oldSidebarCard, `${ctx}: the sidebar card is gone`).toBe(false);
+  expect(g.header.top, `${ctx}: the bar is at the top`).toBe(0);
+  expect(near(g.header.width, g.win.w), `${ctx}: the bar spans the window`).toBe(true);
+  expect(near(g.header.height * z, 44, 1), `${ctx}: 44 screen px tall (got ${g.header.height * z})`).toBe(true);
+  expect(g.cardInHeader && g.tabbarInHeader && g.capsInHeader, `${ctx}: card, tabs and caption buttons all live in the bar`).toBe(true);
+  // One row: everything sits inside the bar's box.
+  for (const [what, r] of [['card', g.card], ['logo', g.logo], ['name', g.name], ['tab', g.firstTab], ['+', g.newTab]]) {
+    expect(r, `${ctx}: ${what} laid out`).toBeTruthy();
+    expect(r.width > 0 && r.top >= g.header.top - 0.5 && r.bottom <= g.header.bottom + 0.5,
+      `${ctx}: ${what} inside the bar (${JSON.stringify(r)})`).toBe(true);
+  }
+  // Left to right: card, tabs, drag region, caption buttons.
+  expect(g.tabbar.left, `${ctx}: tabs start after the card`).toBeGreaterThanOrEqual(g.card.right - 0.5);
+  expect(g.drag.left, `${ctx}: the drag region follows the tabs`).toBeGreaterThanOrEqual(g.tabbar.right - 0.5);
+  expect(g.drag.width * z, `${ctx}: the drag region always keeps room to grab`).toBeGreaterThanOrEqual(40);
+  expect(g.dragRegion, `${ctx}: empty bar space moves the window`).toBe('drag');
+  for (const [sel, region] of g.noDrag) expect(region, `${ctx}: ${sel} is no-drag`).toBe('no-drag');
+  // Windows 11 caption buttons: full bar height, ~46 screen px wide, flush right.
+  g.caps.forEach((r, i) => {
+    expect(near(r.height, g.header.height, 0.5), `${ctx}: caption ${i} is full bar height`).toBe(true);
+    expect(near(r.width * z, 46, 1), `${ctx}: caption ${i} is 46 screen px wide (got ${r.width * z})`).toBe(true);
+  });
+  expect(near(g.caps[2].right, g.win.w, 0.5), `${ctx}: close is flush with the right edge`).toBe(true);
+  expect(g.caps[0].left, `${ctx}: caption buttons follow the drag region`).toBeGreaterThanOrEqual(g.drag.right - 0.5);
+  // The name never clips vertically: its box stays inside the bar.
+  expect(g.name.bottom <= g.header.bottom + 0.5 && g.name.top >= g.header.top - 0.5, `${ctx}: the name fits the bar`).toBe(true);
+}
+
+/** Sets the device name the way a finished rename leaves it. */
+const setDeviceName = (page, name) => page.evaluate((n) => {
+  localStorage.setItem('fp-device-name', n);
+  setDeviceNameText(n);
+}, name);
+
+test('§1: one header bar — identity card, tabs, drag region and caption buttons on one row; the card tracks the sidebar', async () => {
+  const { app, page, errors } = await launchApp();
+  try {
+    await setDeviceName(page, "JJ's PC");
+    const themeWas = await page.evaluate(() => localStorage.getItem('fp-theme') || 'system');
+    await page.evaluate(() => {
+      applyTheme('dark');
+      if (document.getElementById('sidebar').classList.contains('fp-sidebar--collapsed')) toggleSidebar();
+    });
+    const root = (await apiGet('/fs/list/root')).path;
+    await page.evaluate((p) => openBrowserAt(p), `${root}\\Bulk`);
+    await settled(page);
+
+    // Expanded: the card region is exactly the sidebar's width, so the tabs
+    // begin where the content pane begins.
+    let g = await headerGeo(page);
+    expectOneBar(g, 'expanded');
+    expect(near(g.card.left, 0) && near(g.card.width, g.sidebar.width), `card = sidebar width (${g.card.width} vs ${g.sidebar.width})`).toBe(true);
+    expect(near(g.firstTab.left, g.main.left), 'the first tab starts at the content pane').toBe(true);
+    await windowShot(app, page, 'addendum-header-expanded-dark');
+
+    // It tracks a resized sidebar.
+    await page.evaluate(() => setSidebarWidthVar(320));
+    await frames(page);
+    g = await headerGeo(page);
+    expect(near(g.sidebar.width, 320) && near(g.card.width, 320), `card tracks a 320px sidebar (${g.card.width})`).toBe(true);
+    expect(near(g.firstTab.left, g.main.left)).toBe(true);
+    await page.evaluate(() => setSidebarWidthVar(savedSidebarWidth()));
+
+    // Collapsed: the card never collapses to the rail; it keeps its natural
+    // width (logo + whole name) and the tabs start after it.
+    await page.evaluate(() => toggleSidebar());
+    await frames(page);
+    g = await headerGeo(page);
+    expect(g.collapsed).toBe(true);
+    expectOneBar(g, 'collapsed');
+    expect(g.card.width, 'the card is wider than the rail').toBeGreaterThan(g.sidebar.width + 20);
+    expect(g.nameClipped, 'the whole name shows over the rail').toBe(false);
+    await windowShot(app, page, 'addendum-header-collapsed-dark');
+
+    // The collapse toggle sits above the rail icons, inside the sidebar.
+    const railToggle = await page.evaluate(() => {
+      const t = document.getElementById('btn-sidebar-collapse');
+      const a = document.getElementById('btn-ask-fileplus').getBoundingClientRect();
+      const r = t.getBoundingClientRect();
+      return { inSidebar: !!t.closest('#sidebar'), visible: r.width > 0, above: r.bottom <= a.top + 0.5,
+        title: t.title, href: t.querySelector('use')?.getAttribute('href') };
+    });
+    expect(railToggle).toEqual({ inSidebar: true, visible: true, above: true, title: 'Expand sidebar (Ctrl+B)', href: '#fp-chevron-right' });
+    await page.locator('#btn-sidebar-collapse').click();
+    await expect(page.locator('#sidebar')).not.toHaveClass(/fp-sidebar--collapsed/);
+
+    // Expanded: the toggle shares Ask File+'s row.
+    const rowToggle = await page.evaluate(() => {
+      const t = document.getElementById('btn-sidebar-collapse');
+      const tr = t.getBoundingClientRect();
+      const a = document.getElementById('btn-ask-fileplus').getBoundingClientRect();
+      return { sameRow: Math.abs((tr.top + tr.bottom) / 2 - (a.top + a.bottom) / 2) <= 1, after: tr.left >= a.right - 0.5,
+        title: t.title, href: t.querySelector('use')?.getAttribute('href') };
+    });
+    expect(rowToggle).toEqual({ sameRow: true, after: true, title: 'Collapse sidebar (Ctrl+B)', href: '#fp-chevron-left' });
+
+    // Mica: the bar is transparent over the material, like the sidebar.
+    await page.evaluate(() => { document.documentElement.dataset.mica = 'on'; });
+    expect((await headerGeo(page)).headerBg).toBe('rgba(0, 0, 0, 0)');
+    await page.evaluate(() => { delete document.documentElement.dataset.mica; });
+
+    // Light theme.
+    await page.evaluate(() => applyTheme('light'));
+    await windowShot(app, page, 'addendum-header-expanded-light');
+    await page.evaluate(() => toggleSidebar());
+    await windowShot(app, page, 'addendum-header-collapsed-light');
+    await page.evaluate(() => toggleSidebar());
+    await page.evaluate((t) => applyTheme(t), themeWas);
+
+    // Maximized: still one bar, close still flush right; the maximise button
+    // is now Restore.
+    const isMax = () => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isMaximized());
+    await page.locator('#btn-maximize').click();
+    await expect.poll(isMax).toBe(true);
+    await expect(page.locator('#btn-maximize')).toHaveAttribute('aria-label', 'Restore');
+    await page.waitForFunction(() => innerWidth > 1000);
+    await frames(page);
+    expectOneBar(await headerGeo(page), 'maximized');
+    await windowShot(app, page, 'addendum-header-maximized');
+    await page.locator('#btn-maximize').click();
+    await expect.poll(isMax).toBe(false);
+  } finally {
+    await page.evaluate(() => localStorage.removeItem('fp-device-name')).catch(() => {});
+    await app.close();
+  }
+  expectNoErrors(errors);
+});
+
+test('§1: a long device name ellipsizes at the cap with the full name in a tooltip; rename still works in the bar', async () => {
+  const { app, page, errors } = await launchApp();
+  try {
+    await page.evaluate(() => {
+      if (document.getElementById('sidebar').classList.contains('fp-sidebar--collapsed')) toggleSidebar();
+    });
+    const name = page.locator('#device-name');
+    await expect(name).toBeVisible();
+    const long = 'The Extremely Long Workstation Name Of JJ Upstairs';
+    await name.dblclick();
+    await page.keyboard.type(long);
+    await page.keyboard.press('Enter');
+    await expect(name).toHaveText(long);
+    expect(await page.evaluate(() => localStorage.getItem('fp-device-name'))).toBe(long);
+
+    let g = await headerGeo(page);
+    expectOneBar(g, 'long name, expanded');
+    expect(g.nameClipped && g.nameEllipsis === 'ellipsis', 'expanded: the name ellipsizes inside the sidebar-wide card').toBe(true);
+    expect(g.nameTitle).toContain(long);
+    await windowShot(app, page, 'addendum-header-long-name-expanded');
+
+    await page.evaluate(() => toggleSidebar());
+    await frames(page);
+    g = await headerGeo(page);
+    expectOneBar(g, 'long name, collapsed');
+    expect(g.name.width * g.zoom, 'the name caps at ~220 screen px').toBeLessThanOrEqual(221);
+    expect(g.name.width * g.zoom).toBeGreaterThan(200);
+    expect(g.nameClipped && g.nameEllipsis === 'ellipsis').toBe(true);
+    await windowShot(app, page, 'addendum-header-long-name-collapsed');
+
+    // Escape on a rename restores the current name.
+    await name.dblclick();
+    await page.keyboard.type('Scratch');
+    await page.keyboard.press('Escape');
+    await expect(name).toHaveText(long);
+
+    // A single mouse press on the card keeps keyboard focus where it was
+    // (the chrome mouse-focus model covers the bar).
+    await page.evaluate(() => toggleSidebar());
+    const root = (await apiGet('/fs/list/root')).path;
+    await page.evaluate((p) => openBrowserAt(p), `${root}\\Bulk`);
+    await settled(page);
+    await rowByName(page, 'bulk-002.txt').click();
+    const focused = () => page.evaluate(() => document.activeElement?.id || document.activeElement?.className);
+    const before = await focused();
+    await name.click();
+    expect(await focused()).toBe(before);
+    await page.evaluate(() => localStorage.removeItem('fp-device-name'));
+  } finally {
+    await app.close();
+  }
+  expectNoErrors(errors);
+});
+
+test('§1: at 800 px and at 150% zoom nothing in the bar clips; many tabs scroll under the fade; the sidebar handle is grabbable on both halves', async () => {
+  const { app, page, errors } = await launchApp();
+  try {
+    await setDeviceName(page, "JJ's PC");
+    await page.evaluate(() => {
+      if (document.getElementById('sidebar').classList.contains('fp-sidebar--collapsed')) toggleSidebar();
+    });
+    const sizeWas = await app.evaluate(({ BrowserWindow }) => {
+      const w = BrowserWindow.getAllWindows()[0];
+      const was = w.getSize();
+      w.setSize(800, 600);
+      return was;
+    });
+    await page.waitForFunction(() => innerWidth <= 800);
+    await frames(page);
+    expectOneBar(await headerGeo(page), '800px');
+    await windowShot(app, page, 'addendum-header-800');
+
+    // Many tabs: the strip scrolls with the fade; the caption buttons and a
+    // grab-able drag region stay put.
+    for (let i = 0; i < 9; i++) await page.locator('#btn-new-tab').click();
+    await frames(page);
+    let g = await headerGeo(page);
+    expectOneBar(g, '800px, 10 tabs');
+    const strip = await page.evaluate(() => {
+      const s = document.getElementById('tabbar');
+      const t = document.querySelector('.fp-tab--active').getBoundingClientRect();
+      const r = s.getBoundingClientRect();
+      return { scrolls: s.scrollWidth > s.clientWidth, activeInView: t.left >= r.left - 1 && t.right <= r.right + 1 };
+    });
+    expect(strip).toEqual({ scrolls: true, activeInView: true });
+    // Scrolled to the start, tabs are clipped off the right: the fade shows.
+    await page.evaluate(() => { document.getElementById('tabbar').scrollLeft = 0; });
+    await expect(page.locator('#tabbar')).toHaveClass(/fp-tabbar--overflow/);
+    await windowShot(app, page, 'addendum-header-800-many-tabs');
+
+    // 150% zoom: the bar stays 44 screen px, the caption buttons 46 screen
+    // px, nothing clips.
+    const zoomTo = async (z) => {
+      await app.evaluate(({ BrowserWindow }, f) => BrowserWindow.getAllWindows()[0].webContents.setZoomFactor(f), z);
+      await page.waitForFunction((f) => Math.abs(parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--app-zoom')) - f) < 0.001
+        && !window.__fpZoomBusy, z);
+      await frames(page);
+    };
+    await zoomTo(1.5);
+    g = await headerGeo(page);
+    expectOneBar(g, '800px @150%');
+    expect(near(g.card.width, g.sidebar.width), 'card = sidebar width @150%').toBe(true);
+    await windowShot(app, page, 'addendum-header-800-zoom-150');
+    await page.evaluate(() => toggleSidebar());
+    await frames(page);
+    expectOneBar(await headerGeo(page), '800px @150% collapsed');
+    await windowShot(app, page, 'addendum-header-800-zoom-150-collapsed');
+    await page.evaluate(() => toggleSidebar());
+    // The extreme zoom: still one bar, nothing spills out of it.
+    await zoomTo(2);
+    expectOneBar(await headerGeo(page), '800px @200%');
+    await zoomTo(1);
+    await app.evaluate(({ BrowserWindow }, [w, h]) => BrowserWindow.getAllWindows()[0].setSize(w, h), sizeWas);
+    await page.waitForFunction((w) => innerWidth > 800, sizeWas[0]);
+    await frames(page);
+
+    // The sidebar resize handle straddles the panel edge and BOTH halves take
+    // the pointer (its outer half used to be clipped by the sidebar).
+    const handle = await page.evaluate(() => {
+      const side = document.getElementById('sidebar').getBoundingClientRect();
+      const h = document.getElementById('sidebar-resize-handle').getBoundingClientRect();
+      const y = side.top + side.height / 2;
+      return { inner: document.elementFromPoint(side.right - 2, y)?.id, outer: document.elementFromPoint(side.right + 2, y)?.id,
+        straddles: h.left < side.right && h.right > side.right };
+    });
+    expect(handle).toEqual({ inner: 'sidebar-resize-handle', outer: 'sidebar-resize-handle', straddles: true });
+    // A drag that starts on the outer half resizes.
+    const sb = await page.locator('#sidebar').boundingBox();
+    await page.mouse.move(sb.x + sb.width + 2, sb.y + 200);
+    await page.mouse.down();
+    await page.mouse.move(sb.x + sb.width + 30, sb.y + 200, { steps: 4 });
+    await page.mouse.move(sb.x + sb.width + 40, sb.y + 200, { steps: 4 });
+    await page.mouse.up();
+    const w = await page.evaluate(() => document.getElementById('sidebar').getBoundingClientRect().width);
+    expect(near(w, sb.width + 38, 3), `dragged from the outer half (${sb.width} -> ${w})`).toBe(true);
+    // The card followed the drag.
+    const g2 = await headerGeo(page);
+    expect(near(g2.card.width, g2.sidebar.width)).toBe(true);
+  } finally {
+    // The drag saved ui.sidebar_w: put the default back (awaited, so the
+    // save lands before the app closes) — later specs size the toolbar off it.
+    await page.evaluate(async () => {
+      localStorage.removeItem('fp-device-name');
+      localStorage.removeItem('fp-sidebar-width');
+      setSidebarWidthVar(SIDEBAR_EXPANDED_DEFAULT);
+      await saveSetting('ui.sidebar_w', SIDEBAR_EXPANDED_DEFAULT);
+    }).catch(() => {});
     await app.close();
   }
   expectNoErrors(errors);

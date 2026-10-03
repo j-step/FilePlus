@@ -16,34 +16,76 @@
 <div class="app" id="app">
 
   <!-- ═══════════════════════════════════════════════════════════════════
-       A.1.1  TITLEBAR  (32px)
+       HEADER BAR (addendum §1): the window's one top bar, 44 screen px tall.
+       Left to right: the identity card (big logo + device name; as wide as
+       the expanded sidebar, its natural width over the collapsed rail —
+       it never collapses), the tab strip, an empty drag region (moves the
+       window; a double-click maximizes/restores, the OS's caption
+       behaviour) and the Windows caption buttons. Transparent over Mica.
   ════════════════════════════════════════════════════════════════════════ -->
-  <header class="fp-titlebar" id="titlebar">
-    <div class="fp-titlebar__brand">
-      <!-- 14×14 brand mark (amber gradient square with white + cross) -->
-      <svg class="fp-icon fp-brand fp-brand--14" aria-hidden="true"><use href="#fp-brand"></use></svg>
-      <span class="fp-titlebar__brand-name">FilePlus</span>
+  <header class="fp-header" id="header">
+
+    <div class="fp-identity" id="identity">
+      <svg class="fp-icon fp-identity__logo" aria-hidden="true"><use href="#fp-brand-badge"></use></svg>
+      <!-- Editable device name: double-click to rename (persists to
+           localStorage); the tooltip carries the full name, which
+           ellipsizes at --identity-name-max. -->
+      <div class="fp-identity__name" id="device-name"
+           title="Double-click to rename" tabindex="0">My PC</div>
     </div>
-    <!-- drag region fills center -->
-    <div style="flex:1;height:100%;-webkit-app-region:drag"></div>
-    <!-- window controls -->
-    <div class="fp-titlebar__controls" style="-webkit-app-region:no-drag">
-      <button class="fp-titlebar__btn" id="btn-minimize" data-action="window-minimize" aria-label="Minimize">
-        <svg class="fp-icon fp-icon--12" aria-hidden="true"><use href="#fp-window-minimize"></use></svg>
+
+    <!-- The tab strip. Each tab's real state (screen, path, history,
+         selection, scroll…) lives in app.js's `tabs.list` records, not on
+         this markup — this seed element is registered into that model at
+         boot by seedInitialTab(); every other tab is built by createTab().
+         The strip is as wide as its tabs (it scrolls under a fade once they
+         overflow); the drag region after it takes the rest of the bar. -->
+    <div class="fp-tabbar" id="tabbar" role="tablist">
+      <!-- Initial Home tab (active by default).
+           NOTE: the close affordance is a <span role="button">, NOT a nested
+           <button> — nesting buttons is invalid HTML and Chromium silently
+           splits the inner one out as a sibling. The tab itself is a <div>
+           (not a <button>) for the same reason: it hosts the close span as
+           a real descendant with no nested-interactive-content trouble. -->
+      <!-- tabindex="0": the active tab is the strip's single tab stop
+           (roving tabindex — activateTab() moves the 0 with aria-selected,
+           and the strip's Arrow/Home/End keys walk from there). -->
+      <div class="fp-tab fp-tab--active" role="tab" aria-selected="true" tabindex="0"
+           data-tab-id="tab-1" data-action="switch-tab"
+           title="Home" draggable="true">
+        <svg class="fp-icon fp-icon--14" aria-hidden="true"><use href="#fp-home"></use></svg>
+        <span class="fp-tab__label">Home</span>
+        <span class="fp-tab__close" role="button" data-action="close-tab" title="Close tab" tabindex="-1" aria-label="Close tab">
+          <svg class="fp-icon fp-icon--10" aria-hidden="true"><use href="#fp-close"></use></svg>
+        </span>
+      </div>
+      <!-- New tab button: the plain "+" in a 28px ghost square, centred
+           with the tabs (Stage 2D §6.1; .fp-tab-new in styles.css) -->
+      <button class="fp-icon-btn fp-tab-new" id="btn-new-tab" data-action="new-tab" title="New tab (Ctrl+T)" aria-label="New tab">
+        <svg class="fp-icon fp-icon--16" aria-hidden="true"><use href="#fp-add"></use></svg>
       </button>
-      <button class="fp-titlebar__btn" id="btn-maximize" data-action="window-maximize" aria-label="Maximize">
-        <svg class="fp-icon fp-icon--12" aria-hidden="true"><use href="#fp-window-maximize"></use></svg>
+    </div>
+
+    <div class="fp-header__drag" aria-hidden="true"></div>
+
+    <!-- Windows 11 caption buttons: full bar height, 46 screen px wide;
+         close turns red on hover. Custom buttons, not titleBarOverlay — see
+         .fp-caption in styles.css for why. -->
+    <div class="fp-header__controls">
+      <button class="fp-caption" id="btn-minimize" data-action="window-minimize" aria-label="Minimize" title="Minimize">
+        <svg class="fp-icon" aria-hidden="true"><use href="#fp-window-minimize"></use></svg>
       </button>
-      <button class="fp-titlebar__btn fp-titlebar__btn--close" id="btn-close" data-action="window-close" aria-label="Close">
-        <svg class="fp-icon fp-icon--12" aria-hidden="true"><use href="#fp-close"></use></svg>
+      <button class="fp-caption" id="btn-maximize" data-action="window-maximize" aria-label="Maximize" title="Maximize">
+        <svg class="fp-icon" aria-hidden="true"><use href="#fp-window-maximize"></use></svg>
+      </button>
+      <button class="fp-caption fp-caption--close" id="btn-close" data-action="window-close" aria-label="Close" title="Close">
+        <svg class="fp-icon" aria-hidden="true"><use href="#fp-close"></use></svg>
       </button>
     </div>
   </header>
 
   <!-- ═══════════════════════════════════════════════════════════════════
-       SHELL: sidebar + main (fills remaining height)
-       Tab bar now lives INSIDE .main so it starts at the sidebar's right edge
-       rather than spanning the full window width above the sidebar.
+       SHELL: sidebar + main (fills the height between header and status bar)
   ════════════════════════════════════════════════════════════════════════ -->
   <div class="shell" id="shell">
 
@@ -53,37 +95,27 @@
     ════════════════════════════════════════════════════════════════════ -->
     <aside class="fp-sidebar" id="sidebar">
 
-      <!-- Sidebar header (88px — sized to span both the tab-bar row and the
-           original header height now that the tab bar lives inside .main) -->
-      <div class="fp-sidebar__header">
-        <!-- Brand mark — also acts as expand button in collapsed mode -->
-        <svg class="fp-icon fp-icon--36 fp-sidebar__brand-mark" aria-hidden="true"><use href="#fp-brand-badge"></use></svg>
-        <!-- Expand button — only visible in collapsed mode (collapsed uses icon-only layout) -->
-        <button class="fp-icon-btn fp-icon-btn--sm fp-sidebar__expand-btn" id="btn-sidebar-expand"
-                data-action="toggle-sidebar" title="Expand sidebar (Ctrl+B)" style="-webkit-app-region:no-drag">
-          <svg class="fp-icon fp-icon--14" aria-hidden="true"><use href="#fp-chevron-right"></use></svg>
+      <!-- Top row (addendum §1): Ask File+ and the collapse toggle side by
+           side; on the collapsed rail the toggle stacks above Ask File+.
+           Ask File+ (Task 15, design spec §9) is the AI entry point's
+           visible shell only; it opens #ask-popout, nothing is wired to a
+           model until Stage 3. Its label hides and the pill shrinks to an
+           icon-only square when collapsed (.fp-sidebar--collapsed .fp-ask).
+           setSidebarCollapsed() swaps the toggle's chevron and tooltip.
+           The toggle comes first in the markup (and the Tab order, as the
+           old card's collapse button did); expanded, CSS shows it after
+           Ask File+. -->
+      <div class="fp-sidebar__top">
+        <button class="fp-icon-btn fp-sidebar__toggle" id="btn-sidebar-collapse"
+                data-action="toggle-sidebar" title="Collapse sidebar (Ctrl+B)" aria-label="Collapse sidebar">
+          <svg class="fp-icon fp-icon--16" aria-hidden="true"><use href="#fp-chevron-left"></use></svg>
         </button>
-        <div class="fp-sidebar__brand">
-          <!-- Editable device name — double-click to rename, persists to localStorage. -->
-          <div class="fp-sidebar__brand-name" id="sb-device-name"
-               title="Double-click to rename" tabindex="0">My PC</div>
-        </div>
-        <button class="fp-icon-btn fp-icon-btn--sm" id="btn-sidebar-collapse"
-                data-action="toggle-sidebar" title="Collapse sidebar (Ctrl+B)" style="-webkit-app-region:no-drag">
-          <svg class="fp-icon fp-icon--14" aria-hidden="true"><use href="#fp-chevron-left"></use></svg>
+        <button class="fp-ask" id="btn-ask-fileplus" data-action="ask-open"
+                title="Ask File+ (Ctrl+J)">
+          <svg class="fp-icon fp-icon--16" aria-hidden="true"><use href="#fp-sparkle"></use></svg>
+          <span class="fp-ask__label">Ask File+</span>
         </button>
       </div>
-
-      <!-- Ask File+ (Task 15, design spec §9) — the AI entry point's visible
-           shell only; opens #ask-popout, nothing is wired to a model until
-           Stage 3. Single button for both sidebar states: the label hides
-           and the pill shrinks to an icon-only square when collapsed
-           (styles.css .fp-sidebar--collapsed .fp-ask), same as nav-home. -->
-      <button class="fp-ask" id="btn-ask-fileplus" data-action="ask-open"
-              title="Ask File+ (Ctrl+J)">
-        <svg class="fp-icon fp-icon--16" aria-hidden="true"><use href="#fp-sparkle"></use></svg>
-        <span class="fp-ask__label">Ask File+</span>
-      </button>
 
       <div class="fp-sidebar__scroll">
 
@@ -172,45 +204,9 @@
     </aside><!-- /.fp-sidebar -->
 
     <!-- ═══════════════════════════════════════════════════════════════
-         MAIN  (tabbar + toolbar + screens)
+         MAIN  (toolbar + screens; the tabs live in #header)
     ════════════════════════════════════════════════════════════════════ -->
     <div class="main" id="main">
-
-      <!-- ═════════════════════════════════════════════════════════
-           A.1.2  TAB BAR  (32px) — explorer-style tabs
-           Lives inside .main so its left edge snaps to the sidebar's
-           right edge. Each tab's real state (screen, path, history,
-           selection, scroll…) lives in app.js's `tabs.list` records, not on
-           this markup — this seed element is registered into that model at
-           boot by seedInitialTab(); every other tab is built by createTab().
-      ══════════════════════════════════════════════════════════════ -->
-      <div class="fp-tabbar" id="tabbar" role="tablist">
-        <!-- Initial Home tab (active by default).
-             NOTE: the close affordance is a <span role="button">, NOT a nested
-             <button> — nesting buttons is invalid HTML and Chromium silently
-             splits the inner one out as a sibling. The tab itself is a <div>
-             (not a <button>) for the same reason: it hosts the close span as
-             a real descendant with no nested-interactive-content trouble. -->
-        <!-- tabindex="0": the active tab is the strip's single tab stop
-             (roving tabindex — activateTab() moves the 0 with aria-selected,
-             and the strip's Arrow/Home/End keys walk from there). -->
-        <div class="fp-tab fp-tab--active" role="tab" aria-selected="true" tabindex="0"
-             data-tab-id="tab-1" data-action="switch-tab"
-             title="Home" draggable="true">
-          <svg class="fp-icon fp-icon--14" aria-hidden="true"><use href="#fp-home"></use></svg>
-          <span class="fp-tab__label">Home</span>
-          <span class="fp-tab__close" role="button" data-action="close-tab" title="Close tab" tabindex="-1" aria-label="Close tab">
-            <svg class="fp-icon fp-icon--10" aria-hidden="true"><use href="#fp-close"></use></svg>
-          </span>
-        </div>
-        <!-- New tab button: the plain "+" in a 28px ghost square, centred
-             with the tabs (Stage 2D §6.1; .fp-tab-new in styles.css) -->
-        <button class="fp-icon-btn fp-tab-new" id="btn-new-tab" data-action="new-tab" title="New tab (Ctrl+T)" aria-label="New tab">
-          <svg class="fp-icon fp-icon--16" aria-hidden="true"><use href="#fp-add"></use></svg>
-        </button>
-        <!-- spacer fills rest of row (also acts as window drag region) -->
-        <div style="flex:1;align-self:stretch;-webkit-app-region:drag"></div>
-      </div>
 
       <!-- ═════════════════════════════════════════════════════════
            A.1.4  TOOLBAR  (48px)

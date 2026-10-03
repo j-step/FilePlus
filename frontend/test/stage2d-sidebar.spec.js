@@ -12,7 +12,7 @@
 const fs = require('fs');
 const path = require('path');
 const { test, expect } = require('@playwright/test');
-const { launchApp, apiGet, SHOTS, rowByName } = require('./harness/app');
+const { launchApp, apiGet, SHOTS, rowByName, pinFolders } = require('./harness/app');
 
 test.setTimeout(240_000);
 
@@ -87,6 +87,7 @@ async function nativeBars(page, selector) {
 
 test('sidebar: 11px headers, hairline dividers, 28px items, overlay scrollbar with scroll cues, bigger rail icons', async () => {
   const { app, page, errors } = await launchApp();
+  let unpin = async () => {};
   try {
     await page.waitForFunction(() => document.querySelectorAll('#sb-drives .fp-sidebar__item').length > 0);
     const sc = page.locator('.fp-sidebar__scroll');
@@ -165,8 +166,10 @@ test('sidebar: 11px headers, hairline dividers, 28px items, overlay scrollbar wi
     expect(await page.locator('.fp-sidebar__drive-bar').first().evaluate((e) => e.getBoundingClientRect().height)).toBe(3);
 
     // ── Scrolling (§9.3): only the scroller scrolls, nothing is wider ───────
-    expect(await page.locator('#sidebar').evaluate((e) => getComputedStyle(e).overflowY)).toBe('hidden');
-    expect(await page.locator('#sidebar').evaluate((e) => getComputedStyle(e).overflowX)).toBe('hidden');
+    // overflow: clip (addendum §1) — stricter than hidden: not even a script
+    // or a focus can scroll the panel.
+    expect(await page.locator('#sidebar').evaluate((e) => getComputedStyle(e).overflowY)).toBe('clip');
+    expect(await page.locator('#sidebar').evaluate((e) => getComputedStyle(e).overflowX)).toBe('clip');
     expect(await sc.evaluate((e) => getComputedStyle(e).overflowX)).toBe('hidden');
     expect(await xOverflow(page, '.fp-sidebar')).toEqual([]);
     // A long drive / pin name ellipsizes instead of widening the panel.
@@ -187,6 +190,10 @@ test('sidebar: 11px headers, hairline dividers, 28px items, overlay scrollbar wi
     await windowShot(app, page, 'sidebar-expanded');
 
     // ── Overflow: a short window ────────────────────────────────────────────
+    // With four pinned folders: the default sidebar fits even a 500 px
+    // window since the one-row header bar (addendum §1).
+    const fixRoot = (await apiGet('/fs/list/root')).path;
+    unpin = await pinFolders(page, ['Bulk', 'Views', '_gen', '_gen\\Documents'].map((n) => `${fixRoot}\\${n}`));
     await setSize(app, page, 1100, 420); // clamped to the 500 px minHeight
     expect(await sc.evaluate((e) => e.scrollHeight > e.clientHeight)).toBe(true);
     await expect(page.locator('.fp-sidebar .fp-oscroll')).not.toHaveClass(/is-none/);
@@ -198,7 +205,7 @@ test('sidebar: 11px headers, hairline dividers, 28px items, overlay scrollbar wi
     expect(maskBottom).toMatch(/20px/);
 
     // The track hugs the panel's right edge, over the content, under the
-    // resize handle (which still wins its inner half — Task 6's known bug).
+    // resize handle (which takes both its halves — addendum §1).
     const geo = await page.evaluate(() => {
       const side = document.getElementById('sidebar').getBoundingClientRect();
       const track = document.querySelector('.fp-sidebar .fp-oscroll').getBoundingClientRect();
@@ -406,6 +413,7 @@ test('sidebar: 11px headers, hairline dividers, 28px items, overlay scrollbar wi
     // Expanded again: the This PC head's own icon is hidden.
     expect(await page.locator('#sb-thispc .fp-sidebar__section-icon').evaluate((e) => e.getClientRects().length)).toBe(0);
   } finally {
+    await unpin();
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.setZoomFactor(1)).catch(() => {});
     await page.evaluate(() => { if (document.getElementById('sidebar').classList.contains('fp-sidebar--collapsed')) toggleSidebar(); }).catch(() => {});
     await app.close();

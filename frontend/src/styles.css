@@ -262,7 +262,19 @@
   --drive-col-free:  200px;
 
   /* ---------- Component dimensions (unchanged) ---------- */
-  --h-titlebar:     32px;
+  /* The header bar (addendum §1): one top row for the identity card, the
+     tabs and the caption buttons. These are SCREEN px, like the panels:
+     each is divided by --app-zoom where it is used (the --*-css values
+     below), so the bar keeps its size on screen at any app zoom while its
+     text and icons grow with the rest of the chrome. */
+  --h-header:          44px;  /* the bar's height */
+  --w-caption:         46px;  /* a Windows caption button's width */
+  --header-drag-min:   46px;  /* empty bar always left to grab the window by */
+  --identity-name-max: 220px; /* the device name ellipsizes past this */
+  --identity-logo:     28px;  /* the card's logo (CSS px; capped to fit the bar) */
+  --caption-glyph:     10px;  /* the caption buttons' glyphs (CSS px) */
+  --caption-close-bg:  #C42B1C; /* Windows' close-button red (both themes) */
+  --caption-close-fg:  #FFFFFF;
   --h-toolbar:      48px;
   --h-statusbar:    24px;
   --h-button:       28px;
@@ -301,6 +313,19 @@
                          max(calc(var(--sidebar-w-floor) / var(--app-zoom)),
                              calc(100vw - (var(--file-area-min) + var(--w-inspector-min) * var(--inspector-open)) / var(--app-zoom))));
   --rail-w-css:      calc(var(--w-sidebar-collapsed) / var(--app-zoom));
+  /* The header bar in CSS px (its screen size over the zoom), and what
+     fits in it: a tab, the "+" and the logo never outgrow the bar at the
+     top zoom steps (200 % leaves it 22 CSS px tall). */
+  --h-header-css:    calc(var(--h-header) / var(--app-zoom));
+  --header-fit-h:    calc(var(--h-header-css) - 2px);
+  /* The sidebar resize handle straddles the panel's edge: this much on each
+     side of it, all of it taking the pointer (.fp-sidebar clips only past
+     the handle's outer half). */
+  --sidebar-handle-half: 3px;
+  /* …and how far it reaches past the panel's padding box: the half plus the
+     1px border. A plain length because Chromium drops a calc() with a var()
+     in it from overflow-clip-margin (it computes to 0). */
+  --sidebar-handle-reach: 4px;
 
   /* ---------- File-type family colours (Stage 2C Task 6) ----------
      One token per family in backend/filetypes.py (mirrored into
@@ -455,22 +480,22 @@ html, body {
 }
 
 /* Mica: on Windows 11 the OS paints the desktop-tinted material behind the window;
-   only the titlebar and sidebar let it through. Everything else stays solid.
-   Every ancestor between <body> and .fp-titlebar/.fp-sidebar must also go
+   only the header bar and sidebar let it through. Everything else stays solid.
+   Every ancestor between <body> and .fp-header/.fp-sidebar must also go
    transparent, or its own solid paint blocks the material — .app wraps the
-   titlebar directly; .app > .shell wraps the sidebar. Content-side siblings
-   (.main, .screens, .content, .list-pane, tab bar/toolbar/status bar,
+   header directly; .app > .shell wraps the sidebar. Content-side siblings
+   (.main, .screens, .content, .list-pane, toolbar/status bar,
    inspector) keep their own explicit solid backgrounds below so they never
    depend on these now-transparent ancestors. */
 html[data-mica="on"],
 html[data-mica="on"] body { background: transparent; }
 html[data-mica="on"] .app,
 html[data-mica="on"] .shell { background: transparent; }
-html[data-mica="on"] .fp-titlebar,
+html[data-mica="on"] .fp-header,
 html[data-mica="on"] .fp-sidebar { background: transparent; }
 /* While a modal scrim is up the window gets its solid chrome back (addendum
    §3). Chromium draws a backdrop-filter's blurred copy OVER the backdrop, so
-   where the backdrop is transparent (the Mica title bar and sidebar) the
+   where the backdrop is transparent (the Mica header bar and sidebar) the
    sharp text stayed visible through the blur. With an opaque root the blur
    has real paint everywhere and the whole window reads the same under the
    scrim. html[data-scrim-open] is set by fpSetScrim (browser.js), the one
@@ -538,79 +563,135 @@ svg { flex-shrink: 0; }
 }
 
 /* -----------------------------------------------------------------------------
-   5. WINDOW SHELL (Section 9)
+   5. HEADER BAR (addendum §1)
+   The window's one top bar: identity card | tab strip | drag region |
+   caption buttons. 44 screen px tall at any zoom (--h-header-css), on the
+   z-index scale's --z-header layer, transparent over Mica (section 2).
+   Empty bar space is the window's drag region (the bar itself and
+   .fp-header__drag); a double-click there maximizes/restores, which is the
+   OS's own caption behaviour for a drag region. Every control in it is
+   no-drag, or the OS would take its clicks for a window drag.
    ----------------------------------------------------------------------------- */
-.fp-window {
-  background: var(--bg-backdrop);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--r-window);
-  box-shadow: var(--shadow-window);
-  overflow: hidden;
-  display: grid;
-  grid-template-rows: var(--h-titlebar) 1fr var(--h-statusbar);
-}
-
-.fp-titlebar {
-  height: var(--h-titlebar);
-  background: var(--bg-chrome);
-  padding: 0 var(--s-12);
+.fp-header {
+  position: relative;
+  z-index: var(--z-header);
+  height: var(--h-header-css);
+  min-width: 0;
   display: flex;
-  align-items: center;
-  gap: var(--s-10);
+  align-items: stretch;
+  background: var(--bg-chrome);
   -webkit-app-region: drag;
   user-select: none;
 }
-.fp-titlebar__icon { width: 14px; height: 14px; }
-.fp-titlebar__title {
-  font: 500 var(--t-compact) var(--font-ui);
-  letter-spacing: var(--track-body);
-  color: var(--text-secondary);
-  flex: 1;
+
+/* Identity card: the big logo and the device name. As wide as the sidebar
+   while that is expanded (so the tabs begin where the content pane begins,
+   and follow a resize); over the collapsed rail it keeps its natural width
+   (.fp-header--rail, set by setSidebarCollapsed) and never collapses. The
+   logo sits centred over the rail's icons in both states. The card's empty
+   space and the logo stay a drag region; only the name is a control. */
+.fp-identity {
+  --identity-logo-fit: min(var(--identity-logo), calc(var(--h-header-css) - 6px));
+  flex: none;
+  width: var(--sidebar-w-css);
   min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--s-10);
+  padding: 0 var(--s-12) 0 max(0px, calc((var(--rail-w-css) - var(--identity-logo-fit)) / 2));
+  overflow: clip;
+  overflow-clip-margin: var(--s-4);  /* room for the name's edit chip */
+}
+.fp-header--rail .fp-identity { width: auto; }
+.fp-identity .fp-identity__logo {  /* beats .fp-icon's 1em */
+  width: var(--identity-logo-fit);
+  height: var(--identity-logo-fit);
+  flex: none;
+}
+/* The name: a single line that ellipsizes at --identity-name-max screen px
+   (or the card's width, whichever is less); the tooltip carries the whole
+   name. Double-click renames in place (initDeviceName, app.js). Its edit
+   chip pads sideways only, so the box never grows past the bar at 200 %. */
+.fp-identity__name {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: calc(var(--identity-name-max) / var(--app-zoom));
+  font: 600 16px/20px var(--font-ui);
+  letter-spacing: var(--track-body);
+  color: var(--text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  outline: none;
+  border-radius: var(--r-chip);
+  padding: 0 var(--s-4);
+  margin: 0 calc(-1 * var(--s-4));
+  -webkit-app-region: no-drag;
 }
-/* Controls extend to right edge — compensate for titlebar's 12px right padding */
-.fp-titlebar__controls { display: flex; -webkit-app-region: no-drag; margin-right: calc(-1 * var(--s-12)); }
+.fp-identity__name:focus,
+.fp-identity__name[contenteditable="plaintext-only"],
+.fp-identity__name[contenteditable="true"] {
+  background: var(--bg-raised);
+  cursor: text;
+}
 
-/* Defensive: ALL interactive elements inside titlebar/tabbar/sidebar must not be drag region */
-.fp-titlebar button,
-.fp-titlebar a,
-.fp-titlebar input,
-.fp-titlebar [role="button"],
-.fp-titlebar [data-action],
-.fp-tabbar button,
-.fp-tabbar a,
-.fp-tabbar [data-action],
+/* The empty rest of the bar. It never shrinks below --header-drag-min, so
+   a strip full of tabs scrolls instead of leaving nothing to grab. */
+.fp-header__drag {
+  flex: 1 0 calc(var(--header-drag-min) / var(--app-zoom));
+  -webkit-app-region: drag;
+}
+
+/* Caption buttons (Windows 11 metrics): full bar height, --w-caption screen
+   px wide, flush with the window's top-right corner; close turns Windows'
+   red on hover. These are page buttons, not Electron's titleBarOverlay:
+   the native overlay would sit above the page, so the modal scrim
+   (addendum §3) could neither blur nor block it, its colour could not stay
+   transparent over Mica with the theme's own hover fills, and it is not in
+   the page the tests and screenshots see. Windows 11 snap layouts stay one
+   key away (Win+Z) and on a drag to the screen's top edge. */
+.fp-header__controls {
+  flex: none;
+  display: flex;
+  -webkit-app-region: no-drag;
+}
+.fp-caption {
+  width: calc(var(--w-caption) / var(--app-zoom));
+  height: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  color: var(--text-secondary);
+  cursor: default;
+  -webkit-app-region: no-drag;
+  transition: background-color var(--motion-instant) var(--ease-standard),
+              color var(--motion-instant) var(--ease-standard);
+}
+.fp-caption svg { width: var(--caption-glyph); height: var(--caption-glyph); }
+.fp-caption:hover { background: var(--bg-raised); color: var(--text-primary); }
+.fp-caption:active { background: var(--bg-pressed); color: var(--text-primary); }
+.fp-caption--close:hover,
+.fp-caption--close:active { background: var(--caption-close-bg); color: var(--caption-close-fg); }
+/* Keyboard focus: drawn inside, the bar's edges would cut an outset ring. */
+.fp-caption:focus-visible { outline-offset: -2px; }
+
+/* Defensive: every interactive element in the header and the sidebar is
+   no-drag (the OS would otherwise swallow its clicks as a window drag). */
+.fp-header button,
+.fp-header a,
+.fp-header input,
+.fp-header [role="button"],
+.fp-header [role="tab"],
+.fp-header [data-action],
 .fp-sidebar button,
 .fp-sidebar a,
 .fp-sidebar input,
 .fp-sidebar [role="button"],
 .fp-sidebar [data-action] {
   -webkit-app-region: no-drag;
-}
-.fp-titlebar__btn {
-  width: 40px; height: 32px;
-  display: inline-flex; align-items: center; justify-content: center;
-  background: transparent;
-  border: none;
-  color: var(--text-secondary);
-  transition: background var(--motion-instant) var(--ease-standard),
-              color var(--motion-instant) var(--ease-standard),
-              transform var(--motion-instant) var(--ease-standard);
-  cursor: default;
-}
-.fp-titlebar__btn svg, .fp-titlebar__btn .icon { width: 12px; height: 12px; }
-.fp-titlebar__btn:hover { background: var(--bg-raised); color: var(--text-primary); }
-.fp-titlebar__btn:active { transform: translateY(1px); transition-duration: var(--motion-instant); }
-.fp-titlebar__btn--close:hover { background: color-mix(in srgb, #C42B1C 80%, transparent); color: #fff; }
-/* Close button flush with right corner — no border-radius on right side */
-.fp-titlebar__btn[data-action="window-close"],
-.fp-titlebar__btn:last-child {
-  margin-right: 0;
-  border-top-right-radius: 0;
-  border-bottom-right-radius: 0;
 }
 
 /* -----------------------------------------------------------------------------
@@ -619,32 +700,42 @@ svg { flex-shrink: 0; }
 /* The panel itself never scrolls (Stage 2D §9.3): only .fp-sidebar__scroll
    does, under the overlay scrollbar (overlayscroll.js), and nothing in it is
    wider than the panel. It has no side padding of its own so the scroller
-   (and its thumb) reach the panel's right edge; header, Ask File+ and the
-   bottom block each carry the --sidebar-pad-x inset instead. */
+   (and its thumb) reach the panel's right edge; the top row, Ask File+ and
+   the bottom block each carry the --sidebar-pad-x inset instead.
+   overflow: clip (not hidden: nothing can scroll it) with a clip margin just
+   wide enough for the resize handle's outer half, which straddles the edge
+   (addendum §1: that half used to be clipped away, so only the inner half
+   took the pointer). */
 .fp-sidebar {
   width: var(--sidebar-w-css);
   background: var(--bg-chrome);
   border-right: 1px solid var(--border-hairline);
   padding: var(--s-4) 0;
-  overflow: hidden;
+  overflow: clip;
+  overflow-clip-margin: var(--sidebar-handle-reach);
   display: flex;
   flex-direction: column;
   position: relative;
   transition: width var(--motion-slow) var(--ease-out);
-  /* Prevent text selection during drag */
+  /* A clip box is not a scroll container, so as a grid item it would grow
+     to its content's height (hidden got min-height 0 for free): pin both
+     minimums, so .fp-sidebar__scroll takes the overflow. */
   min-width: 0;
+  min-height: 0;
 }
 .fp-sidebar--dragging { transition: none; }
 .fp-sidebar--collapsed {
   /* DO NOT set --sidebar-w-screen here — setSidebarCollapsed() JS manages it via
      inline style on documentElement so dragging from collapsed state can override it. */
 }
+/* Centred on the panel's outer edge: --sidebar-handle-half inside, the same
+   outside (past the 1px border), every px of it grabbable. */
 .fp-sidebar__resize-handle {
   position: absolute;
   top: 0;
-  right: -3px;
+  right: calc(-1 * var(--sidebar-handle-reach));
   bottom: 0;
-  width: 6px;
+  width: calc(2 * var(--sidebar-handle-half));
   cursor: ew-resize;
   z-index: var(--z-sidebar-resize);
   background: transparent;
@@ -661,47 +752,28 @@ svg { flex-shrink: 0; }
 }
 .fp-sidebar--collapsed .fp-sidebar__resize-handle--intent:not(.fp-sidebar__resize-handle--active) { background: transparent; }
 
-.fp-sidebar__header {
-  /* 88px = original 56px + 32px reclaimed from the moved tab-bar row.
-     This puts the brand mark + device name vertically centered alongside
-     where the tab bar now lives in the right column. */
-  height: 88px;
-  padding: var(--s-12) var(--s-14);
-  margin: 0 var(--sidebar-pad-x);
+/* The sidebar's top row (addendum §1): Ask File+ and the collapse toggle
+   side by side; on the collapsed rail the toggle stacks above Ask File+'s
+   icon square. (The identity card that used to head the panel lives in the
+   header bar now.) */
+.fp-sidebar__top {
   flex-shrink: 0;
+  min-width: 0;
   display: flex;
   align-items: center;
-  gap: var(--s-10);
+  gap: var(--s-4);
+  margin: var(--s-6) var(--sidebar-pad-x) var(--s-4);
 }
-.fp-sidebar__brand-mark { width: 36px; height: 36px; flex-shrink: 0; }
-/* The name's wrapper: clipped (nothing can widen the panel), but with room
-   for the name's own -4px focus/edit background to paint. */
-.fp-sidebar__brand { flex: 1; min-width: 0; overflow: clip; overflow-clip-margin: var(--s-4); }
-.fp-sidebar__brand-name {
-  font: 600 17px var(--font-ui);
-  letter-spacing: var(--track-body);
-  color: var(--text-primary);
-  line-height: 22px;
-  /* Single line; truncate long device names with an ellipsis */
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  outline: none;
-  border-radius: var(--r-chip);
-  padding: 2px 4px;
-  margin: -2px -4px;
+.fp-sidebar__top .fp-ask { flex: 1 1 auto; margin: 0; }
+.fp-sidebar__toggle { flex: none; order: 1; }  /* after Ask File+ (it leads the markup) */
+.fp-sidebar--collapsed .fp-sidebar__top {
+  flex-direction: column;
+  align-self: stretch;
+  margin: var(--s-4) 0;
 }
-.fp-sidebar__brand-name:focus,
-.fp-sidebar__brand-name[contenteditable="true"] {
-  background: var(--bg-raised);
-  cursor: text;
-}
-.fp-sidebar__brand-sub {
-  font: 400 var(--t-small) var(--font-ui);
-  color: var(--text-tertiary);
-}
-.fp-sidebar__brand-sub .path,
-.fp-sidebar__brand-sub .mono { font-family: var(--font-data); }
+.fp-sidebar--collapsed .fp-sidebar__top .fp-ask { flex: none; margin: 0; }
+/* Above the rail's icons, its markup place; no wider than a rail square. */
+.fp-sidebar--collapsed .fp-sidebar__toggle { order: 0; max-width: calc(100% - 2 * var(--oscroll-hot)); }
 
 /* Section headers (Quick Access / This PC / Tags / System — Stage 2D §9.1):
    the shared --t-section type. Sections are separated by .fp-sidebar__divider
@@ -913,18 +985,6 @@ svg { flex-shrink: 0; }
 .fp-sidebar--collapsed .fp-sidebar__item > .icon,
 .fp-sidebar--collapsed .fp-sidebar__item > .fp-icon {
   width: var(--sidebar-rail-icon); height: var(--sidebar-rail-icon);
-}
-.fp-sidebar--collapsed .fp-sidebar__brand-mark { width: var(--sidebar-rail-icon); height: var(--sidebar-rail-icon); }
-/* Collapsed header: center brand + expand button vertically */
-.fp-sidebar--collapsed .fp-sidebar__header {
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: var(--s-6);
-  height: auto;
-  min-height: 56px;
-  margin: 0;
-  padding: var(--s-8) 0;
 }
 .fp-sidebar--collapsed .fp-sidebar__item--active::before,
 .fp-sidebar--collapsed .fp-sidebar__section-head--active::before {
@@ -3669,10 +3729,10 @@ body.is-dragging .fp-oscroll { pointer-events: none; }
    36. APP SHELL LAYOUT
    ============================================================================= */
 
-/* Root container fills the window */
+/* Root container fills the window: header bar | shell | status bar. */
 .app {
   display: grid;
-  grid-template-rows: var(--h-titlebar) 1fr var(--h-statusbar);
+  grid-template-rows: var(--h-header-css) 1fr var(--h-statusbar);
   height: 100vh;
   overflow: hidden;
   background: var(--bg-backdrop);
@@ -3734,7 +3794,7 @@ body.is-dragging .fp-oscroll { pointer-events: none; }
   flex-direction: column;
   min-width: 0;
   overflow: hidden;
-  /* Chrome-toned to match its siblings (tab bar/toolbar/status bar) now that
+  /* Chrome-toned to match its siblings (toolbar/status bar) now that
      .shell is transparent under Mica; .screens repaints bg-content on top
      for every screen, so this change is not visible. */
   background: var(--bg-chrome);
@@ -3843,38 +3903,6 @@ body.is-dragging .fp-oscroll { pointer-events: none; }
 
 /* .aq-btn removed (S24): purple-blue gradient violated amber-only accent rule — use .fp-button--primary */
 
-/* Window controls */
-.fp-wc {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: var(--h-titlebar);
-  background: transparent;
-  border: none;
-  color: var(--text-secondary);
-  cursor: pointer;
-  -webkit-app-region: no-drag;
-  transition: background var(--motion-fast) var(--ease-standard), color var(--motion-fast) var(--ease-standard);
-}
-.fp-wc:hover { background: var(--bg-raised); color: var(--text-primary); }
-.fp-wc:active { background: var(--bg-pressed); }
-.fp-wc--close:hover { background: color-mix(in srgb, #C42B1C 80%, transparent); color: #fff; }
-.fp-titlebar__drag-region { flex: 1; -webkit-app-region: drag; }
-
-/* Titlebar brand row — renamed from .fp-brand to avoid collision with brand-mark icon class (R3) */
-.fp-titlebar__brand {
-  display: flex;
-  align-items: center;
-  gap: var(--s-6);
-  -webkit-app-region: no-drag;
-  flex-shrink: 0;
-}
-.fp-titlebar__brand-name {
-  font: 500 var(--t-compact) var(--font-ui);
-  letter-spacing: var(--track-body);
-  color: var(--text-secondary);
-}
 /* .fp-brand__mark and .fp-brand__name kept for legacy compatibility in other contexts */
 .fp-brand__mark { flex-shrink: 0; }
 .fp-brand__name { font: 600 var(--t-body) var(--font-ui); color: var(--text-primary); }
@@ -4691,25 +4719,23 @@ body.is-dragging .fp-oscroll { pointer-events: none; }
    A.1 REFINEMENT PASS — new and updated layout classes
    ============================================================================= */
 
-/* App grid: titlebar | shell | statusbar.
-   Tab bar moved INSIDE .main (sibling of toolbar) so it starts at the
-   sidebar's right edge instead of spanning the full width above the sidebar. */
-.app {
-  grid-template-rows: var(--h-titlebar) 1fr var(--h-statusbar) !important;
-}
-
-/* ── Tab bar (A.1.2) ──────────────────────────────────────────────────────── */
+/* ── Tab strip (A.1.2; in the header bar since addendum §1) ─────────────────
+   As wide as its tabs, shrinking (then scrolling under the overflow fade)
+   once the bar runs out of room; the header's drag region takes the rest.
+   Its first tab starts at the card's right edge, which is the content
+   pane's left edge while the sidebar is expanded. The space above the tabs
+   stays a drag region; the tabs and the "+" are no-drag. */
 .fp-tabbar {
-  height: 32px;
-  background: var(--bg-chrome);
+  flex: 0 1 auto;
+  min-width: 0;
+  background: transparent;
   display: flex;
   align-items: flex-end;
-  padding: 0;                  /* flush left — first tab snaps to sidebar edge */
+  padding: 0;                  /* flush left — first tab snaps to the card's edge */
   gap: 0;                      /* tabs sit edge-to-edge; no gap before first tab */
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: none;
-  flex-shrink: 0;              /* don't compress when toolbar/screens grow */
   -webkit-app-region: drag;
   user-select: none;
 }
@@ -4721,6 +4747,8 @@ body.is-dragging .fp-oscroll { pointer-events: none; }
 .fp-tab-new {
   flex: none;
   align-self: flex-end;
+  width: min(28px, var(--header-fit-h));
+  height: min(28px, var(--header-fit-h));
   margin-left: 2px;
   -webkit-app-region: no-drag;
 }
@@ -4728,7 +4756,7 @@ body.is-dragging .fp-oscroll { pointer-events: none; }
 .fp-tab {
   -webkit-app-region: no-drag;
   position: relative;
-  height: 28px;
+  height: min(28px, var(--header-fit-h));  /* never taller than the bar */
   padding: 0 var(--s-8) 0 var(--s-10);
   border-radius: var(--r-button) var(--r-button) 0 0;
   /* Inactive tabs are visibly filled (not transparent) so the strip reads as
@@ -4749,8 +4777,8 @@ body.is-dragging .fp-oscroll { pointer-events: none; }
   white-space: nowrap;
   /* Uniform-shrink model: each tab targets 240px, but every tab shares the
      shrink uniformly when the row gets crowded, down to a 80px minimum. The
-     spacer at the end of the tabbar absorbs leftover width when tabs are at
-     their natural max, so a single tab does NOT stretch the full row. */
+     header's drag region after the strip absorbs leftover width when tabs
+     are at their natural max, so a single tab does NOT stretch the bar. */
   flex: 0 1 240px;
   min-width: 80px;
   max-width: 240px;
@@ -4848,12 +4876,7 @@ body.is-dragging .fp-oscroll { pointer-events: none; }
   color: currentColor;
   flex-shrink: 0;
 }
-/* Expand button — hidden in expanded mode, shown in collapsed */
-.fp-sidebar__expand-btn { display: none; }
-
 /* ── Collapsed state overrides (Stage 2D §9.2) ─────────────────────────── */
-.fp-sidebar--collapsed .fp-sidebar__brand-name,
-.fp-sidebar--collapsed .fp-sidebar__brand-sub,
 .fp-sidebar--collapsed .fp-sidebar__item__label,
 .fp-sidebar--collapsed .fp-sidebar__item__badge,
 .fp-sidebar--collapsed .fp-sidebar__drive-bar,
@@ -4936,10 +4959,6 @@ body.is-dragging .fp-oscroll { pointer-events: none; }
   background: var(--accent);
   opacity: 1;
 }
-
-/* Show expand button, hide collapse button in collapsed mode */
-.fp-sidebar--collapsed .fp-sidebar__expand-btn { display: inline-flex; }
-.fp-sidebar--collapsed #btn-sidebar-collapse { display: none; }
 
 /* Collapsed sidebar: center everything in the narrow 52px rail. The overlay
    thumb shrinks into the rail's gutter (the squares cap at the rail width
@@ -5145,7 +5164,7 @@ button.fp-pill:hover {
 /* Every modal surface (confirm / conflict modal, Properties, More filters, the
    command palette, the Tag Canvas) opens on one of these: a direct child of
    <body>, outside #app, so no stacking context in the app can lift anything
-   above it. It covers the whole window (title bar and its window controls
+   above it. It covers the whole window (the header bar and its caption buttons
    included: no-drag, so a click there reaches the scrim, not the OS). */
 .fp-scrim {
   position: fixed;

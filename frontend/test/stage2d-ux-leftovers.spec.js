@@ -94,7 +94,7 @@ test('#58 disabled buttons keep their tooltip and the not-allowed cursor', async
 test('#59 Escape on the device-name rename restores the CURRENT name', async () => {
   const { app, page, errors } = await launchApp();
   try {
-    const name = page.locator('#sb-device-name');
+    const name = page.locator('#device-name');
     await expect(name).toBeVisible();
     await name.dblclick();
     await page.keyboard.type('Workstation');
