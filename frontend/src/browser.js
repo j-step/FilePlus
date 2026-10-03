@@ -16,29 +16,65 @@
 // app.js's seedInitialTab() at boot.
 const nav = { history: [], index: -1 };
 
-// ── List/grid scale (Task 10) ────────────────────────────────────────────────
-// Ctrl+wheel over #list-scroll and the View menu's icon-size presets both
-// step/set this — it drives --list-scale on #list-scroll (see styles.css:
-// row height/icon/font in list & details view, tile/thumb size in grid).
-const LIST_SCALE_STEPS = [0.75, 0.875, 1, 1.125, 1.25, 1.5, 1.75, 2];
+// ── This PC (Stage 2D §8) ────────────────────────────────────────────────────
+// The path of the This PC page — a page of drive cards, not a folder. It is
+// what loadDirectory() is asked for by "This PC" (the sidebar header, the
+// breadcrumb root, Alt+Up at a drive root, a tab with no folder yet), and it
+// is a real location in every other respect: history, tab records, the tab
+// label. It never reaches the backend; thispc.js renders it from GET /drives.
+const THISPC = 'thispc:';
 
-// Per-path manual view override, this session only (Map, never persisted) —
-// set by setViewMode(mode, {manual: true}) (View menu items, the empty-area
-// menu's View → Details/Grid). Read by loadDirectory()'s dynamic-media-view
-// check (decideViewAndScale, below) so a folder the user has explicitly
-// switched away from its auto-decided view stays that way for the rest of
-// the session, even if its media share still qualifies it for the other view.
-const manualViewByPath = new Map();
+/** True when the active tab is showing the This PC page right now (not search
+ * results started from it). */
+function thisPcActive() {
+  return browserState.path === THISPC && browserState.mode !== 'search'
+    && typeof tabs !== 'undefined' && browserState.listingTabId === tabs.activeId;
+}
+
+// ── The view ladder (Stage 2D §3) ────────────────────────────────────────────
+// Explorer's eight views, smallest to largest, as one ladder Ctrl+wheel walks
+// a notch at a time: Content, Tiles, Details, List, Small icons, then icons
+// at every size from 48 to 256 (Medium = 48, Large = 96, Extra large = 256).
+// Only `icons` carries a size; the other five are fixed-size (only app zoom
+// makes them bigger). browserState.view/iconSize hold where the active tab
+// sits on it; setView() is the only writer.
+const VIEW_ICON_SIZES = [48, 56, 64, 72, 80, 96, 112, 128, 160, 192, 224, 256];
+const VIEW_LADDER = Object.freeze([
+  { view: 'content', size: null },
+  { view: 'tiles', size: null },
+  { view: 'details', size: null },
+  { view: 'list', size: null },
+  { view: 'small', size: null },
+  ...VIEW_ICON_SIZES.map(size => ({ view: 'icons', size })),
+].map(Object.freeze));
+const VIEW_NAMES = ['content', 'tiles', 'details', 'list', 'small', 'icons'];
+// What the View menu's three icon items set.
+const VIEW_NAMED_ICON_SIZES = { medium: 48, large: 96, xl: 256 };
+// The icon size of the five fixed views, in logical px (spec §3.2).
+const VIEW_FIXED_ICON_PX = { content: 32, tiles: 48, details: 16, list: 16, small: 16 };
+// An icon cell is the icon plus this much: s + 28 (spec §3.4).
+const VIEW_CELL_EXTRA = 28;
+// List / Small icons row height (styles.css --view-row-list).
+const VIEW_LIST_ROW_PX = 22;
+// List / Small icons column width: the longest name, clamped, plus the 16px
+// icon, the 8px gap, 2 x 6px padding and 2 x 1px border of a cell.
+const VIEW_COL_NAME_MIN = 160;
+const VIEW_COL_NAME_MAX = 360;
+const VIEW_COL_CHROME = 16 + 8 + 12 + 2;
+
+// Per-folder view memory (spec §3.1): {[normalised path]: {view, size, t}},
+// persisted as one settings key, the 500 most recently set paths.
+const FOLDER_VIEWS_KEY = 'ui.folder_views';
+const FOLDER_VIEWS_MAX = 500;
 
 // ── Browser state ─────────────────────────────────────────────────────────────
 // The last-loaded directory listing. `parent`/`isRoot` come straight from the
 // /fs/list response so navUp() and the up-button never need to re-derive a
 // parent by string-slicing the path. `showHidden` is seeded from
 // config['ui.show_hidden'] by app.js's init sequence, before the first load.
-// `sort`/`view`/`listScale` are re-applied from ui.sort/ui.view_mode/
-// ui.list_scale by settings.js's applySettingsFromConfig() once GET /config
-// has answered — the literal defaults below only cover the brief window
-// before that first resolves. `selection` is the set of absolute paths
+// `sort` is re-applied from ui.sort by settings.js's
+// applySettingsFromConfig() once GET /config has answered; the view is
+// decided per folder on every navigation (decideView). `selection` is the set of absolute paths
 // currently selected; `anchor` is the shift-range origin, `focus` is the
 // last row acted on (keyboard/click).
 const browserState = {
@@ -50,15 +86,12 @@ const browserState = {
   focus: null,
   showHidden: false,
   showExtensions: true,
-  // 'details' (the old 'list' — columns) | 'list' (name-only, single
-  // column) | 'grid' — mirrors #list-scroll[data-view], read by renderFsRow
-  // to pick row vs tile markup (a tile carries a thumbnail area a row has no
-  // place for). setViewMode() is the only writer, and re-renders the
-  // listing after changing it.
+  // One of VIEW_NAMES — mirrors #list-scroll[data-view], read by renderFsRow
+  // to pick each view's markup. setView() is the only writer.
   view: 'details',
-  // Current --list-scale value (a LIST_SCALE_STEPS member) applied to
-  // #list-scroll; setListScale() is the only writer.
-  listScale: 1,
+  // The icons view's size (a VIEW_ICON_SIZES member). Kept while another
+  // view is showing, so Ctrl+wheel back into icons lands where it left.
+  iconSize: 96,
   // 'browse' (a real /fs/list listing) | 'search' (a results listing from
   // search.js — see renderSearchResults). loadDirectory()'s dynamic-media-view
   // check never runs in 'search', so a results listing never has its own view
@@ -70,8 +103,8 @@ const browserState = {
   parent: null,
   isRoot: false,
   truncated: false,
-  // Last path passed to loadDirectory() (including null for the sandbox
-  // root) — whatever the load's outcome. Used by the error banner's "Retry"
+  // Last path passed to loadDirectory() (THISPC for the This PC page) —
+  // whatever the load's outcome. Used by the error banner's "Retry"
   // action so it can re-attempt the exact same load that just failed.
   lastAttemptedPath: null,
   // Set by refreshDirectory() when it is called from off the Browser screen
@@ -86,113 +119,497 @@ const browserState = {
   // bail out instead of painting stale data over whatever's current. See
   // loadDirectory()'s reqTabId/reqSeq guard.
   _loadSeq: 0,
+  // The latest navigation (loadDirectory): its _loadSeq and, while it loads,
+  // { seq, tabId, done } — refreshDirectory() waits for it (Task 14 M1).
+  _navSeq: 0,
+  _navInFlight: null,
+  // The tab whose listing browserState.path/entries (and #list-scroll) hold —
+  // set by every committed listing. A failed navigation may only fall back
+  // to "keep what is on screen" when what is on screen is this tab's own.
+  listingTabId: null,
+  // When browserState.entries was fetched (ms epoch) — carried into the tab
+  // record's cached listing (Stage 2D §4.2).
+  fetchedAt: 0,
+  // Bumped whenever browserState.entries is replaced by fresh data (a commit,
+  // a refresh patch, a search render) — selectAfterDelete's "has the listing
+  // been refreshed since?" test.
+  listingGen: 0,
+  // A Back/Forward whose fetch is still in flight: {seq, index}. nav.index
+  // only moves once the fetch succeeds (pass-2 #55), so a second Back pressed
+  // before the first lands steps on from here instead of repeating it.
+  _pendingHistory: null,
+  // The tab whose search results are on screen in 'search' mode.
+  searchTabId: null,
+  // exitSearchResults()'s load while it is in flight: {seq} (searchExitPending).
+  _pendingExit: null,
+  // patchDirectory() left a row being renamed out of sorted order.
+  _orderDirty: false,
 };
 
-// ── View modes ────────────────────────────────────────────────────────────────
-/**
- * Sets the active view + syncs every DOM surface that reflects it (list vs
- * grid layout, the column header's visibility, Home's Recent/Favorites
- * panes) and re-renders the listing (row and tile markup differ).
- *
- * `manual` (View menu items, the empty-area menu's View → Details/Grid,
- * Task 11's future callers) records the choice into manualViewByPath for the
- * CURRENT folder and persists it as the ui.view_mode default; an automatic
- * choice (loadDirectory()'s dynamic-media-view check, via decideViewAndScale)
- * does neither, so it never clobbers a default the user picked deliberately,
- * nor a future folder's own auto-decision.
- */
-function setViewMode(mode, { manual = false } = {}) {
-  const v = (mode === 'list' || mode === 'grid') ? mode : 'details';
-  browserState.view = v;
+// Test hooks (Stage 2D §11): renders of the listing, and directory fetches
+// still in flight. Read by the Electron tests, never by the app.
+window.__fpRenderCount = 0;
+window.__fpLoadPending = 0;
+
+// ── Views (Stage 2D §3) ──────────────────────────────────────────────────────
+
+/** The ladder size nearest `px` (ties go to the smaller one). */
+function snapIconSize(px) {
+  const n = Number(px);
+  if (!Number.isFinite(n)) return VIEW_NAMED_ICON_SIZES.large;
+  let best = VIEW_ICON_SIZES[0];
+  for (const s of VIEW_ICON_SIZES) if (Math.abs(s - n) < Math.abs(best - n)) best = s;
+  return best;
+}
+
+/** {view, size} with `view` one of VIEW_NAMES (anything else is Details) and
+ * `size` a ladder size for icons, null otherwise. */
+function normalizeView(view, size = null) {
+  const v = VIEW_NAMES.includes(view) ? view : 'details';
+  return { view: v, size: v === 'icons' ? snapIconSize(size ?? VIEW_NAMED_ICON_SIZES.large) : null };
+}
+
+/** Index of a view (and, for icons, size) on VIEW_LADDER. */
+function viewStepIndex(view, size = null) {
+  const n = normalizeView(view, size);
+  return VIEW_LADDER.findIndex(s => s.view === n.view && (n.view !== 'icons' || s.size === n.size));
+}
+
+/** Where the listing sits on VIEW_LADDER now. */
+function currentViewStep() {
+  return viewStepIndex(browserState.view, browserState.iconSize);
+}
+
+/** Which View-menu item names the current view: the view itself, or for
+ * icons the nearest named size (spec §3.1: < 80 Medium, < 192 Large, else
+ * Extra large). */
+function viewMenuKey() {
+  if (thisPcActive()) return thisPcLayout() === 'details' ? 'details' : 'tiles';
+  if (browserState.view !== 'icons') return browserState.view;
+  const s = browserState.iconSize;
+  return s < 80 ? 'medium' : (s < 192 ? 'large' : 'xl');
+}
+
+/** The listing's logical icon size in CSS px — what --icon-size on
+ * #list-scroll is set to: the size for icons, the fixed size of every other
+ * view (spec §3.2). Row markup asks icons.js for this size, so its
+ * synchronous cache lookup uses the same px bucket the lazy path would. */
+function fpListIconSize() {
+  return browserState.view === 'icons'
+    ? browserState.iconSize
+    : (VIEW_FIXED_ICON_PX[browserState.view] || 16);
+}
+
+/** Puts browserState's view on every DOM surface that reflects it: the
+ * listing's data-view and size variables, and the column header (Details
+ * only). Home's Recent/Favorites panes keep their own layout. */
+function applyViewDom() {
+  const v = browserState.view;
+  const px = fpListIconSize();
   const listScroll = document.getElementById('list-scroll');
-  const listHead   = document.getElementById('list-head');
   if (listScroll) {
-    // Suppress layout flicker by hiding briefly during the layout swap
-    listScroll.style.opacity = '0';
     listScroll.dataset.view = v;
-    // Only 'details' shows the column header — 'list' (name-only) and
-    // 'grid' both hide it (A.3.1's rule extended to the new name-only view).
-    if (listHead) listHead.classList.toggle('list-head--grid-hidden', v !== 'details');
-    // Restore opacity on next paint — batches DOM updates before repaint
-    requestAnimationFrame(() => {
-      listScroll.style.opacity = '';
-    });
+    // One synchronous update: every icon and thumbnail box is sized from
+    // these by CSS, so cells and icons change in the same frame (§3.5).
+    listScroll.style.setProperty('--icon-size', `${px}px`);
+    listScroll.style.setProperty('--cell-w', `${px + VIEW_CELL_EXTRA}px`);
   }
-  // Home — Recent and Favorites panes share the same view-mode toggle
-  document.querySelectorAll('.home-pane').forEach(pane => {
-    pane.dataset.view = v;
-  });
-  if (manual) {
-    if (browserState.path) manualViewByPath.set(browserState.path, v);
-    saveSetting('ui.view_mode', v);
-  }
-  // Rows and tiles are different markup (a tile has a 96px thumbnail area
-  // that requests a real shell thumbnail; a row has a 16px icon), so the
-  // listing has to be re-rendered rather than just re-styled.
-  if (browserState.entries && browserState.entries.length) renderDirectory();
+  const listHead = document.getElementById('list-head');
+  if (listHead) listHead.classList.toggle('list-head--grid-hidden', v !== 'details');
 }
 
 /**
- * Sets --list-scale on #list-scroll (list row height/icon/font, grid
- * tile/thumb size — see styles.css) and, by default, persists it as
- * ui.list_scale. loadDirectory()'s dynamic-media-view check passes
- * {persist: false} to apply a listing-scoped scale (the auto-grid default,
- * or just re-syncing the already-persisted value) without touching the
- * user's actual saved preference.
- */
-function setListScale(v, { persist = true } = {}) {
-  const scale = LIST_SCALE_STEPS.includes(v) ? v : 1;
-  browserState.listScale = scale;
-  const listScroll = document.getElementById('list-scroll');
-  if (listScroll) {
-    listScroll.style.setProperty('--list-scale', String(scale));
-    // Row/tile icons and thumbnails are sized in physical px from the CSS
-    // box (icon-design.md §2), so a --list-scale change makes the old
-    // bitmap the wrong size until it re-resolves. A timer, not rAF: an
-    // occluded window stops painting (icons.js:_fpQueueScan does the same).
-    if (typeof fpInvalidateLazyIcons === 'function') setTimeout(() => fpInvalidateLazyIcons(listScroll), 0);
-  }
-  if (persist) saveSetting('ui.list_scale', scale);
-}
-
-/** Steps --list-scale by one LIST_SCALE_STEPS entry in `direction` (+1/-1) —
- * Ctrl+wheel over #list-scroll (app.js). Persists like any other manual
- * scale change (setListScale's default). */
-function stepListScale(direction) {
-  const idx = LIST_SCALE_STEPS.indexOf(browserState.listScale);
-  const curIdx = idx === -1 ? LIST_SCALE_STEPS.indexOf(1) : idx;
-  const nextIdx = Math.max(0, Math.min(LIST_SCALE_STEPS.length - 1, curIdx + direction));
-  setListScale(LIST_SCALE_STEPS[nextIdx]);
-}
-
-/**
- * Dynamic media view (playtest pass 1, Task 10): decides the view + scale
- * for `path`'s freshly-fetched `entries`. Called by loadDirectory() after
- * every real navigation — never for a tab-switch restore, which reapplies
- * whatever that tab last showed instead (see loadDirectory()'s restore.view
- * handling), and never in a future search-results mode (browserState.mode).
+ * Sets the view (and, for icons, the size) and shows it.
  *
- * A manual override recorded for this exact path this session wins outright,
- * at the persisted scale. Otherwise, unless ui.dynamic_media_view is
- * explicitly false, a folder whose own non-hidden files are more than half
- * pictures/video opens in grid at scale 1 — not persisted, since this is a
- * per-listing default, not a change to the user's actual preference.
- * Anything else falls back to the persisted ui.view_mode/ui.list_scale.
+ * A change of view re-renders the listing once from the in-memory entries
+ * (each view has its own markup) — never a fetch. A size change inside the
+ * icons view does not re-render at all: the cells and icon boxes follow
+ * --icon-size / --cell-w in this very frame, and every bitmap re-resolves at
+ * its new px bucket after decode(), into the same box (spec §3.5, §4.3) — a
+ * re-render would rebuild every image at a bucket the cache may not have yet
+ * and blank it.
+ *
+ * Scroll anchoring: the row `anchorEl` sits in (the row under the pointer
+ * for Ctrl+wheel), else the first visible row, keeps its offset from the top
+ * of the list (from its left in List) across the change.
+ *
+ * `manual` (the View menu, the empty-area flyout, Ctrl+wheel) remembers the
+ * choice for this folder (ui.folder_views — at once, or with `debounceSave`
+ * once a Ctrl+wheel run stops) and for this tab; an automatic
+ * choice (a navigation deciding its view) does neither. `render: false` is
+ * for callers that render the listing themselves right afterwards (one
+ * render per navigation, §4.2).
  */
-function decideViewAndScale(path, entries) {
-  const cfg = window.__fpConfig || {};
-  const persistedScale = LIST_SCALE_STEPS.includes(cfg['ui.list_scale']) ? cfg['ui.list_scale'] : 1;
-  const defaultView = ['details', 'list', 'grid'].includes(cfg['ui.view_mode']) ? cfg['ui.view_mode'] : 'details';
-  const manualPicked = manualViewByPath.get(path);
-  if (manualPicked) return { view: manualPicked, scale: persistedScale };
-  if (cfg['ui.dynamic_media_view'] !== false) {
-    const files = entries.filter(e => !e.is_dir && !e.is_hidden);
-    const mediaShare = files.length
-      ? files.filter(e => typeof fpIsMedia === 'function' && fpIsMedia(e.ext)).length / files.length
-      : 0;
-    if (mediaShare > 0.5) return { view: 'grid', scale: 1 };
+function setView(view, size = null, { manual = false, anchorEl = null, render = true, debounceSave = false, animate = false } = {}) {
+  const want = normalizeView(view, view === 'icons' ? (size ?? browserState.iconSize) : null);
+  const prevView = browserState.view;
+  const changed = prevView !== want.view || (want.view === 'icons' && browserState.iconSize !== want.size);
+  const listScroll = document.getElementById('list-scroll');
+  const hasRows = !!(render && changed && listScroll && listScroll.querySelector(':scope > .fp-row[data-path]'));
+  const anchor = hasRows ? captureScrollAnchor(listScroll, anchorEl) : null;
+
+  browserState.view = want.view;
+  if (want.view === 'icons') browserState.iconSize = want.size;
+  applyViewDom();
+  if (manual) rememberViewChoice({ debounce: debounceSave });
+  if (!render || !changed) return;
+
+  if (prevView === want.view && hasRows) {
+    // icons → icons: CSS alone resizes; the sharper bitmaps swap in later.
+    listScroll.querySelectorAll(':scope > .fp-row .fp-tile__thumb [data-size]').forEach(el => {
+      if (!el.classList.contains('fp-thumb--mini')) el.dataset.size = String(want.size);
+    });
+    if (typeof fpInvalidateLazyIcons === 'function') fpInvalidateLazyIcons(listScroll);
+  } else if (browserState.entries && browserState.entries.length) {
+    renderDirectory();
+    // §5.2 Views: a change of view kind (the View menu) crossfades; a size
+    // step inside Icons and a Ctrl+wheel step never animate (rule 4).
+    if (animate && prevView !== want.view) listFadeIn(0, { from: 0.5 });
+  } else {
+    syncViewMetrics();
   }
-  return { view: defaultView, scale: persistedScale };
+  if (anchor) restoreScrollAnchor(listScroll, anchor);
+}
+
+/** One ladder step up (+1, larger) or down (-1); clamps at both ends.
+ * Ctrl+wheel (app.js) comes through here. Returns whether the view
+ * changed. */
+function stepView(delta, { anchorEl = null } = {}) {
+  // This PC has two layouts of its own, tiles and a details list (§8): the
+  // folder ladder is not touched.
+  if (thisPcActive()) return stepThisPcLayout(delta);
+  const at = currentViewStep();
+  const cur = at === -1 ? viewStepIndex('details') : at;
+  const next = Math.max(0, Math.min(VIEW_LADDER.length - 1, cur + Math.sign(delta || 0)));
+  if (next === cur) return false;
+  const s = VIEW_LADDER[next];
+  // A Ctrl+wheel run saves once, when it stops.
+  setView(s.view, s.size, { manual: true, anchorEl, debounceSave: true });
+  return true;
+}
+
+/** A View-menu / empty-area-flyout choice: 'xl' | 'large' | 'medium' (the
+ * icons view at 256 / 96 / 48) or a fixed view's own name. */
+function applyViewChoice(key) {
+  if (thisPcActive()) {
+    if (setThisPcLayout(thisPcLayoutForView(key)) && listMotionOn()) {
+      fpAnimate(document.getElementById('thispc-drives'), [{ opacity: 0.5 }, { opacity: 1 }], { duration: 'base', key: 'list' });
+    }
+    return;
+  }
+  const size = VIEW_NAMED_ICON_SIZES[key];
+  if (size) setView('icons', size, { manual: true, animate: true });
+  else setView(key, null, { manual: true, animate: true });
+}
+
+/** Where a view change leaves the listing: the anchor row and its offset
+ * along the scroll axis (vertical, or horizontal in List). */
+function captureScrollAnchor(listScroll, anchorEl) {
+  // Rows still sliding after a sort / paste / delete land first: the anchor
+  // is read from where they really are.
+  settleListFlips();
+  const row = (anchorEl && anchorEl.closest && listScroll.contains(anchorEl) && anchorEl.closest('.fp-row[data-path]'))
+    || firstVisibleRow(listScroll);
+  if (!row) return null;
+  const horiz = browserState.view === 'list';
+  const lr = listScroll.getBoundingClientRect();
+  const rr = row.getBoundingClientRect();
+  return { path: row.dataset.path, horiz, offset: horiz ? rr.left - lr.left : rr.top - lr.top };
+}
+
+function restoreScrollAnchor(listScroll, anchor) {
+  const row = findListRow(anchor.path);
+  if (!row) return;
+  const horiz = browserState.view === 'list';
+  const lr = listScroll.getBoundingClientRect();
+  const rr = row.getBoundingClientRect();
+  if (horiz) {
+    // Coming from a vertical view the old offset is a distance from the top:
+    // keep it as a distance from the left, inside the pane.
+    const offset = anchor.horiz ? anchor.offset : Math.min(Math.max(0, anchor.offset), Math.max(0, lr.width - rr.width));
+    listScroll.scrollLeft += (rr.left - lr.left) - offset;
+  } else {
+    const offset = anchor.horiz ? Math.min(Math.max(0, anchor.offset), Math.max(0, lr.height - rr.height)) : anchor.offset;
+    listScroll.scrollTop += (rr.top - lr.top) - offset;
+  }
+}
+
+/** The first row at least partly inside the list's viewport — a binary
+ * search over the rows' positions, which grow monotonically in DOM order in
+ * every view (row-major down the page, or column-major across it in List). */
+function firstVisibleRow(listScroll) {
+  const rows = listScroll.querySelectorAll(':scope > .fp-row[data-path]');
+  if (!rows.length) return null;
+  settleListFlips();
+  const lr = listScroll.getBoundingClientRect();
+  const horiz = browserState.view === 'list';
+  let lo = 0, hi = rows.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    const r = rows[mid].getBoundingClientRect();
+    if (horiz ? r.right > lr.left : r.bottom > lr.top) hi = mid;
+    else lo = mid + 1;
+  }
+  return rows[lo];
+}
+
+/** The rendered row for an absolute path (direct children of #list-scroll). */
+function findListRow(path) {
+  const listScroll = document.getElementById('list-scroll');
+  if (!listScroll || !path) return null;
+  return listScroll.querySelector(`:scope > .fp-row[data-path="${CSS.escape(path)}"]`);
+}
+
+// ── Layout metrics: List / Small icons column width, List rows per column ──
+let _colWidthCache = { entries: null, ext: null, mode: null, width: 0 };
+let _measureCtx = null;
+
+/** One List / Small icons column width for the whole listing (spec §3.2):
+ * the widest display name (canvas measureText, once per listing), clamped to
+ * 160–360, plus the icon, gap, padding and border of a cell. */
+function listColumnWidth() {
+  const c = _colWidthCache;
+  if (c.entries === browserState.entries && c.ext === browserState.showExtensions && c.mode === browserState.mode) {
+    return c.width;
+  }
+  if (!_measureCtx) _measureCtx = document.createElement('canvas').getContext('2d');
+  const family = getComputedStyle(document.documentElement).getPropertyValue('--font-ui').trim() || 'sans-serif';
+  // The cell's name font (styles.css: 500 var(--t-body) — 13px).
+  _measureCtx.font = `500 13px ${family}`;
+  let widest = 0;
+  for (const e of browserState.entries || []) {
+    const w = _measureCtx.measureText(displayNameFor(e)).width;
+    if (w > widest) widest = w;
+  }
+  const width = Math.ceil(Math.min(VIEW_COL_NAME_MAX, Math.max(VIEW_COL_NAME_MIN, widest))) + VIEW_COL_CHROME;
+  _colWidthCache = { entries: browserState.entries, ext: browserState.showExtensions, mode: browserState.mode, width };
+  return width;
+}
+
+/** List view: how many 22px rows fit the pane's height — set on every render
+ * and on every resize of #list-scroll (initViewLayout). */
+function syncListRows(listScroll, { reserveScrollbar = false } = {}) {
+  const cs = getComputedStyle(listScroll);
+  let inner = listScroll.clientHeight - parseFloat(cs.paddingTop || 0) - parseFloat(cs.paddingBottom || 0);
+  // Measured while the list is empty (renderDirectory), there is no
+  // horizontal scrollbar yet: leave room for the one the rows will bring, so
+  // the column count is right the first time (no second layout pass).
+  if (reserveScrollbar) inner -= scrollbarThickness();
+  const rows = Math.max(1, Math.floor(inner / VIEW_LIST_ROW_PX));
+  const v = String(rows);
+  if (listScroll.style.getPropertyValue('--list-rows') !== v) listScroll.style.setProperty('--list-rows', v);
+}
+
+/** The height of a horizontal scrollbar in the listing (the app's own
+ * ::-webkit-scrollbar styling applies), measured once on a probe. */
+let _scrollbarPx = null;
+function scrollbarThickness() {
+  if (_scrollbarPx !== null) return _scrollbarPx;
+  const probe = document.createElement('div');
+  probe.className = 'list-scroll';
+  probe.style.cssText = 'position:absolute;left:-9999px;top:0;width:100px;height:60px;overflow:scroll;flex:none';
+  document.body.appendChild(probe);
+  _scrollbarPx = Math.max(0, probe.offsetHeight - probe.clientHeight);
+  probe.remove();
+  return _scrollbarPx;
+}
+
+/** Brings the layout variables that depend on the listing (List / Small
+ * column width, List rows per column) up to date. */
+function syncViewMetrics({ rows = true } = {}) {
+  const listScroll = document.getElementById('list-scroll');
+  if (!listScroll) return;
+  const v = browserState.view;
+  if (v === 'list' || v === 'small') listScroll.style.setProperty('--list-col-w', `${listColumnWidth()}px`);
+  if (v === 'list' && rows) syncListRows(listScroll);
+}
+
+/** Row text that is cut short (an ellipsis, or the 4-line clamp of an icon
+ * cell) carries its full text as a tooltip; text that fits carries none
+ * (Explorer's behaviour). Decided on hover, when the layout is current. A
+ * name whose extension is hidden (ui.show_extensions off) always shows the
+ * full name. */
+function syncTruncationTitle(el) {
+  const cut = el.scrollWidth > el.clientWidth + 1 || el.scrollHeight > el.clientHeight + 1;
+  let full = el.textContent.trim();
+  let always = false;
+  if (el.classList.contains('fp-row__name')) {
+    const row = el.closest('.fp-row[data-path]');
+    const entry = row ? entryForPath(row.dataset.path) : null;
+    if (entry) { always = displayNameFor(entry) !== entry.name; full = entry.name; }
+  }
+  if (cut || always) el.title = full;
+  else el.removeAttribute('title');
+}
+
+/** Keeps List's rows-per-column in step with the pane's height (a window
+ * resize, app zoom, the inspector opening, the horizontal scrollbar
+ * appearing), and gives cut-short row text its tooltip on hover. */
+function initViewLayout() {
+  const listScroll = document.getElementById('list-scroll');
+  if (!listScroll) return;
+  listScroll.addEventListener('pointerover', e => {
+    const el = e.target.closest && e.target.closest('.fp-row__name, .fp-row__line, .fp-row__meta');
+    if (el && listScroll.contains(el)) syncTruncationTitle(el);
+  });
+  if (typeof ResizeObserver === 'function') {
+    new ResizeObserver(() => { if (browserState.view === 'list') syncListRows(listScroll); }).observe(listScroll);
+  }
+  // Details: when the rows are wider than the pane and scroll sideways, the
+  // column header (a sibling above the scroller, clipped) slides with them,
+  // so every value stays under its own column name (pass 2 #177).
+  const listHead = document.getElementById('list-head');
+  if (listHead) {
+    let lastX = 0;
+    listScroll.addEventListener('scroll', () => {
+      const x = listScroll.scrollLeft;
+      if (x === lastX) return;
+      lastX = x;
+      listHead.style.setProperty('--list-scroll-x', `${x}px`);
+    }, { passive: true });
+  }
+  applyViewDom();
+}
+
+// ── Per-folder view memory ────────────────────────────────────────────────
+// A menu choice is saved at once. A Ctrl+wheel run saves 250 ms after its
+// last step (one POST per run, not per notch); until then its entries wait
+// in _folderViewsPending, which every read consults first — so a config
+// reload (loadConfig) landing inside the window cannot lose them — and which
+// the timer merges into the CURRENT config when it fires. A window closing
+// inside the window flushes them with a keepalive request (pagehide).
+// Every save is a delta to POST /config/merge (never the whole map): the
+// backend keeps the entry with the newer `t`, so two saves landing in either
+// order — one in flight, the keepalive at close — cannot undo each other. A
+// delta stays in _folderViewsInFlight until its request has answered.
+const FOLDER_VIEWS_DEBOUNCE_MS = 250;
+let _folderViewsSaveTimer = 0;
+let _folderViewsPending = {};
+let _folderViewsInFlight = {};
+
+function _folderViewsMap() {
+  const map = (window.__fpConfig || {})[FOLDER_VIEWS_KEY];
+  return (map && typeof map === 'object') ? map : {};
+}
+
+/** The remembered {view, size} for `path`, or null. */
+function folderViewFor(path) {
+  if (!path) return null;
+  const key = fpNormalizePath(path);
+  const rec = _folderViewsPending[key] || _folderViewsInFlight[key] || _folderViewsMap()[key];
+  return rec && VIEW_NAMES.includes(rec.view) ? normalizeView(rec.view, rec.size) : null;
+}
+
+/** The saved map with every pending entry merged in, pruned to the 500 most
+ * recently set paths. */
+function _mergedFolderViews() {
+  const next = { ..._folderViewsMap(), ..._folderViewsInFlight, ..._folderViewsPending };
+  const keys = Object.keys(next);
+  if (keys.length > FOLDER_VIEWS_MAX) {
+    keys.sort((a, b) => (next[a].t || 0) - (next[b].t || 0))
+      .slice(0, keys.length - FOLDER_VIEWS_MAX)
+      .forEach(k => { delete next[k]; });
+  }
+  return next;
+}
+
+/** Writes every pending entry into the current config and sends them, as a
+ * delta, to POST /config/merge. */
+function flushFolderViews() {
+  clearTimeout(_folderViewsSaveTimer);
+  _folderViewsSaveTimer = 0;
+  const delta = _folderViewsPending;
+  if (!Object.keys(delta).length) return Promise.resolve();
+  if (!window.__fpConfig) window.__fpConfig = {};
+  window.__fpConfig[FOLDER_VIEWS_KEY] = _mergedFolderViews();
+  _folderViewsPending = {};
+  Object.assign(_folderViewsInFlight, delta);
+  const settle = () => {
+    for (const [k, v] of Object.entries(delta)) if (_folderViewsInFlight[k] === v) delete _folderViewsInFlight[k];
+  };
+  return API.post('/config/merge', { key: FOLDER_VIEWS_KEY, value: delta, max_keys: FOLDER_VIEWS_MAX })
+    .then(settle, err => {
+      settle();
+      showToast(`Failed to save setting: ${formatApiError(err)}`, 'error');
+    });
+}
+
+/** The window is going away with a Ctrl+wheel run still unsaved: send it with
+ * a keepalive request, which outlives the page (an ordinary fetch is
+ * cancelled on unload). A keepalive body is capped at 64 KB, which the whole
+ * 500-folder map can exceed — so only the pending entries go, to
+ * POST /config/merge, which merges and prunes them server-side (Stage 2D §12
+ * sweep). */
+function flushFolderViewsOnExit() {
+  clearTimeout(_folderViewsSaveTimer);
+  _folderViewsSaveTimer = 0;
+  // Entries whose own save is still in flight go again: that request may be
+  // cancelled by the unload, and the backend keeps the newer `t` either way.
+  const pending = { ..._folderViewsInFlight, ..._folderViewsPending };
+  if (!Object.keys(pending).length) return;
+  if (window.__fpConfig) window.__fpConfig[FOLDER_VIEWS_KEY] = _mergedFolderViews();
+  _folderViewsPending = {};
+  try {
+    fetch(`${API.base}/config/merge`, {
+      method: 'POST',
+      keepalive: true,
+      headers: apiHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ key: FOLDER_VIEWS_KEY, value: pending, max_keys: FOLDER_VIEWS_MAX }),
+    }).catch(() => { /* the window is closing; nothing left to tell */ });
+  } catch (_) { /* ditto */ }
+}
+window.addEventListener('pagehide', flushFolderViewsOnExit);
+window.addEventListener('beforeunload', flushFolderViewsOnExit);
+
+/** A manual view choice belongs to this tab and to this folder. `debounce`
+ * (Ctrl+wheel) waits for the run to stop; anything else saves at once. */
+function rememberViewChoice({ debounce = false } = {}) {
+  const tab = typeof activeTab === 'function' ? activeTab() : null;
+  if (tab) { tab.view = browserState.view; tab.iconSize = browserState.iconSize; }
+  if (browserState.mode === 'search' || !browserState.path) return;
+  _folderViewsPending[fpNormalizePath(browserState.path)] = {
+    view: browserState.view,
+    size: browserState.view === 'icons' ? browserState.iconSize : null,
+    t: Date.now(),
+  };
+  if (!debounce) { flushFolderViews(); return; }
+  clearTimeout(_folderViewsSaveTimer);
+  _folderViewsSaveTimer = setTimeout(flushFolderViews, FOLDER_VIEWS_DEBOUNCE_MS);
+}
+
+/**
+ * The view a freshly-loaded folder opens in (spec §3.1): what the user last
+ * picked for it; else, unless ui.dynamic_media_view is off, Large icons for a
+ * folder whose entries are more than half pictures/videos; else Details.
+ */
+function decideView(path, entries) {
+  const remembered = folderViewFor(path);
+  if (remembered) return remembered;
+  const cfg = window.__fpConfig || {};
+  if (cfg['ui.dynamic_media_view'] !== false) {
+    const shown = (entries || []).filter(e => !e.is_hidden);
+    const media = shown.filter(e => !e.is_dir && typeof fpIsMedia === 'function' && fpIsMedia(e.ext)).length;
+    if (shown.length && media / shown.length > 0.5) return { view: 'icons', size: VIEW_NAMED_ICON_SIZES.large };
+  }
+  return { view: 'details', size: null };
+}
+
+/**
+ * One-time clean-up of the old global view settings (ui.view_mode +
+ * ui.list_scale, Stage 2C). Views are per folder now and an unremembered
+ * folder always opens in Details (or Large icons when it is mostly media,
+ * spec §3.1), so the old values have nowhere to go: they are deleted, and
+ * ui.view_migrated_2d marks it done.
+ */
+function migrateViewSettings(cfg) {
+  // Only once GET /config has really answered (Task 14 M5): with the backend
+  // not up yet, cfg is an empty stand-in and the "migrated" write failed with
+  // an error toast at launch. refreshBackendData() re-runs this on reconnect.
+  if (!window.__fpConfigLoaded) return;
+  if (!cfg || cfg['ui.view_migrated_2d']) return;
+  saveSetting('ui.view_migrated_2d', true);
+  if ('ui.view_mode' in cfg) deleteSetting('ui.view_mode');
+  if ('ui.list_scale' in cfg) deleteSetting('ui.list_scale');
 }
 
 // ── Column sort cycling (A.3.1 / Task 3) ────────────────────────────────────
@@ -212,8 +629,24 @@ function initColumnSort() {
   });
 }
 
-/** Syncs the `.fp-sortable` header classes to browserState.sort. */
+/** Which timestamp the Details date column shows: the one the sort is on when
+ * it is a date sort ('created' | 'accessed'), otherwise 'modified'. The
+ * Content view (Task 5) uses the same field for its date line. */
+function dateFieldForSort() {
+  const key = browserState.sort.key;
+  return (key === 'created' || key === 'accessed') ? key : 'modified';
+}
+
+/** Syncs the `.fp-sortable` header classes to browserState.sort, and points
+ * the date column at the field the sort is on (header label + its sort key). */
 function updateSortHeaderUI() {
+  const field = dateFieldForSort();
+  const dateCol = document.querySelector('#list-head [data-col="date"]');
+  if (dateCol) {
+    dateCol.dataset.sort = field;
+    const label = dateCol.querySelector('.list-col__label');
+    if (label) label.textContent = `Date ${field}`;
+  }
   document.querySelectorAll('.fp-sortable[data-sort]').forEach(col => {
     const isActive = col.dataset.sort === browserState.sort.key;
     col.classList.toggle('active', isActive);
@@ -223,29 +656,67 @@ function updateSortHeaderUI() {
 }
 
 /** Sets the active sort, persists it (ui.sort — replaces the old
- * sessionStorage['fp-sort']), and re-renders the current directory. */
+ * sessionStorage['fp-sort']), and re-renders the current directory. The
+ * re-render keeps the selection (applySelectionState) and scrolls the focused
+ * row back into view, since a new order moves it. */
 function applySort(key, dir) {
   browserState.sort = { key, dir };
   saveSetting('ui.sort', browserState.sort);
   updateSortHeaderUI();
+  const listScroll = document.getElementById('list-scroll');
+  const motionCap = listMotionCapture(listScroll);
   renderDirectory();
+  // Re-rendering dropped DOM focus (the sort menu / header held it): give it to
+  // the focused row (or the list) so arrow keys keep working right after a sort.
+  const focusedRow = browserState.focus ? findRowByPath(browserState.focus) : null;
+  if (focusedRow) {
+    focusedRow.focus({ preventScroll: true });
+    focusedRow.scrollIntoView({ block: 'nearest' });
+  } else {
+    focusListContainer();
+  }
+  sortMotion(listScroll, motionCap);
+}
+
+/** §5.2 Sort: with at most LIST_MOTION_MAX_ROWS rows on screen the rows
+ * slide to their new places (FLIP) and rows new to the view fade in;
+ * otherwise — more rows on screen, a big listing — the listing crossfades. */
+function sortMotion(listScroll, cap) {
+  if (!listScroll || !listMotionOn() || thisPcActive()) return;
+  if (!cap || cap.rows.size > LIST_MOTION_MAX_ROWS || listMotionPlay(listScroll, cap, { enterFade: true }) < 0) {
+    listFadeIn(0, { from: 0.5 });
+  }
 }
 
 /**
  * Returns browserState.entries sorted for display: folders always precede
  * files (regardless of direction), then each group is ordered by the active
- * sort key — name (natural, case-insensitive), size, modified (numeric), or
- * type (file-type family, filetypes.js's fpFamilyFor, then name).
+ * sort key — name (natural, case-insensitive), size, a date field (modified /
+ * created / accessed — numeric, entries without the field last in BOTH
+ * directions), or type (file-type family, filetypes.js's fpFamilyFor, then
+ * name).
  */
 function sortedEntries() {
   const { key, dir } = browserState.sort;
   const sign = dir === 'desc' ? -1 : 1;
+  const isDate = key === 'modified' || key === 'created' || key === 'accessed';
   const byName = (a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
   return [...browserState.entries].sort((a, b) => {
     if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
     let cmp;
-    if (key === 'size') cmp = (a.size ?? 0) - (b.size ?? 0);
-    else if (key === 'modified') cmp = (a.modified ?? 0) - (b.modified ?? 0);
+    if (isDate) {
+      // An access-denied entry (error set) carries dates of 0.0 — treat it as
+      // missing so it sorts last instead of first in an ascending date sort.
+      const av = a.error ? null : a[key];
+      const bv = b.error ? null : b[key];
+      const aMissing = av == null, bMissing = bv == null;
+      if (aMissing || bMissing) {
+        if (aMissing && bMissing) return byName(a, b);
+        return aMissing ? 1 : -1;   // unaffected by direction
+      }
+      cmp = av - bv;
+    }
+    else if (key === 'size') cmp = (a.size ?? 0) - (b.size ?? 0);
     else if (key === 'type') cmp = fpFamilyFor(a.ext).localeCompare(fpFamilyFor(b.ext)) || byName(a, b);
     else cmp = byName(a, b);
     return cmp * sign;
@@ -280,6 +751,7 @@ function initMarqueeSelection() {
     if (e.target.closest('.fp-row, .fp-row__icon, .fp-row__name')) return;
     if (e.button !== 0) return;
     dragging = true;
+    settleListFlips();   // the band hit-tests rows where they really are
     ctrlDrag = e.ctrlKey;
     startX = e.clientX; startY = e.clientY;
     marqueeRect.style.display = 'block';
@@ -293,6 +765,9 @@ function initMarqueeSelection() {
 
   document.addEventListener('mousemove', e => {
     if (!dragging) return;
+    // Marquee selection is continuous input (§5.1 rule 4): no row fill
+    // fades while the band moves.
+    if (!_listStillHeld) holdListStill(listScroll, { held: true });
     const x = Math.min(e.clientX, startX);
     const y = Math.min(e.clientY, startY);
     const w = Math.abs(e.clientX - startX);
@@ -316,6 +791,7 @@ function initMarqueeSelection() {
   document.addEventListener('mouseup', () => {
     if (!dragging) return;
     dragging = false;
+    if (_listStillHeld) holdListStill(listScroll, { held: false });
     marqueeRect.style.display = 'none';
     // A plain click on the empty background (mousedown+mouseup with no drag
     // distance) never fires mousemove, so the rows still carry whatever
@@ -354,12 +830,24 @@ function initMarqueeSelection() {
 // backend/filetypes.py, mirrored into frontend/src/filetypes.js, and each
 // family has its own fp-ft-<family> sprite symbol.
 
+/** The one byte formatter: B, then KB / MB / GB / TB with one decimal
+ * (Stage 2D §8 — drive sizes read "120.3 GB free of 237.0 GB"). Anything that
+ * is not a number (an unknown size) is an em dash, never "NaN". */
+/** "1 item" / "3 items" — every count the UI prints goes through this, so
+ * none says "1 items" (Task 14 Q4). `n` is printed with locale grouping. */
+function countLabel(n, singular, plural = `${singular}s`) {
+  const v = Number(n) || 0;
+  return `${v.toLocaleString()} ${v === 1 ? singular : plural}`;
+}
+
 function formatSize(bytes) {
-  if (bytes == null) return '—';
-  if (bytes < 1024) return bytes + ' B';
-  if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
-  if (bytes < 1073741824) return (bytes / 1048576).toFixed(1) + ' MB';
-  return (bytes / 1073741824).toFixed(2) + ' GB';
+  if (bytes == null || !Number.isFinite(Number(bytes))) return '—';
+  const n = Number(bytes);
+  if (n < 1024) return n + ' B';
+  if (n < 1048576) return (n / 1024).toFixed(1) + ' KB';
+  if (n < 1073741824) return (n / 1048576).toFixed(1) + ' MB';
+  if (n < 1099511627776) return (n / 1073741824).toFixed(1) + ' GB';
+  return (n / 1099511627776).toFixed(1) + ' TB';
 }
 
 // Module-level formatters and a once-per-second "now": renderDirectory calls
@@ -377,10 +865,10 @@ function _nowForFormat() {
   if (!_nowCache.now || t - _nowCache.at > 1000) _nowCache = { at: t, now: new Date(t) };
   return _nowCache.now;
 }
-function formatModified(isoStr) {
-  if (!isoStr) return '—';
-  const d = new Date(isoStr);
-  if (isNaN(d)) return isoStr;
+function formatDate(ts) {
+  if (!ts) return '—';
+  const d = new Date(ts);
+  if (isNaN(d)) return ts;
   const now = _nowForFormat();
   const diff = now - d;
   const sameDay = d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
@@ -389,6 +877,8 @@ function formatModified(isoStr) {
   if (diff < 86400000 * 7) return _FMT_WEEKDAY.format(d);
   return _FMT_DATE.format(d);
 }
+/** Older name for formatDate(); kept so home/inspector callers read the same. */
+function formatModified(ts) { return formatDate(ts); }
 
 function escapeHtml(str) {
   return String(str)
@@ -434,90 +924,243 @@ function parentOfPath(p) {
 }
 
 /**
- * opts.restore (Stage 2C Task 7) — {scrollTop, selection, view} from a tab
- * record being reactivated: applied after the fresh render lands (selection
- * only for paths still present in the refreshed listing). Mutually exclusive
- * with opts.preserveSelection — activateTab() is the only restore caller and
- * it always passes addToHistory:false too.
+ * Loads `absPath` into the Browser listing. THISPC (or null — a tab that has
+ * no folder yet) is the This PC page instead (thispc.js, Stage 2D §8).
+ *
+ * opts.restore (Stage 2C Task 7) — {scrollTop, scrollLeft, selection, view, iconSize}
+ * from a tab record being reactivated: applied with the render (selection
+ * only for paths present in the listing). Mutually exclusive with
+ * opts.preserveSelection — activateTab()/switchScreen() are the restore
+ * callers and they always pass addToHistory:false too.
+ *
+ * opts.cached (Stage 2D §4.2, stale-while-revalidate) — the tab's last
+ * listing {path, entries, parent, isRoot, truncated, fetchedAt}. Painted
+ * synchronously (rows, scroll, selection — no empty frame on a tab switch),
+ * then re-fetched; a changed answer is patched in (patchDirectory), an
+ * unchanged one touches nothing.
+ *
+ * opts.historyIndex — Back/Forward: the nav.history slot being visited. It
+ * becomes nav.index only once the fetch succeeds.
+ *
+ * One render per navigation (§4.2): the view and size are decided BEFORE
+ * the single renderDirectory(). Navigation state — browserState.path, the
+ * tab's label, the breadcrumb, the sidebar highlight and history — commits
+ * only after a successful fetch (pass-2 #55): a failed navigation leaves the
+ * folder on screen and says why in an error toast.
  *
  * reqTabId/reqSeq (fix round 1) guard against the fetch resolving after this
  * call has been superseded — either by a tab switch (tabs.activeId no longer
  * reqTabId) or by a newer navigation in the same tab (browserState._loadSeq
- * moved on). Without this, an unawaited loadDirectory() left running while
- * the user switches tabs (or fires a second navigation before the first
- * lands) could paint a stale listing over whatever's actually current.
+ * moved on). A late answer for a tab that is no longer active may refresh
+ * that tab's cached listing, and never touches the DOM.
  */
-async function loadDirectory(absPath, opts = {}) {
-  const { addToHistory = true, preserveSelection = false, restore = null } = opts;
+function loadDirectory(absPath, opts = {}) {
+  // The navigation in flight, for refreshDirectory() (Task 14 M1): a refresh
+  // that lands while it loads waits for it rather than superseding it.
+  const done = _loadDirectory(absPath, opts);
+  const rec = { seq: browserState._navSeq, tabId: tabs.activeId, done };
+  browserState._navInFlight = rec;
+  const clear = () => { if (browserState._navInFlight === rec) browserState._navInFlight = null; };
+  done.then(clear, clear);
+  return done;
+}
+
+async function _loadDirectory(absPath, opts = {}) {
+  const { addToHistory = true, preserveSelection = false, restore = null, cached = null, historyIndex = null, focusChild = null } = opts;
+  // No path (a tab with no folder yet) is This PC, never the sandbox.
+  if (!absPath) absPath = THISPC;
+  // Where the user was in the folder being left — Back/Forward return to it.
+  rememberFolderPlace();
   const reqTabId = tabs.activeId;
   const reqSeq = ++browserState._loadSeq;
+  browserState._navSeq = reqSeq;
+  const superseded = () => tabs.activeId !== reqTabId || browserState._loadSeq !== reqSeq;
   // Any real navigation ends a search — opening a result folder, Back, a
-  // sidebar click, a spring-loaded drop. Done here rather than at each call
-  // site so there is exactly one exit from search mode.
-  leaveSearchMode();
+  // sidebar click, a spring-loaded drop, the breadcrumb's ×. This tab's OWN
+  // search is only stopped here (no in-flight run may paint over the
+  // folder) and left on screen: commitListing() tears it down once the
+  // folder has really loaded, so a navigation that fails keeps the results
+  // (pass-2 #55). A search left over from another tab goes at once.
+  const ownSearch = browserState.mode === 'search' && browserState.searchTabId === reqTabId;
+  const searchWasInFlight = ownSearch && typeof searchState !== 'undefined' && !!(searchState && searchState.inflight);
+  if (ownSearch) {
+    if (typeof abortSearch === 'function') abortSearch();
+    if (typeof searchState !== 'undefined' && searchState) searchState._seq++;
+  } else {
+    leaveSearchMode();
+  }
   browserState.lastAttemptedPath = absPath;
-  // Sets the active tab's label/icon, the sidebar highlight, and (when
-  // absPath is a real path) the breadcrumb — synchronously, before the
-  // fetch below, so none of them wait on the network or get rewritten a
-  // second time once it resolves.
-  onNavigated(absPath);
+
+  if (absPath === THISPC) {
+    return loadThisPc({ addToHistory, restore, historyIndex, reqTabId, superseded, ownSearch, searchWasInFlight });
+  }
+
+  const cachedListing = (cached && Array.isArray(cached.entries) && cached.path) ? cached : null;
+  if (cachedListing) {
+    commitListing({
+      path: cachedListing.path,
+      entries: cachedListing.entries,
+      parent: cachedListing.parent ?? null,
+      is_root: !!cachedListing.isRoot,
+      truncated: !!cachedListing.truncated,
+    }, { absPath, addToHistory, restore, historyIndex, focusChild, fetchedAt: cachedListing.fetchedAt || 0 });
+  }
+
   let data;
+  window.__fpLoadPending++;
   try {
-    data = absPath
-      ? await API.get('/fs/list', { path: absPath, show_hidden: browserState.showHidden })
-      : await API.get('/fs/list/root', { show_hidden: browserState.showHidden });
+    data = await API.get('/fs/list', { path: absPath, show_hidden: browserState.showHidden });
   } catch (err) {
-    if (tabs.activeId !== reqTabId || browserState._loadSeq !== reqSeq) return;
-    handleLoadError(err, absPath);
+    if (superseded()) return;
+    // The Back/Forward (or exit from search) this was went nowhere: the next
+    // press starts again from what is on screen.
+    browserState._pendingHistory = null;
+    browserState._pendingExit = null;
+    if (cachedListing) {
+      // The tab's own listing is on screen already: keep it and say why it
+      // could not be brought up to date.
+      showToast(loadErrorMessage(err, absPath), 'error');
+      return;
+    }
+    failNavigation(err, absPath, { reqTabId, ownSearch, searchWasInFlight });
+    return;
+  } finally {
+    window.__fpLoadPending--;
+  }
+
+  if (superseded()) {
+    if (tabs.activeId !== reqTabId) storeBackgroundListing(reqTabId, data);
     return;
   }
-  if (tabs.activeId !== reqTabId || browserState._loadSeq !== reqSeq) return;
+  if (cachedListing && data.path === browserState.path) {
+    browserState.parent = data.parent;
+    browserState.isRoot = data.is_root;
+    patchDirectory(data.entries, data);
+    rememberTabListing();
+    return;
+  }
+  commitListing(data, { absPath, addToHistory, restore, preserveSelection, historyIndex, focusChild });
+}
 
+/** The tab-record form of a listing (Stage 2D §4.2) — `entries` by
+ * reference, never copied: every writer replaces browserState.entries with a
+ * new array rather than mutating it. */
+function listingRecordFrom(data, fetchedAt = Date.now()) {
+  return {
+    path: data.path,
+    entries: data.entries,
+    parent: data.parent ?? null,
+    isRoot: !!(data.is_root ?? data.isRoot),
+    truncated: !!data.truncated,
+    fetchedAt,
+  };
+}
+
+/** Points the active tab's cached listing at what browserState now holds. */
+function rememberTabListing() {
+  const tab = activeTab();
+  if (!tab || browserState.mode === 'search' || !browserState.path || browserState.path === THISPC) return;
+  if (browserState.listingTabId !== tab.id) return;
+  tab.listing = listingRecordFrom({
+    path: browserState.path, entries: browserState.entries, parent: browserState.parent,
+    is_root: browserState.isRoot, truncated: browserState.truncated,
+  }, browserState.fetchedAt || Date.now());
+}
+
+/** A fetch that landed after its tab stopped being the active one: it may
+ * refresh that tab's cached listing (the folder it is still showing), and
+ * never touches the DOM. */
+function storeBackgroundListing(tabId, data) {
+  const t = typeof tabRecordFor === 'function' ? tabRecordFor(tabId) : null;
+  if (!t || t.screen !== 'browser' || t.search || t.path !== data.path) return;
+  t.listing = listingRecordFrom(data);
+}
+
+/**
+ * Makes `data` the Browser listing: browserState, the tab record, the chrome
+ * (tab label, sidebar, breadcrumb, address bar, history) and ONE render, with
+ * the view decided before it.
+ */
+function commitListing(data, { absPath, addToHistory = true, restore: restoreIn = null, preserveSelection = false, historyIndex = null, focusChild = null, fetchedAt = Date.now() } = {}) {
+  // Back/Forward land where the user left the folder (scroll and selection,
+  // Explorer's rule); Up selects the folder it came out of. Both used to land
+  // at the top with nothing selected (Stage 2D §12 sweep, "refresh loses
+  // place"). A tab restore's own record wins over both.
+  let restore = restoreIn;
+  let revealFocus = false;
+  if (!restore && historyIndex !== null) restore = folderPlaceFor(data.path);
+  if (!restore && focusChild) {
+    const want = fpNormalizePath(focusChild);
+    const child = data.entries.map(e => joinPath(data.path, e.name)).find(p => fpNormalizePath(p) === want);
+    if (child) { restore = { selection: [child], scrollTop: 0, scrollLeft: 0 }; revealFocus = true; }
+  }
   const prevSelection = preserveSelection ? new Set(browserState.selection) : null;
   const prevAnchor    = preserveSelection ? browserState.anchor : null;
-  const prevFocus      = preserveSelection ? browserState.focus : null;
+  const prevFocus     = preserveSelection ? browserState.focus : null;
+  // Which side the new listing comes in from (§5.2), read before any of the
+  // state it depends on moves.
+  const motionDir = navMotionDir({
+    prevPath: browserState.listingTabId === tabs.activeId ? browserState.path : null,
+    prevMode: browserState.mode,
+    exiting: !!browserState._pendingExit,
+    restore: restoreIn,
+    historyIndex,
+    focusChild,
+    path: data.path,
+  });
+
+  // The navigation succeeded: only now does a search on screen end, and only
+  // now does a tab that was on Home (or any other screen) show the Browser —
+  // the screen, the chrome and the rows change in the same task, so the
+  // Browser never shows rows it held from before (Stage 2D fix round 1).
+  leaveSearchMode();
+  if (!browserScreenActive()) showScreenDom('browser');
+  setThisPcShown(false);
 
   browserState.path = data.path;
   browserState.entries = data.entries;
   browserState.parent = data.parent;
   browserState.isRoot = data.is_root;
-  // Dynamic media view (Task 10): decided fresh on every real navigation —
-  // never for a tab-switch restore (restore.view below reapplies whatever
-  // that tab last showed instead), and never in a future search-results mode.
-  const decidedView = (!(restore && restore.view) && browserState.mode !== 'search')
-    ? decideViewAndScale(data.path, data.entries)
-    : null;
-  if (restore && restore.view) browserState.view = restore.view;
-  else if (decidedView) browserState.view = decidedView.view;
+  browserState.truncated = !!data.truncated;
+  browserState.fetchedAt = fetchedAt;
+  browserState.listingGen++;
+  browserState.listingTabId = tabs.activeId;
+  browserState.listingStale = false;
+  browserState._pendingHistory = null;
+  browserState._pendingExit = null;
+  browserState._orderDirty = false;
+
+  // View first, so the one render below paints rows at their final size. A
+  // tab-switch restore reapplies whatever that tab last showed (tabs keep
+  // their own view state); every real navigation decides fresh from the
+  // folder's own memory, its media share, or the default (decideView).
+  const decided = (restore && restore.view)
+    ? normalizeView(restore.view, restore.iconSize)
+    : (browserState.mode !== 'search' ? decideView(data.path, data.entries) : null);
+  if (decided) setView(decided.view, decided.size, { render: false });
 
   // Keep the active tab's own record continuously pointed at the real
   // (resolved) path — this is what lets switchScreen() tell "this tab has
   // never loaded a folder" (path still null, createTab()'s default) apart
-  // from "this tab is sitting at the sandbox root" (a real resolved path).
+  // from a tab that has.
   const tab = activeTab();
   if (tab) {
     tab.path = data.path;
     tab.screen = 'browser';
-    // Remember that this tab was opened AT the root entry point rather than at
-    // a folder of that name: the resolved path is a real directory, so without
-    // this the "This PC" label would be recomputed as its basename the first
-    // time the tab is re-activated or duplicated (pass 2 #16).
-    tab.isRootTarget = !absPath;
+    tab.listing = listingRecordFrom(data, fetchedAt);
   }
-  browserState.listingStale = false;
-  // onNavigated(null) (the sandbox-root request) couldn't build breadcrumb
-  // crumbs from nothing — finalize them now that the real path is known.
-  if (!absPath) updateBreadcrumb(data.path);
+  // Tab label/icon, sidebar highlight and breadcrumb — only now that the
+  // folder is known to exist (pass-2 #55).
+  onNavigated(data.path);
 
+  const validPaths = new Set(data.entries.map(e => joinPath(data.path, e.name)));
   if (restore) {
-    const validPaths = new Set(data.entries.map(e => joinPath(data.path, e.name)));
     const restoredSelection = (restore.selection || []).filter(p => validPaths.has(p));
     browserState.selection = new Set(restoredSelection);
     browserState.anchor = restoredSelection.length ? restoredSelection[0] : null;
     browserState.focus  = restoredSelection.length ? restoredSelection[restoredSelection.length - 1] : null;
   } else if (preserveSelection && prevSelection) {
     // Keep only paths that still exist in the refreshed listing.
-    const validPaths = new Set(data.entries.map(e => joinPath(data.path, e.name)));
     browserState.selection = new Set([...prevSelection].filter(p => validPaths.has(p)));
     browserState.anchor = prevAnchor && validPaths.has(prevAnchor) ? prevAnchor : null;
     browserState.focus  = prevFocus && validPaths.has(prevFocus) ? prevFocus : null;
@@ -528,33 +1171,137 @@ async function loadDirectory(absPath, opts = {}) {
   }
 
   renderDirectory(data);
-  if (restore && restore.view) {
-    // --list-scale is a single global custom property, so a restore has to
-    // re-assert THIS tab's scale too — otherwise the tab inherits whatever
-    // scale the outgoing tab (or a Ctrl+wheel zoom in it) last set (pass 2 #19).
-    if (restore.listScale) setListScale(restore.listScale, { persist: false });
-    setViewMode(restore.view);
-  } else if (decidedView) {
-    setListScale(decidedView.scale, { persist: false });
-    setViewMode(decidedView.view, { manual: false });
-  }
-  if (addToHistory) pushHistory(data.path);
+  if (historyIndex !== null && historyIndex >= 0 && historyIndex < nav.history.length) {
+    nav.index = historyIndex;
+    refreshNavButtons();
+  } else if (addToHistory) pushHistory(data.path);
   else refreshNavButtons();
   updateAddressBar(data.path);
   onSelectionChanged();
 
   const listScroll = document.getElementById('list-scroll');
-  if (listScroll) listScroll.scrollTop = restore ? (restore.scrollTop || 0) : 0;
+  if (listScroll) {
+    listScroll.scrollTop = restore ? (restore.scrollTop || 0) : 0;
+    listScroll.scrollLeft = restore ? (restore.scrollLeft || 0) : 0;
+  }
+  if (revealFocus && browserState.focus) findListRow(browserState.focus)?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  // After the single render, on top of rows that are already painted.
+  if (motionDir !== null) listFadeIn(motionDir);
 }
 
-/** Re-fetches the current directory, keeping selection/anchor/focus (by path)
- * and the list scroll position where they still apply, and spins the
- * toolbar refresh button's icon for the duration — shared by the toolbar
- * button (data-action="refresh-directory"), F5, and the empty-area context
- * menu's Refresh item, all of which just call this (Task 8, playtest pass 1
- * §3.6). Returns loadDirectory's promise so callers (fileops.run(), inline
- * rename) can await the re-render actually landing before touching the DOM
- * again.
+// ── Where the user was in each folder (Back/Forward) ─────────────────────────
+// Per tab and folder: the scroll position and selection the folder had when
+// the user navigated away from it. Bounded; the oldest entries go first.
+const FOLDER_PLACES_MAX = 200;
+const _folderPlaces = new Map();
+
+function _folderPlaceKey(tabId, path) { return `${tabId}|${fpNormalizePath(path)}`; }
+
+/** Records the listing on screen (the active tab's own folder) before a
+ * navigation replaces it. */
+function rememberFolderPlace() {
+  if (browserState.mode === 'search' || !browserState.path || browserState.path === THISPC) return;
+  if (typeof tabs === 'undefined' || browserState.listingTabId !== tabs.activeId) return;
+  const listScroll = document.getElementById('list-scroll');
+  if (!listScroll) return;
+  const key = _folderPlaceKey(tabs.activeId, browserState.path);
+  _folderPlaces.delete(key);
+  _folderPlaces.set(key, {
+    scrollTop: listScroll.scrollTop,
+    scrollLeft: listScroll.scrollLeft,
+    selection: [...browserState.selection],
+  });
+  while (_folderPlaces.size > FOLDER_PLACES_MAX) _folderPlaces.delete(_folderPlaces.keys().next().value);
+}
+
+/** The place recorded for `path` in the active tab, or null. */
+function folderPlaceFor(path) {
+  if (typeof tabs === 'undefined') return null;
+  return _folderPlaces.get(_folderPlaceKey(tabs.activeId, path)) || null;
+}
+
+/**
+ * A navigation whose fetch failed. Nothing about it is committed (pass-2
+ * #55), and the user keeps what they were looking at, with an error toast
+ * saying why:
+ * - a tab on another screen (Home, a sidebar link from Settings) stays there
+ *   — openBrowserAt() no longer switches screens before the fetch lands;
+ * - a tab showing its own search results keeps them (a run that was still in
+ *   flight is restarted, since this navigation aborted it);
+ * - a tab showing its own folder listing keeps it, chrome re-pointed at it.
+ * Only a tab with nothing of its own to fall back on shows the error banner
+ * (Go back / Retry) for the folder it tried to open.
+ */
+function failNavigation(err, absPath, { reqTabId, ownSearch = false, searchWasInFlight = false }) {
+  const tab = activeTab();
+  const message = loadErrorMessage(err, absPath);
+  // The navigation stopped this tab's own search mid-flight. On the Browser
+  // it is re-run below; off it (a failed open from Home) re-running now would
+  // pull the user onto the Browser, so it waits for the Browser to be shown
+  // again (switchScreen) — it used to be dropped, and the tab came back with
+  // its folder instead of the search (Stage 2D §12 sweep).
+  const stoppedSearch = ownSearch && searchWasInFlight && typeof searchState !== 'undefined'
+    ? searchState.inflightQuery : null;
+  if (stoppedSearch && tab && (!browserScreenActive() || tab.screen !== 'browser')) tab.searchResume = stoppedSearch;
+  if (!browserScreenActive()) {
+    // The Browser was never revealed (it appears only when a listing
+    // commits): the user is still on the screen they started from, and the
+    // tab's record says so again (switchScreen() set it to 'browser' early).
+    const shown = document.querySelector('.screen.active')?.id?.replace(/^screen-/, '');
+    if (tab && shown) tab.screen = shown;
+    showToast(message, 'error');
+    return;
+  }
+  if (tab && tab.screen !== 'browser') {
+    showScreenDom(tab.screen);
+    showToast(message, 'error');
+    return;
+  }
+  if (ownSearch && browserState.mode === 'search') {
+    if (searchWasInFlight && typeof runSearch === 'function') {
+      runSearch({ pushHistory: false, preserveSelection: true });
+    }
+    refreshNavButtons();
+    showToast(message, 'error');
+    return;
+  }
+  // This tab's own folder listing — or its This PC page — is on screen.
+  const ownListingShown = browserState.path && browserState.listingTabId === reqTabId
+    && (browserState.path === THISPC
+      || document.querySelector('#list-scroll > .fp-row[data-path], #list-scroll > .fp-empty-state'));
+  if (ownListingShown) {
+    onNavigated(browserState.path);
+    refreshNavButtons();
+    showToast(message, 'error');
+    return;
+  }
+  leaveSearchMode();
+  setThisPcShown(false);
+  onNavigated(absPath);
+  handleLoadError(err, absPath);
+}
+
+/** One sentence for a failed /fs/list — the error toast's text. Names the
+ * folder the way its tab would (tabLabelFor, app.js), not by its full path. */
+function loadErrorMessage(err, absPath) {
+  const where = typeof tabLabelFor === 'function' ? tabLabelFor(absPath) : (absPath || 'This PC');
+  if (err instanceof ApiError) {
+    if (err.status === 403) return `Access denied: ${where}`;
+    if (err.status === 404) return `Folder not found: ${where}`;
+    if (err.status === 400) return `Invalid path: ${where}`;
+    return formatApiError(err);
+  }
+  return `Couldn't reach backend: ${formatApiError(err)}`;
+}
+
+/** Re-fetches the current directory and patches the difference into the
+ * rendered listing (patchDirectory) — selection/anchor/focus (by path),
+ * scroll position, view and size all stay. Shared by refreshAll() (Ctrl+R,
+ * F5, the toolbar button, the empty-area menu's Refresh) and every file
+ * operation that has to show its result. Returns a promise that resolves once
+ * the patch has landed, so callers (fileops.run(), inline rename) can await it
+ * before touching the DOM again. A failed fetch keeps the listing on screen
+ * and shows an error toast; it never navigates away (Stage 2D §7.2).
  *
  * In search-results mode there is no folder to re-list: the same call re-runs
  * the current search instead (Task 14), which is what a file operation
@@ -573,7 +1320,6 @@ function refreshDirectory() {
     return Promise.resolve();
   }
   if (browserState.mode === 'search') {
-    const searchBtn = document.getElementById('btn-refresh');
     const searchList = document.getElementById('list-scroll');
     // renderSearchResults() scrolls a fresh result set to the top; a re-run of
     // the SAME search (F5, or the refresh every fileops.run() ends with) is not
@@ -581,33 +1327,204 @@ function refreshDirectory() {
     // on hundreds of rows off-screen while staying selected (pass 2 #94).
     // Same reqTabId guard the browse branch below carries.
     const searchScrollTop = searchList ? searchList.scrollTop : 0;
+    const searchScrollLeft = searchList ? searchList.scrollLeft : 0;
     const searchTabId = tabs.activeId;
-    searchBtn?.classList.add('is-spinning');
     const rerun = typeof runSearch === 'function'
       ? Promise.resolve(runSearch({ pushHistory: false, preserveSelection: true }))
       : Promise.resolve();
     return rerun.finally(() => {
       if (searchList && tabs.activeId === searchTabId && browserState.mode === 'search') {
         searchList.scrollTop = searchScrollTop;
+        searchList.scrollLeft = searchScrollLeft;
       }
-      searchBtn?.classList.remove('is-spinning');
     });
   }
-  if (!browserState.path) return;
-  const btn = document.getElementById('btn-refresh');
-  const listScroll = document.getElementById('list-scroll');
-  const scrollTop = listScroll ? listScroll.scrollTop : 0;
-  // #list-scroll is DOM shared by every tab: if the user switches tabs while
-  // this refresh is in flight, loadDirectory() bails on its own reqTabId guard
-  // but this finally() would still stamp THIS tab's offset onto the tab that
-  // is now showing (pass 2 #20).
+  // A navigation still loading in this tab is not cancelled by a refresh
+  // (Task 14 M1): F5, or a file operation's trailing refresh, used to bump
+  // _loadSeq and so drop the folder the user had just clicked into. The
+  // refresh waits for the navigation instead and then refreshes whatever is
+  // on screen (the new folder, or the old one if the navigation failed).
+  const nav = browserState._navInFlight;
+  if (nav && nav.tabId === tabs.activeId && nav.seq === browserState._loadSeq) {
+    return nav.done.then(() => refreshDirectory(), () => refreshDirectory());
+  }
+  if (!browserState.path || !browserHasOwnListing()) return Promise.resolve();
+  // The This PC page re-reads the drives (thispc.js).
+  if (browserState.path === THISPC) return refreshThisPc();
+  const path = browserState.path;
+  // #list-scroll is DOM shared by every tab: a refresh that lands after a tab
+  // switch or a newer navigation must not patch somebody else's listing
+  // (pass 2 #20) — the same reqTabId/reqSeq guard loadDirectory() carries.
   const reqTabId = tabs.activeId;
-  btn?.classList.add('is-spinning');
-  const p = loadDirectory(browserState.path, { addToHistory: false, preserveSelection: true });
-  return p.finally(() => {
-    if (listScroll && tabs.activeId === reqTabId) listScroll.scrollTop = scrollTop;
-    btn?.classList.remove('is-spinning');
-  });
+  const reqSeq = ++browserState._loadSeq;
+  window.__fpLoadPending++;
+  return API.get('/fs/list', { path, show_hidden: browserState.showHidden }).then(data => {
+    if (tabs.activeId !== reqTabId || browserState._loadSeq !== reqSeq) {
+      if (tabs.activeId !== reqTabId) storeBackgroundListing(reqTabId, data);
+      return;
+    }
+    browserState.parent = data.parent;
+    browserState.isRoot = data.is_root;
+    browserState.listingStale = false;
+    patchDirectory(data.entries, data);
+    rememberTabListing();
+  }, err => {
+    if (tabs.activeId !== reqTabId || browserState._loadSeq !== reqSeq) return;
+    showToast(loadErrorMessage(err, path), 'error');
+  }).finally(() => { window.__fpLoadPending--; });
+}
+
+/** What a row shows, as one comparable string — patchDirectory() replaces a
+ * row only when this changes. */
+function rowSignature(e) {
+  // Only the date the row shows counts (Task 14 M2): Windows moves a file's
+  // last-access time whenever something reads it (the shell making its
+  // thumbnail, an Open), and counting that replaced the row on the next
+  // refresh — over 30% of them, a full render — for a column not on screen.
+  // A sort change to another date field re-renders every row anyway.
+  const date = e[dateFieldForSort()];
+  return [e.name, e.is_dir ? 1 : 0, e.size ?? '', date ?? '',
+    e.is_hidden ? 1 : 0, e.error || '', e.ext || ''].join('\u0001');
+}
+
+// Above this share of changed rows, one full render is cheaper (and no less
+// stable) than row surgery (Stage 2D §7.2).
+const PATCH_FULL_RENDER_SHARE = 0.3;
+
+/**
+ * Brings the rendered listing in line with `newEntries` (Stage 2D §7.2): the
+ * listing is diffed against the rendered one by name, and only added, removed
+ * or changed rows are inserted, removed or replaced, in sorted position.
+ * Unchanged rows keep their DOM nodes (their icons never repaint). When more
+ * than 30% of the rows changed it does one full render instead. Either way
+ * scrollTop, the selection (by path — gone paths drop out), the anchor and
+ * DOM focus on the focused row are kept. `data` (the /fs/list payload)
+ * carries `truncated`.
+ */
+function patchDirectory(newEntries, data = null) {
+  const listScroll = document.getElementById('list-scroll');
+  const oldEntries = browserState.entries || [];
+  const truncatedBefore = browserState.truncated;
+  if (data) browserState.truncated = !!data.truncated;
+  browserState.entries = newEntries;
+  browserState.fetchedAt = Date.now();
+  browserState.listingGen++;
+  if (typeof syncHeavyList === 'function') syncHeavyList();
+
+  const valid = new Set(newEntries.map(entryPath));
+  browserState.selection = new Set([...browserState.selection].filter(p => valid.has(p)));
+  if (browserState.anchor && !valid.has(browserState.anchor)) browserState.anchor = null;
+  if (browserState.focus && !valid.has(browserState.focus)) browserState.focus = null;
+  if (!listScroll) return;
+
+  const scrollTop = listScroll.scrollTop;
+  const scrollLeft = listScroll.scrollLeft;
+  const active = document.activeElement;
+  // DOM focus is put back only when it sat on a row itself. Focus inside a
+  // row (the inline-rename input) is never taken: blurring that input
+  // commits the rename (Stage 2D fix round 1).
+  const focusOnRow = !!(active && active !== listScroll && listScroll.contains(active)
+    && active.classList.contains('fp-row'));
+  // A row being renamed keeps its DOM node (and the input in it) as long as
+  // the entry still exists, whatever else changed.
+  const renaming = listScroll.querySelector('.fp-row__rename')?.closest('.fp-row[data-path]') || null;
+  const renamingPath = renaming ? renaming.dataset.path : null;
+
+  const rows = [...listScroll.querySelectorAll(':scope > .fp-row[data-path]')];
+  const nodeByPath = new Map(rows.map(r => [r.dataset.path, r]));
+  const oldByName = new Map(oldEntries.map(e => [e.name, e]));
+  const newNames = new Set(newEntries.map(e => e.name));
+  const changed = new Set();
+  for (const e of newEntries) {
+    if (renamingPath && entryPath(e) === renamingPath) continue;
+    const o = oldByName.get(e.name);
+    if (!o || rowSignature(o) !== rowSignature(e)) { changed.add(e.name); continue; }
+    // A favourite toggled since the row was drawn changes its star.
+    const p = entryPath(e);
+    const node = nodeByPath.get(p);
+    const starred = typeof favoritesHas === 'function' && favoritesHas(p);
+    if (node && starred !== !!node.querySelector('.fp-row__star')) changed.add(e.name);
+  }
+  const removed = oldEntries.filter(o => !newNames.has(o.name));
+  const changes = changed.size + removed.length;
+  const total = Math.max(oldEntries.length, newEntries.length);
+  const domMatches = rows.length === oldEntries.length && oldEntries.length > 0;
+
+  // _orderDirty: an earlier patch left a renaming row out of sorted place;
+  // the row-by-row pass below puts it back once the rename has settled.
+  const orderDirty = !!browserState._orderDirty && !renaming;
+
+  // Motion (§5.2 New items, Removed items, Rename): where the rows are now,
+  // for a change of at most LIST_MOTION_MAX_ROWS rows in a listing small
+  // enough; played once the DOM below is final. A rename the backend just
+  // did is a row that moves, not one out and one in.
+  const moves = takeListMoves();
+  const added = new Set(newEntries.filter(e => !oldByName.has(e.name)).map(entryPath));
+  const movedTo = new Map();      // new path -> old path
+  if (moves) {
+    const addedByNorm = new Map([...added].map(p => [fpNormalizePath(p), p]));
+    for (const o of removed) {
+      const dest = moves.get(fpNormalizePath(entryPath(o)));
+      const np = dest && addedByNorm.get(fpNormalizePath(dest));
+      if (np) { movedTo.set(np, entryPath(o)); added.delete(np); }
+    }
+  }
+  const movedFrom = new Set(movedTo.values());
+  const gone = removed.map(entryPath).filter(p => !movedFrom.has(p)).map(p => ({ path: p, node: nodeByPath.get(p) }));
+  const flux = added.size + gone.length;
+  const motionCap = domMatches && (flux || movedTo.size || orderDirty) && flux <= LIST_MOTION_MAX_ROWS
+    ? listMotionCapture(listScroll, total) : null;
+  if (changes === 0 && !orderDirty && domMatches && truncatedBefore === browserState.truncated) {
+    applySelectionState();
+    updateStatusBar();
+  } else if (!domMatches || !newEntries.length || truncatedBefore !== browserState.truncated
+             || (changes > total * PATCH_FULL_RENDER_SHARE && !(renamingPath && valid.has(renamingPath)))) {
+    // (A full render would destroy an inline rename in progress; that one
+    // case always takes the row-by-row path below instead.)
+    browserState._orderDirty = false;
+    renderDirectory();
+  } else {
+    for (const o of removed) nodeByPath.get(entryPath(o))?.remove();
+    const tpl = document.createElement('template');
+    // The row being renamed never moves, even if its sort key changed (a move
+    // detaches it, and a detached rename input blurs — which commits). Rows
+    // flow around it; it re-sorts with the refresh after the rename settles.
+    const pinned = (renamingPath && valid.has(renamingPath)) ? renaming : null;
+    let cursor = listScroll.querySelector(':scope > .fp-row[data-path]');
+    const skipPinned = () => { while (cursor && cursor === pinned) cursor = cursor.nextElementSibling; };
+    for (const e of sortedEntries()) {
+      let node = nodeByPath.get(entryPath(e));
+      if (node && node === pinned) continue;
+      skipPinned();
+      if (changed.has(e.name)) {
+        tpl.innerHTML = renderFsRow(e, browserState.path);
+        const fresh = tpl.content.firstElementChild;
+        if (node) {
+          if (cursor === node) cursor = node.nextElementSibling;
+          node.remove();
+        }
+        node = fresh;
+      }
+      if (!node) continue;
+      skipPinned();
+      if (node === cursor) cursor = node.nextElementSibling;
+      else listScroll.insertBefore(node, cursor);
+    }
+    browserState._orderDirty = !!pinned;
+    applySelectionState();
+    updateStatusBar();
+  }
+  // A new or renamed entry may be the widest name (List / Small icons).
+  syncViewMetrics();
+  listScroll.scrollTop = scrollTop;
+  listScroll.scrollLeft = scrollLeft;
+  if (focusOnRow) {
+    const row = browserState.focus ? findRowByPath(browserState.focus) : null;
+    if (row) row.focus({ preventScroll: true });
+    else focusListContainer();
+  }
+  if (motionCap) listMotionPlay(listScroll, motionCap, { added, gone, moved: movedTo });
+  onSelectionChanged();
 }
 
 // Every load failure gets the same two recovery actions: "Go back" (real
@@ -639,9 +1556,8 @@ function handleLoadError(err, absPath) {
 }
 
 // Re-attempts the load that just failed — used by the error banner's "Retry"
-// action. lastAttemptedPath is set by loadDirectory() before the fetch (even
-// for the sandbox root, where it's null), so this always repeats the exact
-// same request.
+// action. lastAttemptedPath is set by loadDirectory() before the fetch (THISPC
+// for the This PC page), so this always repeats the exact same request.
 function retryLoad() {
   loadDirectory(browserState.lastAttemptedPath, { addToHistory: false });
 }
@@ -664,22 +1580,56 @@ function pushHistory(path) {
   refreshNavButtons();
 }
 
+/** True while this tab's search is on screen but a navigation out of it
+ * (the × / Back / Up, or any other loadDirectory) is already in flight —
+ * search mode only ends when that listing commits. A second Back/Forward/Up
+ * then steps on from where the first is going instead of repeating it. */
+function searchExitPending() {
+  if (browserState.mode !== 'search') return false;
+  // Either the exit itself, or a Back/Forward already stepping on from it
+  // (a third press while the second is in flight steps on again). Both are
+  // per tab: another tab's pending navigation says nothing about this one.
+  return pendingNavFor(browserState._pendingExit) || pendingNavFor(browserState._pendingHistory);
+}
+
+/** A recorded in-flight navigation ({seq, tabId}) that is still the latest
+ * load, and belongs to the active tab. */
+function pendingNavFor(rec) {
+  return !!(rec && rec.seq === browserState._loadSeq && rec.tabId === tabs.activeId);
+}
+
 function navBack() {
   // Same Explorer rule navUp() follows: the first Back out of a results
   // listing leaves the search and returns to the folder that was searched —
   // searching never pushed a history entry of its own, so without this Back
   // silently skips PAST the searched folder to the previous one (pass 2 #154).
-  if (browserState.mode === 'search') { exitSearchResults(); return; }
-  if (nav.index <= 0) return;
-  nav.index -= 1;
-  loadDirectory(nav.history[nav.index], { addToHistory: false });
+  if (browserState.mode === 'search' && !searchExitPending()) return exitSearchResults();
+  const from = pendingHistoryIndex();
+  if (from <= 0) return undefined;
+  return visitHistory(from - 1);
 }
 
 function navForward() {
-  if (browserState.mode === 'search') { exitSearchResults(); return; }
-  if (nav.index >= nav.history.length - 1) return;
-  nav.index += 1;
-  loadDirectory(nav.history[nav.index], { addToHistory: false });
+  if (browserState.mode === 'search' && !searchExitPending()) return exitSearchResults();
+  const from = pendingHistoryIndex();
+  if (from >= nav.history.length - 1) return undefined;
+  return visitHistory(from + 1);
+}
+
+/** Where Back/Forward step from: a still-in-flight Back/Forward's target, or
+ * nav.index (which moves only once a fetch succeeds — pass-2 #55). */
+function pendingHistoryIndex() {
+  const ph = browserState._pendingHistory;
+  return pendingNavFor(ph) ? ph.index : nav.index;
+}
+
+function visitHistory(index) {
+  // Recorded BEFORE the load, under the sequence number loadDirectory() is
+  // about to take (its first statement bumps it): a commit that happens
+  // synchronously inside the call — a cached listing, the This PC page —
+  // clears it again, instead of leaving a finished step marked in flight.
+  browserState._pendingHistory = { seq: browserState._loadSeq + 1, index, tabId: tabs.activeId };
+  return loadDirectory(nav.history[index], { addToHistory: false, historyIndex: index });
 }
 
 function navUp() {
@@ -687,9 +1637,17 @@ function navUp() {
   // was searched, not to that folder's parent. This is the one path behind the
   // toolbar Up button, Alt+Up and Backspace (browserKeydown, when
   // ui.backspace_deletes is off), so all three agree by construction.
-  if (browserState.mode === 'search') { exitSearchResults(); return; }
+  if (browserState.mode === 'search' && !searchExitPending()) { exitSearchResults(); return; }
+  if (browserState.path === THISPC) return;
+  // Up from a drive root is This PC (Stage 2D §8), as in Explorer.
+  if (isDriveRootPath(browserState.path)) { loadDirectory(THISPC); return; }
   if (browserState.isRoot || !browserState.parent) return;
-  loadDirectory(browserState.parent);
+  loadDirectory(browserState.parent, { focusChild: browserState.path });
+}
+
+/** "C:\\" or "C:" — a drive's root folder. */
+function isDriveRootPath(p) {
+  return /^[A-Za-z]:[\\/]?$/.test(String(p || ''));
 }
 
 /**
@@ -707,6 +1665,44 @@ function browserScreenActive() {
   return !!(el && el.classList.contains('active'));
 }
 
+/**
+ * Does #list-scroll hold the ACTIVE tab's own content — its committed folder
+ * listing, or its own search results? False while a tab's first fetch is in
+ * flight (clearBrowserListing): every shortcut that acts on the listing, and
+ * refresh, is then a no-op rather than acting on another tab's rows.
+ */
+function browserHasOwnListing() {
+  const id = typeof tabs !== 'undefined' ? tabs.activeId : null;
+  return browserState.mode === 'search'
+    ? browserState.searchTabId === id
+    : (!!browserState.path && browserState.listingTabId === id);
+}
+
+/** Empties the Browser listing — DOM and state together — for a tab that has
+ * nothing of its own to show yet. */
+function clearBrowserListing() {
+  leaveSearchMode();
+  document.getElementById('list-scroll')?.replaceChildren();
+  // Another tab's This PC page goes with it.
+  setThisPcShown(false);
+  setListNotice('');
+  browserState.path = null;
+  browserState.entries = [];
+  browserState.parent = null;
+  browserState.isRoot = false;
+  browserState.truncated = false;
+  browserState.selection = new Set();
+  browserState.anchor = null;
+  browserState.focus = null;
+  browserState.listingTabId = null;
+  browserState._pendingHistory = null;
+  browserState._pendingExit = null;
+  browserState._orderDirty = false;
+  if (typeof syncHeavyList === 'function') syncHeavyList();
+  updateStatusBar();
+  onSelectionChanged();
+}
+
 function refreshNavButtons() {
   const back = document.querySelector('[data-action="nav-back"]');
   const fwd  = document.querySelector('[data-action="nav-forward"]');
@@ -720,28 +1716,288 @@ function refreshNavButtons() {
   // In search mode Up always has somewhere to go (back to the searched
   // folder), regardless of whether that folder has a parent of its own.
   if (up)   up.disabled   = !onBrowser || (browserState.mode !== 'search'
-    && (!browserState.path || browserState.isRoot || !browserState.parent));
+    && (!browserState.path || browserState.path === THISPC
+      || ((browserState.isRoot || !browserState.parent) && !isDriveRootPath(browserState.path))));
+}
+
+// ── List motion (Stage 2D addendum §5.2, content) ───────────────────────────
+// Decoration only (§5.1 rule 1): every function here runs after the state,
+// the DOM, the selection and focus are already final, and plays on top
+// through fpAnimate — the next call on the same element and key cancels it,
+// and nothing waits for one to end. Per-row motion is for small changes
+// (rule 3): at most LIST_MOTION_MAX_ROWS rows animate at once, and none in a
+// listing big enough for html.fp-heavy-list (app.js) — there the listing
+// fades as a whole, one compositor-only animation on #list-scroll itself.
+// A held key (html.fp-key-repeat) animates nothing (rule 4).
+const LIST_MOTION_MAX_ROWS = 30;
+const LIST_NAV_SLIDE_PX = 6;      // a navigation's slide (spec: ≤ 6 px)
+
+/** Animations are on and no key is being held. */
+function listMotionOn() {
+  return typeof fpMotionOn === 'function' && fpMotionOn() && !fpKeyRepeating();
+}
+
+/** A listing of `n` entries is too big for per-row (or sliding) motion —
+ * app.js's html.fp-heavy-list threshold. */
+function listIsHeavy(n = (browserState.entries || []).length) {
+  return n > (typeof HEAVY_LIST_ROWS === 'number' ? HEAVY_LIST_ROWS : 300);
+}
+
+/**
+ * The whole listing fades up from `from` (§5.2 Folder navigation, Views,
+ * Sort, Search): `dir` 1 slides it in from the right (into a folder,
+ * Forward), -1 from the left (Back, Up), 0 fades only (a tab switch, a view
+ * or sort crossfade, a big listing). Rows, icons and selection are already
+ * painted underneath — this never hides a row.
+ */
+function listFadeIn(dir = 0, { from = 0.6 } = {}) {
+  const listScroll = document.getElementById('list-scroll');
+  if (!listScroll || !listMotionOn()) return null;
+  const dx = dir && !listIsHeavy() ? Math.sign(dir) * LIST_NAV_SLIDE_PX : 0;
+  const frames = dx
+    ? [{ opacity: from, transform: `translateX(${dx}px)` }, { opacity: 1, transform: 'none' }]
+    : [{ opacity: from }, { opacity: 1 }];
+  return fpAnimate(listScroll, frames, { duration: 'base', key: 'list' });
+}
+
+/** Rows of #list-scroll that are on screen: path → {row, rect}. Ghosts
+ * (no data-path) are never rows. */
+function listRowsInView(listScroll) {
+  const box = listScroll.getBoundingClientRect();
+  const out = new Map();
+  for (const row of listScroll.querySelectorAll(':scope > .fp-row[data-path]')) {
+    const r = row.getBoundingClientRect();
+    if (!r.width || r.bottom <= box.top || r.top >= box.bottom || r.right <= box.left || r.left >= box.right) continue;
+    out.set(row.dataset.path, { row, rect: r });
+  }
+  return out;
+}
+
+/** Where the on-screen rows are before a change, or null when the change
+ * gets no per-row motion (motion off, a held key, a big listing, another
+ * screen). `n` is the larger of the entry counts before and after. */
+function listMotionCapture(listScroll, n = (browserState.entries || []).length) {
+  if (!listScroll || !listMotionOn() || listIsHeavy(n) || !browserScreenActive() || thisPcActive()) return null;
+  return {
+    box: listScroll.getBoundingClientRect(),
+    top: listScroll.scrollTop,
+    left: listScroll.scrollLeft,
+    rows: listRowsInView(listScroll),
+  };
+}
+
+/**
+ * Plays a change of the listing on top of the DOM that already shows it
+ * (§5.2 New items, Removed items, Rename, Sort):
+ *  - rows still on screen slide from where they were (FLIP, transform only);
+ *  - `added` rows (paths) fade and grow in;
+ *  - `gone` rows ([{path, node}], already out of the listing) play out as
+ *    ghosts: inert, aria-hidden, pointer-events none, no data-path — never a
+ *    row to arrow keys, selection, the marquee or patchDirectory — and gone
+ *    within --motion-base;
+ *  - `moved` (new path → old path) slides a renamed row from its old place;
+ *  - `enterFade` fades rows that come into view from off-screen (a sort).
+ * More than LIST_MOTION_MAX_ROWS slides, or arrivals plus ghosts, and that
+ * part does not animate per row. Returns the number of rows that slid, or
+ * -1 when there were too many to slide.
+ */
+function listMotionPlay(listScroll, cap, { added = null, gone = [], moved = null, enterFade = false } = {}) {
+  if (!cap || !listScroll || !listMotionOn()) return 0;
+  // The ghosts below must not hold up a scroll range the listing no longer
+  // has: clamp to the real extent first, or the list would jump when they go.
+  clampListScroll(listScroll);
+  // Reads first (one layout), writes after.
+  const box = listScroll.getBoundingClientRect();
+  const now = listRowsInView(listScroll);
+  const ox = (cap.box.left - cap.left) - (box.left - listScroll.scrollLeft);
+  const oy = (cap.box.top - cap.top) - (box.top - listScroll.scrollTop);
+  const slides = [];
+  const grows = [];
+  const fades = [];
+  for (const [path, { row, rect }] of now) {
+    if (added && added.has(path)) { grows.push(row); continue; }
+    const was = cap.rows.get((moved && moved.get(path)) || path);
+    if (!was) { if (enterFade) fades.push(row); continue; }
+    const dx = was.rect.left - rect.left - ox;
+    const dy = was.rect.top - rect.top - oy;
+    if (Math.abs(dx) >= 0.5 || Math.abs(dy) >= 0.5) slides.push([row, dx, dy]);
+  }
+  const ghosts = gone.filter(g => g && g.node && cap.rows.has(g.path));
+  const perRow = grows.length + ghosts.length <= LIST_MOTION_MAX_ROWS;
+  const slide = slides.length + fades.length <= LIST_MOTION_MAX_ROWS;
+
+  if (perRow) {
+    const ink = { x: listScroll.clientLeft, y: listScroll.clientTop };
+    for (const { path, node } of ghosts) {
+      const r = cap.rows.get(path).rect;
+      listGhost(listScroll, node, {
+        left: r.left - cap.box.left - ink.x + cap.left,
+        top: r.top - cap.box.top - ink.y + cap.top,
+        width: r.width,
+        height: r.height,
+      });
+    }
+    for (const row of grows) {
+      trackListFlip(row, fpAnimate(row, [{ opacity: 0, transform: 'scale(.96)' }, { opacity: 1, transform: 'none' }],
+        { duration: 'base', key: 'flip' }));
+    }
+  }
+  if (!slide) return -1;
+  for (const [row, dx, dy] of slides) {
+    trackListFlip(row, fpAnimate(row, [{ transform: `translate(${dx}px, ${dy}px)` }, { transform: 'none' }],
+      { duration: 'base', key: 'flip' }));
+  }
+  for (const row of fades) fpAnimate(row, [{ opacity: 0 }, { opacity: 1 }], { duration: 'base', key: 'flip' });
+  return slides.length;
+}
+
+// Rows mid-slide or mid-grow: their boxes on screen are not where the
+// layout has them. Anything that reads row geometry to act — the geometric
+// arrow keys, the marquee — first lands them (rule 1: a new action cancels
+// the animation, it never acts on a half-way picture).
+const _listFlips = new Set();
+function trackListFlip(row, anim) {
+  if (!anim) return;
+  _listFlips.add(row);
+  fpAfter(anim, () => _listFlips.delete(row));
+}
+function settleListFlips() {
+  if (!_listFlips.size) return;
+  for (const row of [..._listFlips]) fpCancelAnimation(row, 'flip');
+  _listFlips.clear();
+}
+
+/** Clamps #list-scroll's scroll offsets to its content without ghosts (any
+ * still playing are left out of the measure). */
+function clampListScroll(listScroll) {
+  const ghosts = [...listScroll.querySelectorAll(':scope > .fp-row--ghost')];
+  for (const g of ghosts) g.style.display = 'none';
+  const maxTop = Math.max(0, listScroll.scrollHeight - listScroll.clientHeight);
+  const maxLeft = Math.max(0, listScroll.scrollWidth - listScroll.clientWidth);
+  if (listScroll.scrollTop > maxTop) listScroll.scrollTop = maxTop;
+  if (listScroll.scrollLeft > maxLeft) listScroll.scrollLeft = maxLeft;
+  for (const g of ghosts) g.style.display = '';
+}
+
+/** A removed row's node, kept painted where it was while it fades and
+ * shrinks out (§5.2 Removed items). Everything that made it a row goes
+ * first; it sits out of flow, after the rows, and removes itself. */
+function listGhost(listScroll, node, box) {
+  for (const a of ['data-path', 'data-type', 'role', 'tabindex', 'aria-selected', 'title']) node.removeAttribute(a);
+  node.classList.remove('fp-row--selected', 'fp-row--focused', 'fp-row--active', 'fp-row--drag-target', 'fp-spring');
+  node.setAttribute('aria-hidden', 'true');
+  node.style.left = `${box.left}px`;
+  node.style.top = `${box.top}px`;
+  node.style.width = `${box.width}px`;
+  node.style.height = `${box.height}px`;
+  listScroll.appendChild(node);
+  fpCancelAnimation(node, 'flip');
+  fpPlayExit(node, [{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'scale(.96)' }],
+    { cls: 'fp-row--ghost', duration: 'fast', easing: 'in', done: () => node.remove() });
+}
+
+// A rename the backend just did (fileops.followOps → noteListMoves): the
+// next patch slides the row from its old name's place to its new one
+// instead of fading one out and another in.
+let _listMoves = null;
+const LIST_MOVES_TTL_MS = 5000;
+function noteListMoves(ops) {
+  const map = new Map();
+  for (const op of ops || []) {
+    if (op && op.op_type === 'rename' && op.src && op.dest) map.set(fpNormalizePath(op.src), String(op.dest));
+  }
+  _listMoves = map.size ? { at: Date.now(), map } : null;
+}
+function takeListMoves() {
+  const m = _listMoves;
+  _listMoves = null;
+  return m && Date.now() - m.at < LIST_MOVES_TTL_MS ? m.map : null;
+}
+
+// html-level "rows hold still": more than LIST_MOTION_MAX_ROWS rows change
+// their fill at once (Ctrl+A, a marquee drag), so no row transitions — the
+// class stays two frames, long enough for the change to be styled without
+// it, and comes off with nothing left to transition (styles.css).
+let _listStillRaf = 0;
+let _listStillHeld = false;
+function holdListStill(listScroll = document.getElementById('list-scroll'), { held = null } = {}) {
+  if (!listScroll) return;
+  if (held !== null) _listStillHeld = held;
+  listScroll.classList.add('fp-list-still');
+  cancelAnimationFrame(_listStillRaf);
+  _listStillRaf = requestAnimationFrame(() => {
+    _listStillRaf = requestAnimationFrame(() => {
+      _listStillRaf = 0;
+      if (!_listStillHeld) listScroll.classList.remove('fp-list-still');
+    });
+  });
+}
+
+/** Which way a navigation's listing slides in (§5.2 Folder navigation): 1
+ * from the right (into a folder, Forward), -1 from the left (Back, Up, out
+ * to an ancestor, out of a search), 0 a fade only (a tab switch from its
+ * cached listing, a first listing), null nothing (the same folder again). */
+function navMotionDir({ prevPath, prevMode, exiting, restore, historyIndex, focusChild, path }) {
+  if (restore) return 0;
+  if (prevMode === 'search') return exiting ? -1 : 1;
+  if (historyIndex !== null && historyIndex !== undefined) return historyIndex < nav.index ? -1 : 1;
+  if (focusChild) return -1;
+  if (!prevPath) return 0;
+  const from = fpNormalizePath(prevPath);
+  const to = fpNormalizePath(path);
+  if (from === to) return null;
+  if (prevPath !== THISPC && from.startsWith(`${to}\\`)) return -1;
+  return 1;
 }
 
 function renderDirectory(data) {
+  // On the This PC page there is no folder listing to render: a re-render
+  // asked for by a sort / extension toggle repaints the cards instead.
+  if (thisPcActive()) { renderThisPC(); if (typeof syncHeavyList === 'function') syncHeavyList(); return; }
+  setThisPcShown(false);
+  window.__fpRenderCount++;
+  // Before the rows land: a big listing turns off per-frame width motion.
+  if (typeof syncHeavyList === 'function') syncHeavyList();
   if (data) browserState.truncated = !!data.truncated;
   const listScroll = document.getElementById('list-scroll');
   if (!listScroll) return;
 
   const isSearch = browserState.mode === 'search';
-  // The 10,000-entry banner belongs to a /fs/list listing; a truncated search
-  // says so in its own results header instead (renderSearchResults).
-  const truncatedHtml = (!isSearch && browserState.truncated) ? renderTruncatedBanner() : '';
+  // The 10,000-entry notice belongs to a /fs/list listing; a truncated search
+  // says so in its own results header instead (renderSearchResults). It sits
+  // above the listing, outside it, so it never takes a cell of a flowing
+  // grid (List flows column by column — pass-2 #169).
+  setListNotice((!isSearch && browserState.truncated) ? renderTruncatedBanner() : '');
 
   if (!browserState.entries || browserState.entries.length === 0) {
-    listScroll.innerHTML = truncatedHtml + (isSearch ? renderNoSearchResults() : renderEmptyFolder());
+    listScroll.innerHTML = isSearch ? renderNoSearchResults() : renderEmptyFolder();
     updateStatusBar();
     return;
   }
 
-  listScroll.innerHTML = truncatedHtml + sortedEntries().map(entry => renderFsRow(entry, browserState.path)).join('');
+  // Column width / rows per column first, so the rows land in their final
+  // cells with the one innerHTML below. List measures the pane's height with
+  // the old rows already gone — measuring under them would lay all of them
+  // out once more, in the new view, for nothing (5,000 rows: ~0.4 s).
+  if (browserState.view === 'list') {
+    listScroll.replaceChildren();
+    const cs = getComputedStyle(listScroll);
+    const inner = listScroll.clientHeight - parseFloat(cs.paddingTop || 0) - parseFloat(cs.paddingBottom || 0);
+    const cols = Math.max(1, Math.floor(listScroll.clientWidth / listColumnWidth()));
+    syncListRows(listScroll, { reserveScrollbar: Math.floor(inner / VIEW_LIST_ROW_PX) * cols < browserState.entries.length });
+  }
+  syncViewMetrics({ rows: false });
+  listScroll.innerHTML = sortedEntries().map(entry => renderFsRow(entry, browserState.path)).join('');
   applySelectionState();
   updateStatusBar();
+}
+
+/** Fills (or, with '', hides) #list-notice — the strip above the listing. */
+function setListNotice(html) {
+  const el = document.getElementById('list-notice');
+  if (!el) return;
+  el.innerHTML = html;
+  el.hidden = !html;
 }
 
 function renderTruncatedBanner() {
@@ -760,33 +2016,50 @@ function stemOf(name) {
   return dot > 0 ? name.slice(0, dot) : name;
 }
 
-/** Leading visual for one entry: a 16px family icon in list view, a 96px
- * thumbnail area in grid view.
+/** The label a row shows for `entry`: its name, minus the extension for a
+ * file when ui.show_extensions is off. */
+function displayNameFor(entry) {
+  return (!entry.is_dir && browserState.showExtensions === false) ? stemOf(entry.name) : entry.name;
+}
+
+/** Leading visual for one entry, per view (spec §3.2, §4.4).
  *
- * Grid tiles show real content wherever the shell can produce it — a shell
- * thumbnail for media files, and, for a folder in 'fileplus' mode, up to two
- * of the folder's own pictures fanned over the folder icon (GET /fs/peek,
- * requested only once the tile is on screen). In 'windows' mode every tile
- * asks the shell directly, folders included, which is what Explorer shows.
- * List view keeps the family icon everywhere except image rows, which get a
- * 16px thumbnail of the picture itself. */
+ * Details, List and Small icons: a 16px icon (FilePlus mode shows a 16px
+ * thumbnail for a picture; Explorer, and Windows mode, keep the type icon at
+ * 16 — §4.4 ruling).
+ *
+ * Content (32), Tiles (48) and Icons (s): an s×s slot (.fp-tile__thumb,
+ * sized by --icon-size) showing real content wherever the shell can produce
+ * it — a thumbnail for pictures and videos in every folder, and in
+ * 'fileplus' mode a large icon's folder fans up to two of its own pictures
+ * over the folder (GET /fs/peek, requested only once the cell is on screen).
+ * In 'windows' mode every slot asks the shell directly, folders included,
+ * which is what Explorer shows. */
 function renderFsIcon(entry) {
+  const view = browserState.view;
   const source = fpIconSource();
-  if (browserState.view !== 'grid') {
-    const wantsThumb = !entry.is_dir && !entry.error && source === 'fileplus'
-      && typeof fpIsMedia === 'function' && fpIsMedia(entry.ext)
-      && fpFamilyFor(entry.ext) !== 'svg'; // an SVG's own markup is its icon
-    return wantsThumb
+  const isMedia = !entry.is_dir && typeof fpIsMedia === 'function' && fpIsMedia(entry.ext)
+    && fpFamilyFor(entry.ext) !== 'svg'; // an SVG's own markup is its icon
+  if (view === 'details' || view === 'list' || view === 'small') {
+    return (isMedia && !entry.error && source === 'fileplus')
       ? fpThumbBox(entry, 16, 'fp-row__icon fp-row__icon--thumb')
       : iconFor(entry, 16, 'fp-row__icon');
   }
-  if (entry.error) return fpTileIcon(entry);
-  if (source === 'windows') return fpThumbBox(entry, 96, 'fp-tile__thumb');
-  if (entry.is_dir) return fpFolderPeekBox(entry, 'fp-tile__thumb');
-  if (typeof fpIsMedia === 'function' && fpIsMedia(entry.ext) && fpFamilyFor(entry.ext) !== 'svg') {
-    return fpThumbBox(entry, 96, 'fp-tile__thumb');
-  }
-  return fpTileIcon(entry);
+  const size = fpListIconSize();
+  if (entry.error) return fpTileIcon(entry, size);
+  if (source === 'windows') return fpThumbBox(entry, size, 'fp-tile__thumb');
+  if (entry.is_dir) return view === 'icons' ? fpFolderPeekBox(entry, 'fp-tile__thumb') : fpTileIcon(entry, size);
+  if (isMedia) return fpThumbBox(entry, size, 'fp-tile__thumb');
+  return fpTileIcon(entry, size);
+}
+
+/** A short type description for Tiles / Content: "File folder", or the
+ * extension's own name ("PNG File") — what Explorer shows when no richer
+ * description is registered. */
+function typeLabelFor(entry) {
+  if (entry.is_dir) return 'File folder';
+  const ext = String(entry.ext || '').replace(/^\./, '');
+  return ext ? `${ext.toUpperCase()} File` : 'File';
 }
 
 function renderFsRow(entry, parentPath) {
@@ -797,19 +2070,27 @@ function renderFsRow(entry, parentPath) {
   // a /fs/list entry only carries its own name — join it on here rather than
   // making every icon call site re-derive it.
   const iconHtml = renderFsIcon({ ...entry, path: childPath });
+  const view = browserState.view;
   const sizeText = (entry.is_dir || entry.error) ? '—' : formatSize(entry.size);
-  const modifiedText = entry.error ? '—' : formatModified(entry.modified * 1000);
-  const rowClass = `fp-row${entry.is_dir ? ' fp-row--folder' : ''}${entry.error ? ' fp-row--disabled' : ''}`;
+  // The date follows the sort: created / modified / accessed (a result that
+  // lacks the field, e.g. an index-backed search hit's accessed, shows —).
+  const dateField = dateFieldForSort();
+  const dateValue = entry[dateField];
+  const dateText = (entry.error || dateValue == null) ? '—' : formatDate(dateValue * 1000);
+  const clipMark = clipboardMarkFor(childPath);
+  const rowClass = `fp-row${entry.is_dir ? ' fp-row--folder' : ''}${entry.error ? ' fp-row--disabled' : ''}`
+    + (clipMark ? ` fp-row--${clipMark}` : '');
   const titleAttr = entry.error ? ' title="Access denied"' : '';
   // ui.show_extensions === false hides the extension on FILE rows only —
-  // folders never have one to hide. The full name still shows as a tooltip.
-  const hideExt = !entry.is_dir && browserState.showExtensions === false;
-  const displayName = hideExt ? stemOf(entry.name) : entry.name;
+  // folders never have one to hide; the full name is then the tooltip. Any
+  // other name gets its tooltip only while it is actually cut short
+  // (syncTruncationTitle, on hover — Explorer's behaviour).
+  const displayName = displayNameFor(entry);
+  const hideExt = displayName !== entry.name;
   const nameTitleAttr = hideExt ? ` title="${escapeHtml(entry.name)}"` : '';
-  // Search mode: wrap the matched substrings in <mark> and hang the parent
-  // folder under the name as a "Location" subline. entry.match's offsets index
-  // the RAW name, so highlighting is skipped when show-extensions has trimmed
-  // it — the spans would no longer line up with what is being rendered.
+  // Search mode: wrap the matched substrings in <mark>. entry.match's offsets
+  // index the RAW name, so highlighting is skipped when show-extensions has
+  // trimmed it — the spans would no longer line up with what is rendered.
   const isSearch = browserState.mode === 'search';
   const nameHtml = (isSearch && !hideExt)
     ? highlightMatch(displayName, entry.match)
@@ -821,6 +2102,49 @@ function renderFsRow(entry, parentPath) {
   const starHtml = (typeof favoritesHas === 'function' && favoritesHas(childPath))
     ? `<span class="fp-row__star" title="In Favorites">${icon('star')}</span>`
     : '';
+  const nameSpan = `<span class="fp-row__name"${nameTitleAttr}>${nameHtml}</span>`;
+
+  let body;
+  if (view === 'details') {
+    // Search results hang the parent folder under the name as a "Location"
+    // subline (Details only; the other views keep it in the name's tooltip).
+    body = `${isSearch
+      ? `<span class="fp-row__namecell">
+          ${nameSpan}
+          <span class="fp-row__location" title="${escapeHtml(location)}"><bdi>${escapeHtml(location)}</bdi></span>
+        </span>`
+      : nameSpan}
+    ${starHtml}
+    <span class="fp-row__size mono">${sizeText}</span>
+    <span class="fp-row__modified mono">${dateText}</span>
+    <div class="fp-row__tags"></div>`;
+  } else if (view === 'content') {
+    // Two lines: name | "Date <field>: …" over type (or, for a search
+    // result, its folder) | "Size: …".
+    const second = isSearch
+      ? `<span class="fp-row__meta fp-row__meta--start"><bdi>${escapeHtml(location)}</bdi></span>`
+      : `<span class="fp-row__meta fp-row__meta--start">${escapeHtml(typeLabelFor(entry))}</span>`;
+    const dateLabel = `Date ${dateField}:`;
+    body = `<span class="fp-row__content">
+      ${nameSpan}
+      <span class="fp-row__meta"><span class="fp-row__meta-label">${dateLabel}</span> ${escapeHtml(dateText)}</span>
+      ${second}
+      ${(entry.is_dir || entry.error) ? '<span class="fp-row__meta"></span>'
+        : `<span class="fp-row__meta"><span class="fp-row__meta-label">Size:</span> ${escapeHtml(sizeText)}</span>`}
+    </span>
+    ${starHtml}`;
+  } else if (view === 'tiles') {
+    const type = typeLabelFor(entry);
+    body = `<span class="fp-row__lines">
+      ${nameSpan}
+      <span class="fp-row__line">${escapeHtml(type)}</span>
+      ${(entry.is_dir || entry.error) ? '' : `<span class="fp-row__line">${escapeHtml(sizeText)}</span>`}
+    </span>
+    ${starHtml}`;
+  } else {
+    // List, Small icons, Icons: the icon and the name.
+    body = `${nameSpan}${starHtml}`;
+  }
   // No draggable="true": Stage 2C Task 12 replaced HTML5 drag and drop with a
   // pointer-event drag session (dragdrop.js). The native attribute would now
   // only get in the way — a native drag starting under our own pointermove
@@ -829,16 +2153,7 @@ function renderFsRow(entry, parentPath) {
             data-path="${escapeHtml(childPath)}"
             data-type="${entry.is_dir ? 'folder' : 'file'}" tabindex="-1"${titleAttr}>
     ${iconHtml}
-    ${isSearch
-      ? `<span class="fp-row__namecell">
-          <span class="fp-row__name"${nameTitleAttr}>${nameHtml}</span>
-          <span class="fp-row__location" title="${escapeHtml(location)}"><bdi>${escapeHtml(location)}</bdi></span>
-        </span>`
-      : `<span class="fp-row__name"${nameTitleAttr}>${nameHtml}</span>`}
-    ${starHtml}
-    <span class="fp-row__size mono">${sizeText}</span>
-    <span class="fp-row__modified mono">${modifiedText}</span>
-    <div class="fp-row__tags"></div>
+    ${body}
   </div>`;
 }
 
@@ -921,6 +2236,9 @@ function showSearchPending(query, root) {
   browserState._loadSeq++;
   browserState.mode = 'search';
   browserState.searchRoot = root;
+  // #list-scroll no longer holds a folder listing (see listingTabId).
+  browserState.listingTabId = null;
+  browserState.searchTabId = tabs.activeId;
   if (listScroll) listScroll.dataset.mode = 'search';
   if (entering) {
     browserState.entries = [];
@@ -928,9 +2246,20 @@ function showSearchPending(query, root) {
     browserState.anchor = null;
     browserState.focus = null;
     if (listScroll) listScroll.innerHTML = '';
+    setListNotice('');
+    // A search started from This PC shows its results in the listing.
+    setThisPcShown(false);
+    if (typeof syncHeavyList === 'function') syncHeavyList();
   }
+  const header = document.getElementById('list-search-header');
+  const headerWasHidden = !!(header && header.hidden);
   updateSearchBreadcrumb(root);
   setSearchHeader('Searching…');
+  // §5.2 Search: the results header slides in when it appears.
+  if (headerWasHidden && listMotionOn()) {
+    fpAnimate(header, [{ opacity: 0, transform: 'translateY(-4px)' }, { opacity: 1, transform: 'none' }],
+      { duration: 'base', key: 'enter' });
+  }
   refreshNavButtons();
 }
 
@@ -955,8 +2284,11 @@ function renderSearchResults(payload, { query = '', root = '', preserveSelection
   const prevFocus = preserveSelection ? browserState.focus : null;
   browserState.mode = 'search';
   browserState.searchRoot = root;
+  browserState.listingTabId = null;
+  browserState.searchTabId = tabs.activeId;
   browserState.truncated = false;
   browserState.entries = (payload.results || []).map(r => ({ ...r, location: parentOfPath(r.path) }));
+  browserState.listingGen++;
   if (preserveSelection && prevSelection) {
     const validPaths = new Set(browserState.entries.map(e => e.path));
     browserState.selection = new Set([...prevSelection].filter(p => validPaths.has(p)));
@@ -971,10 +2303,15 @@ function renderSearchResults(payload, { query = '', root = '', preserveSelection
 
   updateSearchBreadcrumb(root);
   renderDirectory();
+  // A new result set starts at the start, on both axes (List scrolls sideways).
   listScroll.scrollTop = 0;
+  listScroll.scrollLeft = 0;
 
   const n = browserState.entries.length;
-  setSearchHeader(payload.truncated ? `First ${n} results — refine the search` : `${n} results`);
+  setSearchHeader(payload.truncated ? `First ${countLabel(n, 'result')} — refine the search` : countLabel(n, 'result'));
+  // §5.2 Search: a new result set fades in (a re-run of the same search —
+  // a refresh after an operation — does not).
+  if (!preserveSelection) listFadeIn(0);
   onSelectionChanged();
   refreshNavButtons();
 }
@@ -989,7 +2326,7 @@ function updateSearchBreadcrumb(root) {
     : (pathBaseName(root) || String(root || '') || 'this folder');
   crumb.innerHTML = `<span class="fp-breadcrumb__search">
       ${icon('search', 'fp-icon--14')}
-      <span>Search in ${escapeHtml(label)}</span>
+      <span class="fp-breadcrumb__label">Search in ${escapeHtml(label)}</span>
     </span>
     <button class="fp-icon-btn fp-icon-btn--sm fp-breadcrumb__clear" data-action="search-clear"
             title="Clear search" aria-label="Clear search">${icon('close', 'fp-icon--10')}</button>`;
@@ -1004,6 +2341,12 @@ function updateSearchBreadcrumb(root) {
  */
 function leaveSearchMode() {
   if (browserState.mode !== 'search') return;
+  // clearSearch()'s own re-list landing: it reset the bar (and ended the
+  // search) when it started, so whatever is in the bar now — text, chips, an
+  // armed debounce, a search in flight — was typed since and belongs to the
+  // NEXT search. Resetting it here wiped that text and cancelled its search
+  // (Task 11 race).
+  const barIsNewer = exitKeepsBar();
   browserState.mode = 'browse';
   browserState.searchRoot = null;
   // search.js loads after browser.js, so its exports only exist once the app
@@ -1012,24 +2355,39 @@ function leaveSearchMode() {
   // request and bump the sequence runSearch()'s superseded() checks so a
   // response that lands after this navigation is ignored instead of
   // repainting stale search results over the folder we're navigating to.
-  if (typeof abortSearch === 'function') abortSearch();
-  if (typeof searchState !== 'undefined' && searchState) searchState._seq++;
+  if (!barIsNewer) {
+    if (typeof abortSearch === 'function') abortSearch();
+    if (typeof searchState !== 'undefined' && searchState) searchState._seq++;
+  }
   const listScroll = document.getElementById('list-scroll');
   if (listScroll) delete listScroll.dataset.mode;
   const header = document.getElementById('list-search-header');
   if (header) { header.hidden = true; header.innerHTML = ''; }
   const tab = typeof activeTab === 'function' ? activeTab() : null;
   if (tab) tab.search = null;
-  if (typeof searchResetBar === 'function') searchResetBar();
+  if (!barIsNewer && typeof searchResetBar === 'function') searchResetBar();
+}
+
+/** True while the load now committing is clearSearch()'s re-list (see
+ * exitSearchResults' barCleared): the bar was reset when it started. */
+function exitKeepsBar() {
+  const rec = browserState._pendingExit;
+  return !!(rec && rec.barCleared && pendingNavFor(rec));
 }
 
 /** Leaves search mode and re-lists the folder the active tab was showing —
  * the breadcrumb's × and search.js's clearSearch(). */
-function exitSearchResults() {
+function exitSearchResults({ barCleared = false } = {}) {
   if (browserState.mode !== 'search') return undefined;
   const tab = typeof activeTab === 'function' ? activeTab() : null;
   const target = tab && tab.path !== undefined ? tab.path : browserState.path;
-  leaveSearchMode();
+  // loadDirectory() ends this tab's search once the folder has loaded (and
+  // keeps the results if it cannot be).
+  // Recorded before the load, like visitHistory()'s step: a synchronous
+  // commit (This PC, a cached listing) clears it.
+  // barCleared: the caller (clearSearch) has already reset the bar, so the
+  // commit must not reset it again over newer typing (leaveSearchMode).
+  browserState._pendingExit = { seq: browserState._loadSeq + 1, tabId: tabs.activeId, barCleared };
   return loadDirectory(target, { addToHistory: false });
 }
 
@@ -1038,9 +2396,49 @@ function updateAddressBar(path) {
   if (addressEl) addressEl.textContent = path;
 }
 
+/** The "This PC" crumb: the whole breadcrumb on the This PC page (current,
+ * icon and name), and the root crumb in front of every drive path (Stage 2D
+ * §8) — there just its icon, named by its tooltip, so the path itself keeps
+ * the toolbar's width. */
+function thisPcCrumbHtml(current) {
+  const glyph = icon('this-pc', 'fp-icon--14 fp-breadcrumb__icon');
+  return current
+    ? `<button class="fp-breadcrumb__crumb fp-breadcrumb__crumb--current" data-action="navigate-crumb" data-path="${THISPC}">`
+      + `${glyph}<span class="fp-breadcrumb__label">This PC</span></button>`
+    : `<button class="fp-breadcrumb__crumb fp-breadcrumb__crumb--root" data-action="navigate-crumb" data-path="${THISPC}"`
+      + ` title="This PC" aria-label="This PC">${glyph}</button>`;
+}
+
 function updateBreadcrumb(path) {
   const crumb = document.getElementById('breadcrumb');
   if (!crumb || !path) return;
+  const before = new Set([...crumb.querySelectorAll('.fp-breadcrumb__crumb[data-path]')].map(b => b.dataset.path));
+  writeBreadcrumb(crumb, path);
+  breadcrumbMotion(crumb, before);
+}
+
+/** §5.2 Breadcrumb: crumbs that were not there before fade in (with the dot
+ * in front of them); a path that shares nothing with the last one fades in
+ * as a whole. Opacity only: the toolbar measures the path's width in this
+ * same frame (layoutToolbar), and a transform would change what it reads. */
+function breadcrumbMotion(crumb, before) {
+  if (!listMotionOn()) return;
+  const crumbs = [...crumb.querySelectorAll('.fp-breadcrumb__crumb[data-path]')];
+  const fresh = crumbs.filter(b => !before.has(b.dataset.path));
+  if (!fresh.length) return;
+  if (fresh.length === crumbs.length) {
+    fpAnimate(crumb, [{ opacity: 0.4 }, { opacity: 1 }], { duration: 'fast', key: 'enter' });
+    return;
+  }
+  for (const b of fresh) {
+    const sep = b.previousElementSibling && b.previousElementSibling.classList.contains('fp-breadcrumb__sep')
+      ? b.previousElementSibling : null;
+    for (const el of [sep, b]) if (el) fpAnimate(el, [{ opacity: 0 }, { opacity: 1 }], { duration: 'fast', key: 'enter' });
+  }
+}
+
+function writeBreadcrumb(crumb, path) {
+  if (path === THISPC) { crumb.innerHTML = thisPcCrumbHtml(true); return; }
   // Split on \ or /, drop empties. First part is drive letter (e.g. "C:") — keep with backslash for nav.
   const parts = String(path).split(/[\\\/]+/).filter(Boolean);
   let cumulative = '';
@@ -1052,9 +2450,20 @@ function updateBreadcrumb(path) {
     // button's own data-path stays the literal "D:\\" for navigation either way.
     const isDriveRoot = i === 0 && /^[A-Za-z]:$/.test(part);
     const label = isDriveRoot ? driveDisplayLabel(part) : part;
-    return `<button class="${cls}" data-action="navigate-crumb" data-path="${escapeHtml(cumulative)}">${escapeHtml(label)}</button>`;
+    // The drive crumb carries the drive's own icon — the real shell icon in
+    // Windows-icon mode (Stage 2D §4.6).
+    const iconHtml = isDriveRoot
+      ? fpShellItemIcon({ path: cumulative, is_dir: true }, 16, 'drive', 'fp-breadcrumb__icon')
+      : '';
+    // The label is its own span so a too-narrow bar can ellipsize the
+    // current crumb (styles.css .is-tight, Stage 2D §6.2).
+    return `<button class="${cls}" data-action="navigate-crumb" data-path="${escapeHtml(cumulative)}">${iconHtml}<span class="fp-breadcrumb__label">${escapeHtml(label)}</span></button>`;
   }).join('<span class="fp-breadcrumb__sep">·</span>');
-  crumb.innerHTML = html;
+  // A drive path starts at This PC, as in Explorer: its root crumb.
+  const root = /^[A-Za-z]:$/.test(parts[0] || '') ? `${thisPcCrumbHtml(false)}<span class="fp-breadcrumb__sep">·</span>` : '';
+  // app.js's MutationObserver on #breadcrumb re-runs layoutToolbar() for this
+  // (before the next paint) — one layout pass per navigation.
+  crumb.innerHTML = root + html;
 }
 
 /**
@@ -1071,6 +2480,8 @@ function showErrorBanner(message, opts = {}) {
         `<button class="fp-error-banner__action fp-btn fp-btn--ghost" data-action="${escapeHtml(a.name)}">${escapeHtml(a.label)}</button>`
       ).join('')}</div>`
     : '';
+  setListNotice('');
+  setThisPcShown(false);
   listScroll.innerHTML = `<div class="fp-error-banner" role="alert">
     ${icon('error', 'fp-icon--14')}
     <span class="fp-body" style="color: var(--text-primary)">${escapeHtml(message)}</span>
@@ -1091,9 +2502,25 @@ function getSelectedPaths() { return [...browserState.selection]; }
 function canRenameSelection() { return browserState.selection.size === 1; }
 
 /** Looks up the entry object for an absolute path in the current directory, or null. */
+let _entryMap = { entries: null, path: null, map: new Map() };
 function entryForPath(path) {
   if (!browserState.path && browserState.mode !== 'search') return null;
-  return browserState.entries.find(e => entryPath(e) === path) || null;
+  // A path -> entry map, built once per listing (Task 14 M8): every writer
+  // replaces browserState.entries with a new array, so the array and the
+  // folder it was joined against identify the listing. The linear find this
+  // replaces made Ctrl+A in a 10,000-item folder a multi-second freeze
+  // (selectionTotalSize looks up every selected path).
+  const entries = browserState.entries || [];
+  const m = _entryMap;
+  if (m.entries !== entries || m.path !== browserState.path) {
+    const map = new Map();
+    for (const e of entries) {
+      const p = entryPath(e);
+      if (!map.has(p)) map.set(p, e);
+    }
+    _entryMap = { entries, path: browserState.path, map };
+  }
+  return _entryMap.map.get(path) || null;
 }
 
 /** Finds the rendered row element for an absolute path, or null. */
@@ -1117,15 +2544,21 @@ function focusListContainer() {
 function applySelectionState() {
   const listScroll = document.getElementById('list-scroll');
   if (!listScroll) return;
+  // Each row's fill fades (§5.2 Rows and selection) — unless more than
+  // LIST_MOTION_MAX_ROWS of them change at once (Ctrl+A): then none does
+  // (the class lands in this same task, before the change is styled).
+  let flips = 0;
   listScroll.querySelectorAll('.fp-row[data-path]').forEach(row => {
     const path = row.dataset.path;
     const isSelected = browserState.selection.has(path);
     const isFocused = path === browserState.focus;
+    if (row.classList.contains('fp-row--selected') !== isSelected) flips++;
     row.classList.toggle('fp-row--selected', isSelected);
     row.setAttribute('aria-selected', isSelected ? 'true' : 'false');
     row.classList.toggle('fp-row--focused', isFocused);
     row.setAttribute('tabindex', isFocused ? '0' : '-1');
   });
+  if (flips > LIST_MOTION_MAX_ROWS) holdListStill(listScroll);
 }
 
 /**
@@ -1180,6 +2613,104 @@ function selectAll() {
   onSelectionChanged();
 }
 
+/**
+ * Keeps the selection on the items an operation just moved (Stage 2D §12
+ * sweep): a renamed or moved item stays selected under its new path and a
+ * trashed one leaves the selection — the moment the operation answers, not
+ * after the listing refresh that follows. Until then the selection named a
+ * path that no longer existed, and any selection event in between sent the
+ * inspector to GET /file for a path that was gone. An item moved out
+ * of the folder on screen leaves the selection too (a search lists results
+ * from anywhere, so there it follows). Same op shape and op types as
+ * fileops.followOps (the clipboard's twin).
+ */
+function followSelectionOps(ops) {
+  if (!ops || !ops.length || !browserState.selection.size) return;
+  const folder = browserState.mode === 'search' ? null : fpNormalizePath(browserState.path);
+  const remap = (p) => {
+    if (!p) return p;
+    let out = p;
+    for (const op of ops) {
+      if (!op || !op.src || !FOLLOWED_OPS.has(op.op_type)) continue;
+      if (op.op_type !== 'trash' && !op.dest) continue;
+      const src = String(op.src);
+      const lsrc = src.toLowerCase();
+      const lp = String(out).toLowerCase();
+      if (lp !== lsrc && !lp.startsWith(lsrc.endsWith('\\') ? lsrc : `${lsrc}\\`)) continue;
+      if (op.op_type === 'trash') return null;
+      out = String(op.dest) + String(out).slice(src.length);
+    }
+    if (out !== p && folder !== null && fpNormalizePath(parentOfPath(out)) !== folder) return null;
+    return out;
+  };
+  let changed = false;
+  const next = [];
+  for (const p of browserState.selection) {
+    const q = remap(p);
+    if (q !== p) changed = true;
+    if (q) next.push(q);
+  }
+  if (!changed) return;
+  browserState.selection = new Set(next);
+  browserState.anchor = remap(browserState.anchor) || null;
+  browserState.focus = remap(browserState.focus) || null;
+  onSelectionChanged();
+}
+
+/** Selects what an operation just brought INTO the folder on screen — the
+ * pasted items, or what an undo put back — as Explorer does. Without it a
+ * paste or an undone delete left nothing selected, and in a long folder the
+ * user had to hunt for what had just arrived (Stage 2D §12 sweep). Called
+ * after the refresh, so the rows exist. Returns whether it selected anything. */
+function selectLandedOps(ops) {
+  if (!ops || !ops.length || browserState.mode === 'search' || !browserState.path) return false;
+  const folder = fpNormalizePath(browserState.path);
+  const landed = ops
+    .filter(op => op && op.dest && ['copy', 'move', 'restore'].includes(op.op_type))
+    .map(op => String(op.dest))
+    .filter(p => fpNormalizePath(parentOfPath(p)) === folder)
+    .map(p => entryPath(browserState.entries.find(e => fpNormalizePath(entryPath(e)) === fpNormalizePath(p))))
+    .filter(Boolean);
+  if (!landed.length) return false;
+  browserState.selection = new Set(landed);
+  browserState.anchor = landed[0];
+  browserState.focus = landed[landed.length - 1];
+  applySelectionState();
+  findListRow(browserState.focus)?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  onSelectionChanged();
+  return true;
+}
+
+/** The folder, mode and sorted index of the first of `paths` — taken before a
+ * delete so selectAfterDelete() can select what took its place. */
+function deletePlace(paths) {
+  const order = sortedEntries().map(entryPath);
+  const idx = paths.map(p => order.indexOf(p)).filter(i => i >= 0);
+  if (!idx.length) return null;
+  return {
+    path: browserState.path, mode: browserState.mode, index: Math.min(...idx),
+    deleted: new Set(paths.map(p => fpNormalizePath(p))),
+    gen: browserState.listingGen,
+  };
+}
+
+/** After a delete, the item now at the deleted one's place (or the last
+ * item) is selected and focused, as in Explorer — the selection used to empty
+ * and the next arrow key started again from the top (Stage 2D §12 sweep,
+ * "refresh loses place"). Nothing happens if the user has moved on or
+ * selected something meanwhile. */
+function selectAfterDelete(place) {
+  if (!place || browserState.path !== place.path || browserState.mode !== place.mode) return;
+  if (browserState.selection.size) return;
+  // Only once the listing has been refreshed since the delete: a refresh that
+  // failed or was superseded leaves the deleted rows in `entries`, and
+  // selecting one would send the inspector to GET /file for a gone path.
+  if (browserState.listingGen === place.gen) return;
+  const order = sortedEntries().map(entryPath).filter(p => !place.deleted.has(fpNormalizePath(p)));
+  if (!order.length) return;
+  moveFocusTo(order[Math.min(place.index, order.length - 1)], {}, order);
+}
+
 /** Clears the selection (anchor/focus included). */
 function clearSelection() {
   browserState.selection = new Set();
@@ -1204,8 +2735,14 @@ function moveFocus(delta, { shift = false } = {}) {
   if (delta === 'home') idx = 0;
   else if (delta === 'end') idx = order.length - 1;
   else idx = curIdx === -1 ? 0 : Math.max(0, Math.min(order.length - 1, curIdx + delta));
+  moveFocusTo(order[idx], { shift }, order);
+}
 
-  const path = order[idx];
+/** Focuses `path` (selecting it, or with `shift` the range from the anchor
+ * in sorted order) and scrolls it into view along both axes. */
+function moveFocusTo(path, { shift = false } = {}, order = sortedEntries().map(entryPath)) {
+  const idx = order.indexOf(path);
+  if (idx === -1) return;
   if (shift) {
     if (!browserState.anchor) browserState.anchor = browserState.focus || path;
     const a = order.indexOf(browserState.anchor);
@@ -1218,8 +2755,110 @@ function moveFocus(delta, { shift = false } = {}) {
   browserState.focus = path;
 
   applySelectionState();
-  findRowByPath(path)?.scrollIntoView({ block: 'nearest' });
+  findListRow(path)?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   onSelectionChanged();
+}
+
+/**
+ * Arrow keys and PageUp/PageDown, by the rendered positions of the cells
+ * (spec §3.3, pass-2 #168):
+ *  - Icons, Tiles, Small icons: ←/→ step through DOM order (within a row,
+ *    wrapping to the previous/next row); ↑/↓ go to the cell in the row
+ *    above/below whose centre is nearest.
+ *  - List: ↑/↓ step through DOM order (down a column, on into the next);
+ *    ←/→ go to the neighbouring column at the same row.
+ *  - Details, Content: ↑/↓ only.
+ * PageUp/PageDown move a viewport's worth along the scroll axis. Rects are
+ * read once per keypress, lazily, only for the rows the search looks at.
+ * `dir` is 'left' | 'right' | 'up' | 'down' | 'pageup' | 'pagedown'.
+ */
+function moveFocusDir(dir, { shift = false } = {}) {
+  if (!browserState.path) return;
+  const listScroll = document.getElementById('list-scroll');
+  if (!listScroll) return;
+  const rows = listScroll.querySelectorAll(':scope > .fp-row[data-path]');
+  if (!rows.length) return;
+  // Geometry is read below: rows still sliding into place land first.
+  settleListFlips();
+  let cur = -1;
+  if (browserState.focus) {
+    const focused = findListRow(browserState.focus);
+    if (focused) cur = Array.prototype.indexOf.call(rows, focused);
+  }
+  if (cur === -1) { moveFocusTo(rows[0].dataset.path, { shift }); return; }
+
+  const view = browserState.view;
+  const grid = view === 'icons' || view === 'tiles' || view === 'small';
+  const rects = new Array(rows.length);
+  const rectOf = (i) => rects[i] || (rects[i] = rows[i].getBoundingClientRect());
+  const step = (d) => Math.max(0, Math.min(rows.length - 1, cur + d));
+  let target = cur;
+  if (dir === 'left' || dir === 'right') {
+    if (grid) target = step(dir === 'right' ? 1 : -1);
+    else if (view === 'list') target = nearestAcross(rows.length, cur, rectOf, dir === 'right' ? 1 : -1, true);
+    else return;
+  } else if (dir === 'up' || dir === 'down') {
+    target = grid
+      ? nearestAcross(rows.length, cur, rectOf, dir === 'down' ? 1 : -1, false)
+      : step(dir === 'down' ? 1 : -1);
+  } else if (dir === 'pageup' || dir === 'pagedown') {
+    const horiz = view === 'list';
+    const c = rectOf(cur);
+    const page = Math.max(1, (horiz ? listScroll.clientWidth - c.width : listScroll.clientHeight - c.height));
+    target = pageTarget(rows.length, cur, rectOf, dir === 'pagedown' ? 1 : -1, horiz, page);
+  }
+  if (target === cur || target < 0) return;
+  moveFocusTo(rows[target].dataset.path, { shift });
+}
+
+/** The cell in the next line (row, or column when `horiz`) in direction
+ * `sign` whose centre is nearest the current cell's, or `cur` when there is
+ * no such line. DOM order runs line by line, so the scan stops at the first
+ * cell past that line. */
+function nearestAcross(n, cur, rectOf, sign, horiz) {
+  const c = rectOf(cur);
+  const centre = horiz ? (c.top + c.bottom) / 2 : (c.left + c.right) / 2;
+  const start = (r) => (horiz ? r.left : r.top);
+  let line = null, best = cur, bestD = Infinity;
+  for (let i = cur + sign; i >= 0 && i < n; i += sign) {
+    const r = rectOf(i);
+    const beyond = sign > 0 ? start(r) >= (horiz ? c.right : c.bottom) - 1 : (horiz ? r.right : r.bottom) <= start(c) + 1;
+    if (!beyond) continue;
+    if (line === null) line = start(r);
+    else if (Math.abs(start(r) - line) > 1) break;
+    const d = Math.abs((horiz ? (r.top + r.bottom) / 2 : (r.left + r.right) / 2) - centre);
+    if (d < bestD) { bestD = d; best = i; }
+  }
+  return best;
+}
+
+/** PageUp/PageDown: the farthest line within one page in direction `sign`
+ * (the last line when the list ends sooner), and in it the cell nearest the
+ * current one across the other axis. */
+function pageTarget(n, cur, rectOf, sign, horiz, page) {
+  const c = rectOf(cur);
+  const pos = (r) => (horiz ? (r.left + r.right) / 2 : (r.top + r.bottom) / 2);
+  const across = (r) => (horiz ? (r.top + r.bottom) / 2 : (r.left + r.right) / 2);
+  const from = pos(c);
+  let lineIdx = cur;
+  // Walk outwards until a cell lies more than a page away.
+  for (let i = cur + sign; i >= 0 && i < n; i += sign) {
+    if (Math.abs(pos(rectOf(i)) - from) > page) break;
+    lineIdx = i;
+  }
+  if (lineIdx === cur) return sign > 0 ? n - 1 : 0;
+  // In the line of lineIdx, the cell nearest across.
+  const linePos = pos(rectOf(lineIdx));
+  let best = lineIdx, bestD = Math.abs(across(rectOf(lineIdx)) - across(c));
+  for (const dirn of [-1, 1]) {
+    for (let i = lineIdx + dirn; i >= 0 && i < n; i += dirn) {
+      const r = rectOf(i);
+      if (Math.abs(pos(r) - linePos) > 1) break;
+      const d = Math.abs(across(r) - across(c));
+      if (d < bestD) { bestD = d; best = i; }
+    }
+  }
+  return best;
 }
 
 /** Opens a directory entry: folder navigates into it, file opens via the OS
@@ -1298,6 +2937,8 @@ function startInlineRename(path) {
   input.setAttribute('aria-label', 'Rename');
   nameEl.replaceWith(input);
   input.focus();
+  // §5.2 Rename: the box fades in — already focused and taking keys.
+  fpAnimate(input, [{ opacity: 0 }, { opacity: 1 }], { duration: 'fast', key: 'enter' });
 
   const dot = currentName.lastIndexOf('.');
   if (!isDir && dot > 0) input.setSelectionRange(0, dot);
@@ -1308,6 +2949,17 @@ function startInlineRename(path) {
     if (settled) return;
     settled = true;
     input.replaceWith(nameEl);
+    // A refresh during the rename left this row where it was; now that the
+    // rename is over, put it where the current sort says (no re-fetch).
+    resortAfterRename();
+  };
+  // A refresh during the rename left this row where it was. Once the rename
+  // is over (cancelled, or failed) put it where the current sort says — only
+  // for a folder listing; search results are never patched.
+  const resortAfterRename = () => {
+    if (!browserState._orderDirty) return;
+    if (browserState.mode !== 'search' && nameEl.isConnected) patchDirectory(browserState.entries);
+    else browserState._orderDirty = false;
   };
   const doRename = (newName) => {
     settled = true;
@@ -1315,7 +2967,10 @@ function startInlineRename(path) {
     // every row (including this one) on success — and reselects it there
     // too; on failure the row stays as-is under the (now orphaned) input —
     // restore the static name span.
-    fileops.rename(path, newName).catch(() => { if (input.isConnected) input.replaceWith(nameEl); });
+    fileops.rename(path, newName).catch(() => {
+      if (input.isConnected) input.replaceWith(nameEl);
+      resortAfterRename();
+    });
   };
   // Enter and blur both "commit", but a validation failure means something
   // different on each: on Enter the user is still in the field, so keep
@@ -1333,6 +2988,16 @@ function startInlineRename(path) {
   };
   const commitFromBlur = () => {
     if (settled) return;
+    // A blur that comes from the row being re-rendered or removed under the
+    // input (a refresh) is not the user leaving the field: cancel, never
+    // rename without them confirming (fix round 2). Chromium fires that blur
+    // from inside the removal, while the input can still read as connected,
+    // so the decision waits for the current task's DOM work to finish.
+    queueMicrotask(commitAfterBlur);
+  };
+  const commitAfterBlur = () => {
+    if (settled) return;
+    if (!input.isConnected) { settled = true; return; }
     const newName = input.value.trim();
     if (!newName || newName === currentName) { restore(); return; }
     const error = validateEntryName(newName);
@@ -1348,17 +3013,56 @@ function startInlineRename(path) {
   input.addEventListener('click', e => e.stopPropagation());
 }
 
-// Selection → inspector debounce: arrow-key navigation and marquee drags can
-// change the selection many times a second, and each change would otherwise
-// fire a fresh GET /file + GET /preview + GET /files/history round-trip.
-// Wait for the selection to settle for 120ms before fetching; _inspectorSeq
-// (inspector.js) additionally guards against an in-flight fetch from an
-// already-superseded selection overwriting the DOM once it resolves.
+// Selection → inspector: what the panel shows must never name an item that
+// is not selected (Stage 2D §12 sweep). So the empty state is painted in the
+// same task the selection empties (navigation, delete, a click on nothing),
+// and a discrete change — a click, one key press — is shown at once
+// (leading edge). Only a burst (arrow-key repeat, a marquee drag) waits for
+// the selection to settle for 120ms before the next GET /file + /preview +
+// /files/history round-trip. A call that repeats the selection the armed
+// timer is already for (a refresh patch) never pushes the timer back, so a
+// stream of refreshes cannot starve the panel. _inspectorSeq (inspector.js)
+// additionally guards against an in-flight fetch from an already-superseded
+// selection overwriting the DOM once it resolves.
+const INSPECTOR_SETTLE_MS = 120;
 let _inspectorDebounceTimer = null;
+let _inspectorTimerKey = null;   // selection key the armed timer will show
+let _inspectorLastChange = -Infinity;
+let _inspectorShownKey = '';     // the last selection the panel was pointed at
+let _inspectorShownKind = 0;     // 0 none, 1 one item, 2 several — of that selection
+
+function inspectorSelectionKey() {
+  return [...browserState.selection].join('|');
+}
+
+/** Points the inspector at the current selection now. */
+function showInspectorForSelection() {
+  if (typeof showInspectorForThisPc === 'function' && showInspectorForThisPc()) return;
+  const n = browserState.selection.size;
+  if (n === 0) {
+    nextInspectorSeq(); // invalidate (and abort) any fetch still in flight from the prior selection
+    // updateInspector('none') renders the full empty state itself (including
+    // revoking any preview blob: URL) — no separate call needed.
+    updateInspector('none');
+  } else if (n === 1) {
+    showInspectorFor([...browserState.selection][0]);
+  } else {
+    showInspectorMulti(getSelectedPaths());
+  }
+}
+
+function cancelInspectorTimer() {
+  if (_inspectorDebounceTimer === null) return;
+  clearTimeout(_inspectorDebounceTimer);
+  _inspectorDebounceTimer = null;
+  _inspectorTimerKey = null;
+  window.__fpInspectorPending--;
+}
 
 /** Hook called whenever the selection changes: updates the status bar
- * immediately, and (debounced) the inspector panel via showInspectorFor /
- * showInspectorMulti / updateInspector('none'). */
+ * immediately, and the inspector panel via showInspectorFor /
+ * showInspectorMulti / updateInspector('none') — at once, or at the end of a
+ * burst (see above). */
 function onSelectionChanged() {
   // Drives the grid single-tile-only selection bar (styles.css, Task 11
   // playtest pass 1 §4.1) — a plain string attribute rather than a boolean
@@ -1367,20 +3071,46 @@ function onSelectionChanged() {
   const listScroll = document.getElementById('list-scroll');
   if (listScroll) listScroll.dataset.selectionCount = String(browserState.selection.size);
   updateStatusBar();
-  clearTimeout(_inspectorDebounceTimer);
+  // The Inspector's Open / Open with… / Reveal follow the selection at once,
+  // not after the panel's debounce.
+  if (typeof syncInspectorActions === 'function') syncInspectorActions();
+
+  const key = inspectorSelectionKey();
+  // Already on its way: leave the timer where it is.
+  if (_inspectorDebounceTimer !== null && key === _inspectorTimerKey) return;
+  // A burst is one item replacing another within the settle window. Emptying
+  // the selection is never part of one, and a repeat of the same selection
+  // (a refresh) does not start one.
+  // A change between one item and several is never part of a burst either
+  // (Task 14 Q3): the status bar said "2 selected" while the panel still
+  // showed the one file for the settle window — the panel's kind follows the
+  // selection at once.
+  const now = performance.now();
+  const size = browserState.selection.size;
+  const kind = size === 0 ? 0 : size === 1 ? 1 : 2;
+  const burst = now - _inspectorLastChange < INSPECTOR_SETTLE_MS && kind === _inspectorShownKind;
+  _inspectorShownKind = kind;
+  if (size === 0) { _inspectorLastChange = -Infinity; _inspectorShownKey = ''; }
+  else if (key !== _inspectorShownKey) { _inspectorLastChange = now; _inspectorShownKey = key; }
+  if (size === 0 || !burst) {
+    cancelInspectorTimer();
+    showInspectorForSelection();
+    return;
+  }
+  // Several items changing fast (a marquee drag): the count and total size
+  // are known here and cheap — they follow at once; only the tag fetch waits
+  // for the selection to settle.
+  if (kind === 2) updateInspector('multi', { count: size, totalSize: formatSize(selectionTotalSize()) });
+  // An armed debounce counts as inspector work still to come
+  // (window.__fpInspectorPending, inspector.js — the tests' settle signal).
+  if (_inspectorDebounceTimer === null) window.__fpInspectorPending++;
+  else clearTimeout(_inspectorDebounceTimer);
+  _inspectorTimerKey = key;
   _inspectorDebounceTimer = setTimeout(() => {
-    const n = browserState.selection.size;
-    if (n === 0) {
-      _inspectorSeq++; // invalidate any fetch still in flight from the prior selection
-      // updateInspector('none') renders the full empty state itself now
-      // (including revoking any preview blob: URL) — no separate call needed.
-      updateInspector('none');
-    } else if (n === 1) {
-      showInspectorFor([...browserState.selection][0]);
-    } else {
-      showInspectorMulti(getSelectedPaths());
-    }
-  }, 120);
+    _inspectorDebounceTimer = null;
+    _inspectorTimerKey = null;
+    try { showInspectorForSelection(); } finally { window.__fpInspectorPending--; }
+  }, INSPECTOR_SETTLE_MS);
 }
 
 /** Sums the size of selected files (folders/errored entries contribute 0). */
@@ -1393,18 +3123,110 @@ function selectionTotalSize() {
   return total;
 }
 
-/** Updates the status bar's item count and selection summary. */
+// ── Clipboard marks (pass 2 #172) ────────────────────────────────────────────
+// Explorer's cue for Ctrl+X: the cut items' icon and name are ghosted until
+// they are pasted or the clipboard is replaced. Copied items carry a small
+// accent badge (styles.css .fp-row--copied). Both are classes renderFsRow
+// writes, so every view, every re-render and every in-place refresh keeps
+// them; syncClipboardMarks() repaints the rows already on screen when the
+// clipboard changes. The status bar says how many items are pending.
+let _clipKeys = { mode: null, set: new Set() };
+function _clipboardKeys() {
+  const clip = (typeof fileops !== 'undefined' && fileops.clipboard) || { mode: null, paths: [] };
+  if (_clipKeys.src !== clip) {
+    _clipKeys = { src: clip, mode: clip.mode, set: new Set((clip.paths || []).map(p => String(p).toLowerCase())) };
+  }
+  return _clipKeys;
+}
+/** 'cut' | 'copied' | '' for a row path (Windows paths: case-insensitive). */
+function clipboardMarkFor(path) {
+  const { mode, set } = _clipboardKeys();
+  if (!mode || !set.has(String(path).toLowerCase())) return '';
+  return mode === 'cut' ? 'cut' : 'copied';
+}
+function syncClipboardMarks() {
+  const changed = [];
+  document.querySelectorAll('#list-scroll .fp-row[data-path]').forEach(row => {
+    const mark = clipboardMarkFor(row.dataset.path);
+    const was = row.classList.contains('fp-row--cut') ? 'cut' : (row.classList.contains('fp-row--copied') ? 'copied' : '');
+    if (was !== mark) changed.push([row, was, mark]);
+    row.classList.toggle('fp-row--cut', mark === 'cut');
+    row.classList.toggle('fp-row--copied', mark === 'copied');
+  });
+  syncClipboardStatus();
+  clipboardMarksMotion(changed);
+}
+
+/** §5.2 Cut/copy: a cut row's icon and name fade to the cut ghosting (and
+ * back), and the copy badge pops in (scale 0.9 → 1). The classes are already
+ * final; only up to LIST_MOTION_MAX_ROWS rows animate, none in a big list. */
+function clipboardMarksMotion(changed) {
+  if (!changed.length || changed.length > LIST_MOTION_MAX_ROWS || !listMotionOn() || listIsHeavy()) return;
+  const cutOpacity = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--clip-cut-opacity')) || 0.5;
+  for (const [row, was, mark] of changed) {
+    if ((was === 'cut') !== (mark === 'cut')) {
+      const [from, to] = mark === 'cut' ? [1, cutOpacity] : [cutOpacity, 1];
+      for (const el of [row.firstElementChild, row.querySelector('.fp-row__name')]) {
+        if (el) fpAnimate(el, [{ opacity: from }, { opacity: to }], { duration: 'fast', key: 'cut' });
+      }
+    }
+    if (mark === 'copied') {
+      fpAnimate(row, [{ opacity: 0, transform: 'scale(.9)' }, { opacity: 1, transform: 'none' }],
+        { duration: 'fast', key: 'badge', pseudo: '::after' });
+    }
+  }
+}
+function syncClipboardStatus() {
+  const el = document.getElementById('status-clipboard');
+  const sep = document.getElementById('status-clipboard-sep');
+  if (!el) return;
+  const clip = (typeof fileops !== 'undefined' && fileops.clipboard) || { mode: null, paths: [] };
+  const n = clip.mode ? clip.paths.length : 0;
+  el.hidden = !n;
+  if (sep) sep.hidden = !n;
+  el.textContent = n ? `${n} item${n === 1 ? '' : 's'} ${clip.mode === 'cut' ? 'cut' : 'copied'}` : '';
+}
+
+/** Updates the status bar's item count, selection summary and pending
+ * clipboard count. */
 function updateStatusBar() {
+  syncClipboardStatus();
+  if (!browserScreenActive()) { updateScreenStatus(); return; }
+  const countEl0 = document.getElementById('status-count');
+  const countSep = countEl0?.nextElementSibling;
+  if (countEl0) countEl0.hidden = false;
+  if (countSep && countSep.classList.contains('fp-statusbar__sep')) countSep.hidden = false;
+  const selEl0 = document.getElementById('status-selected');
+  if (selEl0) selEl0.hidden = false;
+  if (thisPcActive()) { updateThisPcStatus(); return; }
   const countEl = document.getElementById('status-count');
   const selEl = document.getElementById('status-selected');
   const n = browserState.entries.length;
-  if (countEl) countEl.textContent = browserState.mode === 'search' ? `${n} results` : `${n} items`;
+  if (countEl) countEl.textContent = countLabel(n, browserState.mode === 'search' ? 'result' : 'item');
   if (selEl) {
     const n = browserState.selection.size;
     if (n === 0) selEl.textContent = 'Nothing selected';
     else if (n === 1) selEl.textContent = '1 selected';
     else selEl.textContent = `${n} selected · ${formatSize(selectionTotalSize())}`;
   }
+}
+
+/** The status bar off the Browser screen describes that screen, never the
+ * Browser listing hidden behind it (Home said "0 items" over a full Recent
+ * list — Stage 2D §12 sweep): Home counts the rows of its visible pane and
+ * its one selected row; a screen with no items (Settings) shows nothing. */
+function updateScreenStatus() {
+  const countEl = document.getElementById('status-count');
+  const selEl = document.getElementById('status-selected');
+  const home = document.getElementById('screen-home');
+  const onHome = !!(home && home.classList.contains('active'));
+  const pane = onHome ? [...home.querySelectorAll('.home-pane')].find(p => p.style.display !== 'none') : null;
+  const n = pane ? pane.querySelectorAll('.fp-row[data-path]').length : 0;
+  const sel = pane ? pane.querySelectorAll('.fp-row--selected').length : 0;
+  if (countEl) { countEl.textContent = onHome ? countLabel(n, 'item') : ''; countEl.hidden = !onHome; }
+  if (selEl) { selEl.textContent = onHome ? (sel ? `${sel} selected` : 'Nothing selected') : ''; selEl.hidden = !onHome; }
+  const sep = countEl && countEl.nextElementSibling;
+  if (sep && sep.classList.contains('fp-statusbar__sep')) sep.hidden = !onHome;
 }
 
 // ── Row click/dblclick + keyboard (Task 3) ────────────────────────────────────
@@ -1447,15 +3269,49 @@ function initRowInteractions() {
  * contenteditable has focus. F2/Delete/Ctrl+C/X/V/Z/Y belong to Task 4.
  */
 function anyScrimOpen() {
-  return [...document.querySelectorAll('.fp-scrim')].some(el => {
-    if (el.hidden) return false;
-    // Every scrim in index.html ships with style="display:none" and is shown
-    // by setting it to 'flex'; getComputedStyle is the fallback for one that
-    // is driven by a class instead.
-    return el.style.display
-      ? el.style.display !== 'none'
-      : getComputedStyle(el).display !== 'none';
-  });
+  return _fpOpenScrims.size > 0;
+}
+
+// ── The modal scrim: one source of truth (addendum §3) ───────────────────────
+// Every .fp-scrim (palette, Tag Canvas, confirm/conflict modal, More filters,
+// Properties) is shown and hidden ONLY through fpSetScrim. It keeps display
+// and aria-hidden in step and mirrors the number of open scrims onto
+// html[data-scrim-open] — the one signal that anyScrimOpen() and the Mica
+// backing in styles.css (the window gets its solid chrome under a scrim, so
+// the blur has paint everywhere) both read. A Set, so a repeated open or
+// close never miscounts, and nested scrims keep the backing until the last
+// one closes.
+const _fpOpenScrims = new Set();
+
+/** Shows (`open` true) or hides the scrim element `el`. */
+function fpSetScrim(el, open) {
+  if (!el) return;
+  if (open) {
+    // Opened again while still fading out: simply open (live, not inert).
+    fpCancelExit(el);
+    el.style.display = 'flex';
+    el.removeAttribute('aria-hidden');
+    _fpOpenScrims.add(el);
+  } else {
+    const shown = _fpOpenScrims.has(el) && el.style.display !== 'none';
+    el.setAttribute('aria-hidden', 'true');
+    _fpOpenScrims.delete(el);
+    // Closed is closed at once — out of the count, no longer modal, never
+    // hit (.fp-scrim--closing, inert) — while scrim and dialog fade out
+    // together over --motion-fast, the same time the Mica backing below
+    // takes to go (addendum §5.2 Dialogs). Off: hidden on the spot.
+    if (shown && fpMotionOn()) {
+      fpPlayExit(el, [{ opacity: 1 }, { opacity: 0 }], {
+        cls: 'fp-scrim--closing', duration: 'fast', easing: 'out',
+        done: () => { el.style.display = 'none'; },
+      });
+    } else if (!fpExiting(el)) {
+      el.style.display = 'none';
+    }
+  }
+  const html = document.documentElement;
+  if (_fpOpenScrims.size) html.dataset.scrimOpen = String(_fpOpenScrims.size);
+  else delete html.dataset.scrimOpen;
 }
 
 /** True when a real (non-collapsed) text selection exists on the page — a
@@ -1480,6 +3336,10 @@ function browserKeydown(e) {
 
   const key = e.key;
   const ctrl = e.ctrlKey || e.metaKey;
+  // A key an element's own handler already took (the tab strip's roving
+  // arrows) still moves the list cursor as before, but must not pull DOM
+  // focus away from that element.
+  const handledElsewhere = e.defaultPrevented;
 
   if (e.altKey) {
     if (key === 'ArrowUp')         { e.preventDefault(); navUp(); }
@@ -1489,12 +3349,25 @@ function browserKeydown(e) {
     // canRenameSelection()'s single-selection rule doubles as "Properties is
     // single-item only in this pass", design spec §5.1). Same target as F2's
     // Rename below: browserState.focus.
+    else if (key === 'Enter' && thisPcActive()) {
+      e.preventDefault();
+      thisPcProperties(thisPcSelectedPath());
+    }
     else if (key === 'Enter' && canRenameSelection() && browserState.focus) {
       e.preventDefault();
       if (typeof openProperties === 'function') openProperties(browserState.focus);
     }
     return;
   }
+
+  // Everything below acts on the listing (or the file clipboard / undo for
+  // it). A tab whose first listing is still loading — or that shows only an
+  // error banner — has none of its own: the folder it came from went with
+  // its rows (fix round 2). Alt+arrows above still navigate.
+  if (!browserHasOwnListing()) return;
+
+  // The This PC page has drive cards, not files: its own keys (thispc.js).
+  if (thisPcActive()) { thisPcKeydown(e); return; }
 
   if (ctrl && key.toLowerCase() === 'a') {
     e.preventDefault();
@@ -1528,16 +3401,35 @@ function browserKeydown(e) {
   // see and the re-run search would not show (pass 2 #51).
   if (ctrl && key.toLowerCase() === 'v') {
     e.preventDefault();
+    // A held Ctrl+V must not paste over and over (copy mode would make
+    // "x - Copy (2)", "(3)"…: Task 14 I1). Only a real press acts.
+    if (e.repeat) return;
     if (browserState.mode === 'search') { showToast('Leave search results to paste here', 'error'); return; }
     if (browserState.path) fileops.pasteInto(browserState.path).catch(fileopsReported);
     return;
   }
+  // Ctrl+Shift+N — a new folder in the folder on screen, ready to rename
+  // (Explorer's key; Settings › Shortcuts lists it). Search results have no
+  // folder of their own to create it in, the same rule as Ctrl+V above.
+  if (ctrl && e.shiftKey && key.toLowerCase() === 'n') {
+    e.preventDefault();
+    if (e.repeat) return;
+    if (browserState.mode === 'search') { showToast('Leave search results to create here', 'error'); return; }
+    if (browserState.path) fileops.newFolder(browserState.path).catch(fileopsReported);
+    return;
+  }
   if (key === 'F2') { e.preventDefault(); if (canRenameSelection() && browserState.focus) startInlineRename(browserState.focus); return; }
-  if (key === 'Delete') { e.preventDefault(); fileops.trashSelection().catch(fileopsReported); return; }
+  // A held Delete auto-repeats, and a delete selects the next item, so each
+  // repeat would trash the next file too (Task 14 I1): only a real press acts.
+  if (key === 'Delete') { e.preventDefault(); if (!e.repeat) fileops.trashSelection().catch(fileopsReported); return; }
 
   switch (key) {
-    case 'ArrowDown': e.preventDefault(); moveFocus(1, { shift: e.shiftKey }); break;
-    case 'ArrowUp':   e.preventDefault(); moveFocus(-1, { shift: e.shiftKey }); break;
+    case 'ArrowDown':  e.preventDefault(); moveFocusDir('down', { shift: e.shiftKey }); break;
+    case 'ArrowUp':    e.preventDefault(); moveFocusDir('up', { shift: e.shiftKey }); break;
+    case 'ArrowLeft':  e.preventDefault(); moveFocusDir('left', { shift: e.shiftKey }); break;
+    case 'ArrowRight': e.preventDefault(); moveFocusDir('right', { shift: e.shiftKey }); break;
+    case 'PageDown':   e.preventDefault(); moveFocusDir('pagedown', { shift: e.shiftKey }); break;
+    case 'PageUp':     e.preventDefault(); moveFocusDir('pageup', { shift: e.shiftKey }); break;
     case 'Home':      e.preventDefault(); moveFocus('home', { shift: e.shiftKey }); break;
     case 'End':       e.preventDefault(); moveFocus('end', { shift: e.shiftKey }); break;
     case 'Enter':     e.preventDefault(); openFocused(); break;
@@ -1548,11 +3440,23 @@ function browserKeydown(e) {
       // no-ops on an empty selection, so "nothing selected" falls out for
       // free rather than needing its own check here.
       const backspaceDeletes = !!(window.__fpConfig && window.__fpConfig['ui.backspace_deletes']);
-      if (backspaceDeletes) fileops.trashSelection().catch(fileopsReported);
+      if (backspaceDeletes) { if (!e.repeat) fileops.trashSelection().catch(fileopsReported); }
       else navUp();
       break;
     }
-    case 'F5':        e.preventDefault(); refreshDirectory(); break;
     default: break;
   }
+  // The list cursor and DOM focus move together: after a mouse click left
+  // focus on a toolbar button, arrowing through the list and pressing Enter
+  // must open the row, not re-fire the button (Stage 2D Task 7) — the same
+  // hand-over applySort() does after a re-render.
+  if (!handledElsewhere && LIST_CURSOR_KEYS.has(key)) focusCursorRow();
+}
+
+const LIST_CURSOR_KEYS = new Set(['ArrowDown', 'ArrowUp', 'ArrowLeft', 'ArrowRight', 'PageDown', 'PageUp', 'Home', 'End']);
+
+/** Gives DOM focus to the row under the list cursor (browserState.focus). */
+function focusCursorRow() {
+  const row = browserState.focus ? findListRow(browserState.focus) : null;
+  if (row && document.activeElement !== row) row.focus({ preventScroll: true });
 }

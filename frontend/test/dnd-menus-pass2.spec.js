@@ -3,35 +3,26 @@
 // findings (#48-#52, #197-#202). One Electron launch, one page; the sections
 // run in order and each restores the state it borrowed (view mode, click
 // mode, clipboard, selection, favorites) for the next one.
-const { test, expect, _electron: electron } = require('@playwright/test');
-const path = require('path');
+const { test, expect } = require('@playwright/test');
+const { launchApp, resetToDefaults } = require('./harness/app');
 
-const FRONTEND = path.join(__dirname, '..');
 const API = `http://127.0.0.1:${process.env.FILEPLUS_PORT || 9876}`;
 
 test.setTimeout(180_000);
 
 test('drag/drop, selection and menus: pass-2 regressions', async () => {
-  const env = { ...process.env };
-  delete env.ELECTRON_RUN_AS_NODE;
-  const app = await electron.launch({
-    executablePath: require('electron'),
-    args: [FRONTEND],
-    cwd: FRONTEND,
-    env,
-  });
-  const page = await app.firstWindow();
-  await page.emulateMedia({ reducedMotion: 'reduce' });
-  const errors = [];
+  // launchApp (harness): animations off, errors collected from the first
+  // renderer line on (renderer.log, read at close), app ready. Then default
+  // settings, waiting for the reloaded app to be ready again — not a sleep.
+  const { app, page, errors } = await launchApp();
   try {
-    page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
-    page.on('console', (m) => { if (m.type() === 'error') errors.push(`console: ${m.text()}`); });
-
-    await page.waitForSelector('#shell');
-    await page.evaluate(() => localStorage.clear());
-    await page.reload();
-    await page.waitForSelector('#shell');
-    await page.waitForTimeout(800);
+    await resetToDefaults(page);
+    // Settle signals instead of sleeps: no folder load in flight (a click
+    // that navigates starts its load synchronously, so once this holds any
+    // navigation it caused has landed), and the inspector caught up with the
+    // selection (debounce fired, fetches landed).
+    const navSettled = () => page.waitForFunction(() => !window.__fpLoadPending);
+    const inspectorSettled = () => page.waitForFunction(() => window.__fpInspectorPending === 0);
 
     const token = process.env.FILEPLUS_API_TOKEN;
     const headers = token ? { 'X-FilePlus-Token': token } : {};
@@ -74,11 +65,11 @@ test('drag/drop, selection and menus: pass-2 regressions', async () => {
     await page.evaluate(() => { window.__fpConfig = window.__fpConfig || {}; window.__fpConfig['ui.click_mode'] = 'single'; });
     const firstFolderRow = page.locator('#list-scroll .fp-row[data-type="folder"]').first();
     await firstFolderRow.click({ modifiers: ['Control'] });
-    await page.waitForTimeout(250);
+    await navSettled();
     await expect(crumbCurrent).toHaveText('Documents');           // did not navigate
     expect(await page.evaluate(() => browserState.selection.size)).toBe(1);
     await firstFolderRow.click({ modifiers: ['Shift'] });
-    await page.waitForTimeout(250);
+    await navSettled();
     await expect(crumbCurrent).toHaveText('Documents');
     // …and an UNmodified click still opens the folder in this mode.
     await firstFolderRow.click();
@@ -208,15 +199,15 @@ test('drag/drop, selection and menus: pass-2 regressions', async () => {
       if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
     });
     await page.keyboard.press('Control+v');
-    await page.waitForTimeout(150);
+    // The refusal is the handled key's own answer: its error toast.
+    await expect(page.locator('#toast-container .fp-toast--error', { hasText: 'Leave search results to paste here' })).toHaveCount(1);
     expect(await page.evaluate(() => window.__pasteCalls)).toBe(0);
 
     await page.evaluate(() => clearSearch());
-    await page.waitForTimeout(400);
+    await page.waitForFunction(() => browserState.mode !== 'search' && !window.__fpLoadPending);
     await page.evaluate(() => { if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); });
     await page.keyboard.press('Control+v');
-    await page.waitForTimeout(150);
-    expect(await page.evaluate(() => window.__pasteCalls)).toBe(1);   // allowed again outside search
+    await expect.poll(() => page.evaluate(() => window.__pasteCalls)).toBe(1);   // allowed again outside search
     await page.evaluate(() => {
       fileops.pasteInto = window.__origPaste;
       fileops.clipboard = { mode: null, paths: [] };
@@ -244,10 +235,10 @@ test('drag/drop, selection and menus: pass-2 regressions', async () => {
     const fileA = `${docsDir}\\doc-00.txt`;
     const fileB = `${docsDir}\\doc-01.txt`;
     await page.evaluate((p) => selectRow(p), fileA);
-    await page.waitForTimeout(600);
+    await inspectorSettled();
     await page.evaluate(() => { _inspectorFileId = 999999; });       // stand in for a settled single inspection
     await page.evaluate(([a, b]) => { selectRow(a); selectRow(b, { ctrl: true }); }, [fileA, fileB]);
-    await page.waitForTimeout(600);
+    await inspectorSettled();
     expect(await page.evaluate(() => browserState.selection.size)).toBe(2);
     expect(await page.evaluate(() => _inspectorFileId)).toBeNull();
 
@@ -279,7 +270,7 @@ test('drag/drop, selection and menus: pass-2 regressions', async () => {
 
     // ── #201 / #52  A partly failed favourites batch still resyncs ───────────
     await page.evaluate(([a, b]) => { selectRow(a); selectRow(b, { ctrl: true }); }, [fileA, fileB]);
-    await page.waitForTimeout(200);
+    await inspectorSettled();
     const favResult = await page.evaluate(async ([good, bad]) => {
       const orig = API.post.bind(API);
       API.post = (route, body) => (route === '/favorites' && body && body.path === bad)
@@ -287,7 +278,13 @@ test('drag/drop, selection and menus: pass-2 regressions', async () => {
         : orig(route, body);
       document.body.insertAdjacentHTML('beforeend', '<button id="fav-probe" data-action="cm-favorite"></button>');
       document.getElementById('fav-probe').click();
-      await new Promise(r => setTimeout(r, 1500));
+      // The batch is done — requests settled, favorites and listing resynced
+      // — when it reports the one failure (its last step); 10 s cap.
+      const deadline = Date.now() + 10_000;
+      while (![...document.querySelectorAll('#toast-container .fp-toast--error')]
+        .some((t) => /Failed to add 1 of 2/.test(t.textContent)) && Date.now() < deadline) {
+        await new Promise(r => setTimeout(r, 50));
+      }
       API.post = orig;
       document.getElementById('fav-probe').remove();
       return { good: favoritesHas(good), bad: favoritesHas(bad) };
@@ -311,25 +308,27 @@ test('drag/drop, selection and menus: pass-2 regressions', async () => {
     }, fileA)).toBe(true);
     await page.evaluate(async (p) => { await API.del('/favorites', { path: p }); await favoritesReload(); }, fileA);
 
-    // ── #202  Every Ctrl+wheel scale checks exactly one View-menu item ───────
+    // ── #202  Every Ctrl+wheel step checks exactly one View-menu item ────────
     const checks = await page.evaluate(() => {
-      const sizeActions = new Set(['view-xl', 'view-large', 'view-medium', 'view-small']);
-      const view = browserState.view, scale = browserState.listScale;
-      browserState.view = 'grid';
-      const out = LIST_SCALE_STEPS.map(s => {
-        browserState.listScale = s;
+      const view = browserState.view, size = browserState.iconSize;
+      const out = VIEW_LADDER.map(step => {
+        browserState.view = step.view;
+        if (step.size) browserState.iconSize = step.size;
         const ctx = menuContext();
-        const on = VIEW_MENU_ITEMS.filter(i => i !== 'sep' && sizeActions.has(i.action) && i.checked(ctx));
-        return [s, on.length === 1 ? on[0].action : `${on.length} checked`];
+        const on = VIEW_MENU_ITEMS.filter(i => i !== 'sep' && /^view-/.test(i.action) && i.checked(ctx));
+        return [step.view + (step.size ? `@${step.size}` : ''), on.length === 1 ? on[0].action : `${on.length} checked`];
       });
-      browserState.view = view; browserState.listScale = scale;
+      browserState.view = view; browserState.iconSize = size;
       return out;
     });
-    // Exactly one item checked at every Ctrl+wheel step, and each step lands in
-    // the bracket around its own preset.
+    // Exactly one item checked at every Ctrl+wheel step; an icon size lands in
+    // its named bucket (< 80 Medium, < 192 Large, else Extra large — §3.1).
     expect(checks).toEqual([
-      [0.75, 'view-small'], [0.875, 'view-medium'], [1, 'view-medium'], [1.125, 'view-medium'],
-      [1.25, 'view-large'], [1.5, 'view-large'], [1.75, 'view-xl'], [2, 'view-xl'],
+      ['content', 'view-content'], ['tiles', 'view-tiles'], ['details', 'view-details'], ['list', 'view-list'],
+      ['small', 'view-small'], ['icons@48', 'view-medium'], ['icons@56', 'view-medium'], ['icons@64', 'view-medium'],
+      ['icons@72', 'view-medium'], ['icons@80', 'view-large'], ['icons@96', 'view-large'], ['icons@112', 'view-large'],
+      ['icons@128', 'view-large'], ['icons@160', 'view-large'], ['icons@192', 'view-xl'], ['icons@224', 'view-xl'],
+      ['icons@256', 'view-xl'],
     ]);
 
     await page.evaluate(() => clearSelection());

@@ -2,33 +2,22 @@
 // Regression cover for the pass-2 "renderer-tabs-nav" findings (#11-#20,
 // #153-#158). One Electron launch, one page, the checks run in order because
 // each builds on the tab set the previous one left behind.
-const { test, expect, _electron: electron } = require('@playwright/test');
-const path = require('path');
+const { test, expect } = require('@playwright/test');
+const { launchApp, resetToDefaults } = require('./harness/app');
 
-const FRONTEND = path.join(__dirname, '..');
 const API = `http://127.0.0.1:${process.env.FILEPLUS_PORT || 9876}`;
 
 test('tabs and navigation: pass-2 regressions', async () => {
-  const env = { ...process.env };
-  delete env.ELECTRON_RUN_AS_NODE;
-  const app = await electron.launch({
-    executablePath: require('electron'),
-    args: [FRONTEND],
-    cwd: FRONTEND,
-    env,
-  });
-  const page = await app.firstWindow();
-  await page.emulateMedia({ reducedMotion: 'reduce' });
-  const errors = [];
+  // launchApp (harness): animations off, errors collected from the first
+  // renderer line on (renderer.log, read at close), app ready. Then default
+  // settings, waiting for the reloaded app to be ready again — not a sleep.
+  const { app, page, errors } = await launchApp();
   try {
-    page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
-    page.on('console', (m) => { if (m.type() === 'error') errors.push(`console: ${m.text()}`); });
-
-    await page.waitForSelector('#shell');
-    await page.evaluate(() => localStorage.clear());
-    await page.reload();
-    await page.waitForSelector('#shell');
-    await page.waitForTimeout(800);
+    await resetToDefaults(page);
+    // No folder load in flight: anything a click or toggle started (they start
+    // their load synchronously) has landed — the "nothing happened" checks
+    // below run after it, never after a guessed sleep.
+    const navSettled = () => page.waitForFunction(() => !window.__fpLoadPending);
 
     const token = process.env.FILEPLUS_API_TOKEN;
     const headers = token ? { 'X-FilePlus-Token': token } : {};
@@ -76,7 +65,7 @@ test('tabs and navigation: pass-2 regressions', async () => {
     // button back on and click it — the tab must stay a Home tab.
     await page.evaluate(() => { document.getElementById('btn-up').disabled = false; });
     await btnUp.click();
-    await page.waitForTimeout(300);
+    await navSettled();
     expect(await activeScreenOf()).toBe('home');
     expect(await activeLabelOf()).toBe('Home');
     await expect(page.locator('#screen-home')).toBeVisible();
@@ -89,7 +78,7 @@ test('tabs and navigation: pass-2 regressions', async () => {
       t.checked = !t.checked;
       t.dispatchEvent(new Event('change', { bubbles: true }));
     });
-    await page.waitForTimeout(500);
+    await navSettled();
     expect(await activeScreenOf()).toBe('settings');
     expect(await activeLabelOf()).toBe('Settings');
     await expect(page.locator('#screen-settings')).toBeVisible();
@@ -109,8 +98,8 @@ test('tabs and navigation: pass-2 regressions', async () => {
     await expect(crumbCurrent).toHaveText('Documents');
     await expect(btnFwd).toBeEnabled();
     const histLen = await page.evaluate(() => nav.history.length);
+    // openBrowserAt returns the load's promise, which page.evaluate awaits.
     await page.evaluate((p) => openBrowserAt(p), docsDir);   // the folder already shown
-    await page.waitForTimeout(300);
     expect(await page.evaluate(() => nav.history.length)).toBe(histLen);
     await expect(btnFwd).toBeEnabled();
 
@@ -165,11 +154,15 @@ test('tabs and navigation: pass-2 regressions', async () => {
     // #12 again: the new tab starts with a clean toolbar.
     await expect(searchInput).toHaveValue('');
     await expect(btnBack).toBeDisabled();
+    // runSearch() is awaited (page.evaluate awaits the returned promise).
     await page.evaluate(() => { setSearchText('doc-0'); return runSearch(); });
-    await page.waitForTimeout(800);
     const scoped = await page.evaluate(() => ({ root: searchState.root, tabPath: activeTab().path }));
     expect(scoped.root).not.toContain('Documents');      // NOT the other tab's folder
-    expect(scoped.root).toBe(scoped.tabPath);
+    // A tab with no folder of its own opens at This PC (Stage 2D §8), and
+    // "current location" there is This PC: the index scope ('*'), never a
+    // walk of a folder called "thispc:".
+    expect(scoped.tabPath).toBe('thispc:');
+    expect(scoped.root).toBe('*');
     await page.evaluate(() => clearSearch());
     await page.keyboard.press('Control+w');
     await expect(page.locator('.fp-tab')).toHaveCount(1);
@@ -241,25 +234,33 @@ test('tabs and navigation: pass-2 regressions', async () => {
         { chips: [], text: 'pic', scope: 'current', results: null, truncated: false, root: null, query: '' };
     }, tabB);
     await page.evaluate((id) => activateTab(id), tabB);
-    await page.waitForTimeout(1200);
-    await expect(searchInput).toHaveValue('pic');         // resumed, not discarded
+    // Resumed, not discarded: the search re-ran and landed for 'pic'.
+    await page.waitForFunction(() => searchState.query === 'pic' && !searchState.inflight && !window.__fpLoadPending);
+    await expect(searchInput).toHaveValue('pic');
     await page.evaluate(() => clearSearch());
     await page.evaluate((id) => { closeOtherTabs(id); }, tabA);
     await page.evaluate(() => clearSearch());
 
-    // ── #19  --list-scale is per tab ─────────────────────────────────────────
+    // ── #19  the view and icon size are per tab ──────────────────────────────
+    // Two tabs on the SAME folder: a view change in the second must not
+    // reach the first, even though the folder now remembers the second's
+    // choice (Stage 2D §3.1: tabs keep their own view state).
     await page.evaluate((p) => openBrowserAt(p), docsDir);
-    await page.evaluate(() => setListScale(2));
-    expect(await page.evaluate(() => browserState.listScale)).toBe(2);
+    await page.evaluate(() => setView('icons', 256, { manual: true }));
+    expect(await page.evaluate(() => [browserState.view, browserState.iconSize])).toEqual(['icons', 256]);
     const scaleTab = await page.evaluate(() => tabs.activeId);
     await page.keyboard.press('Control+t');
+    await page.evaluate((p) => openBrowserAt(p), docsDir);
+    await page.evaluate(() => setView('icons', 48, { manual: true }));
     await page.evaluate((p) => openBrowserAt(p), picsDir);
-    await page.evaluate(() => setListScale(1));
+    await page.evaluate(() => setView('list', null, { manual: true }));
     await page.locator(`.fp-tab[data-tab-id="${scaleTab}"]`).click();
     await expect(crumbCurrent).toHaveText('Documents');
-    expect(await page.evaluate(() => browserState.listScale)).toBe(2);
+    expect(await page.evaluate(() => [browserState.view, browserState.iconSize])).toEqual(['icons', 256]);
+    expect(await page.locator('#list-scroll').getAttribute('data-view')).toBe('icons');
     await page.evaluate((id) => { closeOtherTabs(id); }, scaleTab);
-    await page.evaluate(() => setListScale(1));
+    await page.evaluate(() => setView('details'));
+    await fetch(`${API}/config/ui.folder_views`, { method: 'DELETE', headers });
   } finally {
     await app.close();
   }

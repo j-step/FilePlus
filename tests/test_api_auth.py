@@ -188,3 +188,17 @@ def test_shell_icon_routes_are_token_gated(client, monkeypatch):
     assert client.get("/shell/icon", params={"path": r"C:\Windows", "px": 16}).status_code == 401
     assert client.post("/shell/icons", json={"items": []}).status_code == 401
     assert client.post("/shell/icons", json={"items": []}, headers={"X-FilePlus-Token": "t"}).status_code == 200
+
+
+def test_stage_2d_delete_and_merge_routes_are_token_gated(client, monkeypatch):
+    """Stage 2D Task 12a/12b added DELETE /recent, DELETE /shell/icons/cache
+    and POST /config/merge: each sits behind the same X-FilePlus-Token gate."""
+    monkeypatch.setattr(_config, "FILEPLUS_API_TOKEN", "t")
+    ok = {"X-FilePlus-Token": "t"}
+    assert client.delete("/recent").status_code == 401
+    assert client.delete("/recent", headers=ok).status_code == 200
+    assert client.delete("/shell/icons/cache").status_code == 401
+    assert client.delete("/shell/icons/cache", headers=ok).status_code == 200
+    body = {"key": "ui.folder_views", "value": {}}
+    assert client.post("/config/merge", json=body).status_code == 401
+    assert client.post("/config/merge", json=body, headers=ok).status_code == 200

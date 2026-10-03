@@ -5,8 +5,9 @@
  * app.js's dispatch switch and context-menu wiring call into.
  *
  * Script load order is api.js → filetypes.js → icons-sprite.js →
- * iconCache.js → icons.js → fileops.js → browser.js → dragdrop.js →
- * search.js → inspector.js → home.js → settings.js → properties.js → app.js
+ * iconCache.js → overlayscroll.js → icons.js → fileops.js → browser.js →
+ * thispc.js → dragdrop.js → search.js → inspector.js → home.js →
+ * settings.js → properties.js → app.js
  * (see index.html; CLAUDE.md's module-order bullet) — this file can
  * call anything defined in an earlier file at parse time (iconFor,
  * escapeHtml, parentOfPath, formatModified, ApiError,
@@ -66,6 +67,7 @@ function favoritesReload() { return loadFavorites(); }
  * correct apart from one glyph. */
 function syncFavoriteStars() {
   const starHtml = `<span class="fp-row__star" title="In Favorites">${icon('star')}</span>`;
+  const popped = [];
   document.querySelectorAll('#list-scroll .fp-row[data-path], #home-recent .fp-row[data-path]').forEach(row => {
     const has = favoritesHas(row.dataset.path);
     const existing = row.querySelector('.fp-row__star');
@@ -79,7 +81,15 @@ function syncFavoriteStars() {
     if (tagsCell) tagsCell.insertAdjacentHTML('beforeend', starHtml);
     else if (sizeCell) sizeCell.insertAdjacentHTML('beforebegin', starHtml);
     else row.insertAdjacentHTML('beforeend', starHtml);
+    popped.push(row.querySelector('.fp-row__star'));
   });
+  // §5.2 Home: favouriting pops the star in (scale 0.9 → 1) — a handful of
+  // rows only; it is already in place.
+  if (popped.length <= LIST_MOTION_MAX_ROWS && typeof listMotionOn === 'function' && listMotionOn()) {
+    for (const star of popped) {
+      fpAnimate(star, [{ opacity: 0, transform: 'scale(.9)' }, { opacity: 1, transform: 'none' }], { duration: 'fast', key: 'enter' });
+    }
+  }
 }
 
 // ── Icons (hover-action buttons + favorite star) ──────────────────────────
@@ -103,7 +113,12 @@ function homeIsDir(entry) {
   return typeof entry.is_dir === 'boolean' ? entry.is_dir : entry.ext === '';
 }
 function homeIconFor(entry) {
-  return iconFor({ ...entry, is_dir: homeIsDir(entry) }, 16, 'fp-row__icon');
+  // Asked for at the size the panes actually draw it (40 px tiles when a
+  // pane is in its own grid layout, styles.css — never the Browser's view),
+  // so a Windows-mode request is the bucket of the real box and its cache
+  // lookup matches the lazy path's (Stage 2D §4.3).
+  const size = document.querySelector('.home-pane[data-view="grid"]') ? 40 : 16;
+  return iconFor({ ...entry, is_dir: homeIsDir(entry) }, size, 'fp-row__icon');
 }
 
 // ── Empty states (existing .fp-empty-state pattern) ───────────────────────
@@ -139,6 +154,14 @@ function formatRecentTime(actionAt, bucketKey) {
 }
 
 // ── Row/section templates ──────────────────────────────────────────────────
+/** A Recent / Favorites item that was moved or deleted since (GET /recent's
+ * and /favorites' `exists`): the row says so, and a click shows that in the
+ * inspector at once instead of asking GET /file about a path that is gone
+ * (it answers {exists: false}; Stage 2D §12 sweep, addendum Task 7). */
+function homeMissingAttr(entry) {
+  return entry && entry.exists === false ? ' data-missing="" title="Moved or deleted"' : '';
+}
+
 function renderRecentRow(entry, bucketKey) {
   const timeLabel = formatRecentTime(entry.action_at, bucketKey);
   // parentOfPath() already ends a drive root in a separator ("C:\"), so
@@ -152,7 +175,7 @@ function renderRecentRow(entry, bucketKey) {
   const hideExt = !isDir && entry.ext !== '' && browserState.showExtensions === false;
   const displayName = hideExt ? stemOf(entry.name) : entry.name;
   const nameTitleAttr = hideExt ? ` title="${escapeHtml(entry.name)}"` : '';
-  const dirAttr = isDir ? ' data-dir=""' : '';
+  const dirAttr = (isDir ? ' data-dir=""' : '') + homeMissingAttr(entry);
   // Recent rows show the same favorite star as Browser rows (Task 11,
   // playtest pass 1 §4.3) — rendered into .fp-row__tags (already an empty,
   // flex-laid-out cell reserved for this row's own grid-template-columns)
@@ -160,17 +183,21 @@ function renderRecentRow(entry, bucketKey) {
   const starHtml = favoritesHas(entry.path)
     ? `<span class="fp-row__star" title="In Favorites">${icon('star')}</span>`
     : '';
-  return `<div class="fp-row fp-row--recent" role="option" tabindex="0"
+  // tabindex -1 on the row and its buttons: homeRovingSync() makes ONE row
+  // per pane the tab stop, and the hover buttons (invisible until hover) are
+  // never Tab targets — the row's context menu carries the same actions
+  // (pass 2 #170).
+  return `<div class="fp-row fp-row--recent" role="option" tabindex="-1"
        data-path="${escapeHtml(entry.path)}" data-ext="${escapeHtml(entry.ext)}"${dirAttr} data-action="open-recent-file">
     ${homeIconFor(entry)}
-    <span class="fp-row__name"${nameTitleAttr}>${escapeHtml(displayName)}</span>
-    <span class="fp-row__recent-path mono">${escapeHtml(parentDisplay)}</span>
+    <span class="fp-row__name" data-full="${escapeHtml(entry.name)}"${nameTitleAttr}>${escapeHtml(displayName)}</span>
+    <span class="fp-row__recent-path mono" title="${escapeHtml(parentDisplay)}"><bdi>${escapeHtml(parentDisplay)}</bdi></span>
     <span class="fp-row__recent-time mono">${escapeHtml(entry.action)} ${escapeHtml(timeLabel)}</span>
     <div class="fp-row__tags">${starHtml}</div>
     <div class="fp-row__hover-actions">
-      <button class="fp-icon-btn fp-icon-btn--sm" data-action="open-file" title="Open">${HOME_ICON_OPEN}</button>
-      <button class="fp-icon-btn fp-icon-btn--sm" data-action="reveal-file" title="Reveal in Browser">${HOME_ICON_REVEAL}</button>
-      <button class="fp-icon-btn fp-icon-btn--sm" data-action="copy-path" title="Copy path">${HOME_ICON_COPY}</button>
+      <button class="fp-icon-btn fp-icon-btn--sm" tabindex="-1" data-action="open-file" title="Open">${HOME_ICON_OPEN}</button>
+      <button class="fp-icon-btn fp-icon-btn--sm" tabindex="-1" data-action="reveal-file" title="Reveal in Browser">${HOME_ICON_REVEAL}</button>
+      <button class="fp-icon-btn fp-icon-btn--sm" tabindex="-1" data-action="copy-path" title="Copy path">${HOME_ICON_COPY}</button>
     </div>
   </div>`;
 }
@@ -193,18 +220,76 @@ function renderFavoriteRow(entry) {
   const hideExt = !isDir && entry.ext !== '' && browserState.showExtensions === false;
   const displayName = hideExt ? stemOf(entry.name) : entry.name;
   const nameTitleAttr = hideExt ? ` title="${escapeHtml(entry.name)}"` : '';
-  const dirAttr = isDir ? ' data-dir=""' : '';
-  return `<div class="fp-row fp-row--recent" role="option" tabindex="0" draggable="true"
+  const dirAttr = (isDir ? ' data-dir=""' : '') + homeMissingAttr(entry);
+  return `<div class="fp-row fp-row--recent" role="option" tabindex="-1" draggable="true"
        data-path="${escapeHtml(entry.path)}" data-ext="${escapeHtml(entry.ext)}"${dirAttr} data-action="open-recent-file">
     ${homeIconFor(entry)}
-    <span class="fp-row__name"${nameTitleAttr}>${escapeHtml(displayName)}</span>
-    <span class="fp-row__recent-path mono">${escapeHtml(parentDisplay)}</span>
+    <span class="fp-row__name" data-full="${escapeHtml(entry.name)}"${nameTitleAttr}>${escapeHtml(displayName)}</span>
+    <span class="fp-row__recent-path mono" title="${escapeHtml(parentDisplay)}"><bdi>${escapeHtml(parentDisplay)}</bdi></span>
     <span class="fp-row__recent-time mono">${escapeHtml(addedLabel)}</span>
-    <button class="fp-icon-btn fp-icon-btn--sm fp-row__fav-star" data-action="unfavorite-file"
+    <button class="fp-icon-btn fp-icon-btn--sm fp-row__fav-star" tabindex="-1" data-action="unfavorite-file"
             data-path="${escapeHtml(entry.path)}" title="Remove from favorites">
       ${HOME_ICON_STAR}
     </button>
   </div>`;
+}
+
+// ── Roving focus (pass 2 #170) ─────────────────────────────────────────────
+// Each pane (Recent, Favorites) is ONE tab stop: the row last focused there,
+// else its first row. Up/Down/Home/End move between rows (homeKeydown).
+// Before this every row and every hidden hover button was a tab stop — up to
+// 800 presses to cross the Recent pane.
+function homePaneRows(pane) {
+  return pane ? [...pane.querySelectorAll('.fp-row[data-path]')] : [];
+}
+function homeRovingSync(pane, stop) {
+  const rows = homePaneRows(pane);
+  const target = (stop && rows.includes(stop)) ? stop : rows[0];
+  for (const r of rows) r.tabIndex = r === target ? 0 : -1;
+}
+/** Replaces a pane's rows, keeping its tab stop (and DOM focus, when it was
+ * on one of the rows) on the same path. */
+function homeRerender(container, html) {
+  const active = document.activeElement;
+  const hadFocus = !!active && container.contains(active);
+  const stopPath = container.querySelector('.fp-row[data-path][tabindex="0"]')?.dataset.path;
+  container.innerHTML = html;
+  const stop = stopPath ? homePaneRows(container).find(r => r.dataset.path === stopPath) : null;
+  homeRovingSync(container, stop);
+  if (hadFocus) (stop || homePaneRows(container)[0])?.focus({ preventScroll: true });
+  homeRowsMotion(container);
+}
+
+/** §5.2 Home: rows that are new to a pane fade in (a re-render of the same
+ * rows — Home shown again, a relative time ticking over — does not). More
+ * than 30 at once (a first paint of a long Recent list): the pane fades as a
+ * whole instead. Rows are final and focusable before this runs. */
+function homeRowsMotion(container) {
+  const rows = homePaneRows(container);
+  const prev = container._fpPaths || null;
+  container._fpPaths = new Set(rows.map(r => r.dataset.path));
+  if (typeof listMotionOn !== 'function' || !listMotionOn()) return;
+  const fresh = prev ? rows.filter(r => !prev.has(r.dataset.path)) : rows;
+  if (!fresh.length) return;
+  if (fresh.length > LIST_MOTION_MAX_ROWS) {
+    fpAnimate(container, [{ opacity: 0.6 }, { opacity: 1 }], { duration: 'base', key: 'list' });
+    return;
+  }
+  for (const r of fresh) {
+    fpAnimate(r, [{ opacity: 0, transform: 'translateY(4px)' }, { opacity: 1, transform: 'none' }], { duration: 'base', key: 'enter' });
+  }
+}
+
+/** Row text cut short by its column gets the full text as a tooltip; text
+ * that fits gets none (Explorer's rule, as browser.js's syncTruncationTitle
+ * does for the file list — pass 2 #60). A name whose extension is hidden
+ * always shows the full name (data-full). */
+function homeSyncTruncationTitle(el) {
+  const cut = el.scrollWidth > el.clientWidth + 1 || el.scrollHeight > el.clientHeight + 1;
+  const shown = el.textContent.trim();
+  const full = el.dataset.full || shown;
+  if (cut || full !== shown) el.title = full;
+  else el.removeAttribute('title');
 }
 
 // ── Data loading ────────────────────────────────────────────────────────────
@@ -224,7 +309,8 @@ async function loadRecent() {
     return;
   }
   const groups = (data && data.groups) || [];
-  container.innerHTML = groups.length ? groups.map(renderRecentSection).join('') : HOME_RECENT_EMPTY_HTML;
+  homeRerender(container, groups.length ? groups.map(renderRecentSection).join('') : HOME_RECENT_EMPTY_HTML);
+  updateStatusBar();
 }
 
 /** GET /favorites -> flat, manually-ordered row list. Refreshes favoritesSet
@@ -249,7 +335,8 @@ async function loadFavorites() {
     favoritesSet.add(norm);
     favoritesPathToId.set(norm, f.id);
   });
-  container.innerHTML = files.length ? files.map(renderFavoriteRow).join('') : HOME_FAVORITES_EMPTY_HTML;
+  homeRerender(container, files.length ? files.map(renderFavoriteRow).join('') : HOME_FAVORITES_EMPTY_HTML);
+  updateStatusBar();
   // Every other pane that draws a star reads favoritesSet at render time, so
   // whoever just changed it has to repaint them (pass 2 #52).
   syncFavoriteStars();
@@ -497,12 +584,16 @@ function initFavoritesDragDrop() {
  * screen the same way browser.js's clearSelection() covers Browser. */
 function homeClearSelection() {
   document.querySelectorAll('#screen-home .fp-row--selected').forEach(r => r.classList.remove('fp-row--selected'));
+  updateStatusBar();
   // The inspector belongs to the Browser screen: resetting it to "No file
   // selected" from here wiped a live Browser selection's panel even though
   // that selection had not changed. Hand it back to whatever the Browser has
   // selected instead (pass 2 #75) — which IS updateInspector('none') when the
   // Browser has nothing selected.
-  if (typeof syncInspectorToBrowserSelection === 'function') syncInspectorToBrowserSelection();
+  // On Home itself the panel has nothing left to show: neutral (Task 14 Q2).
+  const onHome = typeof activeTab === 'function' && activeTab() && activeTab().screen === 'home';
+  if (onHome && typeof showInspectorNeutral === 'function') showInspectorNeutral();
+  else if (typeof syncInspectorToBrowserSelection === 'function') syncInspectorToBrowserSelection();
   else if (typeof updateInspector === 'function') updateInspector('none');
 }
 
@@ -515,6 +606,15 @@ function initHomeRowInteractions() {
     const row = e.target.closest('.fp-row[data-path]');
     if (!row) return;
     homeOpenPath(row.dataset.path, row.dataset.ext || '', homeRowIsDir(row));
+  });
+  // A row that gets focus (click, arrow, Tab) becomes its pane's tab stop.
+  screen.addEventListener('focusin', e => {
+    const row = e.target.closest && e.target.closest('.fp-row[data-path]');
+    if (row && e.target === row) homeRovingSync(row.closest('#home-recent, #home-favorites'), row);
+  });
+  screen.addEventListener('pointerover', e => {
+    const el = e.target.closest && e.target.closest('.fp-row__name, .fp-row__recent-path, .fp-row__recent-time');
+    if (el && screen.contains(el)) homeSyncTruncationTitle(el);
   });
 }
 
@@ -529,6 +629,26 @@ function homeKeydown(e) {
   const active = document.activeElement;
   const row = active && active.closest && active.closest('.fp-row[data-path]');
   if (!row) return;
+  // Inert behind any dialog, like the Browser's keys (pass 2 #53).
+  if (typeof anyScrimOpen === 'function' && anyScrimOpen()) return;
+  // A button inside the row (reachable by mouse only now) acts as itself.
+  if (active !== row) return;
+  if (!e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
+    const pane = row.closest('#home-recent, #home-favorites');
+    const rows = homePaneRows(pane);
+    const i = rows.indexOf(row);
+    const grid = !!row.closest('.home-pane[data-view="grid"]');
+    let next = null;
+    if (e.key === 'ArrowDown' || (grid && e.key === 'ArrowRight')) next = rows[i + 1];
+    else if (e.key === 'ArrowUp' || (grid && e.key === 'ArrowLeft')) next = rows[i - 1];
+    else if (e.key === 'Home') next = rows[0];
+    else if (e.key === 'End') next = rows[rows.length - 1];
+    if (next !== null) {
+      e.preventDefault();
+      if (next) { homeRovingSync(pane, next); next.focus(); next.scrollIntoView({ block: 'nearest' }); }
+      return;
+    }
+  }
   if (e.key === 'Enter') {
     e.preventDefault();
     homeOpenPath(row.dataset.path, row.dataset.ext || '', homeRowIsDir(row));

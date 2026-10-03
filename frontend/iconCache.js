@@ -31,6 +31,9 @@ class LruCache {
 
   static _sizeOf(value) {
     if (value == null) return 0;
+    // An explicit charge wins: icons.js stores a plain folder's entry by
+    // reference to the shared generic string and charges it 0.
+    if (typeof value.bytes === 'number') return value.bytes;
     if (typeof value === 'string') return value.length;
     if (typeof value.url === 'string') return value.url.length;
     return 0;
@@ -81,8 +84,33 @@ class LruCache {
     return removed;
   }
 
+  /** Drops every entry; returns how many there were (Settings › Data ›
+   *  "Clear icon and thumbnail cache", which empties the renderer's and the
+   *  main process's LRUs alike). */
+  clear() {
+    const n = this._map.size;
+    this._map.clear();
+    this._bytes = 0;
+    return n;
+  }
+
   get size() {
     return this._map.size;
+  }
+
+  /** Snapshot of [key, value] pairs, least- to most-recently used. Reading
+   *  it does not refresh recency. */
+  entries() {
+    return [...this._map];
+  }
+
+  /** Replaces the value of an existing key in place — same recency, bytes
+   *  re-charged. Returns false (and does nothing) for a missing key. */
+  replace(key, value) {
+    if (!this._map.has(key)) return false;
+    this._bytes += LruCache._sizeOf(value) - LruCache._sizeOf(this._map.get(key));
+    this._map.set(key, value);
+    return true;
   }
 }
 
@@ -101,6 +129,23 @@ function normalizeWinPath(p) {
 function clampPx(v) {
   const n = Math.round(Number(v));
   return Number.isFinite(n) ? Math.min(512, Math.max(8, n)) : 16;
+}
+
+// Stage 2D §4.3: the physical px every shell icon / thumbnail request goes out
+// at. Snapping caps the number of distinct keys while the view size moves
+// (48..256 logical) and keeps keys stable at a fractional devicePixelRatio;
+// the <img> is CSS-sized to its logical box and the browser downsamples.
+// At <= 32 logical px the snap is at most one step up, so the shell still
+// picks its small, simplified resource (16/20/24/32) — §4.5.
+const ICON_BUCKETS = [16, 20, 24, 32, 40, 48, 64, 96, 128, 192, 256];
+
+/** Smallest bucket >= physPx, capped at 256; a value that does not parse
+ *  falls back to 16 (the list-row size, like clampPx). */
+function fpIconBucket(physPx) {
+  const n = Number(physPx);
+  if (!Number.isFinite(n)) return 16;
+  for (const b of ICON_BUCKETS) if (n <= b) return b;
+  return ICON_BUCKETS[ICON_BUCKETS.length - 1];
 }
 
 // Extensions whose Tier-B (Chromium app.getFileIcon) icon is content-specific
@@ -179,6 +224,6 @@ function isSafeLocalPath(p) {
   return true;
 }
 
-const _exports = { LruCache, iconCacheKey, shellIconKey, isSafeLocalPath, normalizeWinPath, clampPx, PER_PATH_EXTS, PER_PATH_SHELL_EXTS };
+const _exports = { LruCache, iconCacheKey, shellIconKey, isSafeLocalPath, normalizeWinPath, clampPx, fpIconBucket, ICON_BUCKETS, PER_PATH_EXTS, PER_PATH_SHELL_EXTS };
 if (typeof module !== 'undefined' && module.exports) module.exports = _exports;
 else if (typeof window !== 'undefined') window.FpIconCache = _exports;

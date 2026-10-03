@@ -41,12 +41,22 @@ if (Test-Path frontend/src/actions.js) {
 }
 $stubCalls = Select-String -Path frontend/src/*.js -Pattern 'stub(' -SimpleMatch
 if ($stubCalls) { Write-Host 'stub( call left in frontend/src' -ForegroundColor Red; exit 1 }
-$stubScreens = (Select-String -Path frontend/src/app.js -Pattern 'showToast\(STUB_SCREENS' -SimpleMatch).Count
-if ($stubScreens -ne 0) { Write-Host 'showToast(STUB_SCREENS still referenced in app.js' -ForegroundColor Red; exit 1 }
+# check_menu_cases: every cm-* menu action has a switch case, and every
+# data-action in index.html / src templates reaches a case or IN_SCOPE_ACTIONS
+# -- nothing clickable falls into the "not yet implemented" stub branch.
 node scripts/check_menu_cases.js
 if ($LASTEXITCODE -ne 0) { Write-Host 'check_menu_cases failed' -ForegroundColor Red; exit 1 }
 node scripts/check_icons.js
 if ($LASTEXITCODE -ne 0) { Write-Host 'check_icons failed' -ForegroundColor Red; exit 1 }
+# check_motion: every duration/easing in styles.css is a --motion-*/--ease-*
+# token (200 ms ceiling), every animation sits under the html[data-motion]
+# switch, prefers-reduced-motion gates nothing, JS animates only via fpAnimate.
+node scripts/check_motion.js
+if ($LASTEXITCODE -ne 0) { Write-Host 'check_motion failed' -ForegroundColor Red; exit 1 }
+# check_layers: one z-index scale (--z-* tokens on :root, in order); every
+# z-index in styles.css is on it; none in index.html or the JS (addendum §3).
+node scripts/check_layers.js
+if ($LASTEXITCODE -ne 0) { Write-Host 'check_layers failed' -ForegroundColor Red; exit 1 }
 
 # filetypes parity: frontend/src/filetypes.js is generated from
 # backend/filetypes.py (scripts/build_filetypes.py); tests/test_filetypes.py
@@ -64,7 +74,7 @@ try {
   # mode for the same reason).
   $filetypesGen = ([IO.File]::ReadAllText($filetypesTmp)) -replace "`r`n", "`n"
   $filetypesCur = ([IO.File]::ReadAllText((Join-Path $root 'frontend/src/filetypes.js'))) -replace "`r`n", "`n"
-  if ($filetypesGen -ne $filetypesCur) {
+  if ($filetypesGen -cne $filetypesCur) {   # case-sensitive: -ne ignores case
     Write-Host 'frontend/src/filetypes.js is stale -- run: py -3 scripts/build_filetypes.py' -ForegroundColor Red
     exit 1
   }

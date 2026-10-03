@@ -21,6 +21,10 @@ let _propsPath = null;     // GET /fs/properties's own `path` (updates after a r
 let _propsData = null;     // last-fetched /fs/properties response
 let _propsEntry = null;    // {name, path, is_dir, ext} for iconFor()
 let _propsDetailsLoaded = false;
+// Bumped by every open and close: a GET /fs/properties that answers after a
+// newer open (Alt+Enter on another item) or after the panel was closed must
+// not paint — or re-open — the panel for the earlier item (spec §12 sweep).
+let _propsSeq = 0;
 // The folder type the panel LOADED (renderFolderTypeSelect's own `current`),
 // not whatever the <select> resolved to. desktop.ini can hold a FolderType
 // outside the five options below, in which case no <option> is selected and
@@ -89,7 +93,10 @@ function formatPropContains(contains) {
  * or the Inspector's "…" menu after navigating away). */
 function propsEntryFrom(props) {
   const existing = typeof entryForPath === 'function' ? entryForPath(props.path) : null;
-  if (existing) return existing;
+  // A /fs/list entry carries only its name: without the path a Windows-mode
+  // icon has nothing to ask the shell about and fell back to the FilePlus
+  // sprite (Stage 2D §4.6).
+  if (existing) return { ...existing, path: props.path };
   const dot = props.name.lastIndexOf('.');
   const ext = !props.is_dir && dot > 0 ? props.name.slice(dot) : '';
   return { name: props.name, path: props.path, is_dir: props.is_dir, ext };
@@ -115,13 +122,16 @@ async function openProperties(path) {
     return;
   }
 
+  const seq = ++_propsSeq;
   let props;
   try {
     props = await API.get('/fs/properties', { path });
   } catch (err) {
+    if (seq !== _propsSeq) return;
     showToast(`Failed to load properties: ${formatApiError(err)}`, 'error');
     return;
   }
+  if (seq !== _propsSeq) return;
 
   _propsPath = props.path;
   _propsData = props;
@@ -137,7 +147,7 @@ async function openProperties(path) {
   if (applyBtn) applyBtn.disabled = true;
 
   const scrim = document.getElementById('properties-modal-scrim');
-  if (scrim) { scrim.style.display = 'flex'; scrim.removeAttribute('aria-hidden'); }
+  fpSetScrim(scrim, true);
   // Re-measure now the modal is actually laid out: offsetLeft/offsetWidth are
   // 0 while it is display:none, so the reset above could only park the
   // underline at width 0.
@@ -147,8 +157,8 @@ async function openProperties(path) {
 function closeProperties() {
   const scrim = document.getElementById('properties-modal-scrim');
   if (!scrim) return;
-  scrim.style.display = 'none';
-  scrim.setAttribute('aria-hidden', 'true');
+  fpSetScrim(scrim, false);
+  _propsSeq++;
   _propsPath = null;
   _propsData = null;
   _propsEntry = null;
@@ -173,7 +183,11 @@ function switchPropertiesTab(name) {
     t.classList.toggle('fp-tabs__item--active', t.dataset.tab === name);
   });
   modal.querySelectorAll('.properties__pane').forEach(p => {
-    p.hidden = p.dataset.pane !== name;
+    const show = p.dataset.pane === name;
+    // The tab's pane fades in when it changes (addendum §5.2, as the
+    // inspector's tabs do).
+    if (show && p.hidden) fpAnimate(p, [{ opacity: 0 }, { opacity: 1 }], { duration: 'fast', key: 'pane' });
+    p.hidden = !show;
   });
   // Keep the accent underline with the active class -- this function is also
   // called programmatically (openProperties resets to General), where no
@@ -185,10 +199,20 @@ function switchPropertiesTab(name) {
 // ── General tab ──────────────────────────────────────────────────────────────
 
 function renderPropertiesHeader() {
-  const iconEl = document.getElementById('properties-icon');
   const nameInput = document.getElementById('properties-name-input');
-  if (iconEl) iconEl.innerHTML = iconFor(_propsEntry, 24);
+  paintPropertiesIcon();
   if (nameInput) nameInput.value = _propsData.name;
+}
+
+/** The header icon: the item's TYPE icon at 32 px, never its thumbnail
+ * (Stage 2D §4.6) — a .png shows the PNG file-type icon. In Windows mode it
+ * is resolved at once (fpResolveIconsNow) rather than by the lazy observer,
+ * which cannot be trusted inside this dialog. */
+function paintPropertiesIcon() {
+  const iconEl = document.getElementById('properties-icon');
+  if (!iconEl) return;
+  iconEl.innerHTML = fpTypeIconFor(_propsEntry, 32);
+  fpResolveIconsNow(iconEl);
 }
 
 /** Repaints the header icon (and the "Opens with" icon) of an open panel
@@ -196,8 +220,7 @@ function renderPropertiesHeader() {
  * No-op when the panel is closed. */
 function propertiesRefreshIcon() {
   if (!_propsPath || !_propsEntry) return;
-  const iconEl = document.getElementById('properties-icon');
-  if (iconEl) iconEl.innerHTML = iconFor(_propsEntry, 24);
+  paintPropertiesIcon();
   if (_propsData && !_propsData.is_dir) loadOpensWithIcon(_propsData);
 }
 
@@ -226,33 +249,37 @@ function renderOpensWithCell(props) {
     `</div>`;
 }
 
-/** Fills in the "Opens with" app icon via the same shared Tier-B icon
- * pipeline as icons.js's lazy rows (fpTierBIconUrl) — separate from the
- * IntersectionObserver system there only because this is a single explicit
- * icon, not a scrolling list. Sized per the sizing contract (icon-design.md
- * §2): px = clampPx(round(16 * dpr)), the <img> pinned to px/dpr CSS px.
- * Guards against a since-closed or since-replaced modal before touching the
- * DOM. icons.js loads before properties.js, so
- * fpDevicePx/fpTierBIconUrl/FpIconCache are defined at call time. */
+/** Fills in the "Opens with" app icon: always the Windows shell icon of the
+ * associated .exe, through the same pipeline and cache as a row icon (Tier A,
+ * then the Electron bridge; the executable sprite only if both fail), at the
+ * 16-px box's px bucket. Resolved at once, like the header icon — the lazy
+ * observer cannot be trusted inside this dialog. */
+let _propsAppIconUrl = null;
 function loadOpensWithIcon(props) {
   const el = document.getElementById('properties-opens-with-icon');
-  if (!el || !props.opens_with_exe) return;
-  // Same pipeline as a row icon (icons.js: Tier A, then the Electron bridge):
-  // a 16-CSS-px box at the current devicePixelRatio, pinned to px/dpr.
-  const px = fpDevicePx(16);
-  const key = window.FpIconCache.shellIconKey(props.opens_with_exe, 'exe', false, px);
-  fpShellIconUrl(key, { path: props.opens_with_exe, ext: 'exe', isDir: false, px }).then((res) => {
-    if (!res || !res.url || _propsPath !== props.path) return;
-    const el2 = document.getElementById('properties-opens-with-icon');
-    if (!el2) return;
-    el2.innerHTML = '';
-    const img = document.createElement('img');
-    img.src = res.url;
-    img.alt = '';
-    img.dataset.px = String(res.px);
-    img.style.width = img.style.height = (res.px / (window.devicePixelRatio || 1)) + 'px';
-    el2.appendChild(img);
-  }).catch(() => { /* best-effort */ });
+  if (!el) return;
+  if (_propsAppIconUrl) { URL.revokeObjectURL(_propsAppIconUrl); _propsAppIconUrl = null; }
+  if (props.opens_with_exe) {
+    el.innerHTML = fpShellIconMarkup({ path: props.opens_with_exe, ext: 'exe', is_dir: false }, 16, 'ft-executable');
+    fpResolveIconsNow(el);
+    return;
+  }
+  // No app at all: no icon slot (the label says "Unknown application").
+  el.hidden = !props.opens_with;
+  if (!props.opens_with) return;
+  // A Store app (Photos, Media Player) has no executable: the generic app
+  // glyph at once, swapped for the app's own icon image when the backend
+  // named one (Task 14 Q10 — the slot used to stay empty).
+  el.innerHTML = icon('ft-executable', 'fp-icon--16 fp-icon--compact');
+  if (!props.opens_with_icon) return;
+  const want = props.path;
+  API.blob('/preview', { path: props.opens_with_icon }).then(async (res) => {
+    if (!(res.headers.get('content-type') || '').startsWith('image/')) return;
+    const blob = await res.blob();
+    if (!_propsData || _propsData.path !== want || !el.isConnected) return;
+    _propsAppIconUrl = URL.createObjectURL(blob);
+    el.innerHTML = `<img alt="" src="${_propsAppIconUrl}">`;
+  }).catch(() => { /* the glyph stays */ });
 }
 
 function renderFolderTypeSelect(props) {
@@ -367,13 +394,17 @@ function renderDetails(details) {
  * (design spec: "modal stays open with refreshed data") and nowhere else,
  * since nothing but Apply changes the item out from under an open panel. */
 async function reloadProperties(path) {
+  const seq = _propsSeq;
   let fresh;
   try {
     fresh = await API.get('/fs/properties', { path });
   } catch (err) {
+    if (seq !== _propsSeq) return;
     showToast(`Failed to refresh properties: ${formatApiError(err)}`, 'error');
     return;
   }
+  // Closed (or re-opened on another item) while Apply's refresh was out.
+  if (seq !== _propsSeq) return;
   _propsPath = fresh.path;
   _propsData = fresh;
   _propsEntry = propsEntryFrom(fresh);

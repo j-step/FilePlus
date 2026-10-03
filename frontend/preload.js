@@ -6,23 +6,83 @@
  */
 const { contextBridge, ipcRenderer } = require('electron');
 
+// ── Eased app zoom (Stage 2D §5) ───────────────────────────────────────────
+// A zoom step interpolates the page zoom from where it is to `target` over
+// `easeMs` (ease-out; the renderer passes --motion-zoom, styles.css, or 0
+// for an instant step when animations are off), one factor per animation
+// frame, then settles on the exact target. Every factor goes through the
+// main process's webContents.setZoomFactor (win-zoom-to), not
+// webFrame.setZoomFactor: webFrame's zoom is a Chromium *temporary* zoom
+// level, which Electron never persists — after one webFrame step the zoom
+// stopped surviving a restart, and the main-process route keeps it (measured
+// frame times were the same either way). A newer zoomTo supersedes a running
+// one and starts from wherever the page zoom is at that moment.
+// Resolves { factor, frames, superseded }: `frames` are the rAF-to-rAF
+// durations (ms) while the ease ran, which the renderer uses to drop the
+// ease on a machine that cannot keep up (spec §5's 32 ms ruling).
+const ZOOM_EASE_FIRST_STEP_MS = 1000 / 60;
+let zoomRun = 0;
+function zoomTo(target, easeMs) {
+  const ease = Number.isFinite(easeMs) && easeMs > 0 ? easeMs : 0;
+  const run = ++zoomRun;
+  const to = Number(target);
+  const settle = () => ipcRenderer.invoke('win-zoom-to', to);
+  const from = ipcRenderer.sendSync('win-zoom-get');
+  if (!ease || !(Math.abs(to - from) > 0.0005)) {
+    return settle().then((factor) => ({ factor, frames: [], superseded: run !== zoomRun }));
+  }
+  return new Promise((resolve) => {
+    const frames = [];
+    let start = null;
+    let prev = null;
+    let done = false;
+    const tick = (ts) => {
+      if (run !== zoomRun) { resolve({ factor: null, frames, superseded: true }); return; }
+      if (prev !== null) frames.push(Math.round((ts - prev) * 10) / 10);
+      prev = ts;
+      if (done) {
+        // The frame after the last step: its layout and paint are measured too.
+        settle().then((factor) => resolve({ factor, frames, superseded: run !== zoomRun }),
+          () => resolve({ factor: null, frames, superseded: true }));
+        return;
+      }
+      // Progress counts from one 60 Hz frame before the first animation
+      // frame: the first frame already moves, and a slow first frame (the
+      // page's first zoom of the session can take one) never eats the ease.
+      if (start === null) start = ts - ZOOM_EASE_FIRST_STEP_MS;
+      const p = Math.min(1, (ts - start) / ease);
+      const e = 1 - (1 - p) * (1 - p) * (1 - p);
+      ipcRenderer.invoke('win-zoom-to', p >= 1 ? to : from + (to - from) * e).catch(() => {});
+      done = p >= 1;
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  });
+}
+
 contextBridge.exposeInMainWorld('electronAPI', {
   platform: process.platform,
   minimize:    () => ipcRenderer.send('win-minimize'),
   maximize:    () => ipcRenderer.send('win-maximize'),
   close:       () => ipcRenderer.send('win-close'),
+  // Maximize state for the header bar's Maximize / Restore button (pass 2 #174).
+  isMaximized: () => ipcRenderer.sendSync('win-is-maximized'),
+  onMaximizedChange: (fn) => ipcRenderer.on('win-maximized', (_e, maximized) => fn(!!maximized)),
   openMain:    () => ipcRenderer.send('open-main'),
   hideTray:    () => ipcRenderer.send('hide-tray'),
   closeSetup:  () => ipcRenderer.send('close-setup'),
-  // Zoom — uses webContents.setZoomFactor so the entire viewport scales correctly
-  zoomIn:      () => ipcRenderer.send('win-zoom-in'),
-  zoomOut:     () => ipcRenderer.send('win-zoom-out'),
-  zoomReset:   () => ipcRenderer.send('win-zoom-reset'),
+  // App zoom (Stage 2D §5): the step list lives in main.js; zoomTo eases
+  // to a factor over easeMs (0 = instant; see above) and resolves once the
+  // main process has it.
+  zoomSteps:   () => ipcRenderer.sendSync('win-zoom-steps'),
+  zoomTo:      (factor, easeMs) => zoomTo(factor, Number(easeMs)),
   getZoom:     () => ipcRenderer.sendSync('win-zoom-get'),
   // Host info
   hostname:    () => ipcRenderer.sendSync('get-hostname'),
   homeDir:     () => ipcRenderer.sendSync('get-home-dir'),
   micaAvailable: () => ipcRenderer.sendSync('mica-available'),
+  // Animations launch override: 'on' | 'off' | '' (none — follow the setting).
+  motionOverride: () => ipcRenderer.sendSync('get-motion-override'),
   // API auth token (empty string when FILEPLUS_API_TOKEN is unset)
   apiToken:    () => ipcRenderer.sendSync('get-api-token'),
   // Backend port (9876 unless FILEPLUS_PORT overrides it)
@@ -35,9 +95,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   pickFolder:        (defaultPath) => ipcRenderer.invoke('dialog-pick-folder', defaultPath),
   clipboardWriteText: (text) => ipcRenderer.send('clipboard-write-text', text),
   // Icons / thumbnails / native dialogs (Stage 2C Task 4; Tasks 6 and 13 wire
-  // renderer callers; pass 2 — icon-design.md §4.3 — switches sizing from a
-  // coarse enum to physical pixels). px = device pixels (the CSS box size x
-  // devicePixelRatio), computed by icons.js. fileIcon(s) -> {url, px, exact}
+  // renderer callers; pass 2 — docs/superpowers/specs/2026-09-14-stage-2c-
+  // pass-2-icon-design.md §4.3 — switches sizing from a coarse enum to
+  // physical pixels). px = device pixels (the CSS box size x
+  // devicePixelRatio, snapped up to a Stage 2D size bucket by
+  // fpIconBucket), computed by icons.js. fileIcon(s) -> {url, px, exact}
   // | null; fileIcons takes [{path, ext, px}] (<= 64) and answers in the same
   // order. thumbnail -> {url, w, h} | null (w or h == px, the longer edge).
   fileIcon:          (path, ext, px) => ipcRenderer.invoke('get-file-icon', path, ext, px),
@@ -45,4 +107,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
   thumbnail:         (path, px, mtime) => ipcRenderer.invoke('get-thumbnail', path, px, mtime),
   showProperties:    (path) => ipcRenderer.invoke('show-properties', path),
   openWithDialog:    (path) => ipcRenderer.invoke('open-with-dialog', path),
+  // Settings › About / Data (Stage 2D Task 12a). appInfo -> {version, logDir,
+  // electron, chrome, node}: the app version and log folder from the main
+  // process, the runtime versions from this process (same binary).
+  // openLogDir resolves '' on success, else Electron's error text.
+  // clearIconCaches empties the main-process icon/thumbnail LRUs and
+  // resolves {icons, thumbnails}, the counts dropped.
+  appInfo: () => ({
+    ...ipcRenderer.sendSync('get-app-info'),
+    electron: process.versions.electron,
+    chrome: process.versions.chrome,
+    node: process.versions.node,
+  }),
+  openLogDir:        () => ipcRenderer.invoke('open-log-dir'),
+  clearIconCaches:   () => ipcRenderer.invoke('clear-icon-caches'),
 });

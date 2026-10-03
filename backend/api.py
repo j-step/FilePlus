@@ -6,6 +6,7 @@ All business logic lives here; the renderer never touches the filesystem directl
 """
 import asyncio
 import base64
+import concurrent.futures
 import ctypes
 import errno
 import logging
@@ -26,7 +27,7 @@ import psutil
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Any
 
 import backend.config as _config
@@ -38,8 +39,24 @@ from backend import filetypes as ft, mover, operations_log as ol, searcher, stor
 logger = logging.getLogger(__name__)
 
 
+def _quiet_connection_reset(loop, context) -> None:
+    """asyncio exception handler: a client that resets its socket (the
+    Electron window closing right after a keepalive request, a renderer
+    reload) makes the Windows proactor log ``ConnectionResetError`` from
+    ``_call_connection_lost`` as an ERROR with a traceback, though the request
+    was answered and nothing failed. That one case goes to DEBUG so a real
+    error stays findable in backend.log (Stage 2D §12 sweep); everything else
+    keeps asyncio's default handling."""
+    exc = context.get("exception")
+    if isinstance(exc, ConnectionResetError) and "_call_connection_lost" in str(context.get("handle") or context.get("message") or ""):
+        logging.getLogger("backend.api").debug("client reset its connection: %s", exc)
+        return
+    loop.default_exception_handler(context)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    asyncio.get_running_loop().set_exception_handler(_quiet_connection_reset)
     # Auth is never off: an unset FILEPLUS_API_TOKEN is replaced here by a
     # minted, persisted one (config.ensure_api_token) before the first
     # request can be served. Assigned onto the module so _require_token's
@@ -398,11 +415,16 @@ async def file_meta(path: str = Query(..., description="Absolute path of the fil
 
     Unlike /files/{id}, this is addressed by filesystem path (what the
     Inspector has on hand) rather than DB id.
+
+    A path that does not exist (any more) answers 200 {"exists": false}: the
+    inspector asks about the selection while the user may already have
+    trashed or moved it, and that is an answer, not an error (a 404 is a
+    console error in the renderer). The guard still refuses what it refuses.
     """
     resolved = await aguard(path)
     exists, is_dir, st = await asyncio.to_thread(_entry_facts, resolved)
     if not exists:
-        raise HTTPException(status_code=404, detail=f"Not found: {path}")
+        return {"exists": False, "path": str(resolved)}
     if is_dir:
         return {
             "id": None,
@@ -411,8 +433,10 @@ async def file_meta(path: str = Query(..., description="Absolute path of the fil
             "extension": "",
             "size": None,
             "hash": None,
-            "created": datetime.fromtimestamp(st.st_ctime).isoformat(),
-            "modified": datetime.fromtimestamp(st.st_mtime).isoformat(),
+            # Birth time, as every listing and search reports it (st_ctime is
+            # deprecated as creation time on Windows since Python 3.12).
+            "created": _created_time(st),
+            "modified": st.st_mtime,
             "category": None,
             "confidence": 0.0,
             "status": "directory",
@@ -424,18 +448,41 @@ async def file_meta(path: str = Query(..., description="Absolute path of the fil
         conn.row_factory = aiosqlite.Row
         cur = await conn.execute("SELECT * FROM files WHERE path = ?", (str(resolved),))
         row = await cur.fetchone()
-        if row is None:
+        # A row indexed before the file last changed is re-indexed: the
+        # inspector showed the size, Modified date and hash of the file as it
+        # was when first seen (Stage 2D §12 sweep, "missing date fields").
+        stale = row is not None and (
+            row["size"] != st.st_size
+            or (_iso_to_epoch(row["modified"]) is None)
+            or abs(_iso_to_epoch(row["modified"]) - st.st_mtime) > 1)
+        if row is None or stale:
             # On-demand indexing must stay cheap: selecting a folder of large
             # media files fires one of these per item, so only small files are
             # hashed here (see _ONDEMAND_HASH_MAX_BYTES).
-            await index_file(resolved, conn, hash=st.st_size <= _ONDEMAND_HASH_MAX_BYTES)
+            small = st.st_size <= _ONDEMAND_HASH_MAX_BYTES
+            await index_file(resolved, conn, hash=small)
+            if stale and not small:
+                # index_file keeps a stored hash when it does not hash; for a
+                # changed file that hash describes the old content.
+                await conn.execute("UPDATE files SET hash = NULL WHERE path = ?", (str(resolved),))
             await conn.commit()
             cur = await conn.execute("SELECT * FROM files WHERE path = ?", (str(resolved),))
             row = await cur.fetchone()
-        data = dict(row)
+        data = _epoch_dates(dict(row))
         data["tags"] = await tagger.get_tags(conn, data["id"])
     data["kind"] = _kind_for(resolved, is_dir=False)
     return data
+
+
+def _epoch_dates(row: dict) -> dict:
+    """`created` / `modified` as epoch seconds, the unit every listing and
+    search result uses (the index stores naive local ISO strings). Stage 2D
+    §12 sweep: GET /file and /files/{id} were the only routes still shipping
+    the ISO string, so one renderer formatter had to take two shapes."""
+    for key in ("created", "modified"):
+        if key in row and not isinstance(row[key], (int, float)):
+            row[key] = _iso_to_epoch(row[key])
+    return row
 
 
 @app.get("/preview")
@@ -450,7 +497,8 @@ async def preview(path: str = Query(..., description="Absolute path of the file"
     resolved = await aguard(path)
     exists, is_dir, st = await asyncio.to_thread(_entry_facts, resolved)
     if not exists:
-        raise HTTPException(status_code=404, detail=f"Not found: {path}")
+        # Gone since it was selected (see /file): an answer, not a 404.
+        return {"kind": "missing", "exists": False}
     if is_dir:
         raise HTTPException(status_code=400, detail=f"Not a file: {path}")
     ext = resolved.suffix.lower().lstrip(".")
@@ -478,6 +526,15 @@ async def files_history(path: str = Query(..., description="Absolute path to loo
     resolved = await aguard(path)
     async with _db() as conn:
         return await ol.list_operations(conn, path=str(resolved))
+
+
+def _iso_to_epoch(value) -> Optional[float]:
+    """The index stores `created` as a naive local ISO string; listings and live
+    search carry epoch floats. /search normalises to the float (None if unparsable)."""
+    try:
+        return datetime.fromisoformat(value).timestamp()
+    except (TypeError, ValueError, OSError, OverflowError):
+        return None
 
 
 @app.get("/search")
@@ -616,6 +673,10 @@ async def search_files(
         rows = [r for r in rows if searcher.match_spans(r["filename"], words, True) is not None]
     truncated = scan_capped or len(rows) > limit
     results = rows[:limit]
+    for r in results:
+        r["created"] = _iso_to_epoch(r.get("created"))
+        if r["created"] is None:
+            del r["created"]  # unparsable/absent: omit rather than ship a string
     return {"results": results, "indexed_roots": indexed_roots, "truncated": truncated}
 
 
@@ -627,7 +688,7 @@ async def get_file(file_id: int):
         row = await cur.fetchone()
     if row is None:
         raise HTTPException(status_code=404, detail="File not found")
-    return dict(row)
+    return _epoch_dates(dict(row))
 
 
 # ---------------------------------------------------------------------------
@@ -679,6 +740,7 @@ def _scandir_entries(directory: Path, show_hidden: bool) -> tuple[list[dict], bo
             if is_hidden and not show_hidden:
                 continue
             entries.append({"name": de.name, "is_dir": False, "size": 0, "modified": 0.0,
+                            "created": 0.0, "accessed": 0.0,
                             "ext": "", "is_hidden": is_hidden, "error": "access denied"})
             continue
         is_dir = de.is_dir(follow_symlinks=False)
@@ -696,6 +758,8 @@ def _scandir_entries(directory: Path, show_hidden: bool) -> tuple[list[dict], bo
             "is_dir": is_dir,
             "size": stat.st_size,
             "modified": stat.st_mtime,
+            "created": _created_time(stat),
+            "accessed": stat.st_atime,
             "ext": ext,
             "is_hidden": is_hidden,
         })
@@ -903,9 +967,9 @@ async def fs_search(
 # backend.winshell; consumed verbatim by the frontend Properties panel.
 # ---------------------------------------------------------------------------
 
-def _created_time(st) -> float:
-    """st_birthtime when the platform provides it (Python 3.12+ on Windows), else st_ctime."""
-    return getattr(st, "st_birthtime", None) or st.st_ctime
+# One definition (st_birthtime, falling back to st_ctime), shared with the live
+# searcher so a listing and a search result agree on "created".
+_created_time = searcher._created_time
 
 
 def _immediate_child_names(directory: Path) -> list[tuple[str, bool]]:
@@ -924,7 +988,8 @@ def _properties_blocking(resolved: Path, is_dir: bool) -> dict:
     """
     attrs = winshell.get_attributes(resolved)
     if is_dir:
-        assoc_info = {"type_description": "File folder", "opens_with": None, "opens_with_exe": None}
+        assoc_info = {"type_description": "File folder", "opens_with": None, "opens_with_exe": None,
+                      "opens_with_icon": None}
         counts = winshell.contains_counts(resolved)
         size = size_on_disk = counts["bytes"]
         contains = {"files": counts["files"], "folders": counts["folders"], "truncated": counts["truncated"]}
@@ -970,6 +1035,7 @@ async def fs_properties(path: str = Query(..., description="Absolute path of the
         "type_description": assoc_info["type_description"],
         "opens_with": assoc_info["opens_with"],
         "opens_with_exe": assoc_info["opens_with_exe"],
+        "opens_with_icon": assoc_info.get("opens_with_icon"),
         "location": str(resolved.parent),
         "size": data["size"],
         "size_on_disk": data["size_on_disk"],
@@ -1078,6 +1144,15 @@ async def shell_icon(
     return Response(content=png, media_type="image/png", headers=_shell_icon_png_headers())
 
 
+@app.delete("/shell/icons/cache")
+async def shell_icons_cache_clear():
+    """Empties the shell-icon LRU (Settings > Data > Clear icon and thumbnail
+    cache): an app's icon that changed (a new default program for .pdf, say)
+    is fetched from the shell again instead of served for the rest of the
+    session. Index/DB state is untouched."""
+    return {"cleared": winshell.clear_icon_cache()}
+
+
 @app.post("/shell/icons")
 async def shell_icons(req: ShellIconsRequest):
     """Batch form of GET /shell/icon for a viewport of rows: one HTTP round
@@ -1150,21 +1225,82 @@ def _volume_label(mount: str) -> str:
     return buf.value if ok else ""
 
 
+def _drive_kind(opts: str) -> str:
+    """psutil (Windows) puts the GetDriveType result in ``opts``: 'fixed',
+    'removable', 'cdrom' or 'remote' (a mapped network drive)."""
+    flags = {o.strip() for o in (opts or "").split(",")}
+    if "removable" in flags:
+        return "removable"
+    if "cdrom" in flags:
+        return "cdrom"
+    if "remote" in flags:
+        return "network"
+    return "fixed"
+
+
+# Seconds one drive may take to answer disk_usage + the volume-label call. A
+# disconnected network share can hang both for tens of seconds; the probes run
+# concurrently, so /drives answers within about this long regardless.
+_DRIVE_PROBE_TIMEOUT_S = 1.5
+
+# Drive probes run on their own small pool, one probe per mount at a time
+# (Task 14 M4). A probe that times out keeps its thread until the OS call
+# returns; with the default executor, every /drives call (a This PC visit, a
+# refresh, a sidebar reload) used to start another one for the same hung
+# drive, until the threads every other to_thread route needs were all stuck.
+# Now a call that finds the mount's previous probe still running waits on
+# that same probe instead of starting a new one.
+_DRIVE_PROBE_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=8, thread_name_prefix="fp-drive-probe")
+_drive_probes: dict[str, concurrent.futures.Future] = {}
+_drive_probes_lock = threading.Lock()
+
+
+def _drive_probe(p):
+    """Blocking work for one partition: (usage, label). OSError = no media / denied."""
+    return psutil.disk_usage(p.mountpoint), _volume_label(p.mountpoint)
+
+
+def _drive_probe_future(p) -> concurrent.futures.Future:
+    """The running probe of ``p``'s mount, or a new one when none is."""
+    key = str(p.mountpoint).lower()
+    with _drive_probes_lock:
+        fut = _drive_probes.get(key)
+        if fut is None or fut.done():
+            fut = _DRIVE_PROBE_POOL.submit(_drive_probe, p)
+            _drive_probes[key] = fut
+
+            def forget(done, k=key):
+                if _drive_probes.get(k) is done:
+                    _drive_probes.pop(k, None)
+            fut.add_done_callback(forget)
+    return fut
+
+
 @app.get("/drives")
 async def drives():
-    def scan():
-        out = []
-        for p in psutil.disk_partitions(all=False):
-            if "fixed" not in p.opts:
-                continue
-            try:
-                u = psutil.disk_usage(p.mountpoint)
-            except OSError:
-                continue
-            out.append({"letter": p.device.rstrip("\\"), "mount": p.mountpoint, "label": _volume_label(p.mountpoint),
-                        "total_bytes": u.total, "free_bytes": u.free, "used_bytes": u.used})
-        return out
-    return await asyncio.to_thread(scan)
+    async def one(p):
+        item = {"letter": p.device.rstrip("\\"), "mount": p.mountpoint, "label": "",
+                "kind": _drive_kind(p.opts), "fs": p.fstype or "",
+                "total_bytes": None, "free_bytes": None, "used_bytes": None}
+        try:
+            # shield: a timeout here must not cancel the shared probe that a
+            # later call may still be waiting on.
+            u, label = await asyncio.wait_for(asyncio.shield(asyncio.wrap_future(_drive_probe_future(p))),
+                                              _DRIVE_PROBE_TIMEOUT_S)
+        except asyncio.TimeoutError:
+            # Unresponsive (typically a disconnected mapped network drive). Keep
+            # the drive the user can see in Explorer, with null sizes, rather than
+            # dropping it or stalling the whole response. The stuck worker thread
+            # cannot be killed; it ends when the OS call returns.
+            return item
+        except OSError:
+            return None  # no media (empty card reader / optical drive) or denied
+        item.update(label=label, total_bytes=u.total, free_bytes=u.free, used_bytes=u.used)
+        return item
+
+    parts = await asyncio.to_thread(psutil.disk_partitions, all=True)
+    results = await asyncio.gather(*(one(p) for p in parts))
+    return [r for r in results if r is not None]
 
 
 # ---------------------------------------------------------------------------
@@ -1550,6 +1686,12 @@ class ConfigSet(BaseModel):
     value: Any
 
 
+class ConfigMerge(BaseModel):
+    key: str
+    value: dict[str, Any]
+    max_keys: Optional[int] = Field(None, ge=1)
+
+
 class RecentAdd(BaseModel):
     path: str
     action: str
@@ -1598,6 +1740,15 @@ async def post_config(body: ConfigSet):
     return {"key": body.key, "value": body.value}
 
 
+@app.post("/config/merge")
+async def merge_config(body: ConfigMerge):
+    """Merges ``value``'s entries into the object stored at ``key`` (see
+    stores.config_merge) -- a small delta instead of the whole map."""
+    async with _db() as conn:
+        merged = await stores.config_merge(conn, body.key, body.value, body.max_keys)
+    return {"key": body.key, "count": len(merged)}
+
+
 @app.delete("/config/{key}")
 async def delete_config(key: str):
     async with _db() as conn:
@@ -1616,6 +1767,14 @@ async def post_recent(body: RecentAdd):
     async with _db() as conn:
         await stores.recent_add(conn, body.path, body.action)
     return {"status": "ok"}
+
+
+@app.delete("/recent")
+async def delete_recent():
+    """Clears Home > Recent (Settings > Data). History rows only, no files."""
+    async with _db() as conn:
+        removed = await stores.recent_clear(conn)
+    return {"status": "cleared", "removed": removed}
 
 
 @app.get("/favorites")

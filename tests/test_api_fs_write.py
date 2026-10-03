@@ -90,7 +90,8 @@ def test_drives_and_health(client):
     assert h["db_ok"] is True and h["write_unlocked"] is False and h["pending_ops"] == 0 and h["index_running"] is False
 
 
-def test_drives_filters_out_removable_and_remote(client, monkeypatch):
+def test_drives_include_removable_and_remote_with_kind(client, monkeypatch):
+    """Stage 2D §8: removable and network drives are listed too, tagged with a kind."""
     from backend import api as api_module
 
     SDiskPart = namedtuple("sdiskpart", "device mountpoint fstype opts")
@@ -106,6 +107,5 @@ def test_drives_filters_out_removable_and_remote(client, monkeypatch):
     monkeypatch.setattr(api_module.psutil, "disk_usage", lambda mount: fake_usage)
 
     d = client.get("/drives").json()
-    assert len(d) == 1
-    assert d[0]["letter"] == "C:"
-    assert {"letter", "mount", "total_bytes", "free_bytes", "used_bytes", "label"} <= set(d[0])
+    assert {x["letter"]: x["kind"] for x in d} == {"C:": "fixed", "D:": "removable", "E:": "network"}
+    assert {"letter", "mount", "total_bytes", "free_bytes", "used_bytes", "label", "kind", "fs"} <= set(d[0])

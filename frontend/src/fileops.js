@@ -41,6 +41,9 @@ function uniqueNameFor(dir, baseName) {
  * failure. They pass this instead of swallowing it anonymously. */
 function fileopsReported() { /* run() already showed the toast */ }
 
+/** Op types that change where a path lives (fileops.followOps). */
+const FOLLOWED_OPS = new Set(['move', 'rename', 'restore', 'trash']);
+
 const fileops = {
   clipboard: { mode: null, paths: [] },          // 'copy' | 'cut'
   undoStack: [], redoStack: [],                  // batch ids
@@ -52,6 +55,7 @@ const fileops = {
     try {
       const res = await fn();
       if (res && res.batch_id && res.ops && res.ops.length) { this.undoStack.push(res.batch_id); this.redoStack.length = 0; }
+      this.followOps(res && res.ops);
       if (res && res.errors && res.errors.length) showToast(`${label}: ${res.errors[0].error}`, 'error');
       if (res && res.conflicts && res.conflicts.length) return this.resolveConflicts(label, res, fn);
       // `skipped` is the fourth bucket mover._batch returns (on_conflict:
@@ -89,6 +93,7 @@ const fileops = {
   async undoBatch(id) {
     try {
       const res = await API.post(`/operations/batch/${id}/undo`);
+      this.followOps(res && res.ops);
       this.undoStack = this.undoStack.filter(b => b !== id);
       if (res.batch_id) this.redoStack.push(res.batch_id);
       if (res.errors.length) showToast(`Undo: ${res.errors[0].error}`, 'error');
@@ -98,6 +103,8 @@ const fileops = {
       // ops: []} and must be a silent no-op, not a false "Undone".
       else if (res.ops && res.ops.length) showSnackbar('Undone', null, null);
       await refreshDirectory();
+      // What the undo put back into this folder is selected (Explorer).
+      if (typeof selectLandedOps === 'function') selectLandedOps(res.ops);
     } catch (err) { showToast(`Undo failed: ${formatApiError(err)}`, 'error'); }
   },
 
@@ -121,6 +128,7 @@ const fileops = {
     this._inFlight = true;
     try {
       const res = await API.post(`/operations/batch/${id}/undo`);
+      this.followOps(res && res.ops);
       // Mirror undoBatch: the inverse of an op can be refused (the item moved
       // or vanished behind our back) and the backend reports that in
       // `errors`. Dropping the entry regardless made a wholly-failed redo
@@ -135,6 +143,7 @@ const fileops = {
         this.redoStack = this.redoStack.filter(b => b !== id);
       }
       await refreshDirectory();
+      if (typeof selectLandedOps === 'function') selectLandedOps(res.ops);
     } catch (err) { showToast(`Redo failed: ${formatApiError(err)}`, 'error'); }
     finally { this._inFlight = false; }
   },
@@ -142,8 +151,51 @@ const fileops = {
   // Both no-op on an empty selection rather than replacing a real clipboard
   // with an empty one: a stray Ctrl+C after a deselect used to wipe the copy
   // the user had just made, greying Paste out with no feedback (pass 2 #50).
-  copySelection() { const paths = getSelectedPaths(); if (!paths.length) return; this.clipboard = { mode: 'copy', paths }; },
-  cutSelection()  { const paths = getSelectedPaths(); if (!paths.length) return; this.clipboard = { mode: 'cut',  paths }; },
+  copySelection() { const paths = getSelectedPaths(); if (!paths.length) return; this.setClipboard('copy', paths); },
+  cutSelection()  { const paths = getSelectedPaths(); if (!paths.length) return; this.setClipboard('cut', paths); },
+
+  /** The one writer of `clipboard`. Every change repaints the cut / copied
+   * marks on the listing and the status-bar count (browser.js
+   * syncClipboardMarks) — with notifications off (the default) those are the
+   * only sign a Ctrl+X / Ctrl+C happened at all (pass 2 #172). */
+  setClipboard(mode, paths) {
+    this.clipboard = { mode: mode || null, paths: mode ? paths : [] };
+    if (typeof syncClipboardMarks === 'function') syncClipboardMarks();
+  },
+
+  /** Keeps the clipboard true to what is on disk after operations land: a
+   * clipboard item (or anything under a clipboard folder) that was renamed or
+   * moved now lives at its new path; one sent to the trash is dropped. So the
+   * status-bar count always matches the ghosted rows, and Paste never offers
+   * a path that is gone (pass 2 #172 review). Only the four path-changing
+   * op types act; every other (copy, attr-set, folder-type-set, mkdir, …)
+   * leaves the clipboard alone — an attribute change from Properties must
+   * not drop a pending cut. */
+  followOps(ops) {
+    // The selection (and with it the inspector) follows the same ops.
+    if (typeof followSelectionOps === 'function') followSelectionOps(ops);
+    // A renamed row slides to its new place in the refresh that follows.
+    if (typeof noteListMoves === 'function') noteListMoves(ops);
+    const { mode, paths } = this.clipboard;
+    if (!mode || !paths.length || !ops || !ops.length) return;
+    let next = paths.slice();
+    let changed = false;
+    for (const op of ops) {
+      if (!op || !op.src || !FOLLOWED_OPS.has(op.op_type)) continue;
+      if (op.op_type !== 'trash' && !op.dest) continue;
+      const src = String(op.src);
+      const lsrc = src.toLowerCase();
+      const prefix = lsrc.endsWith('\\') ? lsrc : `${lsrc}\\`;
+      next = next.flatMap(p => {
+        const lp = String(p).toLowerCase();
+        if (lp !== lsrc && !lp.startsWith(prefix)) return [p];
+        changed = true;
+        if (op.op_type === 'trash') return [];
+        return [String(op.dest) + String(p).slice(src.length)];
+      });
+    }
+    if (changed) this.setClipboard(next.length ? mode : null, next);
+  },
 
   /** Number of paths currently on the clipboard — the Paste context-menu
    * item's enabled(ctx) predicate (Task 11, playtest pass 1 §4.2) reads this
@@ -155,18 +207,52 @@ const fileops = {
     const { mode, paths } = this.clipboard;
     if (!mode || !paths.length || !dir) return;
     const route = mode === 'cut' ? '/fs/move' : '/fs/copy';
-    const res = await this.run(mode === 'cut' ? 'Moved' : 'Copied',
-      (overridePaths, onConflict) => API.post(route, { sources: overridePaths || paths, dest: dir, on_conflict: onConflict || 'fail' }));
+    if (mode === 'cut' && typeof inspectorAbortFor === 'function') inspectorAbortFor(paths);
+    let res;
+    try {
+      res = await this.run(mode === 'cut' ? 'Moved' : 'Copied',
+        (overridePaths, onConflict) => API.post(route, { sources: overridePaths || paths, dest: dir, on_conflict: onConflict || 'fail' }));
+    } finally {
+      if (typeof inspectorResumeAfterOp === 'function') inspectorResumeAfterOp();
+    }
     // A conflict the user cancelled (resolveConflicts settles 'cancel') means
     // nothing new happened for the still-pending sources — keep the clipboard
     // so Ctrl+V can be retried instead of silently losing the cut selection.
-    if (mode === 'cut' && res !== 'cancel') this.clipboard = { mode: null, paths: [] };
+    // Otherwise the moved items are done (followOps already pointed them at
+    // their new home); any item still at its original path failed (an error,
+    // or skipped) and stays cut, so Ctrl+V can retry just those.
+    // The pasted items are selected, as in Explorer.
+    if (res && res !== 'cancel' && typeof selectLandedOps === 'function') selectLandedOps(res.ops);
+    if (mode === 'cut' && res !== 'cancel') {
+      const original = new Set(paths.map(p => String(p).toLowerCase()));
+      const left = this.clipboard.mode === 'cut'
+        ? this.clipboard.paths.filter(p => original.has(String(p).toLowerCase())) : [];
+      this.setClipboard(left.length ? 'cut' : null, left);
+    }
   },
 
+  // A second Delete while one is still out is a no-op (Task 14 I1): the
+  // selection still holds the items being trashed, and once the first one
+  // lands the next item is selected (selectAfterDelete) — a double press must
+  // not send a duplicate request or trash that next item too.
+  _trashInFlight: false,
+
   async trashSelection() {
+    if (this._trashInFlight) return;
     const paths = getSelectedPaths();
     if (!paths.length) return;
-    await this.run('Deleted', (overridePaths) => API.post('/fs/trash', { paths: overridePaths || paths }));
+    // Where the first deleted item sat: the item that takes its place is
+    // selected afterwards (Explorer), so the keyboard carries on from there.
+    const place = typeof deletePlace === 'function' ? deletePlace(paths) : null;
+    this._trashInFlight = true;
+    if (typeof inspectorAbortFor === 'function') inspectorAbortFor(paths);
+    try {
+      await this.run('Deleted', (overridePaths) => API.post('/fs/trash', { paths: overridePaths || paths }));
+      if (place && typeof selectAfterDelete === 'function') selectAfterDelete(place);
+    } finally {
+      this._trashInFlight = false;
+      if (typeof inspectorResumeAfterOp === 'function') inspectorResumeAfterOp();
+    }
   },
 
   async newFolder(dir) {
@@ -197,7 +283,13 @@ const fileops = {
     // raises ConflictError instead, which the API maps straight to a 409), so
     // run() can never call fn() with those args here; a 409 falls into run()'s
     // catch and is toasted as-is via formatApiError, same as any other failure.
-    const res = await this.run('Renamed', () => API.post('/fs/rename', { path, new_name: newName }));
+    if (typeof inspectorAbortFor === 'function') inspectorAbortFor([path]);
+    let res;
+    try {
+      res = await this.run('Renamed', () => API.post('/fs/rename', { path, new_name: newName }));
+    } finally {
+      if (typeof inspectorResumeAfterOp === 'function') inspectorResumeAfterOp();
+    }
     // Select (and focus) the renamed row once refreshDirectory() (inside
     // run()) has re-rendered it under its new path.
     const newPath = res && res.ops && res.ops[0] && res.ops[0].dest;
@@ -208,8 +300,13 @@ const fileops = {
   async moveTo(paths, dir, copy = false) {
     if (!paths || !paths.length || !dir) return;
     const route = copy ? '/fs/copy' : '/fs/move';
-    await this.run(copy ? 'Copied' : 'Moved',
-      (overridePaths, onConflict) => API.post(route, { sources: overridePaths || paths, dest: dir, on_conflict: onConflict || 'fail' }));
+    if (!copy && typeof inspectorAbortFor === 'function') inspectorAbortFor(paths);
+    try {
+      await this.run(copy ? 'Copied' : 'Moved',
+        (overridePaths, onConflict) => API.post(route, { sources: overridePaths || paths, dest: dir, on_conflict: onConflict || 'fail' }));
+    } finally {
+      if (typeof inspectorResumeAfterOp === 'function') inspectorResumeAfterOp();
+    }
   },
 
   /**

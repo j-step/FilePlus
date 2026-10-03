@@ -7,6 +7,7 @@ here runs directly against aiosqlite.
 from __future__ import annotations
 
 import json
+import stat
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -57,6 +58,50 @@ async def config_set(conn: aiosqlite.Connection, key: str, value: Any) -> None:
     await ol.mark_executed(conn, op_id)
 
 
+async def config_merge(conn: aiosqlite.Connection, key: str, patch: dict,
+                       max_keys: int | None = None) -> dict:
+    """Merges *patch* into the object stored at *key* (a missing or
+    non-object value starts empty) and saves it through config_set, so the
+    write is logged like any other config change. With *max_keys*, the
+    entries with the oldest numeric ``t`` go first until that many remain.
+
+    The renderer saves ui.folder_views only through here, as deltas (Stage 2D
+    §12 sweep): a keepalive request at window close carries at most 64 KB,
+    and the whole 500-folder map can be bigger than that. Two deltas can
+    reach the backend in either order, so an entry already stored with a
+    newer numeric ``t`` is kept over an older one, and the read-modify-write
+    runs in one BEGIN IMMEDIATE transaction so two merges never interleave.
+    The patch is logged before the write, like every config change."""
+    def age(v) -> float:
+        t = v.get("t") if isinstance(v, dict) else None
+        return float(t) if isinstance(t, (int, float)) else 0.0
+
+    op_id = await ol.log_operation(conn, "config-change", key, json.dumps(patch)[:200], reason="merge")
+    await conn.execute("BEGIN IMMEDIATE")
+    try:
+        cur = await conn.execute("SELECT value FROM config WHERE key = ?", (key,))
+        row = await cur.fetchone()
+        current = json.loads(row[0]) if row is not None else None
+        merged = dict(current) if isinstance(current, dict) else {}
+        for k, v in patch.items():
+            if k not in merged or age(v) >= age(merged[k]):
+                merged[k] = v
+        if max_keys is not None and len(merged) > max_keys:
+            for k in sorted(merged, key=lambda k: age(merged[k]))[: len(merged) - max_keys]:
+                del merged[k]
+        await conn.execute(
+            "INSERT INTO config (key, value, updated) VALUES (?, ?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated = excluded.updated",
+            (key, json.dumps(merged), _now()),
+        )
+        await conn.commit()
+    except BaseException:
+        await conn.rollback()
+        raise
+    await ol.mark_executed(conn, op_id)
+    return merged
+
+
 async def config_delete(conn: aiosqlite.Connection, key: str) -> None:
     op_id = await ol.log_operation(conn, "config-change", key, None, reason="delete")
     await conn.execute("DELETE FROM config WHERE key = ?", (key,))
@@ -79,6 +124,17 @@ async def recent_add(conn: aiosqlite.Connection, path: str, action: str) -> None
         (RECENT_CAP,),
     )
     await conn.commit()
+
+
+async def recent_clear(conn: aiosqlite.Connection) -> int:
+    """Empties the Recent list (Settings > Data > Clear Recent). Returns how
+    many entries the user saw there -- distinct paths, not raw rows. Only the
+    history rows go; no file is touched."""
+    cur = await conn.execute("SELECT COUNT(DISTINCT path) FROM recent_actions")
+    (n,) = await cur.fetchone()
+    await conn.execute("DELETE FROM recent_actions")
+    await conn.commit()
+    return int(n or 0)
 
 
 def _bucket_for(ts: datetime, now: datetime) -> tuple[str, str]:
@@ -173,14 +229,24 @@ def _file_entry(path: str, extra: dict) -> dict:
     #36): a folder called "my.folder" is a folder, not a ".folder" file, and
     a directory's ext is '' whatever its name -- the renderer keys its
     per-extension icon cache on ext, so a dotted folder must never share a
-    bucket with files. A path that no longer exists is not a directory."""
+    bucket with files. A path that no longer exists is not a directory.
+
+    ``exists`` (one stat, the same one is_dir needed) lets Home mark a Recent
+    or Favorites row whose item was moved or deleted since, so a click on it
+    never asks GET /file about a path that is gone (Stage 2D §12 sweep)."""
     p = Path(path)
-    is_dir = p.is_dir()
+    try:
+        is_dir = stat.S_ISDIR(p.stat().st_mode)
+        exists = True
+    except OSError:
+        is_dir = False
+        exists = False
     return {
         "path": path,
         "name": p.name,
         "ext": "" if is_dir else p.suffix.lower(),
         "is_dir": is_dir,
+        "exists": exists,
         **extra,
     }
 

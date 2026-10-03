@@ -2,8 +2,12 @@
 
 > **Style note (2026-09-10).** Section A.0 "Aesthetic baseline" and every colour, bevel, glow and font reference in this document describe the April 2026 design, which the roadmap replaces (decisions D7/D8 in `superpowers/specs/2026-09-10-fileplus-roadmap-design.md`). Layout, sizing, density and behaviour in this document remain canonical.
 
+> **Stage 2D update (2026-10-02).** Playtest pass 2 (`superpowers/specs/2026-10-01-stage-2d-playtest-2-design.md`; run summary `superpowers/runs/2026-10-01-stage-2d.md`) changed the behaviour of the tab bar, sidebar, toolbar and status bar (A.1.2–A.1.5), Home (A.2, the Shared tab is gone), the file list's views and refresh (A.3.1, A.3.3), the inspector (A.3.2), the empty-area menu (A.10.3), the palette (A.11.1), notices (A.11.4) and Settings (A.12). Each change is marked inline as **Stage 2D** and wins over the older text around it. It also added the This PC page (A.3.0). Screens A.4–A.9 (File Tree, Scan, Review Bin, Everything Folder) are **hidden** until the stage that builds them: no entry point reaches them, and their mock-up markup is kept in `archive/2026-10-02-unbuilt-screens-markup.html`.
+
+> **Stage 2D addendum (2026-10-03).** The author's five follow-up requests (`superpowers/specs/2026-10-03-stage-2d-addendum-design.md`; the run summary's "Addendum" section): one header bar replaces the title bar and the tab bar (A.1.1, A.1.2); the search box shrinks further and pushes the path instead of covering it (A.1.4); one modal scrim blurs everything evenly (A.11); This PC no longer opens halfway down (A.3.0); and a motion pass under a new Animations switch (A.0.1, A.12.1). Marked inline as **Stage 2D addendum**.
+
 **Status:** Canonical source of truth.
-**Date last updated:** 2026-04-25.
+**Date last updated:** 2026-04-25 (Stage 2D notes added 2026-10-02).
 **Supersedes:** `docs/archive/design-brief.md`. `docs/finalization-spec.md` (archived under `docs/archive/finalization-spec-v0.md`).
 **Decision register:** [docs/superpowers/specs/2026-04-25-fileplus-ui-re-pass-design.md](superpowers/specs/2026-04-25-fileplus-ui-re-pass-design.md) §2.
 **Tokens:** [docs/archive/design-tokens.md](archive/design-tokens.md).
@@ -18,25 +22,41 @@ This document describes every screen, surface, overlay, and component in FilePlu
 
 Visual style is specified in `superpowers/specs/2026-09-10-stage-1-redesign-design.md` (§3 tokens, §4 component treatments). This document specifies layout, sizing, density and behaviour only.
 
+### A.0.1 Motion (Stage 2D addendum §5)
+
+Quick, subtle animations throughout, under one switch: **Settings › Personalization › Animations** (`ui.animations`, on by default; A.12.1). Off, every change is instant; the switch applies at once, without a restart. Windows' "Animation effects" setting does not affect FilePlus.
+
+- **Never in the way:** what an action changes (state, rows, selection, focus) changes at once; the animation is decoration on top. Nothing waits for one to finish, any new action cancels or retargets it, and something leaving (a closed tab, a deleted row, a closing dialog) is a ghost that takes no clicks or keys.
+- **Fast:** 60 ms (hover, press), 100 ms (menus, selection), 140 ms (panels, tabs, dialogs), 200 ms at most (sidebar width). Fades, short slides (≤ 8 px) and small scales (≥ 0.96; small "pop" elements such as chips, the copy badge and the favourite star from 0.9). No bounces, glows or new shadows.
+- **Never per step:** a held key, Ctrl+wheel view steps, a drag following the pointer and a marquee selection animate nothing per step. More than 30 rows changing at once, or a listing over 300 rows, animate as a whole or not at all.
+- **Launch is not a change:** the window opens in its saved state (sidebar, theme, zoom, panel widths) without easing into it.
+- What moves: tabs grow in / shrink out and the underline slides; screens crossfade; a new listing fades in from the side it came from; the breadcrumb's overflow fade grows in; the inspector slides and its content crossfades on a discrete selection change; the sidebar eases its width while its labels fade; menus, flyouts, the search dropdown and Ask File+ fade and scale from where they open (closing is instant); dialogs and their scrim fade; notices slide up and the stack closes gaps; new, renamed, cut and removed items fade, grow or slide; a sort slides up to 30 rows (a crossfade above that); search chips pop; This PC cards fade in (20 ms stagger) and usage bars fill on every visit to This PC (never on a refresh or a tab switch); buttons press to 0.97; the maximise glyph crossfades; the zoom ease and the refresh spin/dip follow the same switch.
+
 ---
 
 ## A.1 Global chrome (every main app screen)
 
-### A.1.1 Titlebar (32px tall)
-- App name "FilePlus" left-aligned with brand mark (14×14)
-- Title text in `t-compact`, Inter 500, `text-secondary`
-- Drag region across the rest
-- Window controls (min / max / close) right-aligned, custom-styled (see Section 9 of v2 token spec). Native Windows chrome disabled.
-- No menu bar
-- Window controls: 32×32 ghost icon buttons with 12×12 Lucide icons. Close button hover uses `#C0392B` at 80% alpha. Min/max hover uses `bg-raised`.
+### A.1.1 Header bar (one top row, 44 screen px; Stage 2D addendum §1)
 
-### A.1.2 Tab bar (32px tall, below titlebar)
-- Explorer-style tabs
-- Each tab: 14×14 Lucide folder icon, folder name in `t-body` Inter 500, 12×12 close (×) icon on hover
-- Active tab: 2px `accent` underline at bottom, `bg-content` background (matches work area, visually "connects" tab to content below)
-- Inactive tabs: `bg-chrome` background, `text-secondary` label
-- Underline slides between tabs at `dur-slide` with `ease-out` (the signature tab motion). Tab content swap is instant (jump-cut).
-- "+" new tab button right of last tab: 24×24 ghost icon button with 14×14 Lucide `plus`
+> **Stage 2D addendum (2026-10-03) — replaces the 32 px title bar and the separate 32 px tab bar.** The window has one top bar. Nothing of the old title bar (small logo, "FilePlus" title) or the old tab row remains.
+
+Left to right:
+1. **Identity card** — the big FilePlus logo and the device name ("JJ's PC"; the OS hostname until renamed — double-click renames it in place, Enter/Escape commit/cancel). The name ellipsizes at about 220 screen px with the whole name as its tooltip. While the sidebar is expanded the card is exactly the sidebar's width, so the tabs begin where the content pane begins and follow a sidebar resize; over the collapsed rail it keeps its natural width (logo + whole name) and never collapses. The card's empty space and the logo are a drag region; only the name is a control.
+2. **Tab strip**, then the **"+"** new-tab button (A.1.2).
+3. **Drag region** — the empty rest of the bar moves the window (at least 46 screen px always stays free to grab, however many tabs there are); a double-click maximises / restores, the OS's own caption behaviour.
+4. **Caption buttons** — minimise, maximise/restore, close: Windows 11 metrics, full bar height, 46 screen px wide, close turns Windows' red on hover; maximise reads "Restore" (two squares) while maximised and its glyph crossfades. They are page buttons, not Electron's `titleBarOverlay`: they sit under the modal scrim like everything else and stay transparent over Mica. Cost: no snap-layout flyout when hovering maximise (Win+Z and dragging to the screen's top edge still work).
+
+- The sidebar's collapse toggle moved out of the old sidebar card into the sidebar's top row: beside "Ask File+" when expanded, above the rail icons when collapsed. "Ask File+" collapses with the sidebar.
+- Screen px: the bar's height, the card's width and the caption buttons keep their size on screen under app zoom (like the panels); text and icons scale with the zoom.
+- Transparent over Mica. Every interactive control is no-drag; empty bar space is a drag region. While a modal scrim is open the window draws solid chrome under it so the blur is even (A.11).
+- No menu bar.
+
+### A.1.2 Tab strip (in the header bar)
+- Explorer-style tabs: icon, title, and a close × (shown on hover and on the active tab; its space is kept on every tab, so titles never jump).
+- **Width (Task 8):** with room, a tab is as wide as its title, up to 200 px (longer titles end in "…", the whole title is the tooltip). When the bar gets crowded every tab shrinks alike — the same share each, a short one never more than its title needs — down to 80 px; past that the strip scrolls sideways (the mouse wheel scrolls it) under a fade on its right edge.
+- **Always in view:** the active tab is scrolled fully into view — never under the fade — when it is activated or created, and when the strip narrows. The "+" sits right after the strip, outside the scrolling part, so it is always on screen. The strip starts 8 px in from the content pane's edge (flush on the seam, the first tab's edge drew a 1 px step beside the sidebar's divider).
+- Active tab: `bg-content` background, hairline border, 2 px `accent` underline; inactive tabs `bg-raised` with `text-secondary` labels. The underline slides to a newly active tab (Motion, A.0.1); tab content swaps at once.
+- "+" new tab: a 28×28 ghost square with the plain 16 px `fp-add` glyph, centred with the tabs (Stage 2D). A drive-root tab is labelled with its letter only (`C:`; the full name is in the breadcrumb and sidebar); a This PC tab reads "This PC". A tab keeps its own view, scroll, selection, search and last listing; switching back paints that listing at once and then revalidates it.
 - Drag tab to reorder
 - Drag a file onto a tab → switches to that tab after 600ms hover (file still held)
 - Right-click tab: Duplicate, Close, Close others, Close to right, Move to new window
@@ -44,6 +64,9 @@ Visual style is specified in `superpowers/specs/2026-09-10-stage-1-redesign-desi
 - Ctrl+T new, Ctrl+W close, Ctrl+Shift+T reopen closed
 
 ### A.1.3 Sidebar (240px wide, collapsible to 52px icon-only)
+
+> **Stage 2C/2D — supersedes the section list below.** Top to bottom: header; **Quick Access** (Home, the known folders from `GET /known-folders` — Desktop, Downloads and Screenshots by default — then pinned folders; Review Bin is hidden until Stage 3); a hairline divider; **This PC**, which replaced the Tree section: a collapsible section listing every drive (fixed, removable, network, optical) as `Label (C:)` with a 3 px usage bar and "X free of Y" in its tooltip, no per-drive expansion; clicking the section header opens the This PC page (A.3.0) and shows it as active while you are there; **Tags** (the top 8 real tags by file count, hidden while nothing is tagged); bottom anchor **Settings** only (Everything Folder is hidden until Stage 3; the System section with File Tree and Scan until Stage 4).
+> Section headers are 11/16 px, weight 600, uppercase, 0.04em tracking, `text-secondary`; sections are separated by 1 px `border-subtle` dividers inset 12 px; items are 28 px tall with an 18 px icon, 8 px gap and 13 px label. The collapsed rail is 52 screen px with 40×40 items, 22 px icons, a This PC icon entry and a tooltip on every item. The sidebar never scrolls sideways; its scroller uses the overlay scrollbar (no native bar: a 3 px thumb that widens to 7 px near the edge, shows while scrolling or hovering, fades 900 ms after the last scroll, with 20 px top/bottom fade cues). Its width is in screen px (`ui.sidebar_w`), so app zoom grows its contents but never narrows it. Mouse clicks on sidebar items hand keyboard focus back to the list.
 - Header (56px tall): 24×24 brand mark + "FilePlus" in `t-body` Inter 600 + subtitle in `t-small` Inter 400 `text-tertiary` (drive portion in JetBrains Mono, format: "D:\ · 214k indexed") + 22×22 collapse toggle right
 - 1px `border-hairline` right edge (the single structural seam in the app, only required panel-to-panel border)
 - Section labels: `t-micro` uppercase +0.06em `text-tertiary`
@@ -69,7 +92,9 @@ Visual style is specified in `superpowers/specs/2026-09-10-stage-1-redesign-desi
 
 Sidebar items per v2 token spec Section 10: 28px tall, 6px radius, 16×16 Lucide icon, `t-body` Inter 500 label. Hover: `bg-raised` background with `highlight-top` inset. Active: `bg-pressed` background with `highlight-top` inset plus 2px `accent` left bar (4px from edge, floats shorter than row for "detached" feel) and label weight bumps to Inter 600. The active bar slides between active items at `dur-slide` ease-out.
 
-### A.1.4 Toolbar (48px tall, below tab bar)
+### A.1.4 Toolbar (48px tall, below the header bar)
+
+> **Stage 2C/2D — supersedes the bullets below where they differ.** Left to right: Back / Forward / Up; the breadcrumb, **left-anchored** (a drive path starts with an icon-only This PC root crumb); Refresh (A.3.3); the search box; the **View** and **Sort** dropdown buttons, which replaced the List / Grid segmented control; the Inspector toggle. As the bar narrows or the path grows: (1) the search box shrinks from 280 to 120 px, filling the space up to the end of the path, (2) it folds to a magnifier (an input-height square) that keeps the field's lighter fill, (3) only then does the path overflow — it right-anchors under a leading fade, and the current folder never fades (it ellipsizes, with the full name as a tooltip), (4) the current folder is never squeezed below a readable floor (~56 px): when even the magnifier leaves it less, the theme toggle, then Refresh, the Inspector toggle and View/Sort move into a "…" (See more) button at the end of the row, whose menu lists them with their icons (View and Sort as flyouts, the Inspector with its on/off check) — nothing just disappears. The decision uses the path's measured width with 24 px hysteresis, never a fixed constant. The magnifier or Ctrl+F opens search in flow: the bar grows over ~140 ms and pushes the path left (never covers it), giving way to keep the current folder's name whole where it can, then down to ~80 px, before anything moves into the "…" menu; it folds back the same way on blur when empty. Both are instant with Animations off (Stage 2D addendum §2). An in-bar × clears a search. Clicking a toolbar button hands keyboard focus back to the list, so Enter afterwards opens the focused row (Explorer's model). The path never fades or cuts while the search box could still shrink (Task 8). In search mode the path reads "Search in <folder>" with a × beside it; when it does not fit it ends in "…" (the whole text is its tooltip) instead of losing its start under the fade. A search box squeezed below its placeholder shortens it with "…" ("Search…") instead of cutting it off. The "…" (See more) button is a horizontal ellipsis, as in Explorer.
 - Back / Forward / Up nav buttons (left): 28×28 icon buttons with 16×16 Lucide icons
 - Breadcrumb / address bar (flex grow): segments in `t-body` Inter 400 `text-secondary` with current crumb in Inter 500 `text-primary`. Separator is middot `·` in `t-small text-tertiary` (never `>` or `/`). Segments clickable, draggable, right-click for sibling dropdown. Click empty area → editable address bar with autocomplete (path portion in JetBrains Mono when editing).
 - Search box right (280px default): concave chrome (`bg-content` + `inset-recess` + 1px `border-subtle`). 14×14 Lucide `search` leading. `Ctrl+K` kbd hint trailing in 16×16 `bg-raised` pill with 4px radius, `t-small` JetBrains Mono 500 `text-tertiary`. Focus: `accent-edge` border + `inset-recess-strong` + `0 0 0 3px accent-glow` ring.
@@ -81,12 +106,13 @@ Sidebar items per v2 token spec Section 10: 28px tall, 6px radius, 16×16 Lucide
 - Left: file count, selection count, total size of selection (numeric portions in JetBrains Mono)
 - Center: background task indicator ("Indexing 12% · 8m" with subtle pulse on the live dot only)
 - Right: Review Bin count if non-zero (as status pill with `accent-wash` variant), keyboard hints in `t-small` Inter 400 `text-tertiary`
+- **Stage 2D:** there is no background-task indicator (the fake "Indexing 12%" is gone) and no Review Bin pill. Left: item count and selection (on Home they count the visible pane; Settings shows none), plus "N items cut" / "N items copied" while the clipboard holds them. Right: the zoom pill (shows the % on every app-zoom change, fades 1.2 s later, click resets to 100 %), the write-mode hint and the keyboard hints, which hide first when the bar is narrow. One line; it never wraps.
 
 ---
 
 ## A.2 Screen 1 — Home (default landing)
 
-Three sub-tabs at the top of the screen content area: Recent (default), Favorites, Shared (disabled, "v2" tooltip). Tabs use the underline tab style (44px tall container, 2px `accent` underline slides between active tabs, 1px `border-hairline` baseline).
+Three sub-tabs at the top of the screen content area: Recent (default), Favorites, Shared (disabled, "v2" tooltip). **Stage 2D:** two sub-tabs, Recent and Favorites; the Shared tab was removed (A.2.3). Tabs use the underline tab style (44px tall container, 2px `accent` underline slides between active tabs, 1px `border-hairline` baseline).
 
 ### A.2.1 Recent sub-tab
 Grouped vertical scroll: Today, Yesterday, This week, Earlier this month, Older.
@@ -99,6 +125,8 @@ Selected row: `accent-wash` background, 2px `accent` left bar (4px from edge, 4p
 
 Hover: `bg-raised` background + `highlight-top` inset, `dur-flash` transition. Per-row hover actions appear at right: 24×24 ghost icon buttons (Open, Reveal, Copy path) with 14×14 Lucide icons.
 
+**Stage 2D:** the name keeps priority as the row narrows (the path gives way first and is cut from the left); a truncated name, folder or time carries a tooltip; an item moved or deleted since is dimmed with a "Moved or deleted" tooltip and selecting it fetches nothing. Each pane is one tab stop (Up/Down/Home/End move between rows; the hover buttons are not tab stops).
+
 Empty state: 48×48 Lucide outlined icon in `text-tertiary` + "Nothing here yet." in `t-title-sm` Inter 600 + "Files you open will appear in this list." in `t-body` Inter 400 `text-secondary` (max 360px width).
 
 ### A.2.2 Favorites sub-tab
@@ -108,8 +136,7 @@ No time grouping. Manual order, drag to reorder.
 Empty state: "Right-click any file or folder to add it here."
 
 ### A.2.3 Shared sub-tab
-Disabled, tooltip "Cloud and network shared files coming in a future version."
-Tab label: `text-tertiary` with 40% opacity. No hover state.
+**Removed in Stage 2D (2026-10-02).** A permanently disabled tab is a control that does nothing, so the tab and its empty pane left the app (markup in `archive/2026-10-02-unbuilt-screens-markup.html`). It comes back only with v2's shared-files feature. The original text: disabled, tooltip "Cloud and network shared files coming in a future version."; tab label `text-tertiary` with 40% opacity, no hover state.
 
 ---
 
@@ -117,7 +144,22 @@ Tab label: `text-tertiary` with 40% opacity. No hover state.
 
 Three-pane: sidebar (already part of global chrome), file list (center), inspector (right, collapsible).
 
+### A.3.0 This PC page (Stage 2D)
+- Opened by the sidebar's This PC header, the breadcrumb's This PC root crumb, and Up / Alt+Up / Backspace at a drive root (which lands with that drive selected; Backspace only while Settings › Personalization › "Backspace deletes selected items" (`ui.backspace_deletes`) is off — when it is on, Backspace deletes the selection instead and never navigates). It opens in the current tab, is a step in Back/Forward history (path `thispc:`), and the tab reads "This PC". A tab that has no folder yet opens here when it switches to the Browser (a new tab itself opens Home). The sandbox root is no longer what "This PC" opens.
+- "Devices and drives" heading, then drive cards in auto-fill columns (min 280 px). Each card: the drive icon at 48 px (the shell icon in Windows-icon mode); the name as Explorer writes it, `Label (C:)`, or by kind when unlabelled (`Local Disk`, `USB Drive`, `Network Drive`, `CD Drive`); a 6 px usage bar (accent fill, `bad` above 90 % used); "X GB free of Y GB" below it, or "Unavailable" when the drive did not answer in time.
+- Single click selects, double click or Enter opens, arrow keys move geometrically. Card menu: Open, Open in new tab, Properties (the native drive Properties). Empty-space menu: Refresh and View (Tiles / Details). Ctrl+wheel switches tiles ↔ details (`ui.thispc_view`). Refresh re-reads the drives and patches the cards in place.
+- With a drive card selected the inspector shows that drive's summary: its icon, `Label (C:)` and mount (`C:\`), the usage bar, and Type, File system, Used (with %), Free and Capacity ("Unavailable" when the drive did not answer); no Preview/Tags/History tabs. With no card selected it shows "No file selected". Its Open / Open with… / Reveal buttons are disabled on this page either way (open a drive with a double click or Enter). A "current location" search from This PC searches the index.
+- **Stage 2D addendum §4:** coming from any view (Icons at any size, scrolled or not) the cards always start at the top of the page, and going back shows the view as it was — the file list's per-view grid no longer outranks the rule that hides it.
+
 ### A.3.1 File list (center pane)
+
+> **Stage 2D — views (supersedes "List view" / "Grid view" below).** The file list has Explorer's eight views. Ctrl+wheel anywhere over the file area walks one ladder, one step per wheel notch (deltas accumulate per 100 units), clamped at both ends, never zooming the app: `Content → Tiles → Details → List → Small icons → Icons 48 → 56 → 64 → 72 → 80 → 96 → 112 → 128 → 160 → 192 → 224 → 256`. The View menu (toolbar button, and a flyout in the empty-area menu) lists Extra large icons (256), Large icons (96), Medium icons (48), Small icons, List, Details, Tiles, Content; the check sits on the nearest named size.
+> - **Layouts (logical px, before app zoom):** Content — 32 px icon, full-width 56 px rows: name and the sort's date on line 1, type and size on line 2. Tiles — 48 px icon, 256×64 cells with name / type / size. Details — 16 px icon, 26 px rows, columns Name / date / Type / Size (the column header shows only here; a narrow pane drops Tags, then Size, then the date before Name goes under 120 px). List — 16 px icon, 22 px rows, column-major with horizontal scroll (the plain wheel scrolls sideways). Small icons — 16 px icon, 22 px rows in fixed-width columns. Icons 48–256 — an s×s icon box in an (s+28)-wide cell, name under it, clamped at 4 lines with an ellipsis (shown in full while the item is selected and focused); long unbroken names wrap inside the cell. List and Small icons share one column width per folder (the longest name, 160–360 px). Only the icon views scale with the wheel; the others grow only with app zoom.
+> - **Memory:** each folder remembers its view and size (`ui.folder_views`, the 500 most recent folders). An unremembered folder opens in Details, or in Large icons when more than half of it is images or videos. A tab keeps its own view.
+> - **Keys:** arrows move by the cells' real positions — in icon/tile/small views ←/→ wrap along rows and ↑/↓ go to the nearest cell above/below; in List ↑/↓ move within a column and ←/→ jump columns; Details and Content use ↑/↓ only. Home/End and PageUp/PageDown work everywhere.
+> - **Sort:** Name, Date… (Date created / Date modified / Date accessed), Type, Size, then Ascending / Descending. The Details date column and Content's date line follow the active date sort. A sort keeps the selection and keeps the focused item in view.
+> - **Icons and thumbnails:** a size change scales every icon in the same frame (CSS from `--icon-size`), and the sharper bitmap swaps in after it has decoded — nothing changes size after the reflow, nothing flashes. Images and videos show freeform thumbnails (their own aspect ratio, bottom-aligned, a hairline outline, no frame) in Content, Tiles and Icons; the 16 px views show the type icon. At 32 px and below, icons use their simpler small-size art. In Windows-icon mode every item icon is the shell's.
+> - **Cut / copy:** cut items show ghosted (50 %), copied items carry a small accent dot, in every view, until the clipboard changes.
 
 **List view columns:** name, size, date modified, tags. Sortable headers.
 
@@ -138,20 +180,19 @@ List header per v2 token spec Section 24: 32px tall, `bg-content` background (be
 - Right-click: context menu (see A.10)
 
 **When inspector opens, list compacts:** Size / Modified / Tags collapse into a single right-aligned mono line per row (e.g., `2.1 MB · 2d` in `t-compact` JetBrains Mono 400 `text-secondary`). Tag chip stack stays inline as the poker-chip visual. When inspector closes, full columns restore. The column transition is instant (jump-cut), not animated.
+**Stage 2D: not built, and dropped.** Its CSS was never wired and was deleted; a narrow file area drops Details columns instead (see Views above).
 
-### A.3.2 Inspector (right pane, closed by default)
+### A.3.2 Inspector (right pane; open by default since Stage 2C)
 
 Per v2 token spec Section 22:
 - Docked: `bg-content` background (matches work area), 1px `border-hairline` left edge, 16px padding, no outer shadow
 - Detached: `bg-raised` background, 1px `border-subtle`, 10px radius, `highlight-top` + `shadow-popover`
 
-Behavior:
-- **Closed by default** when the Browser screen first mounts. The Inspector toggle button in the toolbar is in its default (off) state.
-- **Opens on first file-click in the session** (jump-cut, no slide animation).
-- Stays open across selections until manually closed via the toolbar toggle or the inspector header `x` button.
-- Does **not** auto-reopen on app restart — the open/closed state is per-session, not persisted.
+Behavior (**superseded by Stage 2C §3.4 and Stage 2D**; the April text said closed by default, opened by the first file click, not persisted):
+- **Open by default.** It is a switch: the toolbar toggle and Ctrl+I are the only things that open or close it. Selection never opens or closes it. The state is persisted (`ui.inspector_open`).
 - Push-style: file list shrinks to accommodate.
-- Width default 340px, resizable via drag handle on left edge (min 280, max 520). Drag handle: 4px wide hit area, `accent` color on hover.
+- Width default 340px, resizable via drag handle on left edge (min 280, max 520). Drag handle: 4px wide hit area, `accent` color on hover. **Stage 2D:** the width is in screen px and persisted (`ui.inspector_w`), so app zoom grows its contents but never narrows it; the handle is hidden while the inspector is closed.
+- **Stage 2D:** it never names an item that is not selected — an emptied selection shows "No file selected" at once, a click shows the new item at once, only a burst of key-repeat changes waits 120 ms; a rename or move keeps the item selected under its new name, a delete selects the next item. Open / Open with… / Reveal are disabled unless exactly one item is selected (Open with… is for files only). Everything above the action row scrolls with the overlay scrollbar and the action row stays pinned; at the 500 px minimum window height the preview shrinks first.
 
 **Header:**
 - File preview area (16:10 aspect): image, video first-frame with play overlay, audio waveform (amber strokes), PDF first page, MD/text rendered preview, code with syntax highlighting, generic large icon for unknown. Preview block: `bg-raised` background, 8px radius, 1px `border-subtle`, `highlight-top` inset.
@@ -167,6 +208,11 @@ Behavior:
 **Bottom action row:** Open (primary), Open with..., Reveal in Explorer (secondary buttons), More (ghost icon button). Button row gap 8px, top border 1px `border-hairline` above.
 
 **Multi-select state:** aggregate display (count, total size in JetBrains Mono, common tags as chip stack), bulk tag editor available.
+
+### A.3.3 Refresh and keeping your place (Stage 2D)
+- **Ctrl+R, F5 and the Refresh button** do the same thing: re-list the open folder in place. Scroll, selection, focus, view and size stay; only rows that changed are replaced, inserted or removed (more than 30 % changed → one full render, scroll still kept). Other tabs are marked stale and revalidate when you switch to them; a search re-runs; This PC re-reads the drives; Home re-fetches. The refresh icon spins once (`--motion-refresh-spin`, 200 ms) and the list dips in opacity (`--motion-refresh-dip`, 140 ms); both are off when Settings › Animations is off. A failed refresh keeps the listing and says why in an error toast. An inline rename survives a refresh.
+- The app never reloads its page: Electron's default menu is removed (so are its Ctrl+R reload, Ctrl+Shift+I, zoom keys and Alt menu bar), navigation away from the app page is refused (a file dropped on the window is blocked, not copied in) and `window.open` makes no window. F12 opens DevTools only outside `FILEPLUS_ENV=prod`.
+- **Places:** Back / Forward restore each folder's scroll and selection; Up selects the folder it came out of; after a delete the item that takes its place is selected; after a paste or undo, what landed is selected.
 
 ---
 
@@ -461,6 +507,8 @@ Separator: 1px `border-subtle`, margin 4px 0.
 - Show in Windows Explorer
 
 ### A.10.3 Empty area context menu
+> **Stage 2D:** View is a flyout with the eight views (A.3.1). Menus support flyout submenus: hover 250 ms, click, → or Enter opens; ← or Escape closes only the innermost; they flip left at the window edge and keep a safe triangle for the pointer. A menu taller than the window scrolls inside itself. Resizing the window or scrolling outside a menu closes it. On This PC the empty-area menu is Refresh + View (Tiles / Details).
+
 - New folder
 - New file (submenu)
 - Paste
@@ -486,11 +534,15 @@ Separator: 1px `border-subtle`, margin 4px 0.
 
 ## A.11 Overlays
 
+> **Stage 2D addendum §3 — one scrim, an even blur.** Every stand-out panel (Properties, the confirm and conflict dialogs, More filters, the palette, Tag Canvas) opens over one full-window scrim on the top layer of a single z-index scale (`--z-*` tokens), above the header bar, sidebar, toolbar, overlay scrollbars and status bar. It dims and blurs everything beneath it the same way — over Mica the window draws its solid chrome under an open scrim, so there is something to blur everywhere. The scrim and its dialog fade in (140 ms) and out (100 ms) together; a closed one takes no clicks at once. Toasts and snackbars stay above the scrim; the drag badge stays below it. Tag Canvas no longer has its own stronger blur. The window cannot be moved, minimised or closed with the mouse while a dialog is open (Esc or the dialog's own buttons close it first).
+
 ### A.11.1 Command Palette (Ctrl+K)
 
 Per v2 token spec Section 16. Centered modal, 640px width.
 
 Container: `bg-raised` background, 1px `border-subtle`, 10px radius, `highlight-top` + `shadow-modal`. Backdrop scrim `rgba(0,0,0,0.4)` with subtle blur.
+
+> **Stage 2D:** Chat mode (and its Search / Chat toggle and plan buttons) is hidden until it is built (Stage 4); the preview pane, which nothing ever filled, is gone, so the list takes the full width; the footer reads "↑↓ navigate · ⏎ open · Esc close". Key hints read Ctrl, never ⌘.
 
 **Search mode (default):**
 - Input top (44px tall), `t-title-sm` Inter 400, no border on input itself (container frames it)
@@ -549,9 +601,13 @@ Per v2 token spec Section 30.
 
 Stack vertically with 8px gap, newest on top.
 
+**Stage 2D:** error toasts are opaque, carry `role="alert"`, auto-dismiss after 8 s (the clock pauses while hovered or focused), and sit above panels and dialogs. At most 3 notices show per stack; the oldest non-error goes first. Snackbars stack instead of painting on one spot. The `fp-notifications-enabled` gate is unchanged: only errors bypass it.
+
 ---
 
 ## A.12 Settings
+
+> **Stage 2D (2026-10-02) — what Settings shows today.** Five panes: **Personalization**, **Scan & Index**, **Shortcuts**, **Data** (under Application) and **About** (under System). The Everything Folder, Downloads Folder, Organization Engine, AI Configuration, Custom File Types and Privacy panes (A.12.3–A.12.8) are hidden until the stage that wires them — none of their controls changed real behaviour — with their markup kept in `archive/2026-10-02-unbuilt-screens-markup.html`. Shortcuts (A.12.9) is a read-only list of the keys the app really handles (rebinding and Quick Slots are not built). Data (A.12.10) has Empty FilePlus trash, the write mode, Clear Recent, Clear icon and thumbnail cache, and Open logs folder; nothing else in A.12.10 is built. About (A.12.11) shows the real app, Electron, Chromium, Node and backend versions, the environment, the write mode and the log folder, with Open logs folder. When the Settings area is narrow (≤ 480 px) the nav becomes one section picker and the whole page scrolls; both scroll areas use the overlay scrollbar.
 
 Two-column: nav left (200px), content right (scroll).
 
@@ -589,6 +645,7 @@ All form controls (toggles, sliders, segmented controls, text inputs, radios, ch
 - Show file extensions toggle
 - View hidden files toggle (off default)
 - Single vs double-click open (segmented)
+- **Animations** toggle (Stage 2D addendum, `ui.animations`, on by default): "Quick fades and slides as things open, close and move. Off makes every change instant." Applies at once; it is the only thing that turns motion on or off (A.0.1).
 
 ### A.12.2 Scan & Index
 - Indexed drives & folders (list with add/remove buttons)

@@ -2,35 +2,20 @@
 // Regression cover for the pass-2 "renderer-search" findings (#86-#98,
 // #159-#166). One Electron launch, one page; the sections run in order and
 // each cleans the bar up behind it.
-const { test, expect, _electron: electron } = require('@playwright/test');
-const path = require('path');
+const { test, expect } = require('@playwright/test');
+const { launchApp, resetToDefaults } = require('./harness/app');
 
-const FRONTEND = path.join(__dirname, '..');
 const API = `http://127.0.0.1:${process.env.FILEPLUS_PORT || 9876}`;
 
 test.setTimeout(180_000);
 
 test('toolbar search: pass-2 regressions', async () => {
-  const env = { ...process.env };
-  delete env.ELECTRON_RUN_AS_NODE;
-  const app = await electron.launch({
-    executablePath: require('electron'),
-    args: [FRONTEND],
-    cwd: FRONTEND,
-    env,
-  });
-  const page = await app.firstWindow();
-  await page.emulateMedia({ reducedMotion: 'reduce' });
-  const errors = [];
+  // launchApp (harness): animations off, errors collected from the first
+  // renderer line on (renderer.log, read at close), app ready. Then default
+  // settings, waiting for the reloaded app to be ready again — not a sleep.
+  const { app, page, errors } = await launchApp();
   try {
-    page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
-    page.on('console', (m) => { if (m.type() === 'error') errors.push(`console: ${m.text()}`); });
-
-    await page.waitForSelector('#shell');
-    await page.evaluate(() => localStorage.clear());
-    await page.reload();
-    await page.waitForSelector('#shell');
-    await page.waitForTimeout(800);
+    await resetToDefaults(page);
 
     const token = process.env.FILEPLUS_API_TOKEN;
     const headers = token ? { 'X-FilePlus-Token': token } : {};
@@ -45,6 +30,10 @@ test('toolbar search: pass-2 regressions', async () => {
 
     const searchInput = page.locator('#search-input');
     const searchDropdown = page.locator('#search-dropdown');
+    // The bar, not the <input>: with a long path the toolbar folds search
+    // into its magnifier (Stage 2D §6.2), and a click on the bar opens it
+    // in either mode (search.js's mousedown handler).
+    const searchBar = page.locator('#search-wrap');
     const searchHeader = page.locator('#list-search-header');
     const filtersModal = page.locator('#search-filters-modal');
     const filtersScrim = page.locator('#search-filters-scrim');
@@ -66,22 +55,34 @@ test('toolbar search: pass-2 regressions', async () => {
     const before = await listNames(docsDir);
     await page.locator('#list-scroll .fp-row[data-path]').first().click();
     expect(await page.evaluate(() => browserState.selection.size)).toBe(1);
-    await searchInput.click();
+    await searchBar.click();
     await searchDropdown.locator('[data-action="search-more-filters"]').click();
     await expect(filtersModal).toBeVisible();
     // openMoreFilters() focuses a control, so activeElement is never <body>.
     expect(await page.evaluate(() => document.activeElement && document.activeElement.id))
       .toBe('search-filter-type');
+    // Nothing may happen — checked without a sleep: every file mutation goes
+    // out through API.request with a non-GET /fs/ route, called from the key
+    // handler itself, so a counter on it (read once the keys have been
+    // handled) is 0 exactly when neither key reached the list.
+    await page.evaluate(() => {
+      window.__fsMutations = 0;
+      window.__origRequest = API.request;
+      API.request = function (method, route, ...rest) {
+        if (method !== 'GET' && String(route).startsWith('/fs/')) window.__fsMutations++;
+        return window.__origRequest.call(this, method, route, ...rest);
+      };
+    });
     await page.keyboard.press('Delete');
     await page.keyboard.press('F2');
-    await page.waitForTimeout(700);
+    expect(await page.evaluate(() => { API.request = window.__origRequest; return window.__fsMutations; })).toBe(0);
     expect(await listNames(docsDir)).toEqual(before);
     expect(await page.locator('#list-scroll input').count()).toBe(0);
 
     // -- #92  Escape and a backdrop click both dismiss it --------------------
     await page.keyboard.press('Escape');
     await expect(filtersModal).toBeHidden();
-    await searchInput.click();
+    await searchBar.click();
     await searchDropdown.locator('[data-action="search-more-filters"]').click();
     await expect(filtersModal).toBeVisible();
     await filtersScrim.click({ position: { x: 8, y: 8 } });
@@ -137,8 +138,9 @@ test('toolbar search: pass-2 regressions', async () => {
       return el.scrollTop;
     });
     expect(scrolled).toBeGreaterThan(0);
+    // refreshDirectory() returns its load (or search re-run) promise, which
+    // page.evaluate awaits: the refresh has fully landed here.
     await page.evaluate(() => refreshDirectory());
-    await page.waitForTimeout(700);
     expect(await page.evaluate(() => document.getElementById('list-scroll').scrollTop)).toBe(scrolled);
     await page.evaluate(() => { document.getElementById('list-scroll').style.maxHeight = ''; });
 
@@ -266,7 +268,7 @@ test('toolbar search: pass-2 regressions', async () => {
         { chips: [], text: 'doc-0', scope: 'current' },
       ]));
     });
-    await searchInput.click();
+    await searchBar.click();
     await expect(searchDropdown.locator('[data-action="search-history-run"]')).toHaveCount(2);
     // A newer search lands while the panel stays open: the rendered rows are
     // now positionally wrong, so an index-addressed click ran the wrong one.
@@ -283,24 +285,37 @@ test('toolbar search: pass-2 regressions', async () => {
 
     // -- #161  A typing pause is not a history entry -------------------------
     await page.evaluate(() => localStorage.removeItem('fp-search-history'));
+    // Each pause lets the debounced search run to its end (its results are
+    // on screen: searchState.query is the typed text, nothing in flight).
+    const searchLanded = (q) => page.waitForFunction((t) => searchState.query === t && !searchState.inflight
+      && !window.__fpLoadPending, q);
     await typeQuery('d');
-    await page.waitForTimeout(450);
+    await searchLanded('d');
     await typeQuery('do');
-    await page.waitForTimeout(450);
+    await searchLanded('do');
     await typeQuery('doc-0');
     await expect(marks.first()).toBeVisible({ timeout: 4000 });
     expect(await page.evaluate(() => loadSearchHistory().length)).toBe(0);
     // A deliberate commit (Enter) still records it.
-    await searchInput.click();
+    await searchBar.click();
     await page.keyboard.press('Enter');
     await expect(marks.first()).toBeVisible({ timeout: 4000 });
-    expect(await page.evaluate(() => loadSearchHistory().map(e => e.text))).toEqual(['doc-0']);
+    // Polled: the marks above are still the previous run's, so they do not
+    // say the Enter run has landed yet — reading history once raced it (it
+    // failed 1 run in 3 before Stage 2D touched anything).
+    await expect.poll(() => page.evaluate(() => loadSearchHistory().map(e => e.text)), { timeout: 4000 })
+      .toEqual(['doc-0']);
 
-    // -- #97 / #165  Narrow toolbar: the bar opens for a sidebar tag chip and
-    //                folds again when the search is cleared -----------------
+    // -- #97 / #165  Collapsed toolbar: the bar opens for a sidebar tag chip
+    //                and folds again when the search is cleared ------------
+    //                (a real narrow bar: the widest sidebar at the minimum
+    //                window width collapses the search — Stage 2D §6.2)
     await page.evaluate(() => clearSearch());
+    const winSize = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].getSize());
+    await app.evaluate(({ BrowserWindow }) => { BrowserWindow.getAllWindows()[0].setSize(800, 600); });
+    await page.evaluate(() => document.documentElement.style.setProperty('--sidebar-w-screen', '480px'));
+    await expect(page.locator('#toolbar')).toHaveAttribute('data-search', 'collapsed', { timeout: 3000 });
     await page.evaluate(() => {
-      document.getElementById('toolbar').setAttribute('data-narrow', '');
       const btn = document.createElement('button');
       btn.id = 'test-tag-chip';
       btn.dataset.action = 'filter-by-tag';
@@ -314,30 +329,50 @@ test('toolbar search: pass-2 regressions', async () => {
     await expect(page.locator('#search-wrap')).toHaveClass(/fp-search--expanded/);
     await expect(page.locator('#search-chips .fp-search-chip').first()).toBeVisible();
     await expect(searchHeader).toBeVisible({ timeout: 6000 });
-    await page.locator('#breadcrumb [data-action="search-clear"]').click();
+    // The opened bar pushes the path aside (its "Search in … ×" may be caved
+    // in), so the clear the user reaches is the bar's own × — a real click, the
+    // clear that does not come from a blur or Escape.
+    await expect(page.locator('#search-wrap')).toHaveClass(/fp-search--expanded/);
+    await page.locator('#search-clear-inline').click();
     await expect(searchHeader).toBeHidden();
     await expect(page.locator('#search-wrap')).not.toHaveClass(/fp-search--expanded/);
+    await expect(page.locator('#search-collapsed')).toBeVisible();
     await page.evaluate(() => {
-      document.getElementById('toolbar').removeAttribute('data-narrow');
       document.getElementById('test-tag-chip')?.remove();
+      document.documentElement.style.setProperty('--sidebar-w-screen', '240px');
     });
+    await app.evaluate(({ BrowserWindow }, s) => { BrowserWindow.getAllWindows()[0].setSize(s[0], s[1]); }, winSize);
 
     // -- #89  A new tab starts with a clean bar, and its first query runs ----
-    await page.evaluate((p) => openBrowserAt(p), docsDir);
-    await typeQuery('doc-0');
-    await expect(marks.first()).toBeVisible({ timeout: 4000 });
-    const searchTab = await page.evaluate(() => tabs.activeId);
-    await page.keyboard.press('Control+t');
-    await expect(searchInput).toHaveValue('');
-    expect(await page.evaluate(() => searchState.chips.length)).toBe(0);
-    expect(await page.evaluate(() => browserState.mode)).toBe('browse');
-    // The first query typed on the new tab must not supersede itself.
-    await typeQuery('doc-0');
-    await expect(marks.first()).toBeVisible({ timeout: 8000 });
-    await expect(searchHeader).toHaveText(/\d+ results/);
-    await page.evaluate(() => clearSearch());
-    await page.evaluate((id) => activateTab(id), searchTab);
-    await page.evaluate(() => clearSearch());
+    // A new tab opens at This PC, whose search reads the index: index the
+    // fixture first, so the results never depend on which earlier spec
+    // happened to leave rows in the database (Task 11: this failed when the
+    // spec ran alone). Removed again in the finally, even if a step fails.
+    const indexHeaders = { ...headers, 'Content-Type': 'application/json' };
+    expect((await fetch(`${API}/index`, { method: 'POST', headers: indexHeaders, body: JSON.stringify({ path: genDir }) })).status).toBe(200);
+    let unindexStatus = null;
+    try {
+      await expect.poll(async () => (await (await fetch(`${API}/index/status`, { headers })).json()).running,
+        { timeout: 30_000 }).toBe(false);
+      await page.evaluate((p) => openBrowserAt(p), docsDir);
+      await typeQuery('doc-0');
+      await expect(marks.first()).toBeVisible({ timeout: 4000 });
+      const searchTab = await page.evaluate(() => tabs.activeId);
+      await page.keyboard.press('Control+t');
+      await expect(searchInput).toHaveValue('');
+      expect(await page.evaluate(() => searchState.chips.length)).toBe(0);
+      expect(await page.evaluate(() => browserState.mode)).toBe('browse');
+      // The first query typed on the new tab must not supersede itself.
+      await typeQuery('doc-0');
+      await expect(marks.first()).toBeVisible({ timeout: 8000 });
+      await expect(searchHeader).toHaveText(/\d+ results/);
+      await page.evaluate(() => clearSearch());
+      await page.evaluate((id) => activateTab(id), searchTab);
+      await page.evaluate(() => clearSearch());
+    } finally {
+      unindexStatus = (await fetch(`${API}/index?root=${encodeURIComponent(genDir)}`, { method: 'DELETE', headers })).status;
+    }
+    expect(unindexStatus).toBe(200);
 
     // -- #98  The debounce does not survive a tab switch ---------------------
     await page.evaluate((p) => openBrowserAt(p), docsDir);
@@ -349,12 +384,69 @@ test('toolbar search: pass-2 regressions', async () => {
     await page.evaluate((id) => activateTab(id), tabA);
     await expect(crumbCurrent).toHaveText('Documents');
     await typeQuery('doc-0');                       // arms the 300 ms timer
+    expect(await page.evaluate(() => _searchDebounceTimer !== null)).toBe(true);
     await page.evaluate((id) => activateTab(id), tabB);
-    await page.waitForTimeout(1000);
+    // The switch disarmed it: nothing is left to fire later (checked directly
+    // rather than by sleeping past 300 ms and hoping).
+    expect(await page.evaluate(() => _searchDebounceTimer)).toBeNull();
+    await page.waitForFunction(() => !window.__fpLoadPending && !searchState.inflight);
     await expect(crumbCurrent).toHaveText('Pictures');
     await expect(searchHeader).toBeHidden();
     await expect(marks).toHaveCount(0);
     await page.evaluate((id) => { closeOtherTabs(id); }, tabB);
+  } finally {
+    await app.close();
+  }
+  expect(errors).toEqual([]);
+});
+
+test('typing right after clearing a search survives the folder re-list landing (Task 11 race)', async () => {
+  // clearSearch() resets the bar at once and re-lists the folder; when that
+  // listing landed, leaving search mode reset the bar AGAIN — wiping whatever
+  // had been typed meanwhile and cancelling its pending search. Found by
+  // the #161 step, which (with a fixed sleep) typed into that window and
+  // never actually ran the searches it meant to. The re-list is held in the
+  // page so "while it is in flight" is a state, not a race.
+  const { app, page, errors } = await launchApp();
+  try {
+    const token = process.env.FILEPLUS_API_TOKEN;
+    const headers = token ? { 'X-FilePlus-Token': token } : {};
+    const root = (await (await fetch(`${API}/fs/list/root`, { headers })).json()).path;
+    const docsDir = `${root}\\_gen\\Documents`;
+    await page.evaluate((p) => openBrowserAt(p), docsDir);
+    await page.evaluate(() => { setSearchText('doc-0'); return runSearch(); });
+    await expect(page.locator('#list-scroll .fp-row mark').first()).toBeVisible();
+
+    await page.evaluate((held) => {
+      window.__held = [];
+      window.__origGet = API.get;
+      API.get = function (route, params, ...rest) {
+        if (route === '/fs/list' && params && params.path === held) {
+          return new Promise((res) => { window.__held.push(res); })
+            .then(() => window.__origGet.call(API, route, params, ...rest));
+        }
+        return window.__origGet.call(API, route, params, ...rest);
+      };
+    }, docsDir);
+    await page.evaluate(() => clearSearch());
+    await page.waitForFunction(() => window.__held.length === 1);
+    // Typed while the re-list is in flight.
+    await page.evaluate(() => {
+      const input = document.getElementById('search-input');
+      input.value = 'readme';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    // Its search is still only armed (the debounce) when the re-list lands —
+    // the exact window the race needs.
+    expect(await page.evaluate(() => _searchDebounceTimer !== null && window.__held.length === 1)).toBe(true);
+    await page.evaluate(() => { API.get = window.__origGet; window.__held.splice(0).forEach((res) => res()); });
+    // The typed text is still there and its debounced search runs and lands.
+    await page.waitForFunction(() => searchState.query === 'readme' && !searchState.inflight && !window.__fpLoadPending,
+      null, { timeout: 5000 });
+    await expect(page.locator('#search-input')).toHaveValue('readme');
+    await expect(page.locator('#list-scroll .fp-row mark').first()).toHaveText('readme');
+    await page.evaluate(() => clearSearch());
+    await page.waitForFunction(() => browserState.mode !== 'search' && !window.__fpLoadPending);
   } finally {
     await app.close();
   }

@@ -193,7 +193,7 @@ def test_fs_properties_on_a_file(client, sandbox):
     assert r.status_code == 200
     body = r.json()
     for key in ("path", "name", "is_dir", "type_description", "opens_with", "opens_with_exe",
-                "location", "size", "size_on_disk", "contains", "created", "modified", "accessed",
+                "opens_with_icon", "location", "size", "size_on_disk", "contains", "created", "modified", "accessed",
                 "attributes", "folder_type", "folder_type_detected"):
         assert key in body, key
     assert body["is_dir"] is False

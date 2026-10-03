@@ -14,7 +14,23 @@ def test_file_meta_indexes_on_demand(client, sandbox):
     r = client.get("/file", params={"path": str(p)}); assert r.status_code == 200
     body = r.json()
     assert body["filename"] == "m.md" and body["size"] == 4 and body["hash"] and body["tags"] == [] and body["kind"] == "Markdown"
-    assert client.get("/file", params={"path": str(sandbox / "nope.txt")}).status_code == 404
+
+
+def test_inspector_reads_of_a_gone_path_answer_exists_false(client, sandbox):
+    """The inspector asks about the selection while the user may already be
+    trashing it (addendum Task 7 fix round 1): a path that no longer exists is
+    an answer, not an error -- 200 {exists: false}, never a 404 that Chromium
+    logs as a console error. A path outside the guard is still refused."""
+    gone = sandbox / "nope.txt"
+    r = client.get("/file", params={"path": str(gone)})
+    assert r.status_code == 200 and r.json()["exists"] is False
+    r = client.get("/preview", params={"path": str(gone)})
+    assert r.status_code == 200 and r.json() == {"kind": "missing", "exists": False}
+    r = client.get("/files/history", params={"path": str(gone)})
+    assert r.status_code == 200 and r.json() == []
+    # A file that exists still answers with its metadata (no exists flag needed).
+    p = sandbox / "here.txt"; p.write_text("x")
+    assert client.get("/file", params={"path": str(p)}).json()["filename"] == "here.txt"
 
 
 def test_preview_text_image_binary(client, sandbox):
@@ -187,3 +203,65 @@ def test_tags_listing_carries_file_count(client, sandbox):
     # The q= (prefix search) branch is untouched — no count, same keys as before.
     hit = client.get("/tags", params={"q": "sha"}).json()
     assert [t["name"] for t in hit] == ["shared"] and "count" not in hit[0]
+
+
+def test_index_search_created_is_epoch_float(client, sandbox):
+    """Stage 2D: index-backed /search carries `created` as an epoch float like
+    /fs/list and live search (the index stores an ISO string); a bad value is omitted."""
+    import sqlite3, time
+    from backend import config
+    (sandbox / "epoch-me.txt").write_text("x")
+    client.post("/index", json={"path": str(sandbox)})
+    for _ in range(50):
+        if client.get("/index/status").json()["running"] is False:
+            break
+        time.sleep(0.1)
+    hit = client.get("/search", params={"q": "epoch-me"}).json()["results"][0]
+    assert isinstance(hit["created"], float)
+    assert abs(hit["created"] - (sandbox / "epoch-me.txt").stat().st_ctime) < 2
+    con = sqlite3.connect(config.FILEPLUS_DB_PATH)
+    con.execute("UPDATE files SET created = 'not a date' WHERE filename = 'epoch-me.txt'")
+    con.commit(); con.close()
+    hit = client.get("/search", params={"q": "epoch-me"}).json()["results"][0]
+    assert "created" not in hit
+
+
+def test_file_and_files_id_dates_are_epoch_seconds(client, sandbox):
+    """Stage 2D §12 sweep: /file and /files/{id} carry created/modified as
+    epoch seconds -- the unit /fs/list and both search routes use."""
+    import os
+    p = sandbox / "dated.txt"; p.write_text("d")
+    body = client.get("/file", params={"path": str(p)}).json()
+    assert isinstance(body["created"], float) and isinstance(body["modified"], float)
+    assert abs(body["modified"] - os.stat(p).st_mtime) < 2
+    row = client.get(f"/files/{body['id']}").json()
+    assert isinstance(row["created"], float) and isinstance(row["modified"], float)
+    d = sandbox / "dated-dir"; d.mkdir()
+    folder = client.get("/file", params={"path": str(d)}).json()
+    assert isinstance(folder["created"], float) and isinstance(folder["modified"], float)
+
+
+def test_file_reindexes_a_file_changed_since_it_was_indexed(client, sandbox):
+    """Fix round 1 (§12 sweep): GET /file answered from the index row as it
+    was first seen; a file edited since showed its old size, Modified date and
+    hash in the inspector."""
+    import os
+    p = sandbox / "edited.txt"; p.write_text("one")
+    first = client.get("/file", params={"path": str(p)}).json()
+    p.write_text("two, and longer")
+    os.utime(p, (first["modified"] + 3600, first["modified"] + 3600))
+    second = client.get("/file", params={"path": str(p)}).json()
+    assert second["id"] == first["id"]
+    assert second["size"] == len("two, and longer")
+    assert abs(second["modified"] - (first["modified"] + 3600)) < 2
+    assert second["hash"] and second["hash"] != first["hash"]
+
+
+def test_file_meta_on_directory_reports_birth_time(client, sandbox, monkeypatch):
+    """Task 14 M3: a folder's "created" is the birth time listings and search
+    report (_created_time), not st_ctime."""
+    from backend import api as api_module
+    sub = sandbox / "born"
+    sub.mkdir()
+    monkeypatch.setattr(api_module, "_created_time", lambda st: 1234.5)
+    assert client.get("/file", params={"path": str(sub)}).json()["created"] == 1234.5

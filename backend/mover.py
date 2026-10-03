@@ -17,6 +17,7 @@ import logging
 import os
 import re
 import shutil
+import time
 from collections import OrderedDict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -336,6 +337,31 @@ async def _perform(conn, op_type, src, dest, batch_id, reason, fn, undo_of=None)
     return _result(op_id, op_type, "done", src, dest, batch_id)
 
 
+# Windows refuses to rename a file another handle holds open without
+# FILE_SHARE_DELETE: ERROR_SHARING_VIOLATION (32) / ERROR_LOCK_VIOLATION (33).
+# FilePlus's own inspector holds one for a moment (GET /file hashes the file,
+# GET /preview reads it), so a Delete pressed the instant a file is selected
+# met "file in use". The act step retries just that error a few times, on the
+# worker thread, before giving up with the original error; the protocol
+# (guard -> log executed=0 -> act -> mark) is unchanged.
+_SHARING_VIOLATIONS = (32, 33)
+_SHARING_RETRY_DELAYS = (0.1, 0.2, 0.4)  # seconds before the 2nd, 3rd, 4th try
+
+
+def _retry_in_use(op):
+    """Runs *op()*; on a sharing/lock violation, retries after each delay in
+    _SHARING_RETRY_DELAYS, then re-raises the last (original-kind) error."""
+    for delay in (*_SHARING_RETRY_DELAYS, None):
+        try:
+            return op()
+        except OSError as exc:
+            if delay is None or getattr(exc, "winerror", None) not in _SHARING_VIOLATIONS:
+                raise
+            logger.info("file in use (WinError %s), retrying in %.0f ms: %s", exc.winerror, delay * 1000,
+                        getattr(exc, "filename", ""))
+            time.sleep(delay)
+
+
 def _move_fn(src: Path, dest: Path, *, same_vol: bool | None = None, need: int | None = None):
     """The worker body of a move.
 
@@ -354,7 +380,7 @@ def _move_fn(src: Path, dest: Path, *, same_vol: bool | None = None, need: int |
         if dest.exists():  # conflict resolution ran earlier; this is the race window
             raise ConflictError(f"'{dest}' already exists.")
         if not crosses:
-            os.replace(src, dest) if src.is_file() else os.rename(src, dest)
+            _retry_in_use(lambda: os.replace(src, dest) if src.is_file() else os.rename(src, dest))
         else:
             required = _tree_size(src) if need is None else need
             if _free_bytes(dest.parent) < required + SPACE_MARGIN:
@@ -409,7 +435,8 @@ async def rename(conn, path, new_name, *, batch_id=None, reason=None, _undo_of=N
     target = await _aguard(src.with_name(new_name), "write")
     if target.exists() and target != src:
         raise ConflictError(f"'{new_name}' already exists here.")
-    return await _perform(conn, "rename", src, target, batch_id, reason, lambda: os.rename(src, target), undo_of=_undo_of)
+    return await _perform(conn, "rename", src, target, batch_id, reason,
+                          lambda: _retry_in_use(lambda: os.rename(src, target)), undo_of=_undo_of)
 
 
 async def copy(conn, src, dest_dir, *, batch_id=None, on_conflict="fail", reason=None) -> dict:
@@ -467,7 +494,7 @@ async def trash(conn, path, *, batch_id=None, reason=None, _undo_of=None) -> dic
         root.mkdir(parents=True, exist_ok=True)
         _hide(root)  # idempotent, and logs+swallows its own failures
         batch_dir.mkdir(exist_ok=True)
-        os.rename(src, target)
+        _retry_in_use(lambda: os.rename(src, target))
         _append_manifest_safe(root, batch_id, src, target)
     return await _perform(conn, "trash", src, target, batch_id, reason, run, undo_of=_undo_of)
 

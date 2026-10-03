@@ -8,7 +8,8 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { parseEnvValue, readEnvFileToken, readEnvFileValue, readTokenFile, resolveApiToken,
-        resolveApiPort, DEFAULT_API_PORT, CSP_ALLOWED_PORTS } = require('../envToken');
+        resolveApiPort, DEFAULT_API_PORT, CSP_ALLOWED_PORTS,
+        resolveAppEnv, devToolsAllowed } = require('../envToken');
 
 test.describe('parseEnvValue', () => {
   test('plain value', () => {
@@ -205,5 +206,25 @@ test.describe('resolveApiPort', () => {
     expect(resolveApiPort(dir, { FILEPLUS_PORT: 'not-a-port' }, warn)).toBe(DEFAULT_API_PORT);
     expect(resolveApiPort(dir, { FILEPLUS_PORT: '70000' }, warn)).toBe(DEFAULT_API_PORT);
     expect(warnings).toHaveLength(2);
+  });
+});
+
+test.describe('resolveAppEnv / devToolsAllowed (F12 is dev-only, Stage 2D §7.1)', () => {
+  const noEnvFile = () => fs.mkdtempSync(path.join(os.tmpdir(), 'fp-appenv-'));
+
+  test('defaults to dev, honours the process env, then .env', () => {
+    const dir = noEnvFile();
+    expect(resolveAppEnv(dir, {})).toBe('dev');
+    expect(resolveAppEnv(dir, { FILEPLUS_ENV: ' Test ' })).toBe('test');
+    fs.writeFileSync(path.join(dir, '.env'), 'FILEPLUS_ENV=prod\n');
+    expect(resolveAppEnv(dir, {})).toBe('prod');
+    expect(resolveAppEnv(dir, { FILEPLUS_ENV: 'dev' })).toBe('dev');   // own env wins, like load_dotenv
+  });
+
+  test('DevTools only outside prod', () => {
+    expect(devToolsAllowed('dev')).toBe(true);
+    expect(devToolsAllowed('test')).toBe(true);
+    expect(devToolsAllowed('prod')).toBe(false);
+    expect(devToolsAllowed('PROD')).toBe(false);
   });
 });

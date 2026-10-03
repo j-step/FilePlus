@@ -101,7 +101,19 @@ def test_size_on_disk_composes_high_low_as_unsigned(tmp_path, monkeypatch):
 def test_assoc_type_description_nonempty():
     info = winshell.assoc("txt")
     assert info["type_description"]
-    assert set(info) == {"type_description", "opens_with", "opens_with_exe"}
+    assert set(info) == {"type_description", "opens_with", "opens_with_exe", "opens_with_icon"}
+
+
+def test_assoc_packaged_app_icon_is_a_file_when_there_is_no_exe():
+    """Task 14 Q10: an app with no executable (a Store app such as Photos)
+    names its icon's image file instead, so Properties never shows a gap."""
+    import os
+    for ext in ("png", "jpg", "mp4", "txt", "pdf"):
+        info = winshell.assoc(ext)
+        if info["opens_with_exe"]:
+            assert info["opens_with_icon"] is None
+        elif info["opens_with_icon"]:
+            assert os.path.isfile(info["opens_with_icon"])
 
 
 def test_assoc_unknown_extension_falls_back():
@@ -431,6 +443,52 @@ def test_shell_image_on_sta_executor():
     fut = winshell.icon_executor().submit(winshell.shell_image, Path(r"C:\Windows"), 16)
     png = fut.result(timeout=10)
     assert png and png[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+@nt_only
+def test_shell_image_retries_e_pending(monkeypatch, tmp_path):
+    """GetImage answers E_PENDING (0x8000000A) while another thread is
+    filling the shell's icon cache -- measured: the second and third of three
+    concurrent first calls on a fresh STA pool. That is "not yet", not "no
+    image": shell_image retries it, so a folder never ends up with a
+    definitive null (and the FilePlus sprite) for the whole session (Stage 2D
+    Task 4)."""
+    (tmp_path / "d").mkdir()
+    real = winshell._GETIMAGE
+    calls = {"n": 0}
+
+    def factory(ptr):
+        get_image = real(ptr)
+
+        def flaky(*args):
+            calls["n"] += 1
+            if calls["n"] <= 2:
+                return ctypes.c_long(0x8000000A - (1 << 32)).value  # E_PENDING as a signed HRESULT
+            return get_image(*args)
+        return flaky
+
+    monkeypatch.setattr(winshell, "_GETIMAGE", factory)
+    monkeypatch.setattr(winshell, "_E_PENDING_RETRY_S", 0.001)
+    png = winshell.shell_image(tmp_path / "d", 16)
+    assert png and png[:8] == b"\x89PNG\r\n\x1a\n"
+    assert calls["n"] == 3
+
+
+@nt_only
+def test_shell_image_gives_up_on_endless_e_pending(monkeypatch, tmp_path):
+    (tmp_path / "d").mkdir()
+    calls = {"n": 0}
+
+    def factory(_ptr):
+        def pending(*_args):
+            calls["n"] += 1
+            return ctypes.c_long(0x8000000A - (1 << 32)).value
+        return pending
+
+    monkeypatch.setattr(winshell, "_GETIMAGE", factory)
+    monkeypatch.setattr(winshell, "_E_PENDING_RETRY_S", 0.001)
+    assert winshell.shell_image(tmp_path / "d", 16) is None
+    assert calls["n"] == winshell._E_PENDING_TRIES
 
 
 def test_shell_image_is_none_off_windows(monkeypatch, tmp_path):

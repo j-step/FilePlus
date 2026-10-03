@@ -135,3 +135,113 @@ def test_recent_and_favorites_carry_real_is_dir(client, sandbox):
     favs = {x["name"]: x for x in client.get("/favorites").json()["files"]}
     assert favs["my.folder"]["is_dir"] is True and favs["my.folder"]["ext"] == ""
     assert favs["a.txt"]["is_dir"] is False
+
+
+def test_recent_and_favorites_say_whether_the_item_still_exists(client, sandbox):
+    """Stage 2D §12 sweep: Home marks a row whose item was moved or deleted,
+    so clicking it never sends the inspector to GET /file for a gone path."""
+    kept = sandbox / "kept.txt"; kept.write_text("k")
+    gone = sandbox / "gone.txt"; gone.write_text("g")
+    for p in (kept, gone):
+        client.post("/recent", json={"path": str(p), "action": "opened"})
+        client.post("/favorites", json={"path": str(p)})
+    gone.unlink()
+    files = {x["name"]: x for x in client.get("/recent").json()["groups"][0]["files"]}
+    assert files["kept.txt"]["exists"] is True and files["gone.txt"]["exists"] is False
+    assert files["gone.txt"]["is_dir"] is False
+    favs = {x["name"]: x for x in client.get("/favorites").json()["files"]}
+    assert favs["kept.txt"]["exists"] is True and favs["gone.txt"]["exists"] is False
+
+
+def test_delete_recent_clears_the_list(client, sandbox):
+    # Settings › Data › "Clear Recent" (Stage 2D Task 12a): only the list goes;
+    # the files themselves are untouched and favorites are a separate store.
+    a = sandbox / "a.txt"; b = sandbox / "b.txt"; a.write_text("a"); b.write_text("b")
+    client.post("/recent", json={"path": str(a), "action": "opened"})
+    client.post("/recent", json={"path": str(b), "action": "opened"})
+    client.post("/favorites", json={"path": str(a)})
+    r = client.delete("/recent")
+    assert r.status_code == 200 and r.json() == {"status": "cleared", "removed": 2}
+    assert client.get("/recent").json()["groups"] == []
+    assert a.exists() and b.exists()
+    assert [f["name"] for f in client.get("/favorites").json()["files"]] == ["a.txt"]
+    assert client.delete("/recent").json() == {"status": "cleared", "removed": 0}
+
+
+def test_delete_shell_icon_cache_empties_the_backend_icon_lru(client):
+    # Settings › Data › "Clear icon and thumbnail cache": the backend's shell
+    # icon LRU is one of the three layers (renderer, main process, backend).
+    from backend import winshell
+    with winshell._icon_cache_lock:
+        winshell._icon_cache.clear()
+        winshell._icon_cache[("ext", "txt", 16)] = b"png-a"
+        winshell._icon_cache[("ext", "pdf", 16)] = b"png-b"
+    r = client.delete("/shell/icons/cache")
+    assert r.status_code == 200 and r.json() == {"cleared": 2}
+    assert len(winshell._icon_cache) == 0
+    assert client.delete("/shell/icons/cache").json() == {"cleared": 0}
+
+
+def test_config_merge_adds_entries_and_prunes_the_oldest(client):
+    """Stage 2D §12 sweep: the window-close flush of ui.folder_views sends only
+    the pending entries (a keepalive body is capped at 64 KB); the backend
+    merges them into the saved map and keeps the newest max_keys."""
+    client.post("/config", json={"key": "ui.folder_views", "value": {
+        "c:/a": {"view": "list", "t": 1}, "c:/b": {"view": "details", "t": 2}}})
+    r = client.post("/config/merge", json={"key": "ui.folder_views",
+                                           "value": {"c:/c": {"view": "icons", "size": 96, "t": 3}},
+                                           "max_keys": 2})
+    assert r.status_code == 200 and r.json() == {"key": "ui.folder_views", "count": 2}
+    saved = client.get("/config").json()["ui.folder_views"]
+    assert saved == {"c:/b": {"view": "details", "t": 2}, "c:/c": {"view": "icons", "size": 96, "t": 3}}
+    # A key with no object yet (or a non-object) starts from empty.
+    client.post("/config/merge", json={"key": "ui.fresh_map", "value": {"x": {"t": 1}}})
+    assert client.get("/config").json()["ui.fresh_map"] == {"x": {"t": 1}}
+    assert client.post("/config/merge", json={"key": "k", "value": [1]}).status_code == 422
+
+
+def test_connection_reset_on_close_is_not_logged_as_an_error():
+    """Stage 2D §12 sweep: a client resetting its socket after its answer
+    (the window closing right after a keepalive flush) is not an ERROR."""
+    from backend.api import _quiet_connection_reset
+
+    class Loop:
+        def __init__(self): self.passed = []
+        def default_exception_handler(self, ctx): self.passed.append(ctx)
+
+    loop = Loop()
+    _quiet_connection_reset(loop, {"exception": ConnectionResetError(10054, "reset"),
+                                   "handle": "<Handle _ProactorBasePipeTransport._call_connection_lost()>"})
+    assert loop.passed == []
+    other = {"exception": RuntimeError("real"), "message": "boom"}
+    _quiet_connection_reset(loop, other)
+    assert loop.passed == [other]
+
+
+def test_config_merge_keeps_the_newer_entry_whatever_the_arrival_order(client):
+    """Fix round 1: two folder-view deltas can arrive in either order (a save
+    in flight, then the window-close keepalive); the entry with the newer `t`
+    wins, so an older delta landing late cannot overwrite a newer choice."""
+    newer = {"c:/x": {"view": "icons", "size": 128, "t": 20}}
+    older = {"c:/x": {"view": "list", "size": None, "t": 10}, "c:/y": {"view": "details", "t": 11}}
+    client.post("/config/merge", json={"key": "ui.folder_views", "value": newer})
+    client.post("/config/merge", json={"key": "ui.folder_views", "value": older})
+    saved = client.get("/config").json()["ui.folder_views"]
+    assert saved["c:/x"] == newer["c:/x"] and saved["c:/y"] == older["c:/y"]
+
+
+async def test_config_merge_runs_in_one_immediate_transaction(db):
+    """The read-modify-write cannot interleave with another writer: the merge
+    holds a RESERVED lock (BEGIN IMMEDIATE) from its read to its commit."""
+    import aiosqlite
+    from backend import stores
+    from backend import config as _config
+    statements = []
+    async with aiosqlite.connect(_config.FILEPLUS_DB_PATH) as conn:
+        await conn.set_trace_callback(statements.append)
+        await stores.config_merge(conn, "ui.folder_views", {"c:/z": {"view": "list", "t": 1}})
+    begin = next(i for i, s in enumerate(statements) if s.strip().upper().startswith("BEGIN IMMEDIATE"))
+    select = next(i for i, s in enumerate(statements) if "SELECT value FROM config" in s)
+    write = next(i for i, s in enumerate(statements) if s.strip().upper().startswith("INSERT INTO CONFIG"))
+    assert begin < select < write
+    assert not any(s.strip().upper().startswith("BEGIN") for s in statements[begin + 1:write])

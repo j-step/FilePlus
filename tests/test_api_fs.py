@@ -304,3 +304,22 @@ def test_health_advertises_shell_icons(client):
     r = client.get("/health")
     assert r.status_code == 200
     assert r.json()["shell_icons"] is (os.name == "nt")
+
+
+def test_list_entries_carry_created_and_accessed(client, sandbox):
+    """Stage 2D §6.3: every listed entry has created + accessed (epoch floats)."""
+    (sandbox / "when.txt").write_text("x")
+    (sandbox / "folder").mkdir()
+    for url in (f"/fs/list?path={sandbox}", "/fs/list/root"):
+        entries = client.get(url).json()["entries"]
+        assert {e["name"] for e in entries} >= {"when.txt", "folder"}
+        for e in entries:
+            assert isinstance(e["created"], float) and isinstance(e["accessed"], float)
+    entries = client.get(f"/fs/list?path={sandbox}").json()["entries"]
+    by_name = {e["name"]: e for e in entries}
+    for name in ("when.txt", "folder"):
+        e = by_name[name]
+        assert isinstance(e["created"], float) and isinstance(e["accessed"], float)
+    st = (sandbox / "when.txt").stat()
+    assert abs(by_name["when.txt"]["accessed"] - st.st_atime) < 2
+    assert abs(by_name["when.txt"]["created"] - getattr(st, "st_birthtime", st.st_ctime)) < 2

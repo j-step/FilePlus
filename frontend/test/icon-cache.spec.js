@@ -5,7 +5,7 @@
 // and the path-safety gate the main process relies on before ever touching
 // the filesystem or spawning a shell verb.
 const { test, expect } = require('@playwright/test');
-const { LruCache, iconCacheKey, shellIconKey, isSafeLocalPath, normalizeWinPath, clampPx, PER_PATH_EXTS, PER_PATH_SHELL_EXTS } = require('../iconCache');
+const { LruCache, iconCacheKey, shellIconKey, isSafeLocalPath, normalizeWinPath, clampPx, fpIconBucket, ICON_BUCKETS, PER_PATH_EXTS, PER_PATH_SHELL_EXTS } = require('../iconCache');
 
 test.describe('LruCache', () => {
   test('get/set round-trip', () => {
@@ -13,6 +13,17 @@ test.describe('LruCache', () => {
     cache.set('a', 1);
     expect(cache.get('a')).toBe(1);
     expect(cache.size).toBe(1);
+  });
+
+  test('clear() empties the cache, resets the byte charge and returns the count (Settings › Data)', () => {
+    const cache = new LruCache(10, 1000);
+    cache.set('a', { url: 'xxxx' });
+    cache.set('b', null);
+    expect(cache.clear()).toBe(2);
+    expect(cache.size).toBe(0);
+    expect(cache.bytes).toBe(0);
+    expect(cache.get('a')).toBeUndefined();
+    expect(cache.clear()).toBe(0);
   });
 
   test('get on a missing key returns undefined', () => {
@@ -110,6 +121,25 @@ test.describe('LruCache', () => {
     expect(cache.get('a')).toEqual({ url: 'xxxx' });
     expect(cache.bytes).toBe(6);
     expect(cache.deleteWhere(() => false)).toBe(0);
+  });
+
+  test('an explicit .bytes charge wins over the .url length (a shared generic costs 0)', () => {
+    const cache = new LruCache(10, 100);
+    cache.set('a', { url: 'x'.repeat(90) });
+    cache.set('b', { url: 'x'.repeat(90), bytes: 0 });
+    expect(cache.bytes).toBe(90);
+    expect(cache.get('a')).toBeDefined();
+  });
+
+  test('replace re-charges in place without touching recency; a missing key is refused', () => {
+    const cache = new LruCache(2, 1000);
+    cache.set('a', { url: 'x'.repeat(50) });
+    cache.set('b', { url: 'y'.repeat(10) });
+    expect(cache.replace('a', { url: 'x'.repeat(50), bytes: 0 })).toBe(true);
+    expect(cache.bytes).toBe(10);
+    expect(cache.entries().map(([k]) => k)).toEqual(['a', 'b']); // 'a' is still the oldest
+    expect(cache.replace('zz', { url: 'q' })).toBe(false);
+    expect(cache.size).toBe(2);
   });
 
   test('default maxBytes is unbounded (count-only, Stage 2C Task 4 shape)', () => {
@@ -239,10 +269,31 @@ test.describe('PER_PATH_EXTS / PER_PATH_SHELL_EXTS', () => {
   });
 });
 
+// Stage 2D §4.3: every shell icon / thumbnail request goes out at physical px
+// snapped UP to one of these buckets, capped at 256 (the <img> is CSS-sized
+// to its logical box and the browser downsamples).
+test.describe('fpIconBucket', () => {
+  test('1 -> 16 (the smallest bucket)', () => { expect(fpIconBucket(1)).toBe(16); });
+  test('16 stays 16', () => { expect(fpIconBucket(16)).toBe(16); });
+  test('17 -> 20', () => { expect(fpIconBucket(17)).toBe(20); });
+  test('24 stays 24 (a 16-px row at 150%)', () => { expect(fpIconBucket(24)).toBe(24); });
+  test('33 -> 40', () => { expect(fpIconBucket(33)).toBe(40); });
+  test('50 -> 64', () => { expect(fpIconBucket(50)).toBe(64); });
+  test('144 -> 192', () => { expect(fpIconBucket(144)).toBe(192); });
+  test('256 stays 256', () => { expect(fpIconBucket(256)).toBe(256); });
+  test('300 -> 256 (capped)', () => { expect(fpIconBucket(300)).toBe(256); });
+  test('a fractional px snaps up', () => { expect(fpIconBucket(19.2)).toBe(20); });
+  test('garbage falls back to 16', () => { expect(fpIconBucket('abc')).toBe(16); expect(fpIconBucket(undefined)).toBe(16); });
+  test('every result is a listed bucket', () => {
+    expect(ICON_BUCKETS).toEqual([16, 20, 24, 32, 40, 48, 64, 96, 128, 192, 256]);
+    for (let px = 0; px <= 600; px += 7) expect(ICON_BUCKETS).toContain(fpIconBucket(px));
+  });
+});
+
 test.describe('module export shape', () => {
-  test('exposes all eight names', () => {
+  test('exposes all ten names', () => {
     const mod = require('../iconCache');
-    for (const name of ['LruCache', 'iconCacheKey', 'shellIconKey', 'isSafeLocalPath', 'normalizeWinPath', 'clampPx', 'PER_PATH_EXTS', 'PER_PATH_SHELL_EXTS']) {
+    for (const name of ['LruCache', 'iconCacheKey', 'shellIconKey', 'isSafeLocalPath', 'normalizeWinPath', 'clampPx', 'fpIconBucket', 'ICON_BUCKETS', 'PER_PATH_EXTS', 'PER_PATH_SHELL_EXTS']) {
       expect(mod[name]).toBeDefined();
     }
   });

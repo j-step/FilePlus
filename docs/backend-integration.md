@@ -23,8 +23,22 @@ selection}`, Task 7); This PC section replaces Tree with `GET /known-folders` ba
 theme toggle, inspector-is-a-switch, deselect-anywhere (Task 8); Ctrl+wheel `--list-scale` plus View
 and Sort toolbar menus (Task 10). See `docs/superpowers/runs/2026-09-13-stage-2c.md`.
 
+**Stage 2D (2026-10-02).** `--list-scale` is gone: Ctrl+wheel walks the Explorer view ladder, remembered
+per folder in `ui.folder_views` (A.3 #7). The sidebar's This PC header opens a This PC page of drive
+cards (`thispc:` sentinel, `frontend/src/thispc.js`); sidebar and inspector widths are screen px
+(`ui.sidebar_w`, `ui.inspector_w`) so app zoom never narrows them. See
+`docs/superpowers/runs/2026-10-01-stage-2d.md`.
+
 ### 1. Sidebar drive bar fill
 **Done (Stage 2B, 2026-09-11).** `GET /drives` + real `.fp-sidebar__drive-bar__fill` width in `app.js`.
+
+**Stage 2D (2026-10-01, Task 1).** `GET /drives` → `[{letter: "C:", mount, label, kind, fs, total_bytes,
+free_bytes, used_bytes}]`. `kind` is `fixed | removable | network | cdrom`, `fs` the filesystem.
+Removable, network and optical drives are included; a drive with no media (or access denied) is skipped.
+Each drive is probed in its own thread with a 1.5 s timeout (`_DRIVE_PROBE_TIMEOUT_S`); a drive that
+times out (a sleeping network share) is still listed, with an empty `label` and all three sizes
+`null`, so every consumer must accept null sizes (the This PC card says "Unavailable"). The sidebar
+list and the This PC page share one drive model and one formatter (`thispc.js`).
 
 **What.** Drive cards in `#sb-tree` show a `.fp-sidebar__drive-bar__fill` with hardcoded `width: 25%` / `41%`. Should reflect actual disk usage.
 
@@ -37,7 +51,7 @@ and Sort toolbar menus (Task 10). See `docs/superpowers/runs/2026-09-13-stage-2c
 - Endpoint should be cheap (~20 ms) so the renderer can re-poll every 60 s without a perf hit.
 
 ### 2. Sidebar tag list
-**Done in 2C (2026-09-13).** `GET /tags` (top 8 by count) wired in Task 14; clicking a chip opens a
+**Done in 2C (2026-09-13).** `GET /tags` wired in Task 14. As built, the no-`q` listing returns every tag with its `count`, ordered by name, and the renderer ranks and cuts the top 8 by count (`loadSidebarTags` in app.js); `limit` only applies to the `q=` prefix search (the inspector's autocomplete). The `?limit=8&order=count` shape below was not built; clicking a chip opens a
 This PC search scoped to `tag:<name>`; "View all" still opens the Stage 3 Tag Canvas placeholder. The
 static demo markup the author flagged as "tags not implemented" was this list, not the tag store.
 
@@ -137,7 +151,7 @@ static demo markup the author flagged as "tags not implemented" was this list, n
 **How.**
 - `data-action="open-file"` — call `electronAPI.openPath(path)` (preload exposes `shell.openPath`). Backend additionally logs to `recent_actions` via fire-and-forget `POST /recent/open`.
 - `data-action="reveal-file"` — call `switchScreen('browser')`, then `loadDirectory(parentDir(path))`, then scroll-into-view + select the row whose `data-path === path`.
-- `data-action="copy-path"` — already wired in [actions.js:115](../frontend/src/actions.js#L115). Confirm it picks up the closest `[data-path]` for Recent rows specifically (Recent rows DO have `data-path`, so it should — verify only).
+- `data-action="copy-path"` — wired as `case 'copy-path'` in [app.js](../frontend/src/app.js)'s click switch (`actions.js` was deleted in Stage 2B). Confirm it picks up the closest `[data-path]` for Recent rows specifically (Recent rows DO have `data-path`, so it should — verify only).
 
 #### 4. Selected-row state
 **Done (Stage 2B, 2026-09-11).** Real click/keyboard selection in `home.js` (`homeKeydown` + row click handler), no hardcoded row.
@@ -177,7 +191,7 @@ static demo markup the author flagged as "tags not implemented" was this list, n
 
 **What.** Click on the filled accent star: flips the star path to outline, fades the row over `var(--dur-slide)`, removes the row after 200ms, and surfaces an Undo snackbar that re-inserts the row at its original position with the filled star restored. Currently visual-only — no DELETE/POST is fired.
 
-**Status.** Visual + undo behavior live in `unfavoriteFile()` at [actions.js:57](../frontend/src/actions.js#L57), wired through the click switch in [app.js](../frontend/src/app.js) (case `'unfavorite-file'` calls `unfavoriteFile(btn)`; action is in `IN_SCOPE_ACTIONS`). CSS class `.fp-row--unfavoriting` lives in the Home block of `styles.css`. Snackbar respects the global notifications toggle — when notifications are off (default), the row removal still happens but the Undo affordance is silent. The integration pass should not bypass that gate.
+**Status.** Visual + undo behavior live in `unfavoriteFile()` in [home.js](../frontend/src/home.js), wired through the click switch in [app.js](../frontend/src/app.js) (case `'unfavorite-file'` calls `unfavoriteFile(btn)`; action is in `IN_SCOPE_ACTIONS`). CSS class `.fp-row--unfavoriting` lives in the Home block of `styles.css`. Snackbar respects the global notifications toggle — when notifications are off (default), the row removal still happens but the Undo affordance is silent. The integration pass should not bypass that gate.
 
 **How — backend wiring.**
 - On removal completion (after the 200ms timer fires AND the snackbar's 5.2s window has elapsed without an Undo click), fire `DELETE /favorites?path=<encoded>`. Defer the network call past the snackbar window so undo can race it without a roundtrip.
@@ -199,7 +213,8 @@ static demo markup the author flagged as "tags not implemented" was this list, n
 sync by every mutation) and the context-menu label flips Add/Remove (Task 11, spec §4.3).
 
 ### A.2.3 Shared
-v2 only. Tab is permanently `disabled`. No backend integration in v1.
+v2 only. **Removed in Stage 2D Task 12a (2026-10-02):** the permanently disabled tab and its empty pane are
+gone (markup in `docs/archive/2026-10-02-unbuilt-screens-markup.html`). No backend integration in v1.
 
 ---
 
@@ -207,6 +222,13 @@ v2 only. Tab is permanently `disabled`. No backend integration in v1.
 
 ### 1. Directory listing (already wired — verify)
 **Done (Stage 2A/2B, 2026-09-11).** `show_hidden` query param, `asyncio.to_thread` scandir, and root/parent handling all landed.
+
+**Stage 2D (2026-10-01, Task 1).** Every `/fs/list` and `/fs/list/root` entry also carries `created`
+(`st_birthtime`, falling back to `st_ctime`) and `accessed` (`st_atime`), epoch seconds like
+`modified`; an access-denied entry carries `0.0` for both. Live `/fs/search` results gain `accessed`;
+index `/search` results carry `created` as epoch seconds and have no `accessed` (an index hit sorts
+last on an Accessed sort and shows "—"). "This PC" is its own page now, so the
+renderer no longer browses `/fs/list/root`; it only samples it for the generic-folder icon prewarm.
 
 **What.** [app.js:1214](../frontend/src/app.js#L1214) `loadDirectory()` calls `GET /fs/list?path=<abs>` (or `/fs/list/root`). Implemented in [api.py:126](../backend/api.py#L126).
 
@@ -218,6 +240,22 @@ v2 only. Tab is permanently `disabled`. No backend integration in v1.
 ### 2. Inspector — single-file metadata (`GET /files/{id}/meta`)
 **Done (Stage 2B, 2026-09-11).** Landed as `GET /file?path=` (not a `/files/{id}/meta` route); `inspector.js`'s `showInspectorFor()` populates size/modified/created/hash/tags from it.
 
+**Stage 2D (2026-10-02, Task 12b).** `GET /file` and `GET /files/{id}` return `created` / `modified` as
+epoch seconds (`_epoch_dates`), like every listing; they used to ship the index's ISO strings. `GET
+/file` re-indexes a row whose size or mtime no longer matches the file (an edited file showed its old
+size, date and hash); a path that is gone answers `{exists: false}` since the addendum (below). `GET /recent` and `GET /favorites` entries
+carry `exists`, so Home dims a moved or deleted item ("Moved or deleted") and never asks `/file` about it.
+`DELETE /recent` → `{status: "cleared", removed}` empties the Recent list (Settings › Data).
+
+**Stage 2D addendum (2026-10-03, Task 7).** A path that is gone is no longer an error: `GET /file`
+answers **200 `{exists: false, path}`** instead of 404 (an item trashed while the inspector was still
+asking about it logged a 404 as a console error, which the test gate counts). `path_guard` still runs
+first, so a refused path is still refused; nothing is written. Consumers: the inspector (one item:
+"Moved or deleted"; several: a gone item is left out), and the inspector aborts a read that a newer
+selection made stale. `GET /preview` answers `{kind: "missing", exists: false}` the same way ("No
+preview"; Properties' app icon keeps its glyph). Every other `/file` or `/preview` answer carries
+`exists: true` implicitly (unchanged shape).
+
 **What.** Inspector shows hardcoded `18.7 KB`, `1 hr ago`, `Apr 22, 2026`, dash-for-hash. Real values must come from the backend.
 
 **How.**
@@ -227,7 +265,7 @@ v2 only. Tab is permanently `disabled`. No backend integration in v1.
 - Hash display formatting: render as `xxh64:<first-8-of-hex>…<last-4>` (truncated, monospace) — full hash on hover via `title` attribute.
 
 ### 3. Inspector — Preview tab (`GET /preview`)
-**Done for text/binary/too-large (Stage 2A/2B, 2026-09-11); image/pdf/audio/video/archive not built.** Bounded 4 KB text reads, `path_guard()` always.
+**Done for text/binary/too-large (Stage 2A/2B, 2026-09-11); image/pdf/audio/video/archive not built.** Bounded 4 KB text reads, `path_guard()` always. A path that is gone answers 200 `{kind: "missing", exists: false}` (Stage 2D addendum; see §2).
 
 **What.** Preview tab is a placeholder showing markdown rendered from a fake `design-brief.md`.
 
@@ -282,6 +320,14 @@ v2 only. Tab is permanently `disabled`. No backend integration in v1.
 Dynamic media view) and Sort (Name/Date/Type/Size, Asc/Desc) menus built on the context-menu component
 (`ui.view_mode`, `ui.sort`, `ui.list_scale`, `ui.dynamic_media_view`, Task 10).
 
+**Stage 2D (2026-10-01, Tasks 2 and 5).** Sort has a "Date…" flyout (created / modified / accessed);
+the Details date column and Content view's date line follow it; `ui.sort` accepts the two new keys.
+The view is one of `content | tiles | details | list | small | icons@48–256`, remembered per folder in
+`ui.folder_views` (`{[normalised path]: {view, size, t}}`, the 500 most recent by `t`). The renderer
+saves it only as deltas through `POST /config/merge` (A.12 #0). `ui.view_mode` and `ui.list_scale` are
+deleted once by `migrateViewSettings` (guard key `ui.view_migrated_2d`); an unremembered folder opens in
+Details, or Large icons when more than half of it is images/videos.
+
 **What.** Column headers fire `data-action="sort-by"` but [app.js:569](../frontend/src/app.js#L569) is a stub.
 
 **How.**
@@ -316,7 +362,7 @@ the Properties panel's Change… button uses) instead of the ungated legacy
 `electronAPI.openWith`/`shell-open-with` IPC pair, which final review found still
 wired to the menu item and has been removed (final fix wave, 2026-09-13).
 
-**What.** All `cm-*` actions are stubs in [actions.js:121-148](../frontend/src/actions.js#L121).
+**What (historical — superseded by the Done note above).** The `cm-*` actions were stubs in the old `actions.js` registry (deleted in Stage 2B); they are now `case`s in [app.js](../frontend/src/app.js)'s click switch.
 
 | Action | Endpoint | Notes |
 |---|---|---|
@@ -389,11 +435,17 @@ for directories, extension-less files, `.lnk` or `.url` (those fall to the sprit
 `electronAPI.thumbnail` at physical px. Sizing contract everywhere: `px = clampPx(round(cssBox ×
 devicePixelRatio))`, the bitmap is exactly `px × px`, the `<img>` is pinned to `px / dpr` CSS px;
 zoom, monitor-DPI and `--list-scale` changes re-resolve every icon (`fpInvalidateLazyIcons`).
+**Superseded in Stage 2D (2026-10-01, §4.3):** requests go out at `fpIconBucket(round(css × dpr))`
+(16, 20, 24, 32, 40, 48, 64, 96, 128, 192, 256), the `<img>` is CSS-sized from `--icon-size` /
+`.fp-icon--N` and the browser downsamples, and a re-resolved bitmap swaps in only after `decode()`.
+`DELETE /shell/icons/cache` (→ `{cleared}`) empties the backend's shell-icon LRU (Settings › Data).
 `GET /fs/peek` items carry `modified`; `/recent` and `/favorites` entries carry a real `is_dir`.
 
 ---
 
 ## A.4 File Tree canvas
+
+**Hidden in Stage 2D Task 12a (2026-10-02).** The screen, its sidebar entry and its palette command are out of the DOM (no control may ship that does nothing); the mock-up markup is kept as reference in `docs/archive/2026-10-02-unbuilt-screens-markup.html`. The items below still describe what its stage must wire.
 
 ### 1. Live tree (`GET /tree/live`)
 **What.** Canvas placeholder; `#ftree-canvas` shows nothing real.
@@ -485,6 +537,8 @@ zoom, monitor-DPI and `--list-scale` changes re-resolve every icon (`fpInvalidat
 
 ## A.5 Scan
 
+**Hidden in Stage 2D Task 12a (2026-10-02).** The screen, its sidebar entry and its palette command are out of the DOM (no control may ship that does nothing); the mock-up markup is kept as reference in `docs/archive/2026-10-02-unbuilt-screens-markup.html`. The items below still describe what its stage must wire.
+
 ### A.5.1 Scan Config
 
 #### 1. Conversational mode (`POST /scan/chat`)
@@ -503,7 +557,7 @@ zoom, monitor-DPI and `--list-scale` changes re-resolve every icon (`fpInvalidat
 **How.**
 - `GET /scan/config` returns the current saved config: `{ paths: [...], drives: ['C:\\','D:\\'], exclusions: ['node_modules','.git','__pycache__'], aggressiveness: 'moderate', complexity: 'balanced', priority_exts: ['.py','.md'], never_touch: [...] }`.
 - `POST /scan/config { ... }` overwrites. Stored as a single JSON blob in the config table under key `scan.config`.
-- All toggle/add/remove sub-actions in [actions.js:178-188](../frontend/src/actions.js#L178) collapse into this one POST — frontend rebuilds the full config object and sends it (simpler than per-field PATCH).
+- All toggle/add/remove sub-actions (they were stubs in the deleted `actions.js`; the Scan config screen is now hidden, see the note above) collapse into this one POST — frontend rebuilds the full config object and sends it (simpler than per-field PATCH).
 
 #### 3. Scan estimate (`GET /scan/estimate`)
 **What.** "~12 min" hardcoded under the start button.
@@ -597,6 +651,8 @@ zoom, monitor-DPI and `--list-scale` changes re-resolve every icon (`fpInvalidat
 
 ## A.6 Review Bin
 
+**Hidden in Stage 2D Task 12a (2026-10-02).** The screen, its sidebar entry and its palette command are out of the DOM (no control may ship that does nothing); the mock-up markup is kept as reference in `docs/archive/2026-10-02-unbuilt-screens-markup.html`. The items below still describe what its stage must wire.
+
 ### 1. Listing (`GET /review-bin`)
 **What.** Two-pane queue grouped by destination, with confidence bars.
 
@@ -637,6 +693,8 @@ zoom, monitor-DPI and `--list-scale` changes re-resolve every icon (`fpInvalidat
 ---
 
 ## A.7 Everything Folder
+
+**Hidden in Stage 2D Task 12a (2026-10-02).** The screen, its sidebar entry and its palette command are out of the DOM (no control may ship that does nothing); the mock-up markup is kept as reference in `docs/archive/2026-10-02-unbuilt-screens-markup.html`. The items below still describe what its stage must wire.
 
 ### 1. File list (`GET /ef/files`)
 **What.** Filter (All/Unprocessed/Needs Review/Moving/Errors), sort, status dot per row, "currently moving" card.
@@ -784,10 +842,31 @@ No backend. Pure UI.
 
 ## A.12 Settings
 
+**Stage 2D Task 12a (2026-10-02).** Settings shows only panes that do something today: Personalization,
+Scan & Index, Shortcuts, Data, About. The Everything Folder, Downloads Folder, Organization Engine, AI
+Configuration, Custom File Types and Privacy panes (§3–§8 below) are out of the DOM — markup in
+`docs/archive/2026-10-02-unbuilt-screens-markup.html` — and come back with the stage that wires them.
+Shortcuts is a read-only list of the real keys (rebinding, §9, is not built). Data has Empty FilePlus
+trash, the write mode, **Clear Recent** (`DELETE /recent` → `{status, removed}`), **Clear icon and
+thumbnail cache** (renderer LRUs `fpClearIconCaches`, main-process LRUs `electronAPI.clearIconCaches`,
+backend shell-icon LRU `DELETE /shell/icons/cache` → `{cleared}`) and **Open logs folder**
+(`electronAPI.openLogDir` → `shell.openPath(FILEPLUS_LOG_DIR or <repo>/logs)`); the §10 stats/export/
+import/reset items are not built. About shows real values: `electronAPI.appInfo()` (app version from
+package.json, Electron/Chromium/Node versions, log folder) and `/health` (backend version, env, write
+mode); §11's `GET /version` was not needed.
+
 ### 0. Generic config endpoints (foundation)
 **Done (Stage 2A/2B, 2026-09-11).** `config` table + `GET/GET-by-key/POST/DELETE /config`, `window.__fpConfig` cache, `config-change` op-log audit trail; `secure.*` encryption-at-rest not built (no AI settings pane yet).
 
-**What.** The vast majority of Settings actions in [actions.js:252-310](../frontend/src/actions.js#L252) collapse into a single key/value config layer.
+**Stage 2D (2026-10-02, Task 12b).** `POST /config/merge {key, value, max_keys?}` → `{key, count}`
+merges an object delta into the object stored at `key` (a missing or non-object value starts empty).
+An entry already stored with a newer numeric `t` is kept, so deltas commute; with `max_keys` the
+oldest entries by `t` are dropped. The patch is logged before the write, and the read-modify-write
+runs in one `BEGIN IMMEDIATE` transaction. `ui.folder_views` is saved only through it (the window-close
+keepalive fetch is capped at 64 KB). `saveSetting()` keeps one `POST /config` per key in flight; values
+set meanwhile collapse into the newest.
+
+**What.** The vast majority of Settings actions (once stubs in the deleted `actions.js`; now `case`s in app.js's click switch) collapse into a single key/value config layer.
 
 **How.**
 - New table: `config (key TEXT PRIMARY KEY, value TEXT, updated TEXT)`. Values stored as JSON-encoded strings so any type is representable.
@@ -811,6 +890,11 @@ No backend. Pure UI.
 ui.sort, ui.dynamic_media_view, ui.backspace_deletes, ui.properties_mode, ui.icon_source`. "Spacious"
 density got its missing CSS rule (Task 8, spec §3.14); "Backspace deletes" lives under Personalization
 › Keyboard (Task 9); the known-folders checkboxes for Quick Access restoration live here too.
+
+**Stage 2D (2026-10-02).** New keys: `ui.folder_views` (merge-only, see #0), `ui.view_migrated_2d`,
+`ui.sidebar_w` and `ui.inspector_w` (screen px; the old `ui.inspector_width` is read only when
+`ui.inspector_w` is unset — the inspector width is now built and persisted), `ui.thispc_view`
+(`tiles | details`). `ui.list_scale` and `ui.view_mode` are deleted by the one-time migration.
 
 ### 2. Scan & Index pane
 **Done in 2C (2026-09-13).** Real data replaces the placeholder: `GET /index/status` (indexed roots,
@@ -861,11 +945,15 @@ count. The pane also shows `GET /index/status`'s `error` when the last backgroun
 - `config['privacy.send_telemetry']`, `config['privacy.crash_reports']`, etc. — Currently no telemetry is collected; these are placeholders. v1: render the UI but treat as no-ops until v2 actually wires telemetry.
 
 ### 9. Shortcuts pane
+**Stage 2D (2026-10-02, Task 12a).** Built as a read-only list of the keys the app really handles; no backend. Rebinding (below) is not built.
+
 - `GET /config/shortcuts` → `[{ action, default_keys, current_keys }]`.
 - `POST /config/shortcuts { action, keys }` — validate no duplicate binding; rebind globally on next app start (or hot-rebind via IPC).
 - `POST /config/shortcuts/reset` — restores defaults.
 
 ### 10. Data pane (storage stats / export / import)
+**Stage 2D (2026-10-02, Task 12a).** Shows only what works: Empty FilePlus trash, the write mode, Clear Recent, Clear icon and thumbnail cache, Open logs folder (see the A.12 note). Nothing below is built.
+
 - `GET /data/stats` → `{ db_size_bytes, files_indexed, total_indexed_bytes, snapshot_count, snapshot_size_bytes, ai_calls_count, ai_calls_cost_usd }`.
 - `GET /db/export` → streams the SQLite file as a download (`Content-Type: application/octet-stream`).
 - `POST /db/import` — uploads a .db file; backend validates schema_version, swaps in atomically (rename old to .db.bak), restarts watcher.
@@ -877,6 +965,8 @@ count. The pane also shows `GET /index/status`'s `error` when the last backgroun
   - `defaults`: truncates `config`, leaves all file/tag/operation data.
 
 ### 11. About pane
+**Stage 2D (2026-10-02, Task 12a).** Built without `GET /version`: `electronAPI.appInfo()` (app version, Electron/Chromium/Node, log folder) plus `/health` (`version`, `env`, `write_unlocked`).
+
 - `GET /version` → `{ app_version, schema_version, python_version, sqlite_version }`.
 - "Open licenses" — opens a static HTML page bundled with the app; no backend.
 
@@ -930,6 +1020,9 @@ count. The pane also shows `GET /index/status`'s `error` when the last backgroun
 search code path instead of two (Task 14, spec §8.5). Command/tag palette modes are unaffected.
 
 ### 2. Chat mode (`POST /palette/chat`)
+**Hidden in Stage 2D Task 12a (2026-10-02):** the Search/Chat toggle and the chat pane (with its three
+plan buttons) are out of the DOM until this is built; markup in the archive file named under A.4.
+
 **What.** "Plan something with the AI."
 
 **How.**
@@ -946,9 +1039,11 @@ search code path instead of two (Task 14, spec §8.5). Command/tag palette modes
 **What.** Toasts/snackbars are gated on `localStorage['fp-notifications-enabled']` (default OFF). Errors bypass the gate. Several stub action handlers fire `showToast(...)` which is silent under the default settings — this is masking unwired actions during polish.
 
 **How.**
-- Once the per-screen polish phase finishes, audit [actions.js](../frontend/src/actions.js) for stub registrations and either implement them or remove the registration (so the action becomes a no-op rather than an invisible toast).
+- **Done (Stage 2D, 2026-10-02).** `actions.js` is gone (Stage 2B). `scripts/check_menu_cases.js` now fails verify on any `data-action` without a `case` or an `IN_SCOPE_ACTIONS` entry, with no exemptions, and the unbuilt screens' controls left the DOM (Task 12a), so no control falls into the silent stub. The switch's default branch counts hits in `window.__fpStubHits` (a test asserts 0 after clicking every visible control).
 
 ### 2. Operations log
+**Done (Stage 2A, 2026-09-11).** `backend/operations_log.py` is real: `log_operation` (inserts `executed=0` before the act), `mark_executed`, `mark_error`, `mark_undone`, `list_operations`, `list_batch`, `pending_operations` and `reconcile_pending` (run in the API lifespan on every startup, feeding `GET /operations/pending` and the crash-recovery notice). Undo is a logged inverse (`undo_of`) through `POST /operations/{id}/undo` and `POST /operations/batch/{batch_id}/undo`. Still a proposal: the `payload` / `redo_of` / `undone_at` schema below. The text that follows is the original plan.
+
 **What.** Every filesystem-touching operation must call `operations_log.log_operation()` BEFORE execution, per [CLAUDE.md](../CLAUDE.md)'s hard safety principle. Currently [operations_log.py](../backend/operations_log.py) is all stubs.
 
 **How.**
@@ -962,7 +1057,7 @@ search code path instead of two (Task 14, spec §8.5). Command/tag palette modes
 - Crash recovery on app startup: `SELECT * FROM operations_log WHERE executed=0` — if rows exist, surface a modal offering "complete the pending operations" or "undo (revert the partial state)".
 
 ### 3. Tab/session state per-tab
-**What.** Each `.fp-tab` carries `data-tab-screen`; `switchScreen(id, label)` mutates the active tab's state. Backend has no role yet.
+**What.** Per-tab state lives in JS tab records (`createTab()` in app.js: `{id, screen, label, path, history, historyIndex, view, iconSize, scrollTop, scrollLeft, selection, search, listing, stale}`); the DOM carries only `data-tab-id`. `switchScreen(id, labelOverride)` mutates the active tab's record and `activateTab(id)` saves the outgoing tab and paints the incoming one (from its cached `listing`, then revalidates — Stage 2D §4.2). Backend has no role yet.
 
 **How.**
 - New endpoint `POST /session/snapshot` body `{ tabs: [{ id, screen, label, path? }], active }`. Auto-snapshot on tab change (debounced 1s). Stored as a single config row `ui.session`.
@@ -1047,12 +1142,16 @@ capped at 1000 (`?limit=&offset=`), so a bare call can never serialise the whole
 **How.** See A.5.2.1: convert to a background task tracked by `scan_id`, expose progress via SSE, return immediately.
 
 ### 14. Tests — most are placeholders
-**What.** [tests/](../tests/) has files for classifier/mover/operations_log/snapshotter/tagger but the modules they test are stubs.
+**Superseded (Stage 2A onward).** Every backend module that exists has real pytest coverage (493 passed + 3 strict xfail at the end of Stage 2D); `scripts/verify.ps1` runs it before every commit. The modules for unbuilt features (classifier, snapshotter, proposer) are still to come.
+
+**What (original).** [tests/](../tests/) has files for classifier/mover/operations_log/snapshotter/tagger but the modules they test are stubs.
 
 **How.** As each backend module lands, write tests against it. CI gate (when packaging starts) should require `pytest` green. No CI work needed for v1 personal use; add when distributing.
 
 ### 15. Health endpoint extension
-**What.** `/health` returns `{status, version}` only.
+**Superseded.** `/health` returns `{status, version, db_ok, write_unlocked, env, pending_ops, index_running, auth, shell_icons}` (see A.1 #3); the AI/scan fields below wait for their stages.
+
+**What (original).** `/health` returned `{status, version}` only.
 
 **How.** Extend per A.1.3: add `scan_running`, `ai_status`, `watcher_running`, `db_ok`, `disk_free_gb_app_data`, `pending_approvals`. Renderer's status dot can then map a single fetch to multiple indicators.
 

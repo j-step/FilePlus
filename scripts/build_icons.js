@@ -76,16 +76,25 @@ const CHROME_ICONS = {
   // actions" affordances (Review Bin row overflow, Inspector "More actions")
   // are a vertical 3-dot kebab, not a horizontal one — substituted accordingly.
   more: 'more_vertical_20_regular.svg',
+  // The toolbar's "…" (See more) overflow button: Explorer's command bar
+  // uses a horizontal ellipsis there (Task 8 Q16).
+  'more-horizontal': 'more_horizontal_20_regular.svg',
   undo: 'arrow_undo_20_regular.svg',
   redo: 'arrow_redo_20_regular.svg',
   'new-tab': 'tab_add_20_regular.svg',
   file: 'document_20_regular.svg',
+  // Stage 2D §9.2: the collapsed rail's This PC entry (fp-desktop is
+  // already Quick Access's Desktop folder).
+  'this-pc': 'laptop_20_regular.svg',
 
   // ---- Task 5 additions beyond the brief's list (see task-5-report.md) ----
   // Titlebar window controls (custom 12x12 glyphs in the old markup) —
   // dismiss/"close" already covered above by the brief's own `close` entry.
   'window-minimize': 'subtract_20_regular.svg',
   'window-maximize': 'maximize_20_regular.svg',
+  // The same button while the window is maximized (pass 2 #174): two
+  // overlapping squares, Windows' own Restore glyph.
+  'window-restore': 'square_multiple_20_regular.svg',
   // Sidebar collapse points left; brief only lists chevron-down/right.
   'chevron-left': 'chevron_left_20_regular.svg',
   // File Tree canvas "collapse to depth 3" control.

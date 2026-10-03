@@ -53,7 +53,7 @@ def test_result_item_shape(tree):
     r = search_tree(tree, SearchFilters(q="img"))
     assert len(r["results"]) == 1
     item = r["results"][0]
-    assert set(item) == {"path", "name", "is_dir", "size", "modified", "created", "ext", "match"}
+    assert set(item) == {"path", "name", "is_dir", "size", "modified", "created", "accessed", "ext", "match"}
     assert item["name"] == "img.PNG"
     assert item["is_dir"] is False
     assert item["ext"] == "png"
@@ -223,3 +223,10 @@ def test_skips_reparse_points(tmp_path, monkeypatch):
     r = search_tree(real_dir, SearchFilters(q=""))
     assert r["results"] == []
     assert r["walked"] == 0
+
+
+def test_live_result_carries_accessed(tree):
+    """Stage 2D §6.3: live-stat results carry accessed beside created."""
+    item = search_tree(tree, SearchFilters(q="img"))["results"][0]
+    assert isinstance(item["accessed"], float) and isinstance(item["created"], float)
+    assert abs(item["accessed"] - (tree / "img.PNG").stat().st_atime) < 2

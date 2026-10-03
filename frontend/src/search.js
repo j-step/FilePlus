@@ -32,6 +32,7 @@ const searchState = {
   results: null,
   truncated: false,
   inflight: null,       // AbortController for the request in flight
+  inflightQuery: null,  // {chips, text, scope} that request was for (failNavigation resumes it)
   historyKey: 'fp-search-history',
   root: null,           // what the last render searched ('*' for This PC)
   query: '',            // the q that produced searchState.results
@@ -245,6 +246,7 @@ function removeChip(i) {
 function renderSearchChips() {
   const host = document.getElementById('search-chips');
   if (!host) return;
+  const before = searchChipsBefore(host);
   host.innerHTML = searchState.chips.map((chip, i) => `
     <button type="button" class="fp-chip fp-search-chip" data-action="search-remove-chip"
             data-chip-index="${i}" title="Remove filter ${escapeHtml(chip.key)}: ${escapeHtml(chip.label)}">
@@ -253,23 +255,97 @@ function renderSearchChips() {
     </button>`).join('');
   const wrap = document.getElementById('search-wrap');
   if (wrap) wrap.classList.toggle('fp-search--has-chips', searchState.chips.length > 0);
+  syncSearchHasContent();
   resizeSearchInput();
+  // Chips widen the bar's content: the toolbar re-lays out (app.js, §6.2).
+  if (typeof layoutToolbar === 'function') layoutToolbar();
+  searchChipsMotion(host, before);
+}
+
+// ── Chip motion (Stage 2D addendum §5.2 Search) ──────────────────────────────
+// Chips pop in (scale 0.9 → 1, fade) and out. The chips themselves are
+// already final (state, DOM, the toolbar's layout); a chip that left plays
+// out as a ghost in #search-wrap — out of #search-chips, so no count or
+// width the toolbar measures ever sees it; inert, aria-hidden, no action.
+const searchChipId = (c) => `${c.key}\u0001${c.value}`;
+
+/** The chips on screen before a re-render, with where they were. */
+function searchChipsBefore(host) {
+  const ids = host._fpChipIds || [];
+  const on = typeof listMotionOn === 'function' && listMotionOn();
+  return [...host.children].map((el, i) => ({ id: ids[i], el, rect: on ? el.getBoundingClientRect() : null }));
+}
+
+function searchChipsMotion(host, before) {
+  const ids = searchState.chips.map(searchChipId);
+  host._fpChipIds = ids;
+  if (typeof listMotionOn !== 'function' || !listMotionOn()) return;
+  const had = new Map(before.map(b => [b.id, b]));
+  [...host.children].forEach((el, i) => {
+    const was = had.get(ids[i]);
+    if (!was) {
+      fpAnimate(el, [{ opacity: 0, transform: 'scale(.9)' }, { opacity: 1, transform: 'none' }], { duration: 'fast', key: 'enter' });
+      return;
+    }
+    // A chip that stays slides from where it was into the gap a removed or
+    // replaced one left.
+    const dx = was.rect ? was.rect.left - el.getBoundingClientRect().left : 0;
+    if (Math.abs(dx) >= 0.5) fpAnimate(el, [{ transform: `translateX(${dx}px)` }, { transform: 'none' }], { duration: 'fast', key: 'enter' });
+  });
+  const wrap = document.getElementById('search-wrap');
+  if (!wrap) return;
+  const now = new Set(ids);
+  const gone = before.filter(b => !now.has(b.id) && b.rect && b.rect.width);
+  if (!gone.length) return;
+  const box = wrap.getBoundingClientRect();
+  for (const { el, rect } of gone) {
+    for (const a of ['data-action', 'data-chip-index', 'title', 'type']) el.removeAttribute(a);
+    el.setAttribute('aria-hidden', 'true');
+    el.tabIndex = -1;
+    el.style.left = `${rect.left - box.left - wrap.clientLeft}px`;
+    el.style.top = `${rect.top - box.top - wrap.clientTop}px`;
+    el.style.width = `${rect.width}px`;
+    wrap.appendChild(el);
+    fpCancelAnimation(el, 'enter');
+    fpPlayExit(el, [{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'scale(.9)' }],
+      { cls: 'fp-search-chip--ghost', duration: 'fast', easing: 'in', done: () => el.remove() });
+  }
+}
+
+/** .fp-search--has-content shows the in-bar clear × while the bar holds text
+ * or chips. */
+function syncSearchHasContent() {
+  const wrap = document.getElementById('search-wrap');
+  if (!wrap) return;
+  wrap.classList.toggle('fp-search--has-content', !!(searchState.text.trim() || searchState.chips.length));
 }
 
 // ── Query building ────────────────────────────────────────────────────────────
 /** The exact query string GET /fs/search (or GET /search) is called with.
  * `root` is omitted for the This PC scope — that route searches the index, not
  * a tree. Every other key maps one chip to one documented backend parameter. */
+/** "in: current location" means THIS tab's folder. browserState is global
+ * and still holds whichever tab last listed something, so reading it directly
+ * silently scopes the search to another tab's folder (pass 2 #15). */
+function searchCurrentRoot() {
+  const tab = typeof activeTab === 'function' ? activeTab() : null;
+  return (tab && tab.path) || browserState.path || '';
+}
+
+/** Does this search go to the index (GET /search) rather than walk a folder?
+ * The This PC scope does — and so does "current location" while the tab is
+ * on the This PC page (Stage 2D §8): its location is every drive, never a
+ * folder called "thispc:". */
+function searchUsesIndex() {
+  if (searchState.scope === 'pc') return true;
+  return searchState.scope === 'current' && typeof THISPC !== 'undefined' && searchCurrentRoot() === THISPC;
+}
+
 function buildParams() {
   const params = { q: searchState.text.trim(), limit: SEARCH_LIMIT };
 
-  if (searchState.scope !== 'pc') {
-    // "in: current location" means THIS tab's folder. browserState is global
-    // and still holds whichever tab last listed something, so reading it
-    // directly silently scopes the search to another tab's folder (pass 2 #15).
-    const tab = typeof activeTab === 'function' ? activeTab() : null;
-    const currentRoot = (tab && tab.path) || browserState.path || '';
-    params.root = searchState.scope === 'current' ? currentRoot : searchState.scope;
+  if (!searchUsesIndex()) {
+    params.root = searchState.scope === 'current' ? searchCurrentRoot() : searchState.scope;
   }
 
   const type = searchChipValue('type');
@@ -406,7 +482,7 @@ async function runSearch({ pushHistory = true, preserveSelection = false } = {})
   await searchEnsureBrowser();
   if (superseded()) return;
 
-  const usePc = searchState.scope === 'pc';
+  const usePc = searchUsesIndex();
   const params = buildParams();
   if (!usePc && !params.root) {
     showToast('Open a folder first, or pick "This PC" to search the index', 'error');
@@ -415,6 +491,9 @@ async function runSearch({ pushHistory = true, preserveSelection = false } = {})
 
   const ctrl = new AbortController();
   searchState.inflight = ctrl;
+  searchState.inflightQuery = {
+    chips: searchState.chips.map(c => ({ ...c })), text: searchState.text, scope: searchState.scope,
+  };
   showSearchPending(query, usePc ? '*' : params.root);
 
   let payload;
@@ -494,7 +573,7 @@ function clearSearch() {
   }
   searchResetBar();
   closeSearchDropdown();
-  if (typeof exitSearchResults === 'function') exitSearchResults();
+  if (typeof exitSearchResults === 'function') exitSearchResults({ barCleared: true });
 }
 
 /** Resets the bar's own state and DOM only — no listing side effects. Called
@@ -512,7 +591,7 @@ function searchResetBar() {
   const input = document.getElementById('search-input');
   if (input) input.value = '';
   renderSearchChips();
-  // In narrow-toolbar mode the bar is only expanded while it has something in
+  // In the collapsed toolbar the bar is only expanded while it has something in
   // it. Nothing else folds it back after a clear that didn't come from a blur
   // or Escape (the breadcrumb ×, leaving search mode), which left it wedged
   // open over the breadcrumb for the rest of the session (pass 2 #165).
@@ -525,7 +604,9 @@ function setSearchText(text) {
   searchState.text = String(text || '');
   const input = document.getElementById('search-input');
   if (input) input.value = searchState.text;
+  syncSearchHasContent();
   resizeSearchInput();
+  if (typeof layoutToolbar === 'function') layoutToolbar();
 }
 
 // ── Results header extras ─────────────────────────────────────────────────────
@@ -704,6 +785,14 @@ function restoreSearchHistoryEntry(key) {
 // ── Dropdown ──────────────────────────────────────────────────────────────────
 function searchDropdownEl() { return document.getElementById('search-dropdown'); }
 
+/** The dropdown's focusable entries, in order (filter rows, their choices,
+ * history entries, the clear-history button). */
+function searchDropdownItems() {
+  const el = searchDropdownEl();
+  if (!el || el.hidden) return [];
+  return [...el.querySelectorAll('button:not([disabled])')].filter((b) => b.getClientRects().length);
+}
+
 function openSearchDropdown() {
   const el = searchDropdownEl();
   if (!el) return;
@@ -858,8 +947,7 @@ function openMoreFilters() {
   check('search-filter-hidden', !!searchChipValue('hidden'));
   check('search-filter-whole-word', !!searchChipValue('whole_word'));
 
-  scrim.style.display = 'flex';
-  scrim.removeAttribute('aria-hidden');
+  fpSetScrim(scrim, true);
   // closeSearchDropdown() above hid the button that had focus, so without this
   // document.activeElement falls back to <body> — which app.js's global
   // keydown does not treat as "typing", sending Delete/F2/Ctrl+Z straight
@@ -870,8 +958,7 @@ function openMoreFilters() {
 function closeMoreFilters() {
   const scrim = document.getElementById('search-filters-scrim');
   if (!scrim) return;
-  scrim.style.display = 'none';
-  scrim.setAttribute('aria-hidden', 'true');
+  fpSetScrim(scrim, false);
 }
 
 /** Reads the modal back into the chip set. The `in:` chip is untouched — the
@@ -950,7 +1037,7 @@ function resizeSearchInput() {
   const input = document.getElementById('search-input');
   const ruler = document.getElementById('search-measure');
   if (!input || !ruler) return;
-  ruler.textContent = input.value || input.placeholder || '';
+  ruler.textContent = input.value || searchPlaceholderFull(input);
   const width = Math.ceil(ruler.getBoundingClientRect().width) + 4;
   input.style.width = `${Math.max(width, SEARCH_INPUT_MIN_CH * 7)}px`;
 }
@@ -963,7 +1050,7 @@ let _searchSuppressDropdown = false;
 function focusSearchInput({ keepDropdownClosed = false } = {}) {
   const input = document.getElementById('search-input');
   if (!input) return;
-  expandSearchBar();           // no-op unless the toolbar is in narrow mode
+  expandSearchBar();           // only visible while the toolbar is collapsed
   _searchSuppressDropdown = keepDropdownClosed;
   input.focus();               // dispatches 'focus' synchronously
   _searchSuppressDropdown = false;
@@ -1001,7 +1088,7 @@ function syncSearchToTab() {
 
 /** Repaints a tab's stored search (bar + results) with no network call.
  *
- * `restore` ({selection, scrollTop}) carries the same per-tab view state a
+ * `restore` ({selection, scrollTop, scrollLeft}) carries the same per-tab view state a
  * folder tab gets back through loadDirectory()'s `restore` option — without it
  * a results tab came back scrolled to the top with nothing selected and a
  * blank Inspector, while the identical round-trip on a folder tab restored
@@ -1031,9 +1118,12 @@ function restoreSearchResultsForTab(snapshot, restore = null) {
     { results: searchState.results, truncated: searchState.truncated },
     { query: searchState.query, root: searchState.root, preserveSelection: !!wanted },
   );
-  if (restore && restore.scrollTop) {
+  if (restore && (restore.scrollTop || restore.scrollLeft)) {
     const listScroll = document.getElementById('list-scroll');
-    if (listScroll) listScroll.scrollTop = restore.scrollTop;
+    if (listScroll) {
+      listScroll.scrollTop = restore.scrollTop || 0;
+      listScroll.scrollLeft = restore.scrollLeft || 0;
+    }
   }
 }
 
@@ -1049,19 +1139,33 @@ function resumeSearchForTab(snapshot, tabId) {
   runSearch({ pushHistory: false });
 }
 
-// ── Narrow-toolbar collapse ───────────────────────────────────────────────────
-// Below the toolbar's narrow threshold (app.js's initToolbarNarrowMode sets
-// #toolbar[data-narrow]) the bar shrinks to a single magnifier button so the
-// View/Sort/Inspector/Theme buttons stay reachable. Clicking it (the
-// data-action="focus-search" button inside the bar) expands it again; leaving
-// it with nothing typed and no chips collapses it back.
+// ── Collapsed toolbar: the bar opens in flow ─────────────────────────────────
+// When the path needs the room (app.js's layoutToolbar sets
+// #toolbar[data-search="collapsed"], Stage 2D §6.2) the bar folds into a
+// single magnifier button. Clicking it (the data-action="focus-search" button
+// inside the bar) or Ctrl+F opens it again IN FLOW (addendum §2): the bar
+// grows over --motion-base and pushes the path left — never covers it;
+// leaving it with nothing typed and no chips folds it back the same way.
+// The class is the state and flips at once; layoutToolbar({animate}) only
+// eases the width on top (instant with animations off).
 function expandSearchBar() {
-  document.getElementById('search-wrap')?.classList.add('fp-search--expanded');
+  const wrap = document.getElementById('search-wrap');
+  if (!wrap || wrap.classList.contains('fp-search--expanded')) return;
+  wrap.classList.add('fp-search--expanded');
+  // Its chips are measurable only now (display:none while folded): the
+  // bar's width is re-derived from them (app.js, §6.2).
+  if (typeof layoutToolbar === 'function') layoutToolbar({ animate: true });
 }
 
 function maybeCollapseSearchBar() {
   if (searchState.text.trim() || searchState.chips.length) return;
-  document.getElementById('search-wrap')?.classList.remove('fp-search--expanded');
+  const wrap = document.getElementById('search-wrap');
+  if (!wrap || !wrap.classList.contains('fp-search--expanded')) return;
+  // The folding bar clips its content (.fp-search--folding) — its own
+  // dropdown included, which hangs below it: never fold with it open.
+  if (document.getElementById('toolbar')?.dataset.search === 'collapsed') closeSearchDropdown();
+  wrap.classList.remove('fp-search--expanded');
+  if (typeof layoutToolbar === 'function') layoutToolbar({ animate: true });
 }
 
 // ── Wiring ────────────────────────────────────────────────────────────────────
@@ -1086,21 +1190,30 @@ function initSearch() {
     // stealing focus away from it — but a click on a chip or inside the open
     // dropdown belongs to that element's own data-action, and must not be
     // intercepted (or have the panel re-rendered out from under it).
-    if (e.target.closest('.fp-search-chip, #search-dropdown')) return;
+    // The in-bar clear × likewise: its click clears and, on a collapsed bar,
+    // folds the opened bar — focusing the input first would hold it open.
+    if (e.target.closest('.fp-search-chip, #search-dropdown, .fp-search__clear')) return;
     if (e.target !== input) { e.preventDefault(); focusSearchInput(); }
     openSearchDropdown();
   });
 
   input.addEventListener('input', () => {
     searchState.text = input.value;
+    syncSearchHasContent();
     resizeSearchInput();
+    if (typeof layoutToolbar === 'function') layoutToolbar();
     clearTimeout(_searchDebounceTimer);
     // pushHistory:false — a 300 ms pause mid-word is not a search the user
     // asked to remember. Pushing one per pause stored "q", "qu", "qua", … and
     // flushed all ten real history slots with prefixes of one word (pass 2
     // #161). History is written by the deliberate commits instead: Enter, a
     // chip pick, the palette, re-running a history row.
-    _searchDebounceTimer = setTimeout(() => runSearch({ pushHistory: false }), SEARCH_DEBOUNCE_MS);
+    _searchDebounceTimer = setTimeout(() => {
+      // Fired: nothing is queued any more (cancelSearchDebounce and the tests
+      // read the handle as "a keystroke is still waiting").
+      _searchDebounceTimer = null;
+      runSearch({ pushHistory: false });
+    }, SEARCH_DEBOUNCE_MS);
   });
 
   input.addEventListener('keydown', e => {
@@ -1111,6 +1224,14 @@ function initSearch() {
       runSearch();
       return;
     }
+    // ArrowDown from the field walks into the open dropdown (a combobox);
+    // it never reaches the file list behind it.
+    if (e.key === 'ArrowDown') {
+      const dd = searchDropdownEl();
+      const first = dd && !dd.hidden ? searchDropdownItems()[0] : null;
+      if (first) { e.preventDefault(); e.stopPropagation(); first.focus(); }
+      return;
+    }
     if (e.key === 'Escape') {
       // Escape in the bar closes the dropdown and nothing else — the results,
       // chips and text all stay (design §8.2). stopPropagation keeps the
@@ -1118,7 +1239,7 @@ function initSearch() {
       e.preventDefault();
       e.stopPropagation();
       closeSearchDropdown();
-      // In narrow mode an empty bar folds back into its icon button.
+      // In the collapsed toolbar an empty bar folds back into its magnifier.
       if (!searchState.text.trim() && !searchState.chips.length) {
         maybeCollapseSearchBar();
         input.blur();
@@ -1135,6 +1256,32 @@ function initSearch() {
       e.preventDefault();
       removeChip(searchState.chips.length - 1);
     }
+  });
+
+  // Cursor keys inside the open dropdown move between its entries; Escape
+  // hands the caret back to the field. Nothing here reaches the file list.
+  searchDropdownEl()?.addEventListener('keydown', e => {
+    const items = searchDropdownItems();
+    if (!items.length) return;
+    const cur = items.indexOf(document.activeElement);
+    let next = null;
+    if (e.key === 'ArrowDown') next = items[(cur + 1) % items.length];
+    else if (e.key === 'ArrowUp') {
+      if (cur <= 0) { e.preventDefault(); e.stopPropagation(); focusSearchInput({ keepDropdownClosed: true }); return; }
+      next = items[cur - 1];
+    } else if (e.key === 'Home' || e.key === 'PageUp') next = items[0];
+    else if (e.key === 'End' || e.key === 'PageDown') next = items[items.length - 1];
+    else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); e.stopPropagation(); return; }
+    else if (e.key === 'Escape') {
+      e.preventDefault(); e.stopPropagation();
+      closeSearchDropdown();
+      focusSearchInput({ keepDropdownClosed: true });
+      return;
+    }
+    if (!next) return;
+    e.preventDefault();
+    e.stopPropagation();
+    next.focus();
   });
 
   // Clicking anywhere outside the bar closes the dropdown but keeps the search.

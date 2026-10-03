@@ -108,7 +108,21 @@ function resolveApiPort(repoDir, env, warn = console.warn) {
   return port;
 }
 
+/** FILEPLUS_ENV ('dev' | 'test' | 'prod'), from our own environment, else
+ * <repoDir>/.env, else 'dev' -- the same order and default backend/config.py
+ * uses (load_dotenv() only fills a variable that is missing). Lower-cased. */
+function resolveAppEnv(repoDir, env) {
+  const raw = String((env && env.FILEPLUS_ENV) || readEnvFileValue(repoDir, 'FILEPLUS_ENV') || '').trim().toLowerCase();
+  return raw || 'dev';
+}
+
+/** F12 / DevTools is a development aid: every environment but 'prod' keeps
+ * it (Stage 2D spec §7.1). */
+function devToolsAllowed(appEnv) {
+  return String(appEnv || 'dev').trim().toLowerCase() !== 'prod';
+}
+
 module.exports = {
   parseEnvValue, readEnvFileToken, readEnvFileValue, readTokenFile, resolveApiToken,
-  resolveApiPort, DEFAULT_API_PORT, CSP_ALLOWED_PORTS,
+  resolveApiPort, DEFAULT_API_PORT, CSP_ALLOWED_PORTS, resolveAppEnv, devToolsAllowed,
 };

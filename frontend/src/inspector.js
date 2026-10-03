@@ -13,6 +13,58 @@
 // stale data — each async function captures its own seq and re-checks it
 // after every await before touching anything.
 let _inspectorSeq = 0;
+// Every inspector read (/file, /preview, /files/history) carries this
+// controller's signal. A new selection, an empty one, or an operation about
+// to move or trash the selection aborts what is still in flight
+// (inspectorAbortFetches) — nothing waits on an answer about an item that is
+// gone (addendum Task 7 fix round 1).
+let _inspectorCtrl = new AbortController();
+function inspectorAbortFetches() {
+  _inspectorCtrl.abort();
+  _inspectorCtrl = new AbortController();
+}
+function inspectorFetchOpts() { return { signal: _inspectorCtrl.signal }; }
+/** The next _inspectorSeq: aborts the reads the previous one started. */
+function nextInspectorSeq() {
+  inspectorAbortFetches();
+  return ++_inspectorSeq;
+}
+/** Before an operation moves, renames or trashes `paths`: if the selection
+ * the inspector is reading about is among them, its reads stop now — the
+ * operation's answer moves the selection on and the panel repaints from
+ * there. An unrelated selection keeps its reads. */
+let _inspectorAbortedSeq = null;   // the sequence an operation cut short
+function inspectorAbortFor(paths) {
+  const sel = typeof browserState !== 'undefined' ? browserState.selection : null;
+  if (!sel || !sel.size || !paths || !paths.length) return;
+  const gone = new Set(paths.map(p => fpNormalizePath(p)));
+  for (const p of sel) {
+    if (gone.has(fpNormalizePath(p))) {
+      inspectorAbortFetches();
+      _inspectorAbortedSeq = _inspectorSeq;
+      return;
+    }
+  }
+}
+
+/** After the operation inspectorAbortFor() ran for, however it ended: when
+ * nothing repainted the panel since (the operation failed, was refused, or
+ * its conflict dialog was cancelled, so the selection never moved on), the
+ * selection is shown again — never left half-filled. */
+function inspectorResumeAfterOp() {
+  if (_inspectorAbortedSeq === null) return;
+  const untouched = _inspectorAbortedSeq === _inspectorSeq;
+  _inspectorAbortedSeq = null;
+  if (untouched && typeof showInspectorForSelection === 'function') showInspectorForSelection();
+}
+/** An aborted read: what is on screen stays, whoever aborted repaints. */
+function inspectorAborted(err) { return !!err && err.name === 'AbortError'; }
+// Inspector work still to come: an armed selection debounce (browser.js
+// onSelectionChanged) plus every showInspectorFor() / showInspectorMulti()
+// fetch chain still running. Read by the Electron tests as the "inspector
+// has settled" signal (like browser.js's __fpLoadPending), so they wait on it
+// instead of sleeping.
+window.__fpInspectorPending = 0;
 
 // Currently-inspected file's DB id (null for folders, which can't be
 // tagged) and the path History is showing, so the tag/undo handlers below
@@ -22,6 +74,19 @@ let _inspectorHistoryPath = null;
 
 // Revoked before a new one replaces it so blob: URLs don't leak.
 let _inspectorPreviewUrl = null;
+// The text preview's overlay scrollbar. Its listeners sit on the persistent
+// #inspector-preview box, so it is destroyed before the preview is replaced —
+// otherwise every text file viewed left one behind for the session (Task 14 I2).
+let _inspectorPreviewScroll = null;
+
+function dropInspectorPreviewScroll() {
+  if (_inspectorPreviewScroll) { _inspectorPreviewScroll.destroy(); _inspectorPreviewScroll = null; }
+}
+// path|modified|size of the file the preview box is showing. A re-fetch of
+// the same, unchanged file (every listing refresh re-announces the
+// selection) keeps the preview it has: rebuilding it swapped in a fresh
+// blob: <img> that painted empty until it decoded — a flash (spec §12).
+let _inspectorPreviewFor = null;
 
 // The entry currently in the header, in the {name, path, ext, is_dir} shape
 // iconFor() wants — so the "No preview" placeholder shows the file's own
@@ -37,6 +102,8 @@ let _inspectorEntry = null;
 function updateInspector(mode, data = {}) {
   const inspector = document.getElementById('inspector');
   if (!inspector) return;
+  syncInspectorActions();
+  inspectorContentMotion(inspector, mode, data);
 
   const singlePanes = inspector.querySelectorAll('.fp-inspector__pane:not([data-pane="multi"])');
   const multiPane   = inspector.querySelector('.fp-inspector__pane[data-pane="multi"]');
@@ -45,7 +112,55 @@ function updateInspector(mode, data = {}) {
   const filenameEl  = document.getElementById('inspector-filename');
   const filepathEl  = document.getElementById('inspector-filepath');
 
-  if (mode === 'multi') {
+  // The drive pane belongs to 'drive' mode only.
+  const drivePane = inspector.querySelector('.fp-inspector__pane[data-pane="drive"]');
+  if (drivePane && mode !== 'drive') drivePane.hidden = true;
+
+  if (mode === 'drive') {
+    // A This PC drive card (Task 14 Q18): the drive's name and mount in the
+    // header, its icon in the preview box, type / file system / space in the
+    // pane. No tabs: a drive has no tags or history of its own.
+    _inspectorFileId = null;
+    _inspectorHistoryPath = null;
+    const d = data;
+    _inspectorEntry = { name: driveDisplayName(d), path: d.mount, is_dir: true, ext: '' };
+    singlePanes.forEach(p => { p.hidden = true; });
+    if (multiPane) multiPane.hidden = true;
+    if (tabBar) tabBar.hidden = true;
+    if (preview) preview.hidden = false;
+    // The drive icon exactly as the This PC cards draw it (thispc.js
+    // driveCardHtml): the shell's drive icon in Windows mode, the drive
+    // glyph otherwise — never the folder sprite.
+    renderPreviewNone({ note: '', iconHtml: fpShellItemIcon({ path: d.mount, is_dir: true }, 40, 'drive') });
+    const name = driveDisplayName(d);
+    if (filenameEl) { filenameEl.textContent = name; filenameEl.title = name; }
+    // A left-to-right mark after the mount: the path line is laid out
+    // right-to-left (it ellipsizes from the start), and "C:\" alone, with
+    // no letter after the backslash, came out as "\:C".
+    if (filepathEl) filepathEl.textContent = d.mount ? `${d.mount}\u200E` : '';
+    if (drivePane) {
+      drivePane.hidden = false;
+      const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+      const known = driveHasSize(d);
+      const used = known ? (Number.isFinite(d.used_bytes) ? d.used_bytes : d.total_bytes - d.free_bytes) : null;
+      set('inspector-drive-type', driveTypeText(d));
+      set('inspector-drive-fs', d.fs || '—');
+      set('inspector-drive-used', known ? `${formatSize(used)} (${drivePercentUsed(d)}%)` : 'Unavailable');
+      set('inspector-drive-free', known ? formatSize(d.free_bytes) : 'Unavailable');
+      set('inspector-drive-total', known ? formatSize(d.total_bytes) : 'Unavailable');
+      const bar = document.getElementById('inspector-drive-bar');
+      if (bar) {
+        const pct = drivePercentUsed(d);
+        bar.hidden = !known;
+        if (known) { bar.setAttribute('aria-valuenow', String(pct)); bar.setAttribute('aria-valuetext', `${pct}% used`); }
+        const fill = bar.firstElementChild;
+        if (fill) {
+          fill.style.width = `${pct}%`;
+          fill.classList.toggle('inspector__drive-bar-fill--full', driveIsNearlyFull(d));
+        }
+      }
+    }
+  } else if (mode === 'multi') {
     _inspectorEntry = null;
     // The single-file identity goes with it. Leaving _inspectorFileId behind
     // meant a tag typed into the (single-file) Tags pane while several files
@@ -69,13 +184,12 @@ function updateInspector(mode, data = {}) {
     // The last single selection's image blob goes with it.
     if (preview)  preview.hidden = true;
     if (_inspectorPreviewUrl) { URL.revokeObjectURL(_inspectorPreviewUrl); _inspectorPreviewUrl = null; }
+    _inspectorPreviewFor = null;
     if (filenameEl) { filenameEl.textContent = `${data.count} items selected`; filenameEl.removeAttribute('title'); }
     if (filepathEl) filepathEl.textContent = '';
     if (multiPane) {
       multiPane.hidden = false;
-      const countEl = multiPane.querySelector('#inspector-multi-count');
       const sizeEl  = multiPane.querySelector('#inspector-multi-size');
-      if (countEl) countEl.textContent = data.count || 0;
       if (sizeEl)  sizeEl.textContent  = data.totalSize || '—';
     }
   } else if (mode === 'single') {
@@ -119,12 +233,44 @@ function updateInspector(mode, data = {}) {
   if (mode !== 'single') updateTagInputAvailability();
 }
 
+// ── Content crossfade (addendum §5.2 Inspector) ───────────────────────────────
+// A discrete change of what the panel describes (another file, a different
+// multi-selection, a drive, nothing) fades the new content up from
+// translucent — --motion-fast, no blank frame. The same item announced
+// again (every listing refresh re-announces the selection) never fades, and
+// neither does a change that lands within --motion-slow of the previous one:
+// an arrow-key burst repaints plainly until it settles.
+let _inspectorFadeKey = null;
+let _inspectorFadeAt = -Infinity;
+
+function inspectorContentMotion(inspector, mode, data) {
+  const key = mode === 'single' ? `single|${data.path || ''}`
+    : mode === 'multi' ? `multi|${data.count}`
+    : mode === 'drive' ? `drive|${data.mount || ''}` : mode;
+  const now = performance.now();
+  const burst = now - _inspectorFadeAt < fpMotionMs('slow');
+  const changed = key !== _inspectorFadeKey;
+  if (changed) { _inspectorFadeKey = key; _inspectorFadeAt = now; }
+  if (!changed || burst || !inspector.classList.contains('inspector--open')) return;
+  fpAnimate(document.getElementById('inspector-scroll'), [{ opacity: 0.35 }, { opacity: 1 }],
+    { duration: 'fast', key: 'content' });
+}
+
 // ── Single selection ──────────────────────────────────────────────────────────
 // Fetches GET /file (metadata + tags), GET /preview (image/text/binary), and
 // GET /files/history for `path`, rendering each into the inspector panes as
 // it lands. Called by browser.js's onSelectionChanged (debounced 120ms).
 async function showInspectorFor(path) {
-  const seq = ++_inspectorSeq;
+  window.__fpInspectorPending++;
+  try {
+    await _showInspectorFor(path);
+  } finally {
+    window.__fpInspectorPending--;
+  }
+}
+
+async function _showInspectorFor(path) {
+  const seq = nextInspectorSeq();
 
   // Optimistic header from what the row already told us — the real fetch
   // below can only confirm/replace it, never regress the UI to nothing.
@@ -136,9 +282,9 @@ async function showInspectorFor(path) {
 
   let data;
   try {
-    data = await API.get('/file', { path });
+    data = await API.get('/file', { path }, inspectorFetchOpts());
   } catch (err) {
-    if (seq !== _inspectorSeq) return;
+    if (seq !== _inspectorSeq || inspectorAborted(err)) return;
     _inspectorFileId = null;
     updateTagInputAvailability();
     renderInspectorMeta(null);
@@ -148,6 +294,18 @@ async function showInspectorFor(path) {
     return;
   }
   if (seq !== _inspectorSeq) return;
+  // Gone since it was selected (trashed, moved, deleted outside the app):
+  // the same panel a missing Home row gets.
+  if (data && data.exists === false) {
+    _inspectorFileId = null;
+    _inspectorHistoryPath = null;
+    updateTagInputAvailability();
+    renderInspectorMeta({ kind: 'Moved or deleted' });
+    renderTagChips([]);
+    renderPreviewNone();
+    renderInspectorHistory([]);
+    return;
+  }
 
   _inspectorFileId = data.id ?? null;
   updateTagInputAvailability();
@@ -159,11 +317,34 @@ async function showInspectorFor(path) {
   // the same way a click does. A folder never has a preview to show, so skip
   // the doomed fetch entirely rather than let it round-trip into a console
   // error every time a folder is selected.
+  const previewKey = `${path}|${data.modified}|${data.size}`;
   if (data.kind === 'Folder') renderPreviewNone();
-  else await loadInspectorPreview(path, seq);
-  if (seq !== _inspectorSeq) return;
+  else if (previewKey !== _inspectorPreviewFor) {
+    // Only real content is kept: the "No preview" type icon repaints, so an
+    // icon-source change (refreshBackendData) still reaches it.
+    const shown = await loadInspectorPreview(path, seq);
+    if (seq !== _inspectorSeq) return;
+    if (shown) _inspectorPreviewFor = previewKey;
+  }
 
   await loadInspectorHistory(path, seq);
+}
+
+/** The panel for an item that no longer exists where it was (a Home row
+ * whose file was moved or deleted): its name and old location, "Moved or
+ * deleted" as its kind, nothing fetched (Stage 2D §12 sweep). */
+function showInspectorMissing(path) {
+  nextInspectorSeq();
+  const name = basenameOf(path);
+  updateInspector('single', { name, path });
+  _inspectorEntry = { name, path, is_dir: false, ext: '' };
+  _inspectorFileId = null;
+  _inspectorHistoryPath = null;
+  updateTagInputAvailability();
+  renderInspectorMeta({ kind: 'Moved or deleted' });
+  renderTagChips([]);
+  renderPreviewNone();
+  renderInspectorHistory([]);
 }
 
 function renderInspectorMeta(data) {
@@ -174,10 +355,14 @@ function renderInspectorMeta(data) {
   const hashEl     = document.getElementById('inspector-hash');
   const isFolder   = data && data.kind === 'Folder';
 
-  if (kindEl)     kindEl.textContent     = (data && data.kind) || '—';
+  if (kindEl) {
+    kindEl.textContent = (data && data.kind) || '—';
+    if (data && data.kind) kindEl.title = data.kind; else kindEl.removeAttribute('title');
+  }
   if (sizeEl)     sizeEl.textContent     = (!data || isFolder || data.size == null) ? '—' : formatSize(data.size);
-  if (modifiedEl) modifiedEl.textContent = (data && data.modified) ? formatModified(data.modified) : '—';
-  if (createdEl)  createdEl.textContent  = (data && data.created) ? formatModified(data.created) : '—';
+  // GET /file's dates are epoch seconds, like every listing's.
+  if (modifiedEl) modifiedEl.textContent = (data && data.modified) ? formatModified(data.modified * 1000) : '—';
+  if (createdEl)  createdEl.textContent  = (data && data.created) ? formatModified(data.created * 1000) : '—';
   if (hashEl) {
     if (!data || isFolder || !data.hash) {
       hashEl.textContent = '—';
@@ -201,21 +386,25 @@ function previewContainer() { return document.getElementById('inspector-preview'
 function renderInspectorEmptyPreview() {
   const el = previewContainer();
   if (!el) return;
+  _inspectorPreviewFor = null;
   if (_inspectorPreviewUrl) { URL.revokeObjectURL(_inspectorPreviewUrl); _inspectorPreviewUrl = null; }
+  dropInspectorPreviewScroll();
   el.style.display = 'flex';
   el.style.flexDirection = 'row';
   el.innerHTML = `<span style="opacity:.4;display:flex">${icon('file', 'fp-icon--40')}</span>`;
 }
 
-function renderPreviewNone() {
+function renderPreviewNone({ note = 'No preview', iconHtml = null } = {}) {
   const el = previewContainer();
   if (!el) return;
+  _inspectorPreviewFor = null;
   if (_inspectorPreviewUrl) { URL.revokeObjectURL(_inspectorPreviewUrl); _inspectorPreviewUrl = null; }
   el.style.display = 'flex';
   el.style.flexDirection = 'row'; // back to the container's default centering (a text preview sets 'column')
+  dropInspectorPreviewScroll();
   el.innerHTML = `<div style="display:flex;flex-direction:column;align-items:center;gap:8px;color:var(--text-tertiary)">
-    ${iconFor(_inspectorEntry, 40)}
-    <span style="font:400 var(--t-compact) var(--font-ui)">No preview</span>
+    ${iconHtml || iconFor(_inspectorEntry, 40)}
+    ${note ? `<span class="inspector__preview-note" style="font:400 var(--t-compact) var(--font-ui)">${escapeHtml(note)}</span>` : ''}
   </div>`;
 }
 
@@ -224,9 +413,9 @@ async function loadInspectorPreview(path, seq) {
   if (!el) return;
   let res;
   try {
-    res = await API.blob('/preview', { path });
-  } catch (_) {
-    if (seq !== _inspectorSeq) return;
+    res = await API.blob('/preview', { path }, inspectorFetchOpts());
+  } catch (err) {
+    if (seq !== _inspectorSeq || inspectorAborted(err)) return;
     renderPreviewNone();
     return;
   }
@@ -235,11 +424,12 @@ async function loadInspectorPreview(path, seq) {
   const ct = res.headers.get('content-type') || '';
   if (ct.startsWith('image/')) {
     let blob;
-    try { blob = await res.blob(); } catch (_) {
+    try { blob = await res.blob(); } catch (err) {
       // Same guard as every other await here: a superseded request's decode
       // failure must not revoke the LIVE selection's blob: URL (leaving a
       // broken <img>) or repaint the box with another file's icon (pass 2 #85).
-      if (seq !== _inspectorSeq) return;
+      // An aborted read keeps what is painted (no "No preview" flash).
+      if (seq !== _inspectorSeq || inspectorAborted(err)) return;
       renderPreviewNone();
       return;
     }
@@ -248,18 +438,21 @@ async function loadInspectorPreview(path, seq) {
     _inspectorPreviewUrl = URL.createObjectURL(blob);
     el.style.display = 'flex';
     el.style.flexDirection = 'row';
+    dropInspectorPreviewScroll();
     el.innerHTML = '';
     const img = document.createElement('img');
     img.src = _inspectorPreviewUrl;
     img.alt = '';
-    img.style.cssText = 'max-width:100%;max-height:100%;object-fit:contain';
+    // Fills the box, aspect kept: a small picture is scaled up to the room
+    // the panel has rather than drawn at its own 16 px (Task 14 Q25).
+    img.style.cssText = 'width:100%;height:100%;object-fit:contain';
     el.appendChild(img);
-    return;
+    return true;
   }
 
   let data;
-  try { data = await res.json(); } catch (_) {
-    if (seq !== _inspectorSeq) return;   // pass 2 #85, as above
+  try { data = await res.json(); } catch (err) {
+    if (seq !== _inspectorSeq || inspectorAborted(err)) return;   // pass 2 #85, as above
     renderPreviewNone();
     return;
   }
@@ -267,6 +460,7 @@ async function loadInspectorPreview(path, seq) {
 
   if (data.kind === 'text') {
     if (_inspectorPreviewUrl) { URL.revokeObjectURL(_inspectorPreviewUrl); _inspectorPreviewUrl = null; }
+    dropInspectorPreviewScroll();
     el.innerHTML = '';
     el.style.display = 'flex';
     el.style.flexDirection = 'column';
@@ -276,6 +470,8 @@ async function loadInspectorPreview(path, seq) {
       'white-space:pre-wrap;word-break:break-word;text-align:left;font-size:11px;color:var(--text-secondary)';
     pre.textContent = data.content;
     el.appendChild(pre);
+    // The panel's overlay scrollbar, not a permanent native bar (§9.3 / §12).
+    if (typeof fpOverlayScroll === 'function') _inspectorPreviewScroll = fpOverlayScroll(pre, { hoverRoot: el });
     if (data.truncated) {
       const footer = document.createElement('div');
       footer.className = 'mono';
@@ -284,6 +480,7 @@ async function loadInspectorPreview(path, seq) {
       footer.textContent = `truncated · ${formatSize(data.total_size)} total`;
       el.appendChild(footer);
     }
+    return true;
   } else {
     // 'binary' or 'too-large'
     renderPreviewNone();
@@ -307,14 +504,25 @@ function updateTagInputAvailability() {
   if (!input) return;
   const taggable = _inspectorFileId != null;
   input.disabled = !taggable;
-  input.placeholder = taggable ? 'Add tag…' : 'Only files can be tagged';
+  // Why it is off, in the panel's own terms: nothing selected said "Only
+  // files can be tagged" under "No file selected" (Stage 2D §12 sweep).
+  let why = 'Only files can be tagged';
+  if (!_inspectorEntry) why = 'Select a file to tag it';
+  else if (_inspectorEntry.is_dir === false) why = 'This file can’t be tagged';
+  input.placeholder = taggable ? 'Add tag…' : why;
   if (!taggable) input.value = '';
 }
 
 async function refreshInspectorTags() {
   if (_inspectorFileId == null) return;
+  // The chips land after a round-trip: if the panel has moved on to another
+  // item by then, they are that earlier file's tags and must not be painted
+  // under the new one's name (Stage 2D §12 sweep).
+  const seq = _inspectorSeq;
+  const id = _inspectorFileId;
   try {
-    const tags = await API.get(`/files/${_inspectorFileId}/tags`);
+    const tags = await API.get(`/files/${id}/tags`);
+    if (seq !== _inspectorSeq || id !== _inspectorFileId) return;
     renderTagChips(tags);
   } catch (_) { /* leave the chips as they were */ }
 }
@@ -465,9 +673,9 @@ async function loadInspectorHistory(path, seq) {
   _inspectorHistoryPath = path;
   let rows;
   try {
-    rows = await API.get('/files/history', { path });
-  } catch (_) {
-    if (seq !== _inspectorSeq) return;
+    rows = await API.get('/files/history', { path }, inspectorFetchOpts());
+  } catch (err) {
+    if (seq !== _inspectorSeq || inspectorAborted(err)) return;
     renderInspectorHistory([]);
     return;
   }
@@ -480,8 +688,11 @@ async function loadInspectorHistory(path, seq) {
  * selected, so nothing else is already about to reload it). */
 async function reloadInspectorHistoryFor(path) {
   _inspectorHistoryPath = path;
+  const seq = _inspectorSeq;
   try {
-    const rows = await API.get('/files/history', { path });
+    const rows = await API.get('/files/history', { path }, inspectorFetchOpts());
+    // Same guard as the selection pipeline's own History load.
+    if (seq !== _inspectorSeq || _inspectorHistoryPath !== path) return;
     renderInspectorHistory(rows);
   } catch (_) { /* history refresh is best-effort */ }
 }
@@ -506,6 +717,9 @@ async function inspectorUndoOp(opId, batchId) {
   if (typeof fileops !== 'undefined' && fileops.noteExternalUndo) {
     fileops.noteExternalUndo(batchId, res && res.batch_id);
   }
+  // The selection and the clipboard follow the inverse the same way they
+  // follow every other operation (a rename undone keeps its row selected).
+  if (res && typeof fileops !== 'undefined' && fileops.followOps) fileops.followOps([res]);
   if (typeof refreshDirectory === 'function') await refreshDirectory();
 
   const destPath = res && res.dest;
@@ -533,7 +747,7 @@ async function inspectorUndoOp(opId, batchId) {
     // Neither the restored path nor the prior selection exists in the
     // current listing (e.g. undoing a copy/mkdir/touch sends the item to
     // .FilePlusTrash, off-screen) — nothing left to inspect.
-    _inspectorSeq++;
+    nextInspectorSeq();
     updateInspector('none');
   }
 }
@@ -545,11 +759,21 @@ async function inspectorUndoOp(opId, batchId) {
 // every fetched file renders full-opacity; a tag only some of them carry
 // renders at partial opacity.
 async function showInspectorMulti(paths) {
-  const seq = ++_inspectorSeq;
+  window.__fpInspectorPending++;
+  try {
+    await _showInspectorMulti(paths);
+  } finally {
+    window.__fpInspectorPending--;
+  }
+}
+
+async function _showInspectorMulti(paths) {
+  const seq = nextInspectorSeq();
   updateInspector('multi', { count: paths.length, totalSize: formatSize(selectionTotalSize()) });
 
   const capped = paths.slice(0, 50);
-  const results = await Promise.all(capped.map(p => API.get('/file', { path: p }).catch(() => null)));
+  const results = await Promise.all(capped.map(p => API.get('/file', { path: p }, inspectorFetchOpts())
+    .then(r => (r && r.exists === false ? null : r)).catch(() => null)));
   if (seq !== _inspectorSeq) return;
 
   const counts = new Map();
@@ -590,10 +814,11 @@ async function showInspectorMulti(paths) {
  * screen's file over a listing selecting something else (pass 2 #75). Same
  * three-way branch as browser.js's onSelectionChanged, minus the debounce. */
 function syncInspectorToBrowserSelection() {
+  if (showInspectorForThisPc()) return;
   const selection = (typeof browserState !== 'undefined' && browserState.selection) || null;
   const n = selection ? selection.size : 0;
   if (n === 0) {
-    _inspectorSeq++;   // invalidate any fetch still in flight
+    nextInspectorSeq();   // invalidate (and abort) any fetch still in flight
     updateInspector('none');
   } else if (n === 1) {
     showInspectorFor([...selection][0]);
@@ -602,9 +827,71 @@ function syncInspectorToBrowserSelection() {
   }
 }
 
-// ── Actions row: Open / Reveal ────────────────────────────────────────────────
+/** On the This PC page the panel describes the selected drive card, or shows
+ * the empty state with none selected (Task 14 Q18: the status bar said
+ * "1 selected" over "No file selected"). Returns false off This PC. */
+function showInspectorForThisPc() {
+  if (typeof thisPcActive !== 'function' || !thisPcActive()) return false;
+  nextInspectorSeq();   // nothing fetched here; invalidate whatever still is
+  const path = thisPcSelectedPath();
+  const d = path ? (thisPcState.drives || []).find(x => x.mount === path) : null;
+  if (d) updateInspector('drive', d);
+  else updateInspector('none');
+  return true;
+}
+
+/** The neutral "No file selected" panel for a screen that has no selection
+ * of its own (Settings, …): it never names the item another screen had
+ * selected, and its actions are disabled (Task 14 Q2). */
+function showInspectorNeutral() {
+  nextInspectorSeq();
+  updateInspector('none');
+}
+
+// ── Actions row: Open / Open with… / Reveal ──────────────────────────────────
+// They act on the Browser's single selection, so with anything else (nothing
+// selected, several items, the This PC page's drive cards) they are disabled
+// — aria-disabled, not [disabled], so the tooltip can still say why.
+
+/** The one item the action row acts on, or null: the Browser's single
+ * selection on the Browser screen, the selected Recent / Favorites row on
+ * Home (the row the panel is showing), nothing on any other screen — the
+ * panel shows no item there (Task 14 Q2). */
+function inspectorSelectedPath() {
+  const screen = typeof activeTab === 'function' && activeTab() ? activeTab().screen : 'browser';
+  if (screen === 'home') {
+    const row = document.querySelector('#screen-home .fp-row--selected[data-path]');
+    return row ? row.dataset.path : null;
+  }
+  if (screen !== 'browser') return null;
+  const sel = (typeof browserState !== 'undefined' && browserState.selection) || null;
+  return sel && sel.size === 1 ? [...sel][0] : null;
+}
+
+const INSPECTOR_ACTION_TITLES = {
+  'inspector-open': 'Open the selected item',
+  'open-file-with': 'Choose the app to open the selected file with',
+  'inspector-reveal': 'Show the selected item in Windows Explorer',
+};
+
+/** Enables the action row for exactly one selected item (Open with… for a
+ * file only) and disables it otherwise. */
+function syncInspectorActions() {
+  const path = inspectorSelectedPath();
+  const entry = path && typeof entryForPath === 'function' ? entryForPath(path) : null;
+  document.querySelectorAll('#inspector .inspector__actions [data-action]').forEach(btn => {
+    const action = btn.dataset.action;
+    if (!(action in INSPECTOR_ACTION_TITLES)) return;
+    let why = path ? '' : 'Select one item first';
+    if (!why && action === 'open-file-with' && entry && entry.is_dir) why = 'Open with… is for files';
+    if (why) btn.setAttribute('aria-disabled', 'true');
+    else btn.removeAttribute('aria-disabled');
+    btn.title = why ? `${INSPECTOR_ACTION_TITLES[action]} — ${why}` : INSPECTOR_ACTION_TITLES[action];
+  });
+}
+
 function inspectorOpenSelected() {
-  const path = browserState.selection.size ? [...browserState.selection][0] : null;
+  const path = inspectorSelectedPath();
   if (!path) return;
   const openPath = window.electronAPI?.openPath;
   if (openPath) {
@@ -615,9 +902,21 @@ function inspectorOpenSelected() {
 }
 
 function inspectorRevealSelected() {
-  const path = browserState.selection.size ? [...browserState.selection][0] : null;
+  const path = inspectorSelectedPath();
   if (!path) return;
   window.electronAPI?.showItemInFolder?.(path);
+}
+
+/** Open with… — the native Windows "Open with" dialog for the selected file
+ * (pass 2 #185: the button used to be a dead stub). */
+function inspectorOpenWithSelected() {
+  const path = inspectorSelectedPath();
+  if (!path) return;
+  const entry = typeof entryForPath === 'function' ? entryForPath(path) : null;
+  if (entry && entry.is_dir) return;
+  Promise.resolve(window.electronAPI?.openWithDialog?.(path)).then(ok => {
+    if (!ok) showToast('Failed to open the Open With dialog', 'error');
+  }).catch(err => showToast(`Failed to open the Open With dialog: ${formatApiError(err)}`, 'error'));
 }
 
 // ── Inspector tabs ────────────────────────────────────────────────────────────
@@ -632,16 +931,60 @@ function inspectorRevealSelected() {
 // calls this with {persist: false} on startup) plus Ctrl+I / the toolbar
 // button (via toggleInspector) are the only things that open or close the
 // panel. Selection changes (updateInspector above) never do.
-function setInspectorOpen(open, { persist = true } = {}) {
+function setInspectorOpen(open, { persist = true, animate = persist } = {}) {
   const inspector = document.getElementById('inspector');
   const toggleBtn = document.getElementById('btn-inspector-toggle');
   if (!inspector) return;
+  const wasOpen = inspector.classList.contains('inspector--open');
+  const flips = wasOpen !== open;
+  // Read before the class flips: where a half-played toggle has got to.
+  const from = flips && animate ? inspectorToggleFrom(inspector) : null;
   inspector.classList.toggle('inspector--open', open);
+  if (flips) {
+    if (animate) inspectorToggleMotion(inspector, open, from);
+    // An unanimated change (startup, a test) ends any half-played one.
+    else { fpCancelExit(inspector); fpCancelAnimation(inspector, 'toggle'); }
+  }
+  // The panel clamp (styles.css --sidebar-w-css) leaves room for it.
+  document.documentElement.style.setProperty('--inspector-open', open ? '1' : '0');
   toggleBtn?.classList.toggle('fp-icon-btn--active', open);
   // The panel is display:none while closed, so its tab underline could not be
   // measured until now (moveTabIndicator, app.js, skips a zero-width tab).
   if (open) moveTabIndicator(inspector.querySelector('.fp-inspector__tabs'));
   if (persist && typeof saveSetting === 'function') saveSetting('ui.inspector_open', open);
+}
+
+// ── Inspector toggle motion (addendum §5.2 Inspector) ───────────────────────
+// The file pane takes its new width ONCE, the moment the state flips — the
+// first frame of an open, at once on a close — and the panel slides by
+// transform only, so a big listing is never laid out again per frame (fix
+// round 1: easing the panel's margin re-laid 5,000 rows every frame).
+// Opening, the panel is in place in the layout and slides in from past the
+// window's right edge. Closing, it is out of the layout already; it stays
+// painted over the right edge of the file pane under .inspector--closing
+// (absolute, inert, never hit) while it slides out. A toggle mid-way starts
+// from wherever the panel has got to. The width itself is untouched (the
+// screen-px contract), and the resize handle follows .inspector--open.
+
+/** Where a half-played toggle has the panel (its translateX, as a CSS
+ * length), or null when it is at rest. Read before the state flips. */
+function inspectorToggleFrom(inspector) {
+  if (!fpMotionOn()) return null;
+  if (!fpExiting(inspector) && !inspector.getAnimations().length) return null;
+  return `${new DOMMatrixReadOnly(getComputedStyle(inspector).transform).m41}px`;
+}
+
+function inspectorToggleMotion(inspector, open, from) {
+  if (!fpMotionOn()) return;
+  if (open) {
+    fpCancelExit(inspector);
+    fpAnimate(inspector, [{ transform: `translateX(${from ?? '100%'})` }, { transform: 'none' }],
+      { duration: 'base', key: 'toggle' });
+  } else {
+    fpCancelAnimation(inspector, 'toggle');
+    fpPlayExit(inspector, [{ transform: `translateX(${from ?? '0px'})` }, { transform: 'translateX(100%)' }],
+      { cls: 'inspector--closing', duration: 'base' });
+  }
 }
 
 function toggleInspector() {
@@ -655,23 +998,27 @@ function toggleInspector() {
 // ONE bound, in one place: the drag clamp, the Settings slider's min/max and
 // .inspector's CSS max-width all used to disagree (the drag ran 40px past a
 // 480px CSS cap, and the slider was wired to nothing at all — pass 2 #82/#83).
+// The CSS side is --w-inspector-min / --w-inspector-max in styles.css.
+// Widths are SCREEN px (Stage 2D §5): the panel's CSS width is
+// --inspector-w-screen / --app-zoom, so it keeps its size on screen at any
+// app zoom while its contents grow; ui.inspector_w stores the screen px.
 const INSPECTOR_WIDTH_MIN = 280;
 const INSPECTOR_WIDTH_MAX = 520;
 
-/** Sets the panel's width and keeps the Settings slider + its px label with
- * it, whichever of the two moved. `persist` writes ui.inspector_width, which
- * applySettingsFromConfig (settings.js) re-applies on the next start. */
+/** Sets the panel's width (screen px) and keeps the Settings slider + its px
+ * label with it, whichever of the two moved. `persist` writes
+ * ui.inspector_w, which applySettingsFromConfig (settings.js) re-applies on
+ * the next start. */
 function applyInspectorWidth(px, { persist = false } = {}) {
   const n = Number(px);
   if (!Number.isFinite(n)) return null;
   const width = Math.round(Math.max(INSPECTOR_WIDTH_MIN, Math.min(INSPECTOR_WIDTH_MAX, n)));
-  const inspector = document.getElementById('inspector');
-  if (inspector) inspector.style.width = `${width}px`;
+  document.documentElement.style.setProperty('--inspector-w-screen', `${width}px`);
   const slider = document.getElementById('slider-inspector-width');
   if (slider) slider.value = String(width);
   const label = document.getElementById('val-inspector-width');
   if (label) label.textContent = `${width}px`;
-  if (persist && typeof saveSetting === 'function') saveSetting('ui.inspector_width', width);
+  if (persist && typeof saveSetting === 'function') saveSetting('ui.inspector_w', width);
   return width;
 }
 
@@ -683,19 +1030,28 @@ function initResizer() {
 
   let startX, startW;
   resizer.addEventListener('mousedown', e => {
+    // Pointer travel is CSS px; × the app zoom it is screen px, the unit the
+    // width is kept in (appZoom lives in app.js — read at drag time only).
+    const zoom = (typeof appZoom !== 'undefined' && appZoom.current) || 1;
     startX = e.clientX;
-    startW = inspector.getBoundingClientRect().width;
+    startW = inspector.getBoundingClientRect().width * zoom;
     document.body.style.cursor = 'col-resize';
     document.body.style.userSelect = 'none';
     let lastW = startW;
+    // The rendered width can be the narrow-window clamp (styles.css), not the
+    // saved one: only a pointer that actually moved sets (and saves) a width —
+    // a plain click on the handle must not turn the clamp into the setting.
+    let moved = false;
     const onMove = ev => {
-      lastW = applyInspectorWidth(startW + (startX - ev.clientX)) ?? lastW;
+      if (!moved && ev.clientX === startX) return;
+      moved = true;
+      lastW = applyInspectorWidth(startW + (startX - ev.clientX) * zoom) ?? lastW;
     };
     const onUp = () => {
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
       // One write per drag, at the end — not one per mousemove.
-      applyInspectorWidth(lastW, { persist: true });
+      if (moved) applyInspectorWidth(lastW, { persist: true });
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup', onUp);
     };

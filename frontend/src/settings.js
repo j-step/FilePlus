@@ -16,8 +16,12 @@ async function loadConfig() {
     // so an unbounded GET /config can sit connected-but-unanswered for the
     // whole of a slow startup and stall everything init awaits after it.
     window.__fpConfig = await API.get('/config', null, apiTimeout());
+    window.__fpConfigLoaded = true;
   } catch (err) {
     window.__fpConfig = {};
+    // An empty stand-in, not the user's settings: nothing may be decided
+    // (or written back) from it — see migrateViewSettings (Task 14 M5).
+    window.__fpConfigLoaded = false;
   }
 }
 
@@ -31,20 +35,47 @@ async function loadConfig() {
  * the change and is not rolled back here, since each caller owns its own
  * apply step and can re-apply if it wants to.
  */
+// One POST /config per key at a time (Stage 2D §12 sweep). Two requests for
+// the same key could reach the backend in either order — the browser runs
+// them on separate connections — so a quick double toggle could persist the
+// FIRST click. A save made while one is in flight waits, and only the newest
+// waiting value is sent when the flight lands.
+const _settingSaves = new Map();   // key -> { next: {value, hadPrev, prev} | null, done: Promise }
+
 async function saveSetting(key, value) {
   if (!window.__fpConfig) window.__fpConfig = {};
   const hadPrev = Object.prototype.hasOwnProperty.call(window.__fpConfig, key);
   const prev = window.__fpConfig[key];
   window.__fpConfig[key] = value;
-  try {
-    await API.post('/config', { key, value });
-  } catch (err) {
-    if (hadPrev) window.__fpConfig[key] = prev;
-    else delete window.__fpConfig[key];
-    if (typeof showToast === 'function') {
-      showToast(`Failed to save setting: ${formatApiError(err)}`, 'error');
-    }
+  const queued = _settingSaves.get(key);
+  if (queued) {
+    queued.next = { value, hadPrev, prev };
+    return queued.done;
   }
+  const slot = { next: null, done: null };
+  _settingSaves.set(key, slot);
+  slot.done = (async () => {
+    let cur = { value, hadPrev, prev };
+    while (cur) {
+      try {
+        await API.post('/config', { key, value: cur.value });
+      } catch (err) {
+        // A newer value already waiting is still sent (and is what the user
+        // last asked for); otherwise put back what was there before.
+        if (!slot.next && window.__fpConfig[key] === cur.value) {
+          if (cur.hadPrev) window.__fpConfig[key] = cur.prev;
+          else delete window.__fpConfig[key];
+        }
+        if (typeof showToast === 'function') {
+          showToast(`Failed to save setting: ${formatApiError(err)}`, 'error');
+        }
+      }
+      cur = slot.next;
+      slot.next = null;
+    }
+    _settingSaves.delete(key);
+  })();
+  return slot.done;
 }
 
 /** Removes a persisted setting (DELETE /config/{key}) — used by "Reset to
@@ -90,6 +121,17 @@ function applySettingsFromConfig() {
   }
   if (typeof cfg['ui.notifications'] === 'boolean') setNotificationsEnabled(cfg['ui.notifications']);
 
+  // Animations (Stage 2D addendum §5.1). Default on. The config value is the
+  // source of truth — but only a real one (a backend that could not be read
+  // leaves the boot choice, the localStorage mirror, alone), and a launch
+  // override (the test harness's --fp-motion) wins over both.
+  // {persist: false}: re-applying the value just read back never POSTs.
+  if (window.__fpConfigLoaded && !fpMotionOverride()) {
+    fpSetMotion(cfg['ui.animations'] !== false, { persist: false });
+  }
+  const animToggle = document.getElementById('settings-animations');
+  if (animToggle) animToggle.checked = fpMotionOn();
+
   // Default true — the inspector starts open unless explicitly turned off.
   // No localStorage fast-path (unlike theme/density/accent): config, or this
   // documented default, is its only source (same pattern as show_extensions/
@@ -98,14 +140,16 @@ function applySettingsFromConfig() {
   const inspectorOpen = cfg['ui.inspector_open'] !== false;
   if (typeof setInspectorOpen === 'function') setInspectorOpen(inspectorOpen, { persist: false });
 
-  // Panel width: whatever the resizer or the Personalization slider last
-  // saved (both go through applyInspectorWidth, which clamps to the one
-  // shared bound and keeps the slider + its px label in step — pass 2 #83).
+  // Panel widths (screen px — Stage 2D §5): whatever the resizer or the
+  // Personalization slider last saved (both go through applyInspectorWidth,
+  // which clamps to the one shared bound and keeps the slider + its px label
+  // in step — pass 2 #83). ui.inspector_width is the pre-2D key, read only
+  // when the new one is unset (it was CSS px, the same as screen px at 100%).
   // Unset means the stylesheet's own default, which the slider's static
-  // value/label already state.
-  if (typeof applyInspectorWidth === 'function' && cfg['ui.inspector_width'] != null) {
-    applyInspectorWidth(cfg['ui.inspector_width']);
-  }
+  // value/label already state. The sidebar's expanded width rides along.
+  const inspectorW = cfg['ui.inspector_w'] != null ? cfg['ui.inspector_w'] : cfg['ui.inspector_width'];
+  if (typeof applyInspectorWidth === 'function' && inspectorW != null) applyInspectorWidth(inspectorW);
+  if (typeof applySidebarWidthFromConfig === 'function') applySidebarWidthFromConfig();
 
   // Default true (matches the Personalization checkbox's static markup).
   const showExtensions = cfg['ui.show_extensions'] !== false;
@@ -150,22 +194,21 @@ function applySettingsFromConfig() {
   const backspaceToggle = document.getElementById('settings-backspace-deletes');
   if (backspaceToggle) backspaceToggle.checked = backspaceDeletes;
 
-  // Sort / list-scale / dynamic media view (Task 10). ui.sort replaces the
-  // old sessionStorage['fp-sort'] entirely; ui.list_scale is re-applied to
-  // --list-scale with {persist: false} so reading it straight back never
-  // fires a redundant POST /config on startup (same pattern as
-  // ui.inspector_open/ui.sidebar_thispc_open above). ui.dynamic_media_view
-  // only syncs its Settings checkbox here — loadDirectory() (browser.js)
-  // reads the config key directly on every navigation.
+  // Sort / views / dynamic media view (Task 10, Stage 2D §3). ui.sort
+  // replaces the old sessionStorage['fp-sort'] entirely. Views are decided
+  // per folder on every navigation (browser.js decideView reads
+  // ui.folder_views / ui.dynamic_media_view directly); the old global
+  // ui.view_mode + ui.list_scale are deleted once, here (they have no
+  // per-folder meaning: an unremembered folder always opens in Details).
+  // ui.dynamic_media_view only syncs its Settings checkbox here.
   const savedSort = cfg['ui.sort'];
   if (savedSort && typeof savedSort === 'object'
-      && ['name', 'size', 'modified', 'type'].includes(savedSort.key)
+      && ['name', 'size', 'modified', 'created', 'accessed', 'type'].includes(savedSort.key)
       && (savedSort.dir === 'asc' || savedSort.dir === 'desc')) {
     browserState.sort = { key: savedSort.key, dir: savedSort.dir };
     if (typeof updateSortHeaderUI === 'function') updateSortHeaderUI();
   }
-  const savedScale = LIST_SCALE_STEPS.includes(cfg['ui.list_scale']) ? cfg['ui.list_scale'] : 1;
-  setListScale(savedScale, { persist: false });
+  if (typeof migrateViewSettings === 'function') migrateViewSettings(cfg);
   const dmToggle = document.querySelector('[data-action="settings-toggle"][data-setting="dynamic-media-view"]');
   if (dmToggle) dmToggle.checked = cfg['ui.dynamic_media_view'] !== false;
 }
@@ -200,6 +243,16 @@ function applyPropertiesMode(mode) {
  * icon). Palette results need nothing — they are rebuilt per query. */
 function refreshIconSurfaces() {
   if (browserState.entries && browserState.entries.length) renderDirectory();
+  // Every ITEM icon site follows the source (Stage 2D §4.6): tabs, the
+  // sidebar's Quick Access / pinned folders / drives, the breadcrumb's
+  // drive crumb.
+  if (typeof tabs !== 'undefined') tabs.list.forEach(updateTabElementAppearance);
+  const drives = document.getElementById('sb-drives');
+  if (drives && Array.isArray(window.__fpDrives)) drives.innerHTML = window.__fpDrives.map(renderDriveItem).join('');
+  loadPins();
+  loadQuickAccess();
+  if (browserState.path) updateBreadcrumb(browserState.path);
+  if (typeof fpPrewarmIconSizes === 'function') fpPrewarmIconSizes();
   loadRecent();
   loadFavorites();
   // Only for a selection that is still in the current listing — re-fetching
@@ -212,15 +265,117 @@ function refreshIconSurfaces() {
   if (typeof propertiesRefreshIcon === 'function') propertiesRefreshIcon();
 }
 
+/** The write mode in plain words, from a /health answer (Task 14 Q23: the
+ * main line is for the owner; the settings behind it go in the detail line). */
+function writesStatusText(health) {
+  return health.write_unlocked
+    ? 'Unlocked: FilePlus can move, rename and delete files on your drives, always after you approve.'
+    : 'Practice mode: FilePlus only moves, renames or deletes files inside its own sandbox folder. Your other files are only read.';
+}
+
+/** Where the write mode is set — the secondary line under the main one. */
+function writesDetailText(health) {
+  return health.write_unlocked
+    ? 'Set in FilePlus\u2019s .env file (WRITE_UNLOCKED=true, FILEPLUS_ENV=prod).'
+    : 'To work on your real drives, the .env file in the FilePlus folder needs FILEPLUS_ENV=prod and WRITE_UNLOCKED=true.';
+}
+
 /** Updates the Data pane's read-only "Writes" line from the last /health
  * result (checkBackend(), in app.js, stores it on window.__fpHealth). No-op
  * until /health has answered at least once. */
 function updateWritesStatusLine() {
   const el = document.getElementById('settings-writes-status');
   if (!el || !window.__fpHealth) return;
-  el.textContent = window.__fpHealth.write_unlocked
-    ? 'Unlocked — real-drive writes enabled'
-    : 'Sandbox only — set FILEPLUS_ENV=prod and WRITE_UNLOCKED=true in .env to enable real-drive writes';
+  el.textContent = writesStatusText(window.__fpHealth);
+  const detail = document.getElementById('settings-writes-detail');
+  if (detail) detail.textContent = writesDetailText(window.__fpHealth);
+}
+
+// ── Settings › About and Data actions (Stage 2D Task 12a) ──────────────────
+// Real values only: versions from the running binaries (preload appInfo),
+// the backend's own /health answer, and the log folder the main process
+// writes to. Nothing here is typed into the markup by hand.
+
+/** Fills the About pane. Called whenever it is shown, and by checkBackend()
+ * after each /health answer so the backend lines follow a reconnect. */
+function renderAboutPane() {
+  const set = (id, text) => { const el = document.getElementById(id); if (el) el.textContent = text; };
+  const info = (window.electronAPI?.appInfo && window.electronAPI.appInfo()) || {};
+  set('about-app-version', info.version || '—');
+  set('about-electron-version', info.electron || '—');
+  set('about-chrome-version', info.chrome || '—');
+  set('about-node-version', info.node || '—');
+  set('about-log-dir', info.logDir || '—');
+  const h = window.__fpHealth;
+  set('about-backend-version', h ? `${h.version} · ${h.env}` : 'Not connected');
+  set('about-writes', h ? (h.write_unlocked ? 'Unlocked — real drives' : 'Sandbox only') : '—');
+}
+
+/** Shows `text` in a Settings row's own status line (polite live region).
+ * In place rather than a toast: toasts are off by default, and a button
+ * that answers nothing reads as a dead one. */
+function setSettingsRowStatus(id, text) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = text;
+}
+
+/** "Open logs folder" (About and Data): Explorer on the folder holding
+ * main.log, renderer.log and backend.log. */
+async function openLogsFolder() {
+  let err = 'not available';
+  try {
+    if (window.electronAPI?.openLogDir) err = await window.electronAPI.openLogDir();
+  } catch (e) {
+    err = (e && e.message) || String(e);
+  }
+  if (err) showToast(`Couldn’t open the logs folder: ${err}`, 'error');
+}
+
+/** "Clear icon and thumbnail cache": every layer that keeps a rendered icon
+ * or picture preview — this renderer, the main process, the backend's shell
+ * icon cache — drops it, so the next view asks Windows again (an app whose
+ * icon changed, a stale preview). Files and the index are untouched. The
+ * per-layer counts are kept on window.__fpLastCacheClear for diagnostics. */
+async function clearIconCachesEverywhere() {
+  // The layers the renderer refills FROM go first, each on its own: emptying
+  // the renderer first re-requested every visible icon at once, and those
+  // requests were answered from the main-process and backend caches that had
+  // not been cleared yet — the stale images came straight back (Stage 2D §12
+  // sweep). One layer failing no longer skips the next.
+  let main = { icons: 0, thumbnails: 0 };
+  let backend = 0;
+  const failed = [];
+  try {
+    if (window.electronAPI?.clearIconCaches) main = (await window.electronAPI.clearIconCaches()) || main;
+  } catch (_) { failed.push('the app’s'); }
+  try {
+    const res = await API.del('/shell/icons/cache');
+    backend = Number(res && res.cleared) || 0;
+  } catch (_) { failed.push('the backend’s'); }
+  const renderer = typeof fpClearIconCaches === 'function' ? fpClearIconCaches() : 0;
+  window.__fpLastCacheClear = { renderer, main, backend, failed };
+  const total = renderer + (main.icons || 0) + (main.thumbnails || 0) + backend;
+  const cleared = total ? `Cleared ${total.toLocaleString()} cached image${total === 1 ? '' : 's'}` : 'Already empty';
+  // Said plainly on the row itself when a layer could not be reached.
+  setSettingsRowStatus('settings-cache-status', failed.length
+    ? `${total ? cleared : 'Cleared what could be'} — couldn’t clear ${failed.join(' or ')} cache`
+    : cleared);
+  if (failed.length) showToast(`Couldn’t clear ${failed.join(' or ')} icon cache`, 'error');
+}
+
+/** "Clear Recent": empties Home › Recent (DELETE /recent). The files are
+ * not touched, and Favorites are a separate list. */
+async function clearRecentList() {
+  try {
+    const res = await API.del('/recent');
+    const n = Number(res && res.removed) || 0;
+    setSettingsRowStatus('settings-recent-status',
+      n ? `Cleared ${n.toLocaleString()} item${n === 1 ? '' : 's'}` : 'Already empty');
+  } catch (err) {
+    showToast(`Couldn’t clear Recent: ${formatApiError(err)}`, 'error');
+    return;
+  }
+  if (typeof loadRecent === 'function') loadRecent();
 }
 
 // ── Settings › Scan & Index (Task 14, design §8.7) ──────────────────────
@@ -304,7 +459,7 @@ async function loadIndexStatus() {
       ${roots.map(r => `<div class="settings-index__row" role="listitem">
         <span class="settings-index__main">
           <span class="settings-index__root fp-mono" title="${escapeHtml(r.root)}">${escapeHtml(r.root)}</span>
-          <span class="settings-index__meta">${Number(r.file_count || 0).toLocaleString()} files · indexed ${escapeHtml(formatIndexRunTime(r.last_run))}</span>
+          <span class="settings-index__meta">${countLabel(r.file_count, 'file')} · indexed ${escapeHtml(formatIndexRunTime(r.last_run))}</span>
         </span>
         <span class="settings-index__actions-cell">
           <button class="fp-btn fp-btn--ghost fp-btn--sm" data-action="settings-index-reindex"
@@ -358,7 +513,7 @@ function removeIndexRoot(root) {
           // the stale-sweep's count, which was 0 whenever the files were
           // still on disk — i.e. always).
           const n = res && Number(res.removed);
-          const suffix = n ? ` (${n.toLocaleString()} files)` : '';
+          const suffix = n ? ` (${countLabel(n, 'file')})` : '';
           showToast(`Removed ${pathBaseName(root) || root} from the index${suffix}`, 'default');
           loadIndexStatus();
         })
@@ -377,10 +532,103 @@ function switchSettingsPane(pane) {
   document.querySelectorAll('.settings-nav__item').forEach(btn => {
     btn.classList.toggle('settings-nav__item--active', btn.dataset.pane === pane);
   });
+  const select = document.getElementById('settings-nav-select');
+  if (select) select.value = pane;
   document.querySelectorAll('.settings-pane').forEach(p => {
-    p.style.display = p.dataset.pane === pane ? '' : 'none';
+    const show = p.dataset.pane === pane;
+    const appearing = show && p.style.display === 'none';
+    p.style.display = show ? '' : 'none';
+    // The pane that takes over fades up (addendum §5.2 Settings) — from
+    // translucent, so the content area is never blank for a frame.
+    if (appearing) fpAnimate(p, [{ opacity: 0.3 }, { opacity: 1 }], { duration: 'fast', key: 'pane' });
   });
+  // Panes that show live values refresh them on every visit, whichever way
+  // the pane was reached (a nav click or restoreSettingsPane).
+  if (pane === 'data') {
+    updateWritesStatusLine();
+    // A "Cleared …" answer belongs to the click that made it, not to a
+    // later visit.
+    setSettingsRowStatus('settings-recent-status', '');
+    setSettingsRowStatus('settings-cache-status', '');
+  }
+  if (pane === 'about') renderAboutPane();
   try { sessionStorage.setItem('fp-settings-pane', pane); } catch (_) { /* storage disabled */ }
+}
+
+/** The narrow Settings layout's section picker: one <select> in place of the
+ * nav list, which in a narrow pane (800px window, sidebar and inspector open,
+ * 150%) wrapped into a strip of rows that filled the screen (Stage 2D §12
+ * sweep). Built from the nav buttons, so the two lists never disagree;
+ * styles.css shows one or the other (the fp-settings container query). */
+function initSettingsNavSelect() {
+  const nav = document.querySelector('#screen-settings .settings-nav');
+  if (!nav || document.getElementById('settings-nav-select')) return;
+  const select = document.createElement('select');
+  select.id = 'settings-nav-select';
+  select.className = 'fp-input settings-nav__select';
+  select.setAttribute('aria-label', 'Settings section');
+  for (const btn of nav.querySelectorAll('.settings-nav__item[data-pane]')) {
+    const opt = document.createElement('option');
+    opt.value = btn.dataset.pane;
+    opt.textContent = btn.textContent.trim();
+    select.appendChild(opt);
+  }
+  select.value = nav.querySelector('.settings-nav__item--active')?.dataset.pane || select.value;
+  select.addEventListener('change', () => switchSettingsPane(select.value));
+  nav.appendChild(select);
+}
+
+// ── Segmented controls: the highlight slides (addendum §5.2 Settings) ────────
+// Every way an option becomes the active one (a click, a sync from config, a
+// theme change elsewhere) only flips classes; one observer per control sees
+// the flip and slides a transient highlight from the old option to the new
+// one, holding the new option's own fill off until it arrives. Nothing
+// waits: the classes, the setting and focus are final before it plays.
+const SEGMENTED_ACTIVE = ['active', 'fp-segmented__opt--active', 'fp-segmented__option--active'];
+const segmentedIsActive = (cls) => SEGMENTED_ACTIVE.some(c => String(cls || '').split(/\s+/).includes(c));
+
+function segmentedGlide(container, fromEl, toEl) {
+  if (!fpMotionOn() || !fromEl || !toEl || !fromEl.isConnected) return;
+  if (!toEl.offsetWidth || !fromEl.offsetWidth) return;   // not on screen
+  let glide = container.querySelector(':scope > .fp-segmented__glide');
+  if (!glide) {
+    glide = document.createElement('span');
+    glide.className = 'fp-segmented__glide';
+    glide.setAttribute('aria-hidden', 'true');
+    container.prepend(glide);
+  }
+  glide.style.top = `${toEl.offsetTop}px`;
+  glide.style.height = `${toEl.offsetHeight}px`;
+  const anim = fpAnimate(glide, [
+    { left: `${fromEl.offsetLeft}px`, width: `${fromEl.offsetWidth}px` },
+    { left: `${toEl.offsetLeft}px`, width: `${toEl.offsetWidth}px` },
+  ], { duration: 'base', key: 'glide' });
+  // Both options' own fills stay off while the highlight travels (the old
+  // one would otherwise fade out in place behind it).
+  for (const el of [fromEl, toEl]) {
+    fpAnimate(el, [{ backgroundColor: 'transparent' }, { backgroundColor: 'transparent' }], { duration: 'base', key: 'glide' });
+  }
+  glide._fpGlide = anim;
+  fpAfter(anim, () => { if (glide._fpGlide === anim) glide.remove(); });
+}
+
+function initSegmentedGlide() {
+  if (typeof MutationObserver !== 'function') return;
+  for (const container of document.querySelectorAll('.fp-segmented')) {
+    new MutationObserver((records) => {
+      let from = null;
+      let to = null;
+      for (const r of records) {
+        const el = r.target;
+        if (el.parentElement !== container) continue;
+        const was = segmentedIsActive(r.oldValue);
+        const now = segmentedIsActive(el.className);
+        if (was && !now) from = el;
+        else if (!was && now) to = el;
+      }
+      if (from && to) segmentedGlide(container, from, to);
+    }).observe(container, { subtree: true, attributes: true, attributeFilter: ['class'], attributeOldValue: true });
+  }
 }
 
 /** Reopens the Settings screen on the pane last used in this window --
@@ -431,12 +679,24 @@ function applyAccentHex(rawHex) {
   return true;
 }
 
+/** The accent field's hint names the accent actually in use: the theme's own
+ * default (dark and light differ) unless a custom one is set — the field used
+ * to say the dark default's #4CC2FF beside the light theme's swatch
+ * (Task 14 Q17). Called on every theme change (applyTheme, app.js). */
+function syncAccentField() {
+  const input = document.getElementById('settings-accent-hex');
+  if (!input) return;
+  const current = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim();
+  if (current && /^#[0-9a-f]{3,8}$/i.test(current)) input.placeholder = current.toUpperCase();
+}
+
 function resetAccentToDefault() {
   document.documentElement.style.removeProperty('--accent-custom');
   const swatch = document.getElementById('settings-accent-swatch');
   if (swatch) swatch.style.background = `var(--accent)`;
   const input = document.getElementById('settings-accent-hex');
   if (input) input.value = '';
+  syncAccentField();
   const errorEl = document.getElementById('settings-accent-error');
   if (errorEl) { errorEl.hidden = true; errorEl.textContent = ''; }
   localStorage.removeItem('fp-accent');

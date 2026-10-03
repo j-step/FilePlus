@@ -112,3 +112,29 @@ def test_messy_classes_for_the_dev_harness(tmp_path):
 def test_fixture_tree_fixture_is_fresh_and_inside_the_sandbox(fixture_tree, sandbox):
     assert fixture_tree.parent == sandbox
     assert len(_listing(fixture_tree)) == EXPECTED_FILES
+
+
+def test_default_out_comes_from_config(monkeypatch, tmp_path):
+    """Pass-2 #101: the default --out is <config sandbox>/_gen, so a .env
+    FILEPLUS_ROOT override moves the dev fixture tree with the backend."""
+    from backend import config
+    from scripts.gen_sandbox import default_out
+    monkeypatch.setattr(config, "FILEPLUS_SANDBOX_PATH", tmp_path / "elsewhere")
+    assert default_out() == tmp_path / "elsewhere" / "_gen"
+
+
+def test_rebuild_clears_a_read_only_leftover(tmp_path):
+    """Pass-2 #100: a test that died with a fixture file read-only must not
+    wedge the next rebuild."""
+    import os
+    import stat
+    root = tmp_path / "gen"
+    build(root)
+    victim = root / "Documents" / "doc-00.txt"
+    os.chmod(victim, stat.S_IREAD)
+    try:
+        assert build(root)["files"] == EXPECTED_FILES
+        assert os.access(root / "Documents" / "doc-00.txt", os.W_OK)
+    finally:
+        if victim.exists():
+            os.chmod(victim, stat.S_IWRITE | stat.S_IREAD)

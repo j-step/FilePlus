@@ -81,6 +81,10 @@ if os.name == "nt":
         ctypes.c_wchar_p, ctypes.POINTER(ctypes.c_uint32),
     ]
     _shlwapi.AssocQueryStringW.restype = ctypes.c_long
+    _shlwapi.SHLoadIndirectString.argtypes = [
+        ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint32, ctypes.c_void_p,
+    ]
+    _shlwapi.SHLoadIndirectString.restype = ctypes.c_long
 else:
     _kernel32 = None
     _shlwapi = None
@@ -286,6 +290,12 @@ def size_on_disk(path: Path, budget_s: float = 3.0, clock=time.monotonic) -> int
 _ASSOCSTR_EXECUTABLE = 2
 _ASSOCSTR_FRIENDLYDOCNAME = 3
 _ASSOCSTR_FRIENDLYAPPNAME = 4
+# Windows 8+: the associated app's icon as an indirect string. For a
+# packaged (Store) app -- Photos, Media Player -- it is
+# "@{<package>?ms-resource://.../Assets/...AppList.png}", which
+# SHLoadIndirectString resolves to that PNG on disk; such an app has no
+# EXECUTABLE to take an icon from (Task 14 Q10).
+_ASSOCSTR_APPICONREFERENCE = 23
 
 
 def _assoc_query_string(assocstr: int, dotted_ext: str) -> str | None:
@@ -305,8 +315,25 @@ def _assoc_query_string(assocstr: int, dotted_ext: str) -> str | None:
     return buf.value or None
 
 
+def _app_icon_file(dotted_ext: str) -> str | None:
+    """The image file of a packaged app's icon for *dotted_ext*, or None (a
+    classic app's reference is "<exe>,<index>": its exe is the icon source)."""
+    ref = _assoc_query_string(_ASSOCSTR_APPICONREFERENCE, dotted_ext)
+    if not ref or not ref.startswith("@"):
+        return None
+    buf = ctypes.create_unicode_buffer(1024)
+    if _shlwapi.SHLoadIndirectString(ref, buf, 1024, None) != 0:  # S_OK
+        return None
+    p = buf.value
+    return p if p and os.path.isfile(p) else None
+
+
 def assoc(ext: str) -> dict:
-    """Return {"type_description", "opens_with", "opens_with_exe"} for *ext*.
+    """Return {"type_description", "opens_with", "opens_with_exe",
+    "opens_with_icon"} for *ext*.
+
+    ``opens_with_icon`` is the image file of the app's icon when the app is a
+    packaged one with no executable path (None otherwise).
 
     Windows: AssocQueryStringW for the friendly doc name (e.g. "Text
     Document"), the friendly app name (e.g. "Notepad") and the resolved
@@ -319,14 +346,17 @@ def assoc(ext: str) -> dict:
         try:
             type_description = _assoc_query_string(_ASSOCSTR_FRIENDLYDOCNAME, dotted)
             if type_description:
+                exe = _assoc_query_string(_ASSOCSTR_EXECUTABLE, dotted)
                 return {
                     "type_description": type_description,
                     "opens_with": _assoc_query_string(_ASSOCSTR_FRIENDLYAPPNAME, dotted),
-                    "opens_with_exe": _assoc_query_string(_ASSOCSTR_EXECUTABLE, dotted),
+                    "opens_with_exe": exe,
+                    "opens_with_icon": None if exe else _app_icon_file(dotted),
                 }
         except OSError:
             pass
-    return {"type_description": f"{ext.upper()} File", "opens_with": None, "opens_with_exe": None}
+    return {"type_description": f"{ext.upper()} File", "opens_with": None, "opens_with_exe": None,
+            "opens_with_icon": None}
 
 
 # ---------------------------------------------------------------------------
@@ -715,6 +745,9 @@ import io
 import threading
 
 SIIGBF_ICONONLY = 0x4
+_E_PENDING = 0x8000000A
+_E_PENDING_TRIES = 20         # x _E_PENDING_RETRY_S: well inside the batch route's 2.5 s
+_E_PENDING_RETRY_S = 0.025
 SIIGBF_SCALEUP = 0x100
 _IID_ISHELLITEMIMAGEFACTORY = "{BCC18B79-BA16-442F-80C4-8A59C30C463B}"
 ICON_PX_MIN, ICON_PX_MAX = 8, 512
@@ -837,6 +870,15 @@ _icon_cache_lock = threading.Lock()
 _ICON_CACHE_MAX = 2048
 
 
+def clear_icon_cache() -> int:
+    """Drops every cached shell image; returns how many there were. An icon
+    being rendered right now still lands afterwards -- it is a fresh answer."""
+    with _icon_cache_lock:
+        n = len(_icon_cache)
+        _icon_cache.clear()
+    return n
+
+
 def shell_icon_key(path: Path, is_dir: bool, px: int) -> tuple:
     """Cache identity for a shell image: every directory per path (desktop.ini
     custom icons, known-folder glyphs), PER_PATH_ICON_EXTS per path, any other
@@ -874,7 +916,17 @@ def shell_image(path: Path, px: int, icon_only: bool = True) -> bytes | None:
     hbm = ctypes.c_void_p()
     try:
         flags = SIIGBF_SCALEUP | (SIIGBF_ICONONLY if icon_only else 0)
-        if get_image(ppv, _SIZE(px, px), flags, ctypes.byref(hbm)) != 0 or not hbm:
+        # E_PENDING is "not yet": the shell is still filling its icon cache
+        # on another thread (measured: the 2nd and 3rd of three concurrent
+        # first calls on a fresh STA pool). Retried briefly, never reported
+        # as "no image" -- the renderer would cache that null for the session.
+        for attempt in range(_E_PENDING_TRIES):
+            hr = get_image(ppv, _SIZE(px, px), flags, ctypes.byref(hbm)) & 0xFFFFFFFF
+            if hr != _E_PENDING:
+                break
+            if attempt + 1 < _E_PENDING_TRIES:
+                time.sleep(_E_PENDING_RETRY_S)
+        if hr != 0 or not hbm:
             return None
         return _hbitmap_to_png(hbm)
     except Exception:

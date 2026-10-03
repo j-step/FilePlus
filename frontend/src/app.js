@@ -5,19 +5,278 @@ const btnSidebarCollapse = document.getElementById('btn-sidebar-collapse');
 const paletteScrim       = document.getElementById('palette-scrim');
 const paletteInput       = document.getElementById('palette-input');
 
+// ── Motion: the one switch (Stage 2D addendum §5.1) ──────────────────────────
+// Settings › Personalization › "Animations" (ui.animations, default on) is the
+// only thing that turns motion on or off — Windows' "Animation effects"
+// (the reduced-motion media query) gates nothing (decision A-2). The switch
+// is html[data-motion="on"|"off"]: styles.css gives everything under anything
+// but "on" no animation and no transition, and every JS-driven animation asks
+// fpMotionOn() (fpAnimate, the zoom ease, the spring-load pulse wait).
+//
+// Decided here, at app.js's first line, before anything can animate: a launch
+// override (--fp-motion=on|off, the test harness) wins; otherwise the
+// localStorage mirror of the last applied setting, so a user who turned it
+// off sees no motion at boot either; the config value (the source of truth)
+// is applied when it loads (applySettingsFromConfig). Until this runs the
+// attribute is unset, which the CSS gate already treats as off.
+const FP_MOTION_LS_KEY = 'fp-animations';
+const FP_MOTION_DURATIONS = ['instant', 'fast', 'base', 'slow'];
+const FP_MOTION_EASINGS = ['out', 'in', 'standard'];
+const _fpMotionOverride = (() => {
+  const o = window.electronAPI?.motionOverride?.();
+  return o === 'on' || o === 'off' ? o : null;
+})();
+(function fpBootMotion() {
+  let on = true;
+  if (_fpMotionOverride) on = _fpMotionOverride === 'on';
+  else {
+    try { on = localStorage.getItem(FP_MOTION_LS_KEY) !== 'off'; } catch (_) { /* default on */ }
+  }
+  document.documentElement.dataset.motion = on ? 'on' : 'off';
+  // Launch is not a change (Task 8 R2): the restored sidebar, theme, zoom,
+  // panel widths and inspector land in their saved state, never ease into
+  // it. html.fp-booting sits in styles.css's motion-off block and makes
+  // fpAnimate() instant until fpEndBoot() lifts it, two frames after the
+  // saved settings were applied.
+  document.documentElement.classList.add('fp-booting');
+})();
+
+/** True until the saved state has been restored at launch (fpEndBoot). */
+function fpBooting() {
+  return document.documentElement.classList.contains('fp-booting');
+}
+
+let _fpBootEnding = false;
+/** Lifts html.fp-booting two animation frames from now: the restored state
+ * has been styled and painted by then, so nothing it set can transition.
+ * Idempotent. */
+function fpEndBoot() {
+  if (_fpBootEnding) return;
+  _fpBootEnding = true;
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    document.documentElement.classList.remove('fp-booting');
+  }));
+}
+
+/** True while animations are on (html[data-motion="on"]). */
+function fpMotionOn() {
+  return document.documentElement.dataset.motion === 'on';
+}
+
+/** The launch override ('on' | 'off'), or null when the setting decides. */
+function fpMotionOverride() {
+  return _fpMotionOverride;
+}
+
+let _fpMotionTokens = null;
+/** The --motion-* durations (ms) and --ease-* curves, read once from
+ * styles.css's :root — the one source for CSS and JS motion alike. */
+function fpMotionTokens() {
+  if (_fpMotionTokens) return _fpMotionTokens;
+  const cs = getComputedStyle(document.documentElement);
+  const ms = (name, fallback) => {
+    const raw = cs.getPropertyValue(name).trim();
+    const n = parseFloat(raw);
+    if (!Number.isFinite(n)) return fallback;
+    return /ms$/.test(raw) ? n : (/s$/.test(raw) ? n * 1000 : n);
+  };
+  const fallbackMs = { instant: 60, fast: 100, base: 140, slow: 200 };
+  const durations = {};
+  for (const n of FP_MOTION_DURATIONS) durations[n] = ms(`--motion-${n}`, fallbackMs[n]);
+  const easings = {};
+  for (const n of FP_MOTION_EASINGS) easings[n] = cs.getPropertyValue(`--ease-${n}`).trim() || 'ease-out';
+  _fpMotionTokens = { durations, easings, ms };
+  return _fpMotionTokens;
+}
+
+/** A --motion-* token in ms: fpMotionMs('fast') → 100; any other custom
+ * property name ('--motion-spring') is read as given. */
+function fpMotionMs(name) {
+  const t = fpMotionTokens();
+  if (t.durations[name] != null) return t.durations[name];
+  return t.ms(name, t.durations.base);
+}
+
+// Rule 4 (§5.1): key repeat is continuous input. A held Ctrl+W, Ctrl+T,
+// Ctrl+B, Ctrl+I, arrow or Delete never starts an animation per step: while
+// a repeat is active html carries .fp-key-repeat — set by the first repeated
+// keydown, before any other keydown listener runs (window, capture), and
+// cleared by the key coming up, a fresh (non-repeat) keydown, or the window
+// losing focus. Under it every fpAnimate() is instant (returns null, an exit
+// finishes at once) and styles.css's motion gate zeroes every CSS
+// transition and animation, the sidebar's width included.
+function fpKeyRepeating() {
+  return document.documentElement.classList.contains('fp-key-repeat');
+}
+// A modifier alone (Ctrl, Shift, Alt, Meta) auto-repeats while it is held
+// for a Ctrl+click or Shift+click — that is not a held step and changes
+// nothing (fix round 2).
+const FP_MODIFIER_KEYS = new Set(['Control', 'Shift', 'Alt', 'Meta', 'AltGraph', 'CapsLock']);
+window.addEventListener('keydown', e => {
+  if (FP_MODIFIER_KEYS.has(e.key)) return;
+  document.documentElement.classList.toggle('fp-key-repeat', !!e.repeat);
+}, true);
+const fpEndKeyRepeat = () => document.documentElement.classList.remove('fp-key-repeat');
+window.addEventListener('keyup', fpEndKeyRepeat, true);
+// The WINDOW losing focus ends a hold, not an element's blur: a held arrow
+// moves DOM focus row to row at every step, and a capture-phase listener on
+// window hears each of those element blurs too (Task 8 R1). Non-capture,
+// and only when the event's target is the window itself.
+window.addEventListener('blur', e => { if (e.target === window) fpEndKeyRepeat(); });
+
+// Animations fpAnimate() started that may still be running: cancelled the
+// moment the switch goes off. Per element, one animation per key.
+const _fpLiveAnimations = new Set();
+const _fpAnimationsByEl = new WeakMap();   // el -> Map(key -> Animation)
+
+/**
+ * The one way JS animates (scripts/check_motion.js rejects any other call
+ * to Element.animate). Decoration only (§5.1 rule 1): the caller has already
+ * put the state, the DOM and focus where they belong; this only plays a
+ * transition on top, and nothing may wait for it.
+ *
+ * A new call on the same element and key cancels the one before it (nothing
+ * queues). Returns the Animation, or null when animations are off (any
+ * previous one for that key is still cancelled).
+ *
+ *   duration: 'instant' | 'fast' | 'base' | 'slow' (default 'fast') or ms,
+ *             clamped to --motion-slow (the ceiling); an unknown name or a
+ *             NaN / negative / zero ms gets the default ('fast')
+ *   easing:   'out' (default) | 'in' | 'standard'
+ *   key:      names the animation slot on `el` (default 'default')
+ *   delay:    ms before it starts (a stagger), clamped to 0..--motion-slow
+ *   fill:     'none' (default) or 'backwards' only — state lives in the DOM,
+ *             never in an animation's fill, so a finished animation leaves
+ *             nothing behind (anything else is treated as 'none')
+ *   pseudo:   '::before' | '::after' plays it on that pseudo-element of
+ *             `el` (a row's copy badge) instead of on `el` itself
+ */
+function fpAnimate(el, keyframes, { duration = 'fast', easing = 'out', key = 'default', delay = 0, fill = 'none', pseudo = null } = {}) {
+  if (!el) return null;
+  let slots = _fpAnimationsByEl.get(el);
+  const prev = slots && slots.get(key);
+  if (prev) { slots.delete(key); _fpLiveAnimations.delete(prev); prev.cancel(); }
+  if (!fpMotionOn() || fpKeyRepeating() || fpBooting() || typeof el.animate !== 'function') return null;
+  const t = fpMotionTokens();
+  const ceiling = t.durations.slow;
+  let ms = t.durations.fast;
+  if (typeof duration === 'number') {
+    if (Number.isFinite(duration) && duration > 0) ms = Math.min(duration, ceiling);
+  } else if (t.durations[duration] != null) {
+    ms = t.durations[duration];
+  }
+  const wait = Number.isFinite(delay) ? Math.max(0, Math.min(delay, ceiling)) : 0;
+  const anim = el.animate(keyframes, {
+    duration: ms,
+    easing: t.easings[easing] || t.easings.out,
+    delay: wait,
+    fill: fill === 'backwards' ? 'backwards' : 'none',
+    ...(pseudo === '::before' || pseudo === '::after' ? { pseudoElement: pseudo } : {}),
+  });
+  if (!slots) { slots = new Map(); _fpAnimationsByEl.set(el, slots); }
+  slots.set(key, anim);
+  _fpLiveAnimations.add(anim);
+  const done = () => {
+    _fpLiveAnimations.delete(anim);
+    if (slots.get(key) === anim) slots.delete(key);
+  };
+  anim.addEventListener('finish', done);
+  anim.addEventListener('cancel', done);
+  return anim;
+}
+
+/**
+ * Turns animations on or off at once (no restart): sets html[data-motion],
+ * cancels whatever fpAnimate() still has running when it goes off, mirrors
+ * the choice to localStorage (the boot read above), syncs the Settings
+ * switch, fires `fpMotionChanged` on document ({detail: {on}}) when it
+ * changed, and, unless {persist: false}, saves ui.animations.
+ */
+function fpSetMotion(on, { persist = true } = {}) {
+  on = !!on;
+  const was = fpMotionOn();
+  document.documentElement.dataset.motion = on ? 'on' : 'off';
+  if (!on) {
+    for (const a of [..._fpLiveAnimations]) a.cancel();
+    _fpLiveAnimations.clear();
+  }
+  try { localStorage.setItem(FP_MOTION_LS_KEY, on ? 'on' : 'off'); } catch (_) { /* boot falls back to on */ }
+  const toggle = document.getElementById('settings-animations');
+  if (toggle) toggle.checked = on;
+  if (typeof zoomEaseMode === 'function') window.__fpZoomEase = zoomEaseMode();
+  if (was !== on) document.dispatchEvent(new CustomEvent('fpMotionChanged', { detail: { on } }));
+  if (persist) saveSetting('ui.animations', on);
+}
+
+/** Cancels the fpAnimate() animation in slot `key` on `el`, if one runs. */
+function fpCancelAnimation(el, key = 'default') {
+  const slots = el && _fpAnimationsByEl.get(el);
+  const anim = slots && slots.get(key);
+  if (!anim) return;
+  slots.delete(key);
+  _fpLiveAnimations.delete(anim);
+  anim.cancel();
+}
+
+/** Calls `fn` once, when `anim` finishes or is cancelled — at once when
+ * there is no animation (motion off). */
+function fpAfter(anim, fn) {
+  if (!anim) { fn(); return; }
+  let done = false;
+  const once = () => { if (!done) { done = true; fn(); } };
+  anim.addEventListener('finish', once);
+  anim.addEventListener('cancel', once);
+}
+
+/**
+ * The exit half of rule 1 (§5.1): `el`'s state has already left — it is
+ * closed, hidden, no longer in any count — and this only keeps it painted
+ * while `keyframes` play. For that time it carries `cls` (CSS keeps it on
+ * screen with pointer-events off) and is inert, so it never takes a click,
+ * a key or focus. `done` runs when the exit ends, at once with motion off;
+ * fpCancelExit() (a new open) ends it early without calling `done`.
+ */
+function fpPlayExit(el, keyframes, { cls = '', done = null, ...opts } = {}) {
+  if (!el) return null;
+  fpCancelExit(el);
+  const token = { cls };
+  el._fpExit = token;
+  if (cls) el.classList.add(cls);
+  el.inert = true;
+  const anim = fpAnimate(el, keyframes, { ...opts, key: 'exit' });
+  fpAfter(anim, () => {
+    if (el._fpExit !== token) return;
+    el._fpExit = null;
+    if (cls) el.classList.remove(cls);
+    el.inert = false;
+    if (done) done();
+  });
+  return anim;
+}
+
+/** Ends a running fpPlayExit on `el` at once (its `done` never runs): the
+ * element is being opened again. */
+function fpCancelExit(el) {
+  const token = el && el._fpExit;
+  if (!token) return;
+  el._fpExit = null;
+  if (token.cls) el.classList.remove(token.cls);
+  el.inert = false;
+  fpCancelAnimation(el, 'exit');
+}
+
+/** True while `el` is playing an fpPlayExit (closed, still fading). */
+function fpExiting(el) {
+  return !!(el && el._fpExit);
+}
+
 // ── Screen switching ────────────────────────────────────────────────────────
-// Screens whose backend wiring is not yet complete. Each screen's HTML carries
-// its own static "Not built yet — planned for Stage N" banner (see index.html)
-// — this map is now just the stage-number reference for those banners; entry
-// no longer fires a stub toast (showScreenDom below).
-const STUB_SCREENS = {
-  'review-bin':     3,
-  everything:       3,
-  ftree:            4,
-  'scan-config':    4,
-  'scan-progress':  4,
-  'scan-results':   4,
-};
+// Only screens that work today are in index.html (Home, Browser, Settings).
+// The Stage 3/4 mock-ups (File Tree, Scan, Review Bin, Everything Folder)
+// were taken out of the DOM in Stage 2D Task 12a — no control may ship that
+// does nothing — and live as design reference in
+// docs/archive/2026-10-02-unbuilt-screens-markup.html until their stage
+// builds them for real.
 
 // Per-tab UI state model (Stage 2C Task 7)
 // ─────────────────────────────────────────
@@ -42,6 +301,7 @@ const STUB_SCREENS = {
 const tabs = { list: [], activeId: null };
 let _tabIdSeq = 1; // unique id generator (HTML seeds the first tab as tab-1)
 let _closedTabs = []; // stack of full tab records, most-recently-closed last
+const CLOSED_TABS_MAX = 20; // Ctrl+Shift+T depth
 
 function nextTabId() {
   _tabIdSeq += 1;
@@ -62,12 +322,6 @@ function tabRecordFor(id) {
 const SCREEN_LABELS = {
   home:            'Home',
   browser:         'Files',
-  ftree:           'File Tree',
-  'scan-config':   'Scan',
-  'scan-progress': 'Scan',
-  'scan-results':  'Scan',
-  'review-bin':    'Review Bin',
-  everything:      'Everything Folder',
   settings:        'Settings',
 };
 
@@ -86,16 +340,17 @@ function pathBaseName(p) {
   return parts[parts.length - 1] || String(p);
 }
 
-/** Tab label for a browser-screen path: 'This PC' for the sandbox root
- * (loadDirectory(null)'s target — never a folder name), the bare drive
- * letter for a drive root ('D:'), the folder's basename otherwise. (A Home
- * tab's label comes from createTab's own 'Home' default, not from here —
- * this only ever runs for the browser screen, from onNavigated().) */
+/** Tab label for a browser-screen path: 'This PC' for the This PC page
+ * (THISPC, or a tab with no folder yet), the bare drive letter for a drive
+ * root ('C:' — the owner's pass-1 rule; the full name lives in the
+ * breadcrumb), the folder's basename otherwise. (A Home tab's label comes from createTab's
+ * own 'Home' default, not from here — this only ever runs for the browser
+ * screen, from onNavigated().) */
 function tabLabelFor(path) {
-  if (!path) return 'This PC';
+  if (!path || path === THISPC) return 'This PC';
   const norm = String(path).replace(/[\\/]+$/, '');
   if (/^[A-Za-z]:$/.test(norm)) return norm.toUpperCase();
-  return pathBaseName(norm) || 'This PC';
+  return pathBaseName(norm) || norm;
 }
 
 /** 'Seagate Barracuda 4tb HDD (D:)' from the cached /drives list
@@ -105,20 +360,28 @@ function tabLabelFor(path) {
 function driveDisplayLabel(letter) {
   const norm = String(letter || '').replace(/[\\/]+$/, '').toUpperCase();
   const drives = window.__fpDrives || [];
-  const d = drives.find(x => String(x.letter || '').replace(/[\\/]+$/, '').toUpperCase() === norm);
-  if (!d) return norm;
-  const label = (d.label || '').trim();
-  return label ? `${label} (${norm})` : `Local Disk (${norm})`;
+  const d = drives.find(x => driveLetterOf(x) === norm);
+  // One formatter for every place a drive is named (thispc.js, Stage 2D §8).
+  return d ? driveDisplayName(d) : norm;
 }
 
 /** Tab element icon: home for the Home screen, a drive glyph for a browser
  * tab sitting at a drive root, a plain folder for every other browser tab,
  * and the screen's own icon (falling back to a generic file glyph) for
- * anything else. */
+ * anything else. In Windows-icon mode a browser tab shows the real shell
+ * icon of its folder or drive (Stage 2D §4.6), at 16 px — a shell bucket —
+ * where the chrome glyph keeps its 14. */
 function tabIconFor(record) {
+  if (record.screen === 'browser' && (!record.path || record.path === THISPC)) {
+    // The This PC page is not a folder: the chrome glyph, never a shell
+    // lookup of "thispc:".
+    return icon('this-pc', 'fp-icon--14 fp-tab__icon');
+  }
   if (record.screen === 'browser') {
     const norm = String(record.path || '').replace(/[\\/]+$/, '');
-    return /^[A-Za-z]:$/.test(norm) ? icon('drive', 'fp-icon--14') : icon('folder', 'fp-icon--14');
+    const isDrive = /^[A-Za-z]:$/.test(norm);
+    const item = record.path ? { path: isDrive ? norm + '\\' : record.path, is_dir: true } : null;
+    return fpShellItemIcon(item, 16, isDrive ? 'drive' : 'folder', 'fp-tab__icon', 14);
   }
   return getScreenIcon(record.screen);
 }
@@ -130,8 +393,10 @@ function updateTabElementAppearance(record) {
   if (!el) return;
   const labelEl = el.querySelector('.fp-tab__label');
   if (labelEl) labelEl.textContent = record.label;
-  const firstSvg = el.querySelector(':scope > svg');
-  if (firstSvg) firstSvg.outerHTML = tabIconFor(record);
+  // The icon is the tab's first child: a chrome sprite glyph, or a shell image in
+  // Windows-icon mode.
+  const iconEl = el.querySelector(':scope > svg:first-child, :scope > img:first-child');
+  if (iconEl) iconEl.outerHTML = tabIconFor(record);
   el.setAttribute('title', record.label);
 }
 
@@ -168,32 +433,136 @@ function createTab({ screen = 'home', path = null, history = [], historyIndex = 
     screen, label, path,
     history: history.slice(),
     historyIndex,
+    // This tab's own view and icon size (Stage 2D §3.1: tabs keep their own
+    // view state), or null until it has had a listing of its own. The view
+    // is global DOM state, so without per-tab values a Ctrl+wheel step in
+    // one tab silently changed every other tab's listing on the next switch
+    // (pass 2 #19).
     view: null,
-    // This tab's own --list-scale (a LIST_SCALE_STEPS member), or null until
-    // it has had a listing of its own. The custom property is global, so
-    // without a per-tab value a Ctrl+wheel zoom in one tab silently resized
-    // every other tab's listing on the next switch (pass 2 #19).
-    listScale: null,
+    iconSize: null,
     scrollTop: 0,
+    scrollLeft: 0,
     selection: [],
-    // True when this tab was opened at the root entry point ("This PC") rather
-    // than at a folder that happens to share its resolved path — keeps its
-    // label from collapsing to the folder's basename (pass 2 #16).
-    isRootTarget: false,
     // Task 14: this tab's own search (chips + text + the rendered results),
     // or null when it is showing a plain folder listing. Captured on every
     // deactivation and repainted on reactivation, so switching tabs and back
     // keeps the results without re-walking the tree.
     search: null,
+    // Stage 2D §4.2: this tab's last folder listing ({path, entries, parent,
+    // isRoot, truncated, fetchedAt}, entries by reference), painted at once
+    // when the tab is activated again and then revalidated. null until the
+    // tab has had a listing of its own.
+    listing: null,
   };
   tabs.list.push(record);
   const el = createTabElement(record);
+  // The "+" lives after the strip, not in it (Task 8 Q4): a new tab is
+  // simply the strip's last child.
   const tabbar = document.getElementById('tabbar');
-  const newTabBtn = document.getElementById('btn-new-tab');
-  if (tabbar) tabbar.insertBefore(el, newTabBtn);
+  if (tabbar) tabbar.appendChild(el);
   initTabDrag(el);
   updateTabbarOverflow();
+  tabEnterMotion(el);
   return record;
+}
+
+// ── Tab strip motion (addendum §5.2 Tabs) ────────────────────────────────────
+// Decoration only (§5.1 rule 1): the record, the element, active state and
+// focus are all in place before any of this plays, and nothing here waits.
+
+/** A new tab grows in from width 0 while it fades in, and the strip makes
+ * room for it as it grows. When the strip is already scrolling under its
+ * overflow fade it only fades (growing would push the "+" and the tab past
+ * the edge mid-way, and scrollTabIntoView has to see the final width). */
+function tabEnterMotion(el) {
+  if (!fpMotionOn() || !el.isConnected) return;
+  const tabbar = el.parentElement;
+  const w = el.getBoundingClientRect().width;
+  if (!w) return;
+  if (tabbar && tabbar.scrollWidth > tabbar.clientWidth + 1) {
+    fpAnimate(el, [{ opacity: 0 }, { opacity: 1 }], { duration: 'base', key: 'enter' });
+    return;
+  }
+  const anim = fpAnimate(el, [
+    { maxWidth: '0px', minWidth: '0px', paddingLeft: '0px', paddingRight: '0px', marginRight: '0px', opacity: 0 },
+    { maxWidth: `${w}px`, opacity: 1 },
+  ], { duration: 'base', key: 'enter' });
+  // The strip's overflow (fade + the active tab scrolled into view) is
+  // measured again at the tab's real width.
+  fpAfter(anim, () => {
+    updateTabbarOverflow();
+    if (el.dataset.tabId === tabs.activeId && anim) scrollTabIntoView(tabs.activeId);
+  });
+}
+
+/** A closed tab's element is already gone (closeTabById removed it); this
+ * puts an inert copy in its place that shrinks to nothing while the
+ * neighbours close the gap, then removes itself. The copy is not a .fp-tab
+ * (no id, no data-action, no role, never focusable or clickable), so no
+ * query, click, key or count ever sees it. */
+function tabExitGhost(el, prev, parent, w) {
+  if (!fpMotionOn() || !parent || !w) return;
+  const ghost = el.cloneNode(true);
+  ghost.className = 'fp-tab-ghost';
+  for (const a of ['id', 'role', 'tabindex', 'data-tab-id', 'data-action', 'title', 'draggable', 'aria-selected', 'style']) ghost.removeAttribute(a);
+  ghost.querySelectorAll('[data-action], [role], [tabindex], [id]').forEach(n => {
+    for (const a of ['id', 'role', 'tabindex', 'data-action']) n.removeAttribute(a);
+  });
+  ghost.setAttribute('aria-hidden', 'true');
+  ghost.inert = true;
+  parent.insertBefore(ghost, prev && prev.parentNode === parent ? prev.nextSibling : parent.firstChild);
+  const anim = fpAnimate(ghost, [
+    { maxWidth: `${w}px`, minWidth: `${w}px`, opacity: 1 },
+    { maxWidth: '0px', minWidth: '0px', paddingLeft: '0px', paddingRight: '0px', marginRight: '0px', opacity: 0 },
+  ], { duration: 'fast', key: 'exit' });
+  fpAfter(anim, () => { ghost.remove(); updateTabbarOverflow(); });
+}
+
+/** The active-tab underline slides from the tab that was active to the one
+ * that is now: a transient bar starts over the old tab's underline and
+ * glides (transform only) to the new one, whose own underline is held off
+ * until the bar arrives. Nothing slides when the old tab is gone (closed)
+ * or the new one has no width yet (still growing in). */
+function tabUnderlineMotion(fromEl, toEl) {
+  if (!fpMotionOn() || !fromEl || !toEl || fromEl === toEl || !fromEl.isConnected) return;
+  const tabbar = toEl.parentElement;
+  if (!tabbar || fromEl.parentElement !== tabbar) return;
+  const to = { left: toEl.offsetLeft + 1, width: toEl.offsetWidth - 2 };
+  const from = { left: fromEl.offsetLeft + 1, width: fromEl.offsetWidth - 2 };
+  if (to.width < 1 || from.width < 1) return;
+  let bar = tabbar.querySelector(':scope > .fp-tab-slider');
+  if (!bar) {
+    bar = document.createElement('span');
+    bar.className = 'fp-tab-slider';
+    bar.setAttribute('aria-hidden', 'true');
+    tabbar.appendChild(bar);
+  }
+  bar.style.left = `${to.left}px`;
+  bar.style.width = `${to.width}px`;
+  const anim = fpAnimate(bar, [
+    { transform: `translateX(${from.left - to.left}px) scaleX(${from.width / to.width})` },
+    { transform: 'none' },
+  ], { duration: 'base', key: 'slide' });
+  // The new tab's own underline (an inset shadow) waits for the bar.
+  fpAnimate(toEl, [
+    { boxShadow: 'inset 0 0 0 transparent' },
+    { boxShadow: 'inset 0 0 0 transparent' },
+  ], { duration: 'base', key: 'underline' });
+  // A newer slide reuses the bar; only the last one takes it away.
+  bar._fpSlide = anim;
+  fpAfter(anim, () => { if (bar._fpSlide === anim) bar.remove(); });
+}
+
+/** Tab drag-reorder: the tabs the drop moved slide from where they were to
+ * where they now are (FLIP — the DOM order is already final). */
+function tabReorderMotion(before, dragged) {
+  if (!fpMotionOn()) return;
+  for (const [el, left] of before) {
+    if (el === dragged || !el.isConnected) continue;
+    const dx = left - el.getBoundingClientRect().left;
+    if (Math.abs(dx) < 1) continue;
+    fpAnimate(el, [{ transform: `translateX(${dx}px)` }, { transform: 'none' }], { duration: 'base', key: 'reorder' });
+  }
 }
 
 /**
@@ -212,6 +581,16 @@ function scrollTabIntoView(id) {
     el.scrollIntoView({ inline: 'nearest', block: 'nearest' });
   }
   updateTabbarOverflow();
+}
+
+/** Scrolls the strip, if it must, so the active tab is whole and clear of
+ * the overflow fade (the strip's scroll-padding reserves the fade's width,
+ * styles.css .fp-tabbar). No-op when it already is. */
+function keepActiveTabInView() {
+  const tabbar = document.getElementById('tabbar');
+  const el = tabbar && tabbar.querySelector('.fp-tab.fp-tab--active');
+  if (!el || tabbar.scrollWidth <= tabbar.clientWidth) return;
+  el.scrollIntoView({ inline: 'nearest', block: 'nearest' });
 }
 
 /** Tab ids in the order they appear in the strip — the DOM is the authority on
@@ -249,14 +628,20 @@ function syncActiveTabRecord() {
   if (!tab) return;
   tab.path = browserState.path;
   tab.view = browserState.view;
-  tab.listScale = browserState.listScale;
-  tab.selection = [...browserState.selection];
+  tab.iconSize = browserState.iconSize;
+  // On the This PC page the selection is a drive card (thispc.js).
+  const onThisPc = thisPcActive();
+  tab.selection = onThisPc ? thisPcSelectionList() : [...browserState.selection];
   tab.historyIndex = nav.index;
   // The live search bar + its results, or null when this tab is showing a
   // plain listing (search.js's captureSearchState).
   tab.search = typeof captureSearchState === 'function' ? captureSearchState() : null;
-  const listScroll = document.getElementById('list-scroll');
-  if (listScroll) tab.scrollTop = listScroll.scrollTop;
+  // The folder listing this tab shows, for the synchronous repaint when it is
+  // activated again (Stage 2D §4.2). Search results are not a folder listing:
+  // the tab keeps the one committed before the search started.
+  if (typeof rememberTabListing === 'function') rememberTabListing();
+  const scroller = document.getElementById(onThisPc ? 'thispc-view' : 'list-scroll');
+  if (scroller) { tab.scrollTop = scroller.scrollTop; tab.scrollLeft = scroller.scrollLeft; }
 }
 
 /** Activates tab `id`: saves the outgoing tab's live state into its own
@@ -274,13 +659,17 @@ function activateTab(id) {
   // re-run below if no results had landed yet.
   if (typeof abortSearch === 'function') abortSearch();
 
+  const outgoingEl = tabs.activeId ? document.querySelector(`.fp-tab[data-tab-id="${tabs.activeId}"]`) : null;
   tabs.activeId = id;
+  let incomingEl = null;
   document.querySelectorAll('.fp-tab').forEach(t => {
     const isActive = t.dataset.tabId === id;
+    if (isActive) incomingEl = t;
     t.classList.toggle('fp-tab--active', isActive);
     t.setAttribute('aria-selected', isActive ? 'true' : 'false');
     t.setAttribute('tabindex', isActive ? '0' : '-1');
   });
+  tabUnderlineMotion(outgoingEl, incomingEl);
 
   nav.history = incoming.history;
   nav.index = incoming.historyIndex;
@@ -303,40 +692,53 @@ function activateTab(id) {
     browserState.path = incoming.path;
     browserState.parent = null;
     browserState.isRoot = false;
-    // Apply the INCOMING tab's own view/scale before repainting its results —
+    // Apply the INCOMING tab's own view before repainting its results —
     // otherwise renderDirectory() (called from inside restoreSearchResultsForTab
-    // → renderSearchResults) paints them with whatever view/scale the OUTGOING
-    // tab left behind (e.g. a grid Pictures tab making another tab's results
-    // render as tiles). Mirrors the listing branch's restore.view handling below.
-    const cfg = window.__fpConfig || {};
-    const cfgView = ['details', 'list', 'grid'].includes(cfg['ui.view_mode']) ? cfg['ui.view_mode'] : 'details';
-    if (typeof setViewMode === 'function') setViewMode(incoming.view || cfgView);
-    if (typeof setListScale === 'function' && typeof LIST_SCALE_STEPS !== 'undefined') {
-      const cfgScale = LIST_SCALE_STEPS.includes(cfg['ui.list_scale']) ? cfg['ui.list_scale'] : 1;
-      setListScale(incoming.listScale || cfgScale, { persist: false });
-    }
+    // → renderSearchResults) paints them with whatever view the OUTGOING tab
+    // left behind (e.g. a Large-icons Pictures tab making another tab's
+    // results render as icons). Mirrors the listing branch's restore.view
+    // handling below. render:false — the results render right below is the
+    // only render (Stage 2D §4.2).
+    setView(incoming.view || 'details', incoming.iconSize, { render: false });
     // This tab's own selection + scroll offset come back with its results, the
     // same two things the folder branch below restores (pass 2 #153).
     restoreSearchResultsForTab(pendingSearch, {
       selection: incoming.selection,
       scrollTop: incoming.scrollTop,
+      scrollLeft: incoming.scrollLeft,
     });
     updateSidebarActive(incoming.path);
     refreshNavButtons();
   } else if (incoming.screen === 'browser') {
+    const cached = cachedListingFor(incoming);
+    if (!cached) {
+      // Nothing of this tab's own to paint yet (a tab staged in the
+      // background): #list-scroll still holds another tab's rows, which must
+      // not be shown under this tab while its first fetch is in flight.
+      // The state goes with the rows: entries, selection, anchor, focus and
+      // path all belonged to the outgoing tab, and Delete / F2 / Ctrl+C /
+      // Ctrl+X / Ctrl+R would otherwise act on that folder's invisible rows.
+      // Until this tab's listing commits it has none (browserHasOwnListing).
+      clearBrowserListing();
+    }
     showScreenDom('browser');
     if (typeof searchResetBar === 'function') searchResetBar();
-    const loaded = loadDirectory(incoming.isRootTarget ? null : incoming.path, {
+    const loaded = loadDirectory(incoming.path, {
       // Empty history means this tab was staged in the background (openBrowserAt
       // on an inactive tab) and is only now getting its first real fetch — treat
       // that as a real navigation (push it) rather than a pure restore.
       addToHistory: incoming.history.length === 0,
       restore: {
         scrollTop: incoming.scrollTop,
+        scrollLeft: incoming.scrollLeft,
         selection: incoming.selection,
         view: incoming.view,
-        listScale: incoming.listScale,
+        iconSize: incoming.iconSize,
       },
+      // Stale-while-revalidate (Stage 2D §4.2): the tab's own last listing is
+      // painted synchronously — rows, scroll and selection in this same task,
+      // no empty frame — and the fetch only patches what changed.
+      cached,
     });
     // A search this tab had typed but not finished (its request was aborted
     // when it was switched away) re-runs once the folder listing underneath it
@@ -365,18 +767,57 @@ function activateTab(id) {
   updateTabElementAppearance(incoming);
 }
 
+/** The tab's cached listing when it still describes the folder the tab is
+ * at, else null (Stage 2D §4.2). */
+function cachedListingFor(tab) {
+  const l = tab && tab.listing;
+  return (l && l.path && l.path === tab.path && Array.isArray(l.entries)) ? l : null;
+}
+
 // Load a screen's DOM into view (no tab-state changes, no data fetch —
 // callers own both; the browser screen's own auto-load-root fallback lives
 // in switchScreen(), the one caller that can tell "never loaded" from "just
 // showing what's already in #list-scroll" apart).
 function showScreenDom(id) {
+  const current = document.querySelector('.screen.active');
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
   const target = document.getElementById(`screen-${id}`);
   if (target) target.classList.add('active');
+  if (current && target && current !== target) screenFadeIn(target);
+  syncHeavyList();
   if (id === 'home') {
     loadRecent();
     loadFavorites();
   }
+  // The inspector describes the screen on display too (Task 14 Q2): off the
+  // Browser it starts neutral — Settings has no selection at all, and Home's
+  // rows are re-rendered unselected — never the item another screen had
+  // selected. The Browser repaints it from its own selection when it commits.
+  if (id !== 'browser' && typeof showInspectorNeutral === 'function') showInspectorNeutral();
+  // The status bar describes the screen on display (browser.js).
+  if (typeof updateStatusBar === 'function') updateStatusBar();
+}
+
+/** Home ↔ Browser ↔ Settings (§5.2 Screens): the new screen is already the
+ * active one (it takes every click and key) and the old one is hidden at
+ * once — keeping a full Browser listing painted under the fade cost a
+ * forced layout of thousands of rows (fix round 1). The new screen fades up
+ * from half opacity over --motion-fast, so no frame is blank. */
+function screenFadeIn(to) {
+  fpAnimate(to, [{ opacity: 0.5 }, { opacity: 1 }], { duration: 'fast', easing: 'standard', key: 'screen' });
+}
+
+/** html.fp-heavy-list: the Browser is on screen with a listing big enough
+ * that re-laying it out every frame would stutter (fix round 1). Width
+ * motion that resizes the file pane every frame — the sidebar, the shell
+ * column and the header card — is then a single step (styles.css); the
+ * fades stay. */
+const HEAVY_LIST_ROWS = 300;
+function syncHeavyList() {
+  const onBrowser = !!document.getElementById('screen-browser')?.classList.contains('active')
+    && !(typeof thisPcActive === 'function' && thisPcActive());
+  const n = typeof browserState !== 'undefined' && Array.isArray(browserState.entries) ? browserState.entries.length : 0;
+  document.documentElement.classList.toggle('fp-heavy-list', onBrowser && n > HEAVY_LIST_ROWS);
 }
 
 /**
@@ -394,10 +835,13 @@ function resetToolbarForNonBrowser(screenId) {
   const crumb = document.getElementById('breadcrumb');
   if (crumb) {
     // A plain (non-interactive) label, not a data-action="navigate-crumb"
-    // button: there is no path here to navigate to.
+    // button: there is no path here to navigate to. The text sits in its own
+    // .fp-breadcrumb__label like a folder crumb's, so a too-narrow bar
+    // ellipsizes it and layoutToolbar() can measure what the ellipsis hides —
+    // without it the layout flipped .is-tight every frame (Task 11).
     const label = typeof getScreenLabel === 'function' ? getScreenLabel(screenId) : '';
     crumb.innerHTML = label
-      ? `<span class="fp-breadcrumb__crumb fp-breadcrumb__crumb--current">${escapeHtml(label)}</span>`
+      ? `<span class="fp-breadcrumb__crumb fp-breadcrumb__crumb--current"><span class="fp-breadcrumb__label">${escapeHtml(label)}</span></span>`
       : '';
   }
   if (typeof refreshNavButtons === 'function') refreshNavButtons();
@@ -407,13 +851,28 @@ function switchScreen(id, labelOverride) {
   // Mutate the ACTIVE tab's screen state — never switch tabs from here.
   const tab = activeTab();
   if (!tab) return;
+  // A screen that is not in the DOM (one of the unbuilt Stage 3/4 screens
+  // taken out in Task 12a, named by a stale caller) would leave the tab
+  // showing nothing at all: stay where we are instead.
+  if (!document.getElementById(`screen-${id}`)) return;
   tab.screen = id;
   if (id === 'browser') {
-    if (tab.path === null) {
-      // This tab has never shown Browser before — load the sandbox root,
-      // same fallback the old global navHistory-empty check used to give.
+    if (tab.searchResume && browserState.mode === 'search' && typeof resumeSearchForTab === 'function') {
+      // A search a failed navigation stopped while this tab was off the
+      // Browser (failNavigation): run it again now that it is shown.
+      const snap = tab.searchResume;
+      tab.searchResume = null;
       showScreenDom('browser');
-      loadDirectory(null);
+      updateSidebarActive(tab.path);
+      resumeSearchForTab(snap, tab.id);
+      return;
+    }
+    tab.searchResume = null;
+    if (tab.path === null) {
+      // This tab has never shown Browser before — open This PC (Stage 2D
+      // §8). The Browser screen appears when that page commits, never
+      // before with rows left over from another tab.
+      loadDirectory(THISPC);
     } else if (browserState.mode === 'search' && tab.search && tab.search.results
                && typeof restoreSearchResultsForTab === 'function') {
       // This tab left the Browser screen mid-search. #list-scroll still holds
@@ -426,6 +885,7 @@ function switchScreen(id, labelOverride) {
       restoreSearchResultsForTab(tab.search, {
         selection: [...browserState.selection],
         scrollTop: listEl ? listEl.scrollTop : 0,
+        scrollLeft: listEl ? listEl.scrollLeft : 0,
       });
       updateSidebarActive(tab.path);
       if (typeof refreshNavButtons === 'function') refreshNavButtons();
@@ -434,25 +894,29 @@ function switchScreen(id, labelOverride) {
       // belong to ANOTHER tab (this tab was on Home while that one browsed) or
       // have been fetched with settings a Settings toggle has since changed
       // (browserState.listingStale, pass 2 #155). Re-fetch rather than reveal
-      // somebody else's listing.
-      showScreenDom('browser');
-      loadDirectory(tab.isRootTarget ? null : tab.path, {
+      // somebody else's listing. commitListing() reveals the Browser screen
+      // together with the rows (at once when the tab has a cached listing).
+      loadDirectory(tab.path, {
         addToHistory: false,
         restore: {
           scrollTop: tab.scrollTop,
+          scrollLeft: tab.scrollLeft,
           selection: tab.selection,
           view: tab.view,
-          listScale: tab.listScale,
+          iconSize: tab.iconSize,
         },
+        // A listing fetched before a settings change (listingStale) is not
+        // worth painting first: the fetch would replace most of it.
+        cached: browserState.listingStale ? null : cachedListingFor(tab),
       });
     } else {
       // Already has a folder loaded, still sitting in #list-scroll from
       // earlier in this tab's life (screens are hidden, not torn down) — just
       // reveal it, no re-fetch.
-      tab.label = labelOverride || (tab.isRootTarget ? tabLabelFor(null) : tabLabelFor(tab.path));
+      tab.label = labelOverride || tabLabelFor(tab.path);
       updateTabElementAppearance(tab);
       showScreenDom('browser');
-      updateSidebarActive(tab.isRootTarget ? null : tab.path);
+      updateSidebarActive(tab.path);
       updateBreadcrumb(tab.path);
       if (typeof refreshNavButtons === 'function') refreshNavButtons();
       // Nothing re-fetches on this path (the listing is already in
@@ -463,6 +927,9 @@ function switchScreen(id, labelOverride) {
     }
     return;
   }
+  // A Browser navigation still in flight for this tab must not pull it back
+  // to the Browser once it lands.
+  if (typeof browserState !== 'undefined') browserState._loadSeq++;
   tab.label = labelOverride || getScreenLabel(id);
   updateTabElementAppearance(tab);
   showScreenDom(id);
@@ -484,12 +951,14 @@ function openBrowserAt(path, { tab } = {}) {
   if (!target) return;
   if (target.id !== tabs.activeId) {
     target.screen = 'browser';
-    target.path = path ?? null;
+    target.path = path ?? THISPC;
     target.label = tabLabelFor(target.path);
     updateTabElementAppearance(target);
     return Promise.resolve();
   }
-  showScreenDom('browser');
+  // The current screen (Home, Settings, …) stays up until the folder has
+  // loaded; commitListing() then switches screen, chrome and rows in one go,
+  // and a failure leaves the user where they were with an error toast.
   return loadDirectory(path);
 }
 
@@ -513,14 +982,34 @@ function closeTabById(id) {
   // Neighbor is read off the DOM (not tabs.list's order, which drag-reorder
   // never touches) so the fallback active tab always matches what the user
   // actually sees next to the one they closed.
-  const prevEl = el?.previousElementSibling;
-  const nextEl = el?.nextElementSibling;
-  const neighborEl = (prevEl && prevEl.classList.contains('fp-tab')) ? prevEl
-                    : (nextEl && nextEl.classList.contains('fp-tab')) ? nextEl : null;
+  // (Closing ghosts and the underline bar sit between tabs for a moment
+  // while they animate: they are not tabs, so they are stepped over.)
+  const tabSibling = (start, dir) => {
+    let n = start;
+    while (n && !n.classList.contains('fp-tab')) {
+      if (!n.classList.contains('fp-tab-ghost') && !n.classList.contains('fp-tab-slider')) return null;
+      n = n[dir];
+    }
+    return n;
+  };
+  const prevEl = tabSibling(el?.previousElementSibling, 'previousElementSibling');
+  const nextEl = tabSibling(el?.nextElementSibling, 'nextElementSibling');
+  const neighborEl = prevEl || nextEl || null;
 
   tabs.list.splice(idx, 1);
-  el?.remove();
-  _closedTabs.push(record);
+  if (el) {
+    const parent = el.parentElement;
+    const before = el.previousSibling;
+    // Measured before it goes: the ghost takes the tab's exact width.
+    const ghostSource = fpMotionOn() ? el : null;
+    const w = ghostSource ? el.getBoundingClientRect().width : 0;
+    el.remove();
+    if (ghostSource && w) tabExitGhost(el, before, parent, w);
+  }
+  // The listing is dropped (a reopened tab revalidates from scratch anyway)
+  // and the stack is capped, so closed tabs never pin whole folder listings.
+  _closedTabs.push({ ...record, listing: null });
+  if (_closedTabs.length > CLOSED_TABS_MAX) _closedTabs.splice(0, _closedTabs.length - CLOSED_TABS_MAX);
 
   if (tabs.list.length === 0) {
     const fresh = createTab({ screen: 'home', label: 'Home' });
@@ -549,10 +1038,10 @@ function reopenLastTab() {
     label: record.label,
   });
   restored.view = record.view;
-  restored.listScale = record.listScale;
+  restored.iconSize = record.iconSize;
   restored.scrollTop = record.scrollTop;
+  restored.scrollLeft = record.scrollLeft || 0;
   restored.selection = record.selection;
-  restored.isRootTarget = record.isRootTarget;
   // The closed record carried its search (closeTabById pushes the whole thing,
   // syncActiveTabRecord having just refreshed it) — createTab() starts every
   // tab at search:null, so it has to be carried across explicitly or Ctrl+W /
@@ -574,13 +1063,15 @@ function duplicateTab(id) {
     label: source.label,
   });
   copy.view = source.view;
-  copy.listScale = source.listScale;
+  copy.iconSize = source.iconSize;
   copy.selection = source.selection.slice();
   copy.scrollTop = source.scrollTop;
-  copy.isRootTarget = source.isRootTarget;
+  copy.scrollLeft = source.scrollLeft || 0;
   // Duplicating a results tab duplicates the results, not the folder under
   // them — deep-cloned so the two tabs' snapshots never alias (pass 2 #18).
   copy.search = source.search ? JSON.parse(JSON.stringify(source.search)) : null;
+  // Listings are never mutated in place, so the two tabs can share one.
+  copy.listing = source.listing || null;
   // Place the duplicate right after its source, matching a browser's
   // "Duplicate tab" placement, instead of at the end of the strip.
   const copyEl = document.querySelector(`.fp-tab[data-tab-id="${copy.id}"]`);
@@ -599,7 +1090,7 @@ function closeOtherTabs(id) {
 function seedInitialTab() {
   const el = document.querySelector('.fp-tab[data-tab-id]');
   const id = el ? el.dataset.tabId : 'tab-1';
-  const record = { id, screen: 'home', label: 'Home', path: null, history: [], historyIndex: -1, view: null, listScale: null, scrollTop: 0, selection: [], isRootTarget: false, search: null };
+  const record = { id, screen: 'home', label: 'Home', path: null, history: [], historyIndex: -1, view: null, iconSize: null, scrollTop: 0, scrollLeft: 0, selection: [], search: null, listing: null };
   tabs.list.push(record);
   tabs.activeId = id;
   nav.history = record.history;
@@ -628,7 +1119,7 @@ function onNavigated(path) {
 // ── Sidebar active-state machinery ────────────────────────────────────────────
 // Exactly ONE sidebar item carries --active at any time — this is the single
 // place that decides which one, called synchronously from onNavigated() (a
-// browser-screen path, including null for the sandbox root) and from
+// browser-screen path, including THISPC for the This PC page) and from
 // activateTab()/switchScreen() (a non-browser screen id). No other code
 // touches .fp-sidebar__item--active.
 //
@@ -643,6 +1134,19 @@ function updateSidebarActive(pathOrScreen) {
     it.classList.remove('fp-sidebar__item--active');
     it.classList.remove('active');
   });
+  // The This PC section head is the This PC page's sidebar entry (Stage 2D §8).
+  const thisPcHead = document.querySelector('#sb-thispc .fp-sidebar__section-head');
+  if (thisPcHead) {
+    thisPcHead.classList.remove('fp-sidebar__section-head--active');
+    thisPcHead.removeAttribute('aria-current');
+  }
+  if (pathOrScreen === THISPC) {
+    if (thisPcHead) {
+      thisPcHead.classList.add('fp-sidebar__section-head--active');
+      thisPcHead.setAttribute('aria-current', 'page');
+    }
+    return;
+  }
 
   const isKnownScreen = typeof pathOrScreen === 'string'
     && pathOrScreen !== 'browser'
@@ -656,8 +1160,8 @@ function updateSidebarActive(pathOrScreen) {
     return;
   }
 
-  // A real filesystem path (or null/'' for the sandbox root, which has no
-  // sidebar entry to highlight) — match the longest data-path prefix.
+  // A real filesystem path (THISPC — the This PC page — matches no
+  // data-path, so nothing is highlighted) — match the longest data-path prefix.
   const currentPath = String(pathOrScreen || '').toLowerCase();
   if (!currentPath) return;
 
@@ -693,31 +1197,100 @@ function updateSidebarActive(pathOrScreen) {
 //   - Cursor X above MIN → panel width = cursor X, capped at MAX
 // Snap direction switches at the same TRIGGER, so the act of snapping (which
 // moves the panel) creates the natural hysteresis preventing flicker.
+// Every width and threshold here is SCREEN px (Stage 2D §5): the panel's CSS
+// width is --sidebar-w-screen / --app-zoom, so it keeps its size on screen at
+// any app zoom, and the pointer's CSS x is multiplied by the zoom before it
+// is compared. ui.sidebar_w (config) holds the expanded width; the
+// fp-sidebar-width localStorage copy only lets the first paint use it before
+// config has loaded.
 const SIDEBAR_WIDTH_MAX        = 480; // px; absolute maximum draggable width
 const SIDEBAR_WIDTH_MIN        = 180; // px; minimum expanded width (lock position)
 const SIDEBAR_COLLAPSE_TRIGGER = 100; // px; cursor X — going IN past this collapses, going OUT past this expands
 const SIDEBAR_EXPANDED_DEFAULT = 240;
 const SIDEBAR_COLLAPSED_WIDTH  = 52;
 
+function setSidebarWidthVar(px) {
+  document.documentElement.style.setProperty('--sidebar-w-screen', px + 'px');
+}
+
+/** The saved expanded width (screen px), or the default when none is valid. */
+function savedSidebarWidth() {
+  const cfg = window.__fpConfig || {};
+  const fromCfg = Number(cfg['ui.sidebar_w']);
+  const saved = Number.isFinite(fromCfg) && fromCfg > 0 ? fromCfg : parseInt(localStorage.getItem('fp-sidebar-width'), 10);
+  return (saved && saved >= SIDEBAR_WIDTH_MIN && saved <= SIDEBAR_WIDTH_MAX) ? saved : SIDEBAR_EXPANDED_DEFAULT;
+}
+
 function setSidebarCollapsed(collapsed) {
   if (!shell || !sidebar) return;
   if (collapsed) {
     shell.classList.add('sidebar-collapsed');
     sidebar.classList.add('fp-sidebar--collapsed');
-    document.documentElement.style.setProperty('--sidebar-width', SIDEBAR_COLLAPSED_WIDTH + 'px');
+    setSidebarWidthVar(SIDEBAR_COLLAPSED_WIDTH);
   } else {
     shell.classList.remove('sidebar-collapsed');
     sidebar.classList.remove('fp-sidebar--collapsed');
-    const saved = parseInt(localStorage.getItem('fp-sidebar-width'), 10);
-    const w = (saved && saved >= SIDEBAR_WIDTH_MIN && saved <= SIDEBAR_WIDTH_MAX) ? saved : SIDEBAR_EXPANDED_DEFAULT;
-    document.documentElement.style.setProperty('--sidebar-width', w + 'px');
+    setSidebarWidthVar(savedSidebarWidth());
   }
   localStorage.setItem('fp-sidebar-collapsed', collapsed ? 'on' : 'off');
+  // The header's identity card is as wide as the expanded sidebar, and keeps
+  // its natural width over the rail (addendum §1): styles.css's
+  // .fp-header--rail. The top-row toggle points the way it will move.
+  document.getElementById('header')?.classList.toggle('fp-header--rail', collapsed);
+  if (btnSidebarCollapse) {
+    // Tab order = the order the row is drawn in: Ask File+ then the toggle
+    // beside it when expanded; the toggle above Ask File+ on the rail.
+    const ask = document.getElementById('btn-ask-fileplus');
+    if (ask && ask.parentElement === btnSidebarCollapse.parentElement) {
+      if (collapsed) ask.before(btnSidebarCollapse);
+      else ask.after(btnSidebarCollapse);
+    }
+    const label = collapsed ? 'Expand sidebar' : 'Collapse sidebar';
+    btnSidebarCollapse.title = `${label} (Ctrl+B)`;
+    btnSidebarCollapse.setAttribute('aria-label', label);
+    btnSidebarCollapse.querySelector('use')?.setAttribute('href', collapsed ? '#fp-chevron-right' : '#fp-chevron-left');
+  }
+  // The rail's This PC square has no visible label, so it gets a tooltip;
+  // the expanded header shows "This PC" itself and needs none.
+  const thisPcHead = document.querySelector('#sb-thispc .fp-sidebar__section-head');
+  if (thisPcHead) {
+    if (collapsed) thisPcHead.title = 'This PC';
+    else thisPcHead.removeAttribute('title');
+  }
+  // Rail icons are bigger (Stage 2D §9.2): shell bitmaps re-resolve at the
+  // size they are now drawn at instead of being stretched.
+  if (typeof fpInvalidateLazyIcons === 'function') fpInvalidateLazyIcons(sidebar);
+}
+
+/** The px a sidebar row's icon is drawn at — --sidebar-icon, or the rail's
+ * --sidebar-rail-icon while collapsed (styles.css is the one source). */
+function sidebarIconPx() {
+  const collapsed = !!sidebar && sidebar.classList.contains('fp-sidebar--collapsed');
+  const v = getComputedStyle(document.documentElement).getPropertyValue(collapsed ? '--sidebar-rail-icon' : '--sidebar-icon');
+  return parseInt(v, 10) || (collapsed ? 22 : 18);
 }
 
 function toggleSidebar() {
   const isCollapsed = sidebar && sidebar.classList.contains('fp-sidebar--collapsed');
   setSidebarCollapsed(!isCollapsed);
+  sidebarToggleMotion();
+}
+
+/** Collapse / expand (addendum §5.2 Sidebar): the panel's width, the shell
+ * column and the header's identity card all ease over --motion-slow in CSS
+ * (one easing, so the tabs track the content pane's edge). The panel's
+ * contents switch layout at once (rail squares or labelled rows — the
+ * state); they are held clear for the first part of the width change and
+ * fade in once the panel is nearly its new width, so the labels never
+ * squeeze into a narrowing panel nor the rail squares slide across a wide
+ * one. A second Ctrl+B mid-way retargets the widths and restarts the fade. */
+function sidebarToggleMotion() {
+  if (!sidebar || !fpMotionOn()) return;
+  const parts = [sidebar.querySelector('.fp-sidebar__scroll'), sidebar.querySelector('.fp-sidebar__bottom'),
+    document.getElementById('btn-ask-fileplus')];
+  for (const el of parts) {
+    fpAnimate(el, [{ opacity: 0 }, { opacity: 0, offset: 0.35 }, { opacity: 1 }], { duration: 'slow', easing: 'standard', key: 'collapse' });
+  }
 }
 
 function initSidebarResize() {
@@ -726,8 +1299,28 @@ function initSidebarResize() {
 
   let dragging = false;
 
+  // Hover intent (Task 14 Q21): the line shows once the pointer has rested
+  // on the handle for --timer-resize-intent — a class on a timer, not a
+  // transition delay, so it holds the same with animations off.
+  let intentTimer = 0;
+  const clearIntent = () => {
+    clearTimeout(intentTimer);
+    intentTimer = 0;
+    handle.classList.remove('fp-sidebar__resize-handle--intent');
+  };
+  const armIntent = () => {
+    clearTimeout(intentTimer);
+    intentTimer = setTimeout(() => {
+      intentTimer = 0;
+      handle.classList.add('fp-sidebar__resize-handle--intent');
+    }, fpMotionMs('--timer-resize-intent'));
+  };
+  handle.addEventListener('pointerenter', armIntent);
+  handle.addEventListener('pointerleave', () => { if (!dragging) clearIntent(); });
+
   handle.addEventListener('pointerdown', e => {
     dragging = true;
+    clearIntent();
     handle.classList.add('fp-sidebar__resize-handle--active');
     sidebar.classList.add('fp-sidebar--dragging');
     shell.classList.add('sidebar-dragging');
@@ -740,14 +1333,14 @@ function initSidebarResize() {
     // VSCode-like model: cursor X drives the panel width directly. The dead
     // zone between TRIGGER and MIN keeps the panel locked at MIN until the
     // cursor pulls past MIN, then 1:1 follows. Below TRIGGER → collapsed.
-    const cursorX = e.clientX;
+    const cursorX = e.clientX * appZoom.current;          // screen px
     const isCollapsed = sidebar.classList.contains('fp-sidebar--collapsed');
 
     if (isCollapsed) {
       if (cursorX >= SIDEBAR_COLLAPSE_TRIGGER) {
         // Cursor crossed back over the trigger — snap to expanded at MIN
         setSidebarCollapsed(false);
-        document.documentElement.style.setProperty('--sidebar-width', SIDEBAR_WIDTH_MIN + 'px');
+        setSidebarWidthVar(SIDEBAR_WIDTH_MIN);
       }
       // else: stay collapsed, no visual change
     } else {
@@ -756,11 +1349,10 @@ function initSidebarResize() {
         setSidebarCollapsed(true);
       } else if (cursorX <= SIDEBAR_WIDTH_MIN) {
         // Dead zone — lock at MIN regardless of cursor position
-        document.documentElement.style.setProperty('--sidebar-width', SIDEBAR_WIDTH_MIN + 'px');
+        setSidebarWidthVar(SIDEBAR_WIDTH_MIN);
       } else {
         // Cursor past MIN — width follows cursor 1:1, capped at MAX
-        const w = Math.min(SIDEBAR_WIDTH_MAX, cursorX);
-        document.documentElement.style.setProperty('--sidebar-width', w + 'px');
+        setSidebarWidthVar(Math.min(SIDEBAR_WIDTH_MAX, cursorX));
       }
     }
   });
@@ -771,40 +1363,60 @@ function initSidebarResize() {
     handle.classList.remove('fp-sidebar__resize-handle--active');
     sidebar.classList.remove('fp-sidebar--dragging');
     shell.classList.remove('sidebar-dragging');
-    // Persist final width if expanded
+    if (handle.matches(':hover')) armIntent();
+    // Persist final width if expanded (screen px; one write per drag)
     if (!sidebar.classList.contains('fp-sidebar--collapsed')) {
-      const finalWidth = sidebar.getBoundingClientRect().width;
-      const w = Math.max(SIDEBAR_WIDTH_MIN, Math.round(finalWidth));
+      const finalWidth = sidebar.getBoundingClientRect().width * appZoom.current;
+      const w = Math.min(SIDEBAR_WIDTH_MAX, Math.max(SIDEBAR_WIDTH_MIN, Math.round(finalWidth)));
       localStorage.setItem('fp-sidebar-width', String(w));
-      document.documentElement.style.setProperty('--sidebar-width', w + 'px');
+      setSidebarWidthVar(w);
+      if (typeof saveSetting === 'function') saveSetting('ui.sidebar_w', w);
     }
     handle.releasePointerCapture(e.pointerId);
   });
 }
 
+/** First paint: collapsed state + the localStorage copy of the width.
+ * applySidebarWidthFromConfig re-applies ui.sidebar_w once config loads. */
 function restoreSidebarState() {
-  const collapsed = localStorage.getItem('fp-sidebar-collapsed') === 'on';
-  const saved = parseInt(localStorage.getItem('fp-sidebar-width'), 10);
-  if (collapsed) {
-    setSidebarCollapsed(true);
-  } else if (saved && saved >= 180 && saved <= 480) {
-    document.documentElement.style.setProperty('--sidebar-width', saved + 'px');
-  } else {
-    document.documentElement.style.setProperty('--sidebar-width', SIDEBAR_EXPANDED_DEFAULT + 'px');
-  }
+  if (localStorage.getItem('fp-sidebar-collapsed') === 'on') setSidebarCollapsed(true);
+  else setSidebarWidthVar(savedSidebarWidth());
 }
 
-// ── Sidebar device name ───────────────────────────────────────────────────────
-// Editable label at the top of the sidebar — defaults to OS hostname, can be
-// renamed by double-clicking. The chosen name persists in localStorage.
+function applySidebarWidthFromConfig() {
+  const w = Number((window.__fpConfig || {})['ui.sidebar_w']);
+  if (!Number.isFinite(w) || w < SIDEBAR_WIDTH_MIN || w > SIDEBAR_WIDTH_MAX) return;
+  localStorage.setItem('fp-sidebar-width', String(w));
+  if (sidebar && !sidebar.classList.contains('fp-sidebar--collapsed')) setSidebarWidthVar(w);
+}
+
+// ── Device name (the header bar's identity card, addendum §1) ─────────────────
+// Defaults to the OS hostname, renamed by double-clicking. The chosen name
+// persists in localStorage. It ellipsizes at --identity-name-max, so the
+// tooltip always carries the whole name.
+const DEVICE_NAME_HINT = 'Double-click to rename';
+
+/** Shows `name` as the device name, tooltip included (it does not save). */
+function setDeviceNameText(name) {
+  const el = document.getElementById('device-name');
+  if (!el) return;
+  el.textContent = name;
+  el.title = `${name}\n${DEVICE_NAME_HINT}`;
+}
+
 function initDeviceName() {
-  const el = document.getElementById('sb-device-name');
+  const el = document.getElementById('device-name');
   if (!el) return;
   const saved = localStorage.getItem('fp-device-name');
   const fallback = (window.electronAPI?.hostname?.() || 'My PC').trim() || 'My PC';
-  el.textContent = saved || fallback;
+  setDeviceNameText(saved || fallback);
 
+  // The name as it stood when this edit began: Escape restores THIS, not the
+  // name from app start, which threw away a rename made earlier in the
+  // session (pass 2 #59).
+  let before = el.textContent;
   el.addEventListener('dblclick', () => {
+    before = el.textContent;
     el.setAttribute('contenteditable', 'plaintext-only');
     el.focus();
     // Select all so the user can just start typing to replace
@@ -818,87 +1430,455 @@ function initDeviceName() {
   function commit() {
     el.removeAttribute('contenteditable');
     const next = (el.textContent || '').trim().slice(0, 80) || fallback;
-    el.textContent = next;
+    setDeviceNameText(next);
     localStorage.setItem('fp-device-name', next);
+    // A long name was scrolled to its end while being typed: show its start.
+    el.scrollLeft = 0;
   }
 
   el.addEventListener('blur',    commit);
   el.addEventListener('keydown', e => {
     if (e.key === 'Enter')  { e.preventDefault(); el.blur(); }
-    if (e.key === 'Escape') { e.preventDefault(); el.textContent = saved || fallback; el.blur(); }
+    if (e.key === 'Escape') { e.preventDefault(); el.textContent = before; el.blur(); }
   });
 }
 
-// ── Toolbar layout ─────────────────────────────────────────────────
-// The old JS resize model (initToolbarResponsive: a ResizeObserver +
-// MutationObserver pair that measured the breadcrumb every frame and wrote a
-// pixel width onto the search bar, collapsing it to an icon below a threshold)
-// is gone — Task 14's layout is pure CSS (styles.css §7/§9/§10, design §8.3):
-// #breadcrumb-wrap flexes and is right-anchored with a leading mask fade, and
-// #search-wrap grows with its own content (field-sizing: content, with
-// search.js's measuring-span fallback) up to 60% of the toolbar. Nothing has
-// to run per frame, and the search bar no longer collapses into a button that
-// opened the palette instead of searching.
+// ── Toolbar layout (Stage 2D §6.2, addendum §2) ────────────────────
+// The path and the search bar share the bar. The path starts at the left
+// (right after the nav group) and grows rightward. As the bar narrows, or
+// the path grows, the order is fixed:
+//   1. the search bar shrinks from its preferred width (280, or wider while
+//      chips and text need it, up to 60% of the free space) to its 120 min —
+//      it fills the space up to the end of the path (addendum §2 ruling);
+//   2. it collapses fully to the magnifier, an --h-input square that keeps
+//      the field's lighter fill (styles.css);
+//   3. only then does the path overflow: #breadcrumb-wrap.is-overflowing
+//      right-anchors it under the leading fade, current folder in view;
+//   4. the current folder's crumb is never squeezed below a readable
+//      TOOLBAR_CRUMB_FLOOR (it ellipsizes, .is-tight, down to that): when
+//      even the magnifier leaves it less, the lowest-priority buttons move
+//      into the "…" (See more) button (#toolbar > [data-fold="1".."4"]:
+//      theme, refresh, inspector toggle, View/Sort), back again with the
+//      same 24px hysteresis. Nothing ever just vanishes.
+// Opened while collapsed (the magnifier, Ctrl+F, a tag chip), the bar grows
+// IN FLOW — never over the path — to its preferred width, giving way to
+// keep the current folder's name whole, then to its floor, then down to
+// TOOLBAR_SEARCH_GIVE before anything folds; it pushes the path left (it
+// caves in further under the fade). Folding back runs the same width ease
+// in reverse (setSearchSlotWidth). Both are instant with animations off.
+// Every decision uses the path's MEASURED natural width against the free
+// space — never a fixed constant — so a short path keeps a full search bar
+// on a narrow window and a deep one collapses it on a wide window. Nothing
+// measured depends on the mode it decides (the two flexible children are
+// excluded from `fixed`, a folded button counts with its last measured
+// width, the gap never changes), so it cannot oscillate; the 24px hysteresis
+// keeps a window drag across a threshold from flickering. Mid-ease widths
+// never feed a decision: the slot's target is computed, not measured, and
+// the path is laid out for the narrowest width the ease passes through.
+// Runs from a ResizeObserver (toolbar and path), a MutationObserver on the
+// crumbs, updateBreadcrumb(), every zoom change, font loads, search content
+// changes and the end of a width ease — never per frame.
+const TOOLBAR_SEARCH_PREFERRED = 280;
+const TOOLBAR_SEARCH_MIN       = 120;
+const TOOLBAR_SEARCH_GIVE      = 80;    // opened while collapsed, it gives way to this before buttons fold
+const TOOLBAR_SEARCH_GROW_MAX  = 0.6;   // share of the free space content may grow the bar to
+const TOOLBAR_CRUMB_FLOOR      = 56;    // the current folder's readable minimum (an ellipsized name)
+const TOOLBAR_HYSTERESIS       = 24;
+const TOOLBAR_FADE             = 24;    // the path's leading fade (styles.css .is-overflowing)
 
-// The toolbar stays on one line at every width: the breadcrumb yields its
-// space first (it can shrink to nothing under its fade), then the search bar
-// folds into a single magnifier button, and the nav/View/Sort/Inspector/Theme
-// buttons never move. The only thing JS decides is WHEN that fold happens —
-// once per resize, never per frame.
-const TOOLBAR_SEARCH_MIN = 140;  // px the expanded search bar wants
-const TOOLBAR_PATH_MIN   = 120;  // px the breadcrumb wants before the bar folds
-// Extra room the toolbar must regain before it leaves narrow mode — wider than
-// the 12px the mode's own gap change is worth (pass 2 #163).
-const TOOLBAR_NARROW_HYSTERESIS = 24;
+/** The width the search bar's content wants: its chrome, the chips and the
+ * typed text (or the placeholder). Measured off the hidden ruler span, so it
+ * never depends on the width the bar currently has. */
+function searchContentWidth() {
+  const wrap = document.getElementById('search-wrap');
+  const input = document.getElementById('search-input');
+  const ruler = document.getElementById('search-measure');
+  const chips = document.getElementById('search-chips');
+  if (!wrap || !input || !ruler) return 0;
+  const cs = getComputedStyle(wrap);
+  const px = (v) => parseFloat(v) || 0;
+  const gap = px(cs.columnGap);
+  ruler.textContent = input.value || searchPlaceholderFull(input);
+  const text = Math.ceil(ruler.getBoundingClientRect().width) + 4;   // + caret
+  const chipsW = chips && chips.childElementCount ? chips.scrollWidth + gap : 0;
+  const icon = wrap.querySelector('.fp-search__icon');
+  const iconW = icon ? icon.getBoundingClientRect().width || 14 : 14;
+  const clear = wrap.classList.contains('fp-search--has-content')
+    ? (document.getElementById('search-clear-inline')?.offsetWidth || 20) + gap : 0;
+  return px(cs.paddingLeft) + px(cs.paddingRight) + px(cs.borderLeftWidth) + px(cs.borderRightWidth)
+    + iconW + gap + chipsW + text + clear;
+}
 
-function initToolbarNarrowMode() {
-  const toolbar = document.getElementById('toolbar');
-  if (!toolbar || typeof ResizeObserver === 'undefined') return;
+/** The search bar's whole placeholder ("Search files…"): fitSearchPlaceholder
+ * may have shortened the live one, so it is kept in data-placeholder. */
+function searchPlaceholderFull(input) {
+  if (!input) return '';
+  if (input.dataset.placeholder == null) input.dataset.placeholder = input.placeholder || '';
+  return input.dataset.placeholder;
+}
 
-  function recalc() {
-    const style = getComputedStyle(toolbar);
-    const gap = parseFloat(style.gap) || 0;
-    let fixed = 0;
-    let visible = 0;
-    for (const child of toolbar.children) {
-      const width = child.getBoundingClientRect().width;
-      if (width === 0) continue;
-      visible++;
-      // The two flexible children are excluded so the measurement cannot
-      // change as a result of the mode it decides — no oscillation.
-      if (child.id === 'search-wrap' || child.id === 'breadcrumb-wrap') continue;
-      fixed += width;
+/** A bar that has given way below its placeholder ends it in an ellipsis
+ * ("Search f…"), never a hard cut (Task 8 Q13). CSS text-overflow cannot do
+ * it: Chromium clips the placeholder of a focused input. So the text itself
+ * is shortened to the input's width, measured off the same ruler as
+ * searchContentWidth (which reads the whole text, so this never feeds back
+ * into the bar's width). */
+function fitSearchPlaceholder() {
+  const input = document.getElementById('search-input');
+  const ruler = document.getElementById('search-measure');
+  if (!input || !ruler) return;
+  const full = searchPlaceholderFull(input);
+  const room = input.clientWidth - 2;              // the caret
+  let text = full;
+  if (room > 0) {
+    ruler.textContent = full;
+    if (ruler.getBoundingClientRect().width > room) {
+      const base = full.replace(/…$/, '');
+      let n = base.length;
+      do {
+        n--;
+        text = `${base.slice(0, n).trimEnd()}…`;
+        ruler.textContent = text;
+      } while (n > 1 && ruler.getBoundingClientRect().width > room);
     }
-    const padding = (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0);
-    const available = toolbar.clientWidth - padding - gap * Math.max(0, visible - 1);
-    // The gap IS mode-dependent (#toolbar[data-narrow] tightens it from 6px to
-    // 4px), so `available` is ~12px larger when measured in the mode it is
-    // deciding — entry and exit thresholds sat 12px apart and the bar flickered
-    // for that whole band of a window drag (pass 2 #163). Leaving narrow mode
-    // needs that much more room than entering it did, so no width can satisfy
-    // both tests at once.
-    const narrow = toolbar.hasAttribute('data-narrow');
-    const needed = fixed + TOOLBAR_SEARCH_MIN + TOOLBAR_PATH_MIN + (narrow ? TOOLBAR_NARROW_HYSTERESIS : 0);
-    toolbar.toggleAttribute('data-narrow', available < needed);
+  }
+  if (input.placeholder !== text) input.placeholder = text;
+}
+
+const TOOLBAR_INPUT_FLOOR_CH = 3;        // the toolbar input's min-width (styles.css, 3ch)
+
+/** The least width the bar's content fits in: its chrome, the icon, the
+ * input at its floor (a few characters), the clear × while it holds
+ * something, and the chips' gap (they shrink to nothing). The opened bar
+ * never gets less, or its content would spill over the next button. Like
+ * searchContentWidth, measured off the ruler, never off the bar itself. */
+function searchContentMin() {
+  const wrap = document.getElementById('search-wrap');
+  const ruler = document.getElementById('search-measure');
+  const chips = document.getElementById('search-chips');
+  if (!wrap || !ruler) return 0;
+  const cs = getComputedStyle(wrap);
+  const px = (v) => parseFloat(v) || 0;
+  const gap = px(cs.columnGap);
+  ruler.textContent = '0'.repeat(TOOLBAR_INPUT_FLOOR_CH);
+  const input = Math.ceil(ruler.getBoundingClientRect().width);
+  const icon = wrap.querySelector('.fp-search__icon');
+  const iconW = icon ? icon.getBoundingClientRect().width || 14 : 14;
+  const chipsGap = chips && chips.childElementCount ? gap : 0;
+  const clear = wrap.classList.contains('fp-search--has-content')
+    ? (document.getElementById('search-clear-inline')?.offsetWidth || 20) + gap : 0;
+  return Math.ceil(px(cs.paddingLeft) + px(cs.paddingRight) + px(cs.borderLeftWidth) + px(cs.borderRightWidth)
+    + iconW + gap + chipsGap + input + clear);
+}
+
+// The search slot's running width ease ({anim, from, to}), or null.
+let _searchSlotEase = null;
+
+/**
+ * Gives the search slot its width. The target is the DOM truth and is set at
+ * once (--search-slot-w); with `animate` (an expand or fold the user asked
+ * for, never a resize or typing) and animations on, fpAnimate eases the
+ * rendered width from wherever it is now — mid-ease included, so a fold
+ * right after an expand retargets instead of queueing — over --motion-base.
+ * While it runs, the bar carries .fp-search--sizing (its content may shrink
+ * past its minimum) and, folding, .fp-search--folding (it keeps the field's
+ * look until it is the magnifier again). When the ease ends or is cancelled
+ * layoutToolbar() runs once more so the path settles on the final width.
+ */
+function setSearchSlotWidth(slot, sw, to, animate) {
+  const prev = _searchSlotEase;
+  if (prev && prev.to === to) return;          // already easing there
+  const from = slot.getBoundingClientRect().width;
+  slot.style.setProperty('--search-slot-w', `${to}px`);
+  _searchSlotEase = null;
+  const anim = animate && Math.abs(from - to) >= 1
+    ? fpAnimate(slot, [{ width: `${from}px` }, { width: `${to}px` }], { duration: 'base', easing: 'out', key: 'search-slot' })
+    : null;
+  if (!anim) {
+    if (prev) prev.anim.cancel();
+    sw?.classList.remove('fp-search--sizing', 'fp-search--folding');
+    return;
+  }
+  const rec = { anim, from, to };
+  _searchSlotEase = rec;
+  if (sw) {
+    sw.classList.add('fp-search--sizing');
+    sw.classList.toggle('fp-search--folding', to < from && !sw.classList.contains('fp-search--expanded'));
+  }
+  const end = () => {
+    if (_searchSlotEase !== rec) return;     // retargeted: the new ease owns the bar
+    _searchSlotEase = null;
+    // A fold-back has ended: the buttons it held folded may come back.
+    if (rec.to < rec.from && !sw?.classList.contains('fp-search--expanded')) _toolbarFolds.open = 0;
+    sw?.classList.remove('fp-search--sizing', 'fp-search--folding');
+    layoutToolbar();
+  };
+  anim.addEventListener('finish', end);
+  anim.addEventListener('cancel', end);
+}
+
+// Buttons folded into the "…" menu, per mode (step 4 above).
+const _toolbarFolds = { rest: 0, open: 0 };
+
+let _toolbarCollapsedW = 0;
+/** The folded magnifier's size: an --h-input square (styles.css). */
+function toolbarCollapsedW() {
+  if (!_toolbarCollapsedW) {
+    const v = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--h-input'));
+    _toolbarCollapsedW = Number.isFinite(v) && v > 0 ? v : 30;
+  }
+  return _toolbarCollapsedW;
+}
+
+/** The "…" (See more) button's menu: the toolbar actions folded away, with
+ * their icons — View and Sort as the same flyouts their buttons open, the
+ * inspector toggle with its on/off check (Explorer's command-bar overflow). */
+function openToolbarMoreMenu(anchor) {
+  const folded = new Set([...document.querySelectorAll('#toolbar > [data-fold].is-folded')].map((el) => el.dataset.fold));
+  const items = [];
+  if (folded.has('2')) items.push({ label: 'Refresh', action: 'refresh-directory', kbd: 'F5', icon: icon('refresh', 'fp-icon--14') });
+  if (folded.has('4')) {
+    items.push({ label: 'View', icon: icon('view-grid', 'fp-icon--14'), items: VIEW_MENU_ITEMS });
+    items.push({ label: 'Sort', icon: icon('sort', 'fp-icon--14'), items: SORT_MENU_ITEMS });
+  }
+  if (folded.has('3')) {
+    items.push({ label: 'Inspector', action: 'toggle-inspector', kbd: 'Ctrl+I', icon: icon('inspector', 'fp-icon--14'),
+      checked: () => !!document.getElementById('inspector')?.classList.contains('inspector--open') });
+  }
+  if (folded.has('1')) {
+    // The theme button's own glyph (applyTheme keeps it on the current theme).
+    const glyph = document.querySelector('#btn-theme svg')?.cloneNode(true);
+    if (glyph) glyph.setAttribute('class', 'fp-icon fp-icon--14');
+    items.push({ label: 'Toggle theme', action: 'toggle-theme', icon: glyph ? glyph.outerHTML : '' });
+  }
+  if (!items.length) return;
+  showContextMenu(0, 0, items, { anchor, ctx: menuContext() });
+}
+
+let _layoutToolbarDepth = 0;
+function layoutToolbar({ animate = false } = {}) {
+  const toolbar = document.getElementById('toolbar');
+  const wrap = document.getElementById('breadcrumb-wrap');
+  const crumbs = document.getElementById('breadcrumb');
+  const slot = document.getElementById('search-slot');
+  const sw = document.getElementById('search-wrap');
+  const more = document.getElementById('btn-toolbar-more');
+  if (!toolbar || !wrap || !crumbs || !slot) return;
+  const width = toolbar.getBoundingClientRect().width;
+  if (!width) return;                     // not laid out (hidden window)
+
+  const style = getComputedStyle(toolbar);
+  const gap = parseFloat(style.columnGap) || 0;
+  let fixed = 0;
+  let visible = 0;
+  const foldables = [];
+  for (const child of toolbar.children) {
+    if (child === more) continue;         // the "…" is accounted for by the folds below
+    if (child === wrap || child === slot) { visible++; continue; }
+    const order = Number(child.dataset.fold) || 0;
+    const folded = child.classList.contains('is-folded');
+    // A folded button counts with the width it had, so folding it never
+    // changes the free space it was folded for.
+    const w = folded ? (child._fpFoldW || 0) : child.getBoundingClientRect().width;
+    if (order && !folded && w) child._fpFoldW = w;
+    if (!w) continue;
+    visible++;
+    fixed += w;
+    if (order) foldables.push({ el: child, order, w });
+  }
+  foldables.sort((a, b) => a.order - b.order);
+  const padding = (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0);
+  // The room the path and the search slot share, with every button shown.
+  const free = width - padding - fixed - gap * Math.max(0, visible - 1);
+  // The path's natural width — with back whatever an ellipsized current
+  // crumb (.is-tight below) is hiding, so that cap never feeds back here.
+  // In search mode the "Search in <folder>" header is the current crumb (its
+  // clear × trails it) — Task 8 Q10.
+  const current = crumbs.querySelector('.fp-breadcrumb__crumb--current, .fp-breadcrumb__search');
+  const isSearchHead = !!current && current.classList.contains('fp-breadcrumb__search');
+  // A crumb with no label span (none is built that way today) is measured
+  // itself, so a capped crumb can never read as "fits" and flip back.
+  const label = current ? (current.querySelector('.fp-breadcrumb__label') || current) : null;
+  const hidden = label ? Math.max(0, label.scrollWidth - label.clientWidth) : 0;
+  let crumbNatural = Math.max(crumbs.scrollWidth, crumbs.getBoundingClientRect().width) + hidden;
+  let currentNatural = current ? current.getBoundingClientRect().width + hidden : crumbNatural;
+  // Measured through the cap, the hidden part is whole px (scrollWidth −
+  // clientWidth) while the uncapped crumb is fractional: up to 1px apart,
+  // which made the opened bar's width (it gives way to the name) differ by
+  // 1px between the capped and uncapped passes — a ResizeObserver loop. So
+  // the uncapped measure is kept on the crumb and used while it is capped,
+  // unless the two disagree by more than rounding (fonts loaded, say).
+  if (current) {
+    const kept = current._fpNatural;
+    if (!wrap.classList.contains('is-tight')) current._fpNatural = { crumbs: crumbNatural, current: currentNatural };
+    else if (kept && Math.abs(kept.current - currentNatural) <= 2 && Math.abs(kept.crumbs - crumbNatural) <= 2) {
+      crumbNatural = kept.crumbs;
+      currentNatural = kept.current;
+    }
   }
 
-  new ResizeObserver(recalc).observe(toolbar);
-  recalc();
+  const room = free - crumbNatural;       // what the search may take beside the whole path
+  const wasCollapsed = toolbar.dataset.search === 'collapsed';
+  const collapsed = room < TOOLBAR_SEARCH_MIN + (wasCollapsed ? TOOLBAR_HYSTERESIS : 0);
+  const preferred = Math.max(TOOLBAR_SEARCH_PREFERRED,
+    Math.min(Math.ceil(searchContentWidth()), Math.floor(free * TOOLBAR_SEARCH_GROW_MAX)));
+
+  if (collapsed && !wasCollapsed && sw) {
+    // A bar that is in use when the toolbar collapses stays open (in flow)
+    // rather than vanishing from under the caret; one that is not folds.
+    const inUse = sw.contains(document.activeElement)
+      || (typeof searchState !== 'undefined' && (searchState.text.trim() || searchState.chips.length));
+    sw.classList.toggle('fp-search--expanded', !!inUse);
+  }
+  const expanded = collapsed && !!sw && sw.classList.contains('fp-search--expanded');
+
+  // Step 4: the current folder keeps its readable floor beside the search
+  // (the magnifier, or the opened bar given way down to TOOLBAR_SEARCH_GIVE);
+  // only when that is still short do the low-priority buttons leave the row,
+  // in order, into the "…" (See more) button that takes the first folded
+  // slot — so folding one button alone gains nothing, and they never vanish
+  // (their actions live on in its menu, openToolbarMoreMenu). The count is
+  // kept per mode (at rest / opened) so the 24px hysteresis of one never
+  // leaks into the other: folding the bar back restores the rest count.
+  const collapsedW = toolbarCollapsedW();
+  const floor = Math.min(currentNatural, crumbNatural, TOOLBAR_CRUMB_FLOOR);
+  const mode = !collapsed ? null : (expanded ? 'open' : 'rest');
+  // Opened, the bar never gets less than its content needs (a bar holding
+  // text and the clear × needs more than the bare 80).
+  const give = mode === 'open' ? Math.max(TOOLBAR_SEARCH_GIVE, searchContentMin()) : 0;
+  const need = mode === 'open' ? floor + give : floor + collapsedW;
+  const moreW = (more && more.getBoundingClientRect().width) || more?._fpFoldW || foldables[0]?.w || collapsedW;
+  if (more && moreW) more._fpFoldW = moreW;
+  const availWith = (n) => foldables.slice(0, n).reduce((sum, f) => sum + f.w + gap, free)
+    - (n > 0 ? moreW + gap : 0);
+  let fold = 0;
+  if (mode) {
+    const was = _toolbarFolds[mode];
+    while (fold < foldables.length && availWith(fold) - need < (fold < was ? TOOLBAR_HYSTERESIS : 0)) fold++;
+    _toolbarFolds[mode] = fold;
+  } else {
+    _toolbarFolds.rest = 0;
+    _toolbarFolds.open = 0;
+  }
+
+  let slotW;
+  if (!collapsed) slotW = Math.floor(Math.min(preferred, room));
+  else if (!expanded) slotW = collapsedW;
+  else {
+    // Opened in flow: its preferred width, but it gives way (down to its
+    // minimum) to keep the current folder's name whole; below that the name
+    // ellipsizes down to its floor, and then the bar gives way further, to
+    // TOOLBAR_SEARCH_GIVE, before anything folds.
+    const keepWhole = availWith(fold) - Math.ceil(currentNatural) - 1;
+    // Never below its content minimum: with every button already in the
+    // "…", the path gives up the rest of its floor rather than the bar
+    // spilling its content over the buttons beside it.
+    slotW = Math.max(collapsedW, Math.ceil(searchContentMin()), Math.floor(Math.min(preferred,
+      Math.max(TOOLBAR_SEARCH_MIN, keepWhole), availWith(fold) - floor)));
+  }
+
+  toolbar.dataset.search = collapsed ? 'collapsed' : 'full';
+  setSearchSlotWidth(slot, sw, slotW, animate);
+  // While the bar folds back it is still wide: buttons it had folded away
+  // come back only once it is the magnifier again (the ease's end), or the
+  // row would overflow for the length of the ease.
+  const ease = _searchSlotEase;
+  if (ease && ease.to < ease.from) fold = Math.max(fold, _toolbarFolds.open);
+  // Folded back and settled (no ease, or none left to hold for): the opened
+  // count is spent, so the next opening starts its own hysteresis from
+  // nothing. Only now — the hold above must still read it while the bar
+  // eases back.
+  else if (mode === 'rest') _toolbarFolds.open = 0;
+  foldables.forEach((f, i) => f.el.classList.toggle('is-folded', i < fold));
+  if (more) more.hidden = fold === 0;
+  if (fold) toolbar.dataset.fold = String(fold);
+  else delete toolbar.dataset.fold;
+  const avail = availWith(fold);
+  window.__fpToolbarLayout = { free, floor, fold, rest: _toolbarFolds.rest, open: _toolbarFolds.open, collapsedW };
+
+  // The path is laid out for the narrowest the wrap gets while the bar
+  // eases (its final width when growing, its start when folding), so it
+  // never flips mid-ease; the ease's end re-runs this for the final width.
+  const widest = ease ? Math.max(ease.from, ease.to) : slotW;
+  const wrapW = Math.max(0, Math.floor(avail - widest));
+  // The path overflows only when it does not fit beside what the slot takes.
+  const overflowing = crumbNatural > wrapW + 0.5;
+  wrap.classList.toggle('is-overflowing', overflowing);
+  // The current folder is never under the fade: when the wrap cannot hold it
+  // plus the 24px fade, the fade goes and the crumb ellipsizes to the wrap.
+  // What follows the current crumb (the search header's clear ×) stays whole
+  // beside it, so the cap leaves it room.
+  let trailing = 0;
+  for (let el = current && current.nextElementSibling; el; el = el.nextElementSibling) {
+    const w = el.getBoundingClientRect().width;
+    if (w) trailing += w + (parseFloat(getComputedStyle(crumbs).columnGap) || 0);
+  }
+  // The search header never goes under the fade: overflowing, it ellipsizes
+  // ("Search in Final-Appr…") instead of losing its start mid-word.
+  const tight = overflowing && (isSearchHead || currentNatural + trailing + TOOLBAR_FADE > wrapW);
+  wrap.classList.toggle('is-tight', tight);
+  wrap.style.setProperty('--crumb-current-max', `${Math.max(0, wrapW - trailing)}px`);
+  if (current) {
+    if (tight) current.title = label ? label.textContent : current.textContent;
+    else current.removeAttribute('title');
+  }
+  // A separator under the fade has lost the crumb before it: alone at the
+  // path's left edge it read as a stray "·" (Task 14 Q12). Overflowing, the
+  // path is right-anchored, so where a separator lands is its distance from
+  // the path's end, measured inside the path (no mid-ease geometry).
+  const pathEnd = crumbs.getBoundingClientRect().right;
+  crumbs.querySelectorAll('.fp-breadcrumb__sep').forEach((sep) => {
+    sep.classList.toggle('is-orphan', overflowing && wrapW - (pathEnd - sep.getBoundingClientRect().left) < TOOLBAR_FADE);
+  });
+  // The Filters/History dropdown hangs leftward from the bar's right edge
+  // (which no ease moves); on a narrow bar it must not run past the
+  // toolbar's left edge, where the main column clips it (styles.css
+  // .fp-search-dd).
+  const ddRoom = slot.getBoundingClientRect().right - toolbar.getBoundingClientRect().left - 4;
+  slot.style.setProperty('--search-dd-room', `${Math.max(0, Math.floor(ddRoom))}px`);
+  // …and it hangs no lower than the status bar: styles.css caps its height at
+  // the room from here to there (Task 14 Q13).
+  slot.style.setProperty('--search-dd-top', `${Math.ceil(slot.getBoundingClientRect().bottom)}px`);
+  fitSearchPlaceholder();
+  // A flip changes what is measurable (chips are display:none while folded):
+  // one more pass settles it.
+  if (collapsed !== wasCollapsed && _layoutToolbarDepth === 0) {
+    _layoutToolbarDepth++;
+    try { layoutToolbar(); } finally { _layoutToolbarDepth--; }
+  }
+}
+
+function initToolbarLayout() {
+  const toolbar = document.getElementById('toolbar');
+  const crumbs = document.getElementById('breadcrumb');
+  if (!toolbar || !crumbs) return;
+  if (typeof ResizeObserver !== 'undefined') {
+    const ro = new ResizeObserver(() => layoutToolbar());
+    ro.observe(toolbar);
+    ro.observe(crumbs);                   // the path's natural width (crumbs, font, zoom)
+  }
+  // Crumb changes from anywhere (updateBreadcrumb, the search header, Home):
+  // re-laid out before the next paint.
+  new MutationObserver(() => layoutToolbar())
+    .observe(crumbs, { childList: true, subtree: true, characterData: true });
+  if (document.fonts) {
+    document.fonts.ready.then(() => layoutToolbar());
+    document.fonts.addEventListener?.('loadingdone', () => layoutToolbar());
+  }
+  layoutToolbar();
 }
 
 // ── Command palette ───────────────────────────────���──────────────────────��─────
 function openPalette() {
   if (!paletteScrim) return;
-  paletteScrim.style.display = 'flex';
-  paletteScrim.removeAttribute('aria-hidden');
+  fpSetScrim(paletteScrim, true);
   if (paletteInput) { paletteInput.value = ''; paletteInput.focus(); }
   paletteResetToCommands();
 }
 
 function closePalette() {
   if (!paletteScrim) return;
-  paletteScrim.style.display = 'none';
-  paletteScrim.setAttribute('aria-hidden', 'true');
+  fpSetScrim(paletteScrim, false);
 }
 
 // ── Palette → toolbar search (Task 14, design §8.5) ────────────────────
@@ -972,36 +1952,17 @@ function handlePaletteAction(btn) {
   closePalette();
 }
 
-// Palette Search/Chat mode switch (A.11.1)
-function setPaletteMode(mode) {
-  const searchPane = document.getElementById('palette-search-pane');
-  const chatPane   = document.getElementById('palette-chat-pane');
-  const toggle     = document.getElementById('palette-mode-toggle');
-  if (searchPane) searchPane.style.display = mode === 'search' ? '' : 'none';
-  if (chatPane)   chatPane.style.display   = mode === 'chat' ? '' : 'none';
-  toggle?.querySelectorAll('.fp-segmented__opt').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.mode === mode);
-  });
-  if (paletteInput) {
-    paletteInput.placeholder = mode === 'search'
-      ? 'Type a command, path, or question…'
-      : 'Ask Claude anything about your files…';
-  }
-}
-
 // ── Tag canvas (A.11.2) ───────────────────────────────────────────────────────
 function openTagCanvas() {
   const scrim = document.getElementById('tag-canvas-scrim');
   if (!scrim) return;
-  scrim.style.display = 'flex';
-  scrim.removeAttribute('aria-hidden');
+  fpSetScrim(scrim, true);
 }
 
 function closeTagCanvas() {
   const scrim = document.getElementById('tag-canvas-scrim');
   if (!scrim) return;
-  scrim.style.display = 'none';
-  scrim.setAttribute('aria-hidden', 'true');
+  fpSetScrim(scrim, false);
 }
 
 // ── Ask File+ (Task 15, design spec §9) ─────────────────────────────────────
@@ -1023,8 +1984,16 @@ function openAskPopout() {
   // uses for the View/Sort toolbar dropdowns.
   const r = btn.getBoundingClientRect();
   const vw = window.innerWidth, vh = window.innerHeight;
-  popout.style.left = `${Math.min(r.left, vw - popout.offsetWidth - 8)}px`;
-  popout.style.top  = `${Math.min(r.bottom + 6, vh - popout.offsetHeight - 8)}px`;
+  const edge = menuEdgePx();
+  // Never over the status bar (Task 14 Q12): the popout fits between the
+  // header bar and the status bar, and scrolls inside itself when even that
+  // is too short (a 500 px window at 150 %).
+  const status = document.querySelector('.fp-statusbar, #statusbar');
+  const bottom = (status ? status.getBoundingClientRect().top : vh) - edge;
+  const top = Math.max(edge, document.getElementById('header')?.getBoundingClientRect().bottom || edge);
+  popout.style.maxHeight = `${Math.max(0, bottom - top)}px`;
+  popout.style.left = `${Math.min(r.left, vw - popout.offsetWidth - edge)}px`;
+  popout.style.top  = `${Math.max(top, Math.min(r.bottom + 6, bottom - popout.offsetHeight))}px`;
   document.getElementById('ask-input')?.focus();
 }
 
@@ -1138,18 +2107,14 @@ function openModal(type, config = {}) {
 
   _modalOnClose = typeof config.onClose === 'function' ? config.onClose : null;
 
-  scrim.style.display = 'flex';
-  scrim.removeAttribute('aria-hidden');
+  fpSetScrim(scrim, true);
 }
 
 function closeModal() {
   const scrim = document.getElementById('modal-scrim');
   const onClose = _modalOnClose;
   _modalOnClose = null;
-  if (scrim) {
-    scrim.style.display = 'none';
-    scrim.setAttribute('aria-hidden', 'true');
-  }
+  fpSetScrim(scrim, false);
   if (onClose) onClose();
 }
 
@@ -1197,70 +2162,203 @@ function applyTheme(mode) {
   // 'system' resolves to whichever the OS currently reports).
   const themeIconUse = document.querySelector('#btn-theme use');
   if (themeIconUse) themeIconUse.setAttribute('href', `#fp-theme-${resolved}`);
+  if (typeof syncAccentField === 'function') syncAccentField();
 }
 
-// ── Zoom — uses Electron webContents.setZoomFactor when in Electron (no layout cut-off),
-//           falls back to CSS zoom for non-Electron contexts (tests/browser).
-const ZOOM_STEPS   = [0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.33, 1.5, 1.75, 2.0];
+// ── App zoom (Stage 2D §5, decision D2D-1) ─────────────────────────────────
+// The zoom is Electron's page zoom (webContents.setZoomFactor: it scales the
+// whole viewport and Electron persists it across restarts). The renderer
+// publishes the factor in effect as --app-zoom on :root; the sidebar, the
+// collapsed rail and the inspector size themselves as screen px divided by
+// it, so they keep their width on screen while the text and icons inside
+// them grow (styles.css, --sidebar-w-screen / --inspector-w-screen).
+//
+// The step list is main.js's ZOOM_STEPS (read once over IPC). A step eases
+// in through electronAPI.zoomTo (preload.js) — unless animations are off
+// (fpMotionOn), or one of the first two eased steps of the session had a frame over
+// ZOOM_EASE_FRAME_LIMIT_MS (spec §5 fallback ruling), after which every step
+// is instant. window.__fpZoomEase says which mode is in effect and
+// window.__fpZoomFrames keeps the measured frame times.
+//
+// --app-zoom follows the zoom the page has actually APPLIED: it is set in a
+// capture-phase `resize` listener, which runs in the frame the new zoom first
+// lays out in, before any layout of it — so no frame shows a panel at the
+// old width. A zoom change always changes devicePixelRatio, so a resize that
+// leaves it alone (the user dragging the window edge) costs nothing; a
+// matchMedia(resolution) watcher catches a monitor-DPI move that fires no
+// resize. Mid-ease the factor comes from devicePixelRatio over the display
+// scale (renderer-local truth, re-read before every step); asking the main
+// process then could answer with a step the page has not drawn yet.
 const ZOOM_DEFAULT = 1.0;
-function getCurrentZoom() {
-  if (window.electronAPI?.getZoom) return window.electronAPI.getZoom();
-  const z = parseFloat(document.documentElement.style.zoom);
-  return isNaN(z) ? ZOOM_DEFAULT : z;
+const ZOOM_EASE_FRAME_LIMIT_MS = 32;
+const ZOOM_PILL_FADE_MS = 1200;
+const appZoom = {
+  current: 1, target: null, busy: 0, scale: null, dpr: null, steps: null,
+  measured: [], dropped: false, pillTimer: 0, pillHideTimer: 0, settleRaf: 0,
+};
+window.__fpZoomFrames = [];
+window.__fpZoomBusy = false;
+
+function zoomSteps() {
+  if (!appZoom.steps) {
+    const steps = window.electronAPI?.zoomSteps?.();
+    appZoom.steps = Array.isArray(steps) && steps.length ? steps : [ZOOM_DEFAULT];
+  }
+  return appZoom.steps;
 }
 
-// Status-bar zoom pill — visible only when zoom != 100%, click resets.
-function updateZoomPill() {
+/** The zoom factor the main process holds (the target of a running ease). */
+function getCurrentZoom() {
+  return Number(window.electronAPI?.getZoom?.()) || ZOOM_DEFAULT;
+}
+
+/** The 32 ms fallback test for one eased step's rAF-to-rAF frame times. The
+ * session's first eased step skips its first two frames: its first factor
+ * goes out in the first frame and is drawn in the next, and the first frame
+ * a page ever draws at a new zoom can take 100+ ms while the GPU warms up
+ * (measured: 108–129 ms on a fresh profile, never again after) — that one
+ * frame must not switch the whole session to instant steps. */
+function zoomFramesTooSlow(frames, firstOfSession) {
+  return frames.slice(firstOfSession ? 2 : 0).some((ms) => ms > ZOOM_EASE_FRAME_LIMIT_MS);
+}
+
+function zoomEaseMode() {
+  return (appZoom.dropped || !fpMotionOn()) ? 'instant' : 'eased';
+}
+
+/** Publishes the applied zoom as --app-zoom. Panel width transitions are
+ * held off for the frame so the panels never animate toward their new CSS
+ * width (that is exactly the "closing in" the owner disliked). */
+function syncAppZoom(force = false) {
+  const dpr = window.devicePixelRatio || 1;
+  const root = document.documentElement;
+  const first = !root.style.getPropertyValue('--app-zoom');
+  if (!force && !first && dpr === appZoom.dpr) return;   // a plain window resize
+  appZoom.dpr = dpr;
+  let z;
+  if (appZoom.busy && appZoom.scale) {
+    z = Math.round((dpr / appZoom.scale) * 1e6) / 1e6;
+  } else {
+    z = getCurrentZoom();
+    if (force && appZoom.scale && Math.abs(dpr / appZoom.scale - z) > 0.001) {
+      // The step's reply beat its first frame: the page still draws the old
+      // zoom. Publishing now would size the panels for a zoom not drawn yet;
+      // the resize that comes with it publishes instead.
+      appZoom.dpr = null;
+      return;
+    }
+    appZoom.scale = dpr / z;
+  }
+  const moved = first || Math.abs(z - appZoom.current) >= 0.00005;
+  // Always keep the exact factor, even when only float noise moved (the
+  // mid-ease devicePixelRatio estimate vs the settled IPC value): the wheel
+  // code multiplies by it, and 0.99999994 × 100 is one notch short of a step.
+  appZoom.current = z;
+  if (root.style.getPropertyValue('--app-zoom') === String(z)) return;
+  root.classList.add('fp-zoom-changing');
+  root.style.setProperty('--app-zoom', String(z));
+  // The toolbar's collapse order re-runs at the new zoom in this same frame
+  // (the panels just changed the toolbar's CSS width) — Stage 2D §5/§6.2.
+  layoutToolbar();
+  cancelAnimationFrame(appZoom.settleRaf);
+  appZoom.settleRaf = requestAnimationFrame(() => {
+    appZoom.settleRaf = requestAnimationFrame(() => root.classList.remove('fp-zoom-changing'));
+  });
+  // Startup at 100% is not a change: no pill. Startup zoomed shows it once.
+  if (moved && !appZoom.busy && !(first && Math.abs(z - ZOOM_DEFAULT) < 0.005)) updateZoomPill(z);
+}
+window.addEventListener('resize', () => syncAppZoom(), true);
+// Re-armed against the new ratio after every change (matchMedia's `change`
+// fires once per crossing) — same pattern as icons.js's _fpWatchDpr.
+function watchAppZoomDpr() {
+  const mq = window.matchMedia(`(resolution: ${window.devicePixelRatio || 1}dppx)`);
+  mq.addEventListener('change', () => { syncAppZoom(); watchAppZoomDpr(); }, { once: true });
+}
+syncAppZoom();
+watchAppZoomDpr();
+window.__fpZoomEase = zoomEaseMode();
+
+// Status-bar zoom pill (spec §5): shows the percentage on every change and
+// fades 1.2 s after the last one. Away from 100% the faded pill keeps its
+// place and comes back on hover / focus, so it stays the click-to-reset
+// target; at 100% it leaves the status bar once faded.
+function updateZoomPill(z = appZoom.target ?? appZoom.current) {
   const pill = document.getElementById('status-zoom-pill');
   const sep  = document.getElementById('status-zoom-sep');
   if (!pill) return;
-  const z = getCurrentZoom();
-  const pct = Math.round(z * 100);
-  pill.textContent = pct + '%';
-  // Treat 99–101% as "100%" to absorb floating-point drift around the default.
+  pill.textContent = Math.round(z * 100) + '%';
+  // Treat 99.5–100.5% as "100%" to absorb floating-point drift.
   const atDefault = Math.abs(z - ZOOM_DEFAULT) < 0.005;
-  pill.style.display = atDefault ? 'none' : '';
-  if (sep) sep.style.display = atDefault ? 'none' : '';
+  for (const el of [pill, sep]) {
+    if (!el) continue;
+    el.style.display = '';
+    el.classList.remove('is-faded');
+  }
+  clearTimeout(appZoom.pillTimer);
+  clearTimeout(appZoom.pillHideTimer);
+  appZoom.pillTimer = setTimeout(() => {
+    pill.classList.add('is-faded');
+    sep?.classList.add('is-faded');
+    if (atDefault) {
+      const fadeMs = parseFloat(getComputedStyle(pill).transitionDuration) * 1000 || 0;
+      appZoom.pillHideTimer = setTimeout(() => {
+        pill.style.display = 'none';
+        if (sep) sep.style.display = 'none';
+      }, fadeMs + 50);
+    }
+  }, ZOOM_PILL_FADE_MS);
 }
 
-function zoomIn() {
-  if (window.electronAPI?.zoomIn) {
-    window.electronAPI.zoomIn();
-    updateZoomPill();
-    return;
+/** Zooms the app to `target` (clamped to the step list): eased or instant
+ * per zoomEaseMode(). Key repeats step on from the running step's target,
+ * so a burst of presses lands exactly that many steps on. */
+async function setAppZoom(target) {
+  const api = window.electronAPI;
+  if (!api?.zoomTo) return;
+  const steps = zoomSteps();
+  const t = Math.min(steps[steps.length - 1], Math.max(steps[0], Number(target) || ZOOM_DEFAULT));
+  appZoom.target = t;
+  updateZoomPill(t);
+  const ease = zoomEaseMode() === 'eased';
+  // The display scale is re-read before every step that starts from rest
+  // (the window may have moved to a monitor with another DPI since): the
+  // mid-ease --app-zoom is devicePixelRatio over it.
+  if (!appZoom.busy) appZoom.scale = (window.devicePixelRatio || 1) / getCurrentZoom();
+  appZoom.busy += 1;
+  window.__fpZoomBusy = true;
+  let r = null;
+  try {
+    r = await api.zoomTo(t, ease ? fpMotionMs('--motion-zoom') : 0);
+  } catch (_e) {
+    r = null;
+  } finally {
+    appZoom.busy -= 1;
   }
-  // Fallback for non-Electron
-  const cur = getCurrentZoom();
-  const next = ZOOM_STEPS.find(s => s > cur + 0.001) ?? ZOOM_STEPS[ZOOM_STEPS.length - 1];
-  document.documentElement.style.zoom = String(next);
-  localStorage.setItem('fp-zoom', String(next));
-  updateZoomPill();
-}
-function zoomOut() {
-  if (window.electronAPI?.zoomOut) {
-    window.electronAPI.zoomOut();
-    updateZoomPill();
-    return;
+  if (ease && r && !r.superseded && r.frames && r.frames.length && appZoom.measured.length < 2) {
+    const firstOfSession = appZoom.measured.length === 0;
+    appZoom.measured.push(r.frames);
+    window.__fpZoomFrames = appZoom.measured.map((f) => f.slice());
+    if (zoomFramesTooSlow(r.frames, firstOfSession)) appZoom.dropped = true;
   }
-  // Fallback for non-Electron
-  const cur = getCurrentZoom();
-  const prev = [...ZOOM_STEPS].reverse().find(s => s < cur - 0.001) ?? ZOOM_STEPS[0];
-  document.documentElement.style.zoom = String(prev);
-  localStorage.setItem('fp-zoom', String(prev));
-  updateZoomPill();
-}
-function zoomReset() {
-  if (window.electronAPI?.zoomReset) {
-    window.electronAPI.zoomReset();
-    document.documentElement.style.zoom = '';
-    localStorage.removeItem('fp-zoom');
-    updateZoomPill();
-    return;
+  window.__fpZoomEase = zoomEaseMode();
+  if (!appZoom.busy) {
+    appZoom.target = null;
+    syncAppZoom(true);       // exact final factor (and the pill) from the main process
+    window.__fpZoomBusy = false;
   }
-  document.documentElement.style.zoom = '';
-  localStorage.removeItem('fp-zoom');
-  updateZoomPill();
 }
+
+function zoomStep(dir) {
+  const steps = zoomSteps();
+  const cur = appZoom.target ?? appZoom.current;
+  const next = dir > 0
+    ? (steps.find((s) => s > cur + 0.001) ?? steps[steps.length - 1])
+    : ([...steps].reverse().find((s) => s < cur - 0.001) ?? steps[0]);
+  setAppZoom(next);
+}
+function zoomIn()  { zoomStep(1); }
+function zoomOut() { zoomStep(-1); }
+function zoomReset() { setAppZoom(ZOOM_DEFAULT); }
 
 // ── Context-menu applicability (Task 11, playtest pass 1 §4.2) ─────────────
 // Shared enabled(ctx)/label(ctx) predicates, built from buildMenuContext()'s
@@ -1376,13 +2474,43 @@ const CONTEXT_MENUS = {
     { label: 'Paste',      action: 'cm-paste',      kbd: 'Ctrl+V', enabled: cmClipboardEnabled },
     { label: 'Refresh',    action: 'cm-refresh',    kbd: 'F5' },
     'sep',
-    { label: 'View → Details',    action: 'cm-view-list' },
-    { label: 'View → Grid',       action: 'cm-view-grid' },
+    // The same eight views as the toolbar's View menu, as a flyout (§3.1).
+    // Written out (not viewMenuItems()) so check_menu_cases.js can see every
+    // cm-* action in this block.
+    { label: 'View', items: [
+      { label: 'Extra large icons', action: 'cm-view-xl',      checked: () => viewMenuKey() === 'xl' },
+      { label: 'Large icons',       action: 'cm-view-large',   checked: () => viewMenuKey() === 'large' },
+      { label: 'Medium icons',      action: 'cm-view-medium',  checked: () => viewMenuKey() === 'medium' },
+      { label: 'Small icons',       action: 'cm-view-small',   checked: () => viewMenuKey() === 'small' },
+      { label: 'List',              action: 'cm-view-list',    checked: () => viewMenuKey() === 'list' },
+      { label: 'Details',           action: 'cm-view-details', checked: () => viewMenuKey() === 'details' },
+      { label: 'Tiles',             action: 'cm-view-tiles',   checked: () => viewMenuKey() === 'tiles' },
+      { label: 'Content',           action: 'cm-view-content', checked: () => viewMenuKey() === 'content' },
+    ] },
     { label: 'Sort by → name',    action: 'cm-sort-name' },
     { label: 'Sort by → modified', action: 'cm-sort-modified' },
     'sep',
     { label: ctx => browserState.showHidden ? 'Hide hidden files' : 'Show hidden files', action: 'cm-toggle-hidden' },
     { label: 'Properties',        action: 'cm-properties' },
+  ],
+
+  // Stage 2D §8 — a drive (This PC card or sidebar drive row).
+  drive: [
+    { label: 'Open',            action: 'cm-drive-open', icon: icon('open', 'fp-icon--14') },
+    { label: 'Open in new tab', action: 'cm-drive-open-tab' },
+    'sep',
+    { label: 'Properties',      action: 'cm-drive-properties' },
+  ],
+
+  // Stage 2D §8 — the open space of the This PC page: nothing to create or
+  // paste into (it is not a folder), its two layouts, and Refresh.
+  thispc: [
+    { label: 'Refresh', action: 'cm-refresh', kbd: 'F5' },
+    'sep',
+    { label: 'View', items: [
+      { label: 'Tiles',   action: 'cm-thispc-view-tiles',   checked: () => thisPcLayout() === 'tiles' },
+      { label: 'Details', action: 'cm-thispc-view-details', checked: () => thisPcLayout() === 'details' },
+    ] },
   ],
 
   // A.10.4 — Tab context menu
@@ -1438,29 +2566,20 @@ const INSPECTOR_MORE_MENU_ITEMS = [
 // click point, and {ctx: menuContext()} drives each item's checked(ctx)
 // predicate (Task 11 adds enabled(ctx) to the same item shape — unknown
 // fields are simply ignored by showContextMenu, not an error).
-/** Which icon-size item a grid scale belongs to. The four menu presets are
- * 0.75 / 1 / 1.5 / 2, but Ctrl+wheel steps through all eight of
- * LIST_SCALE_STEPS — so an exact-equality check left the whole View menu with
- * no checkmark at all at 0.875, 1.125, 1.25 or 1.75 (pass 2 #202). Each item
- * claims the band around its own preset instead. */
-function viewScaleBucket(scale) {
-  const s = Number(scale) || 1;
-  if (s >= 1.75) return 'xl';
-  if (s >= 1.25) return 'large';
-  if (s >= 0.875) return 'medium';
-  return 'small';
+/** The eight views, top to bottom as Explorer lists them (Stage 2D §3.1).
+ * The check sits on the item viewMenuKey() (browser.js) names: the view
+ * itself, or for icons the nearest named size — so every Ctrl+wheel step
+ * checks exactly one item (pass 2 #202). Built twice: the toolbar View menu
+ * (view-*) and the empty-area menu's View flyout (cm-view-*). */
+function viewMenuItems(prefix) {
+  return [
+    ['Extra large icons', 'xl'], ['Large icons', 'large'], ['Medium icons', 'medium'], ['Small icons', 'small'],
+    ['List', 'list'], ['Details', 'details'], ['Tiles', 'tiles'], ['Content', 'content'],
+  ].map(([label, key]) => ({ label, action: `${prefix}${key}`, checked: () => viewMenuKey() === key }));
 }
 
 const VIEW_MENU_ITEMS = [
-  { label: 'Extra large icons', action: 'view-xl',      checked: ctx => ctx.view === 'grid' && viewScaleBucket(ctx.scale) === 'xl' },
-  { label: 'Large icons',       action: 'view-large',   checked: ctx => ctx.view === 'grid' && viewScaleBucket(ctx.scale) === 'large' },
-  { label: 'Medium icons',      action: 'view-medium',  checked: ctx => ctx.view === 'grid' && viewScaleBucket(ctx.scale) === 'medium' },
-  { label: 'Small icons',       action: 'view-small',   checked: ctx => ctx.view === 'grid' && viewScaleBucket(ctx.scale) === 'small' },
-  'sep',
-  // "List" is deliberately not Explorer's multi-column flowing list — ours
-  // is a single-column, name-only row (see browser.js's setViewMode).
-  { label: 'List',              action: 'view-list',    checked: ctx => ctx.view === 'list' },
-  { label: 'Details',           action: 'view-details', checked: ctx => ctx.view === 'details' },
+  ...viewMenuItems('view-'),
   'sep',
   { label: 'Show hidden files',    action: 'toggle-show-hidden',     checked: ctx => ctx.showHidden },
   { label: 'Show file extensions', action: 'toggle-show-extensions', checked: ctx => ctx.showExtensions },
@@ -1469,7 +2588,11 @@ const VIEW_MENU_ITEMS = [
 
 const SORT_MENU_ITEMS = [
   { label: 'Name',          action: 'sort-name',     checked: ctx => ctx.sortKey === 'name' },
-  { label: 'Date modified', action: 'sort-modified', checked: ctx => ctx.sortKey === 'modified' },
+  { label: 'Date…', checked: ctx => ['created', 'modified', 'accessed'].includes(ctx.sortKey), items: [
+    { label: 'Date created',  action: 'sort-created',  checked: ctx => ctx.sortKey === 'created' },
+    { label: 'Date modified', action: 'sort-modified', checked: ctx => ctx.sortKey === 'modified' },
+    { label: 'Date accessed', action: 'sort-accessed', checked: ctx => ctx.sortKey === 'accessed' },
+  ] },
   { label: 'Type',          action: 'sort-type',     checked: ctx => ctx.sortKey === 'type' },
   { label: 'Size',          action: 'sort-size',     checked: ctx => ctx.sortKey === 'size' },
   'sep',
@@ -1484,7 +2607,7 @@ function menuContext() {
   const cfg = window.__fpConfig || {};
   return {
     view: browserState.view,
-    scale: browserState.listScale,
+    iconSize: browserState.iconSize,
     showHidden: browserState.showHidden,
     showExtensions: browserState.showExtensions,
     dynamicMediaView: cfg['ui.dynamic_media_view'] !== false,
@@ -1495,6 +2618,10 @@ function menuContext() {
 
 function getMenuTypeForTarget(target) {
   if (target.closest('.fp-tab')) return 'tab';
+  // A drive — a This PC card or a sidebar drive row — has its own menu
+  // (Stage 2D §8); the open space of the This PC page has another.
+  if (target.closest('.fp-drive-card[data-path], #sb-drives .fp-sidebar__item[data-path]')) return 'drive';
+  if (target.closest('#thispc-view')) return 'thispc';
   // User pins (data-pin-id) and Quick Access known folders (data-known-id)
   // both get the sidebar-item menu — Home and drives are neither and fall
   // through to the empty-area menu instead.
@@ -1502,8 +2629,8 @@ function getMenuTypeForTarget(target) {
   // Home's Recent/Favorites rows get their own menu — checked before the
   // generic folder/file checks below so a Home row never falls into those.
   if (target.closest('.fp-row--recent')) return 'home-row';
-  if (target.closest('.fp-row[data-type="folder"], .ef-row[data-type="folder"]')) return 'folder';
-  if (target.closest('.fp-row, .ef-row, .rb-row')) return 'file';
+  if (target.closest('.fp-row[data-type="folder"]')) return 'folder';
+  if (target.closest('.fp-row')) return 'file';
   return 'empty-area';
 }
 
@@ -1600,8 +2727,192 @@ const contextMenu = document.getElementById('context-menu');
  */
 function showContextMenu(x, y, items, opts = {}) {
   if (!contextMenu) return;
+  closeContextFlyouts(0);
+  clearTimeout(cmTimer);
+  cmPrevFocus = document.activeElement;
+  cmKbdPointer = null;
   contextMenu.innerHTML = '';
-  const ctx = opts.ctx;
+  buildContextMenuItems(cmMakeScroller(contextMenu), items, opts.ctx, 0);
+  contextMenu.style.display = 'block';
+  // Position within the viewport using the MEASURED size (pass 2 #61: the old
+  // hardcoded 200px/220px let a wide menu spill off the right edge), and never
+  // past the top or left edge either.
+  const vw = window.innerWidth, vh = window.innerHeight;
+  const w = contextMenu.offsetWidth, h = contextMenu.offsetHeight;
+  let left, top;
+  if (opts.anchor) {
+    const r = opts.anchor.getBoundingClientRect();
+    left = r.left;
+    top = r.bottom + 4;
+  } else {
+    left = x;
+    top = y;
+  }
+  const edge = menuEdgePx();
+  const placedLeft = Math.max(0, Math.min(left, vw - w - edge));
+  const placedTop = Math.max(0, Math.min(top, vh - h - edge));
+  contextMenu.style.left = `${placedLeft}px`;
+  contextMenu.style.top  = `${placedTop}px`;
+  cmSyncScrollCue(cmScroller(contextMenu));
+  armContextMenuScrollClose();
+  // Grows out of the pointer (or the anchor button's bottom-left), wherever
+  // the edge clamp put the menu.
+  const ar = opts.anchor ? opts.anchor.getBoundingClientRect() : null;
+  menuOpenMotion(contextMenu, (ar ? ar.left : x) - placedLeft, (ar ? ar.bottom : y) - placedTop, w, h);
+}
+
+/** Menus and flyouts (§5.2 Menus & popovers): fade in while scaling up from
+ * 0.97 about (ox, oy) — the point they open from — over --motion-fast. The
+ * items are where they will stay (a 3 % scale) and take clicks and keys at
+ * once; closing is instant. */
+function menuOpenMotion(menu, ox, oy, w, h) {
+  if (!fpMotionOn()) return;
+  menu.style.transformOrigin = `${Math.round(Math.max(0, Math.min(w, ox)))}px ${Math.round(Math.max(0, Math.min(h, oy)))}px`;
+  fpAnimate(menu, [{ opacity: 0, transform: 'scale(.97)' }, { opacity: 1, transform: 'none' }], { duration: 'fast', key: 'open' });
+}
+
+/** --menu-edge: the gap a menu or popover keeps from the window edge (CSS
+ * token, read once; the menus' max-height uses the same one). */
+let _menuEdgePx = null;
+function menuEdgePx() {
+  if (_menuEdgePx === null) {
+    const v = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--menu-edge'));
+    _menuEdgePx = Number.isFinite(v) ? v : 8;
+  }
+  return _menuEdgePx;
+}
+
+/** Items live in an inner scroller, so a menu too tall for the window
+ * scrolls inside its own border and shadow (pass 2 #61), and the scroll-cue
+ * fade masks only the items, never the menu's frame. */
+function cmMakeScroller(menu) {
+  const scroller = document.createElement('div');
+  scroller.className = 'fp-context-menu__scroll fp-oscroll-host--fade';
+  scroller.setAttribute('role', 'none');
+  menu.appendChild(scroller);
+  return scroller;
+}
+function cmScroller(menu) {
+  return menu.querySelector(':scope > .fp-context-menu__scroll') || menu;
+}
+function cmSyncScrollCue(scroller) {
+  const over = scroller.scrollHeight > scroller.clientHeight + 1;
+  scroller.classList.toggle('is-scroll-top', over && scroller.scrollTop > 1);
+  scroller.classList.toggle('is-scroll-bottom', over && scroller.scrollTop + scroller.clientHeight < scroller.scrollHeight - 1);
+}
+
+// ── Menus and popovers never float at stale coordinates (pass 2 #175) ──────
+// The context menu, the View / Sort dropdowns (the same element) and the Ask
+// File+ popout are position:fixed, placed once from viewport coordinates. A
+// window resize (app zoom included) closes them, and so does any scroll of
+// what is under them (the list, the sidebar, a pane) — Windows' rule for
+// menus. A scroll inside the menu itself never closes it. The scroll close
+// is armed two frames after the menu opens, so the scroll-into-view that
+// right-clicking a half-hidden row can cause does not close the menu it just
+// opened.
+let cmScrollArmed = false;
+let cmScrollArmRaf = 0;
+function armContextMenuScrollClose() {
+  cmScrollArmed = false;
+  cancelAnimationFrame(cmScrollArmRaf);
+  cmScrollArmRaf = requestAnimationFrame(() => {
+    cmScrollArmRaf = requestAnimationFrame(() => { cmScrollArmed = true; });
+  });
+}
+/** Closes the menu for a resize / scroll. When the keyboard was inside it,
+ * focus goes back where it was before the menu opened (as after an
+ * activation) instead of dropping to <body>. */
+function closeContextMenuForLayout() {
+  if (document.activeElement?.closest?.('.fp-context-menu')) closeContextMenuAfterActivation();
+  else hideContextMenu();
+}
+window.addEventListener('resize', () => {
+  if (contextMenuIsOpen()) closeContextMenuForLayout();
+  if (askPopoutOpen()) closeAskPopout();
+});
+document.addEventListener('scroll', e => {
+  const t = e.target;
+  if (t instanceof Element && t.classList.contains('fp-context-menu__scroll')) { cmSyncScrollCue(t); return; }
+  if (t instanceof Element && t.closest('.fp-context-menu')) return;
+  if (cmScrollArmed && contextMenuIsOpen()) closeContextMenuForLayout();
+}, true);
+
+// ── Flyout submenus (Stage 2D §6.3) ────────────────────────────────────────
+// An item with `items: [...]` renders a trailing chevron and opens a child
+// menu (.fp-context-menu--flyout) built by the same builder. One flyout per
+// level: cmFlyouts[d] is the flyout opened from a row of menu level d (0 is
+// #context-menu itself), so the deepest open menu is the last one.
+const CM_FLYOUT_OPEN_DELAY = 250;    // hover this long on a parent row to open
+const CM_FLYOUT_CLOSE_GRACE = 300;   // sibling hover shorter than this keeps it open
+let cmFlyouts = [];                  // [{ menu, owner }]
+let cmTimer = null;                  // the one pending hover open/close
+let cmPrevFocus = null;              // focus to give back when the menu closes by keyboard / activation
+// Hover is ignored while the keyboard drives the menu: set to the pointer's
+// position when a menu key is handled, cleared by the first pointerenter that
+// arrives at a DIFFERENT position (a layout shift under a stationary pointer
+// fires pointerenter with the same coordinates and must not close a flyout the
+// user opened with the arrow keys).
+let cmKbdPointer = null;
+// null until the pointer has been seen: a keyboard-opened menu then learns
+// where the (stationary) pointer is from the first pointerenter instead of
+// treating it as movement — an invented -1,-1 made that first layout-shift
+// pointerenter close the flyout the keys had just opened (§12 sweep).
+let cmLastPointer = null;
+
+function cmOpenMenus() { return [contextMenu, ...cmFlyouts.map(f => f.menu)]; }
+
+function cmFocusableItems(menu) {
+  return [...cmScroller(menu).children].filter(el =>
+    el.classList.contains('fp-context-menu__item') && !el.classList.contains('fp-context-menu__item--disabled'));
+}
+
+/** Closes every flyout opened from level `depth` or deeper. */
+function closeContextFlyouts(depth) {
+  for (let i = cmFlyouts.length - 1; i >= depth; i--) {
+    const { menu, owner } = cmFlyouts[i];
+    menu.remove();
+    owner.classList.remove('fp-context-menu__item--open');
+    owner.setAttribute('aria-expanded', 'false');
+  }
+  cmFlyouts.length = Math.min(cmFlyouts.length, depth);
+}
+
+/** Opens the flyout for parent row `btn` (a row of menu level `depth`). */
+function openContextFlyout(item, btn, depth, ctx, focusFirst) {
+  if (cmFlyouts[depth] && cmFlyouts[depth].owner === btn) {
+    if (focusFirst) cmFocusableItems(cmFlyouts[depth].menu)[0]?.focus();
+    return;
+  }
+  closeContextFlyouts(depth);
+  const parentMenu = cmOpenMenus()[depth];
+  const menu = document.createElement('div');
+  menu.className = 'fp-context-menu fp-context-menu--flyout';
+  menu.setAttribute('role', 'menu');
+  menu.addEventListener('pointerenter', () => clearTimeout(cmTimer));
+  buildContextMenuItems(cmMakeScroller(menu), item.items, ctx, depth + 1);
+  document.body.appendChild(menu);
+  cmFlyouts[depth] = { menu, owner: btn };
+  btn.classList.add('fp-context-menu__item--open');
+  btn.setAttribute('aria-expanded', 'true');
+  // Right edge of the parent menu (flip to its left edge when that would
+  // overflow the viewport); top aligned with the parent row, clamped.
+  const vw = window.innerWidth, vh = window.innerHeight;
+  const pr = parentMenu.getBoundingClientRect();
+  const rr = btn.getBoundingClientRect();
+  const w = menu.offsetWidth, h = menu.offsetHeight;
+  const edge = menuEdgePx();
+  let left = pr.right - 2;
+  if (left + w > vw - edge / 2) left = pr.left - w + 2;
+  const top = Math.max(0, Math.min(rr.top - 5, vh - h - edge));
+  menu.style.left = `${Math.max(0, left)}px`;
+  menu.style.top = `${top}px`;
+  // From the side it opened on, level with the parent row.
+  menuOpenMotion(menu, left >= pr.right - 3 ? 0 : w, rr.top - top, w, h);
+  cmSyncScrollCue(cmScroller(menu));
+  if (focusFirst) cmFocusableItems(menu)[0]?.focus();
+}
+
+function buildContextMenuItems(menuEl, items, ctx, depth) {
   const shown = [];
   for (const item of items) {
     if (item === 'sep') {
@@ -1618,17 +2929,24 @@ function showContextMenu(x, y, items, opts = {}) {
     if (item === 'sep') {
       const sep = document.createElement('div');
       sep.className = 'fp-context-menu__sep';
-      contextMenu.appendChild(sep);
+      menuEl.appendChild(sep);
       return;
     }
     const isEnabled = typeof item.enabled !== 'function' || !!item.enabled(ctx);
     const label = typeof item.label === 'function' ? item.label(ctx) : item.label;
+    const hasChildren = Array.isArray(item.items) && item.items.length > 0;
     const btn = document.createElement('button');
     btn.className = 'fp-context-menu__item'
       + (item.danger ? ' fp-context-menu__item--danger' : '')
       + (!isEnabled ? ' fp-context-menu__item--disabled' : '');
-    btn.setAttribute('data-action', item.action || '');
+    // A parent row carries no data-action: clicking it only opens its flyout.
+    if (!hasChildren) btn.setAttribute('data-action', item.action || '');
+    btn.setAttribute('data-menu-label', String(label).replace(/<[^>]*>/g, ''));
     btn.setAttribute('role', 'menuitem');
+    if (hasChildren) {
+      btn.setAttribute('aria-haspopup', 'true');
+      btn.setAttribute('aria-expanded', 'false');
+    }
     if (!isEnabled) {
       btn.setAttribute('aria-disabled', 'true');
       btn.setAttribute('tabindex', '-1'); // keyboard Tab order skips it too
@@ -1645,36 +2963,133 @@ function showContextMenu(x, y, items, opts = {}) {
       kbd.textContent = item.kbd;
       btn.appendChild(kbd);
     }
+    if (hasChildren) btn.insertAdjacentHTML('beforeend', icon('chevron-right', 'fp-icon--14 fp-context-menu__chevron'));
     // A disabled item gets no click listener at all — CSS's pointer-events:
     // none on .fp-context-menu__item--disabled already keeps the click from
     // ever reaching this button (see styles.css), so this is belt-and-braces
     // against that CSS being bypassed some other way, not the only guard.
     if (isEnabled) {
-      if (item.onClick) btn.addEventListener('click', () => { item.onClick(); hideContextMenu(); });
-      else btn.addEventListener('click', hideContextMenu);
+      if (hasChildren) btn.addEventListener('click', () => { clearTimeout(cmTimer); openContextFlyout(item, btn, depth, ctx, false); });
+      else if (item.onClick) btn.addEventListener('click', () => { closeContextMenuAfterActivation(); item.onClick(); });
+      else btn.addEventListener('click', closeContextMenuAfterActivation);
+      btn._cmItem = hasChildren ? item : null;
+      btn._cmCtx = ctx;
+      btn._cmDepth = depth;
     }
-    contextMenu.appendChild(btn);
+    // Hover: a parent row opens its flyout after 250 ms; entering any other
+    // row while a flyout is open closes it only after a 300 ms grace, so the
+    // pointer can cross a sibling on its way to the flyout (safe triangle) —
+    // entering the flyout (or coming back to the parent row) cancels that.
+    btn.addEventListener('pointerenter', e => {
+      if (cmKbdPointer) {
+        if (cmKbdPointer.unknown) { cmKbdPointer = { x: e.clientX, y: e.clientY }; return; }
+        if (e.clientX === cmKbdPointer.x && e.clientY === cmKbdPointer.y) return;
+        cmKbdPointer = null;
+      }
+      clearTimeout(cmTimer);
+      const open = cmFlyouts[depth];
+      if (hasChildren && isEnabled) {
+        if (open && open.owner === btn) return;
+        cmTimer = setTimeout(() => openContextFlyout(item, btn, depth, ctx, false), CM_FLYOUT_OPEN_DELAY);
+      } else if (open) {
+        cmTimer = setTimeout(() => closeContextFlyouts(depth), CM_FLYOUT_CLOSE_GRACE);
+      }
+    });
+    menuEl.appendChild(btn);
   });
-  contextMenu.style.display = 'block';
-  // Position within viewport
-  const vw = window.innerWidth, vh = window.innerHeight;
-  if (opts.anchor) {
-    const r = opts.anchor.getBoundingClientRect();
-    contextMenu.style.left = `${Math.min(r.left, vw - 220)}px`;
-    contextMenu.style.top  = `${Math.min(r.bottom + 4, vh - contextMenu.offsetHeight - 8)}px`;
-  } else {
-    contextMenu.style.left = `${Math.min(x, vw - 200)}px`;
-    contextMenu.style.top  = `${Math.min(y, vh - contextMenu.offsetHeight - 8)}px`;
-  }
 }
 
 function hideContextMenu() {
-  if (contextMenu) contextMenu.style.display = 'none';
+  clearTimeout(cmTimer);
+  closeContextFlyouts(0);
+  if (contextMenu) {
+    contextMenu.style.display = 'none';
+    // Closing is instant: an open motion still playing goes with it.
+    fpCancelAnimation(contextMenu, 'open');
+  }
+}
+
+/** Closes the menu because an item was activated (mouse or keyboard) and gives
+ * focus back to where it was before the menu opened — the focused item was
+ * about to be removed, which would drop focus to <body>. This runs BEFORE the
+ * item's action, so an action that moves focus itself (a re-sorted list, an
+ * inline rename, a dialog) still wins. */
+function closeContextMenuAfterActivation() {
+  const prev = cmPrevFocus;
+  hideContextMenu();
+  if (prev && prev.isConnected && prev !== document.body) prev.focus({ preventScroll: true });
+}
+
+/** The keyboard closes (Tab, Escape on the root menu) give focus back the
+ * same way — one copy of the rule, so the body guard cannot drift. */
+function closeContextMenuByKeyboard() {
+  closeContextMenuAfterActivation();
+}
+
+function contextMenuIsOpen() {
+  return !!contextMenu && contextMenu.style.display === 'block';
 }
 
 document.addEventListener('click', e => {
-  if (!contextMenu?.contains(e.target)) hideContextMenu();
+  if (!e.target.closest?.('.fp-context-menu')) hideContextMenu();
 });
+
+// Keyboard for the open menu (it had none before): Up/Down/Home/End move
+// through the innermost open menu, Right/Enter on a parent row opens its
+// flyout, Left or Escape closes only the innermost flyout, and Escape on the
+// root menu closes everything. Capture phase + stopPropagation so the keys
+// never also reach the file list (arrow selection, Enter to open) or the
+// global Escape handler behind the menu.
+for (const type of ['pointermove', 'pointerdown', 'pointerover']) {
+  document.addEventListener(type, e => { cmLastPointer = { x: e.clientX, y: e.clientY }; }, true);
+}
+
+// Tab leaves the menu: close it all and put focus back, so Tab then continues
+// from where the user was. Focus moving to anything outside the menu tree by
+// other means (focusout with a real target) closes it too; relatedTarget null
+// is the menu removing its own focused item and is ignored.
+document.addEventListener('focusout', e => {
+  if (!contextMenuIsOpen()) return;
+  const to = e.relatedTarget;
+  if (to && !to.closest?.('.fp-context-menu')) hideContextMenu();
+});
+
+document.addEventListener('keydown', e => {
+  if (!contextMenuIsOpen()) return;
+  const key = e.key;
+  if (key === 'Tab') {
+    closeContextMenuByKeyboard();
+    return;
+  }
+  if (!['ArrowDown', 'ArrowUp', 'ArrowLeft', 'ArrowRight', 'Enter', 'Escape', 'Home', 'End'].includes(key)) return;
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  e.preventDefault();
+  e.stopPropagation();
+  cmKbdPointer = cmLastPointer ? { ...cmLastPointer } : { unknown: true };
+  const menus = cmOpenMenus();
+  const active = menus[menus.length - 1];
+  const items = cmFocusableItems(active);
+  const cur = items.indexOf(document.activeElement);
+  const focused = cur >= 0 ? items[cur] : null;
+  if (key === 'ArrowDown') items[(cur + 1) % items.length]?.focus();
+  else if (key === 'ArrowUp') items[cur <= 0 ? items.length - 1 : cur - 1]?.focus();
+  else if (key === 'Home') items[0]?.focus();
+  else if (key === 'End') items[items.length - 1]?.focus();
+  else if (key === 'ArrowRight') {
+    if (focused?._cmItem) openContextFlyout(focused._cmItem, focused, focused._cmDepth, focused._cmCtx, true);
+  } else if (key === 'Enter') {
+    if (!focused) return;
+    if (focused._cmItem) openContextFlyout(focused._cmItem, focused, focused._cmDepth, focused._cmCtx, true);
+    else focused.click();
+  } else if (cmFlyouts.length) {
+    // ArrowLeft / Escape: the innermost flyout first.
+    const { owner } = cmFlyouts[cmFlyouts.length - 1];
+    closeContextFlyouts(cmFlyouts.length - 1);
+    owner.focus();
+  } else if (key === 'Escape') {
+    closeContextMenuByKeyboard();
+  }
+}, true);
 
 // ── Deselect anywhere (design spec §3.5) ────────────────────────────────────
 // A capture-phase mousedown on #app clears the active selection (Browser
@@ -1698,13 +3113,16 @@ document.addEventListener('click', e => {
 // toolbar, tab bar, inspector blank space, Home background) still clears.
 const DESELECT_INTERACTIVE_SELECTOR = 'button, a, input, select, textarea, ' +
   '[contenteditable], [role=button], .fp-row, .home-row, .fp-tab, ' +
-  '.fp-sidebar__item, .fp-context-menu, .modal, .palette, .fp-inspector__tab, .fp-chip';
+  '.fp-sidebar__item, .fp-context-menu, .modal, .palette, .fp-inspector__tab, .fp-chip, .fp-drive-card';
 
 function deselectOnOpenSpace(target) {
   if (target?.closest?.(DESELECT_INTERACTIVE_SELECTOR)) return;
   if (target?.closest?.('#list-scroll')) return;
   const screen = activeTab()?.screen;
-  if (screen === 'browser') clearSelection();
+  if (screen === 'browser') {
+    clearSelection();
+    if (thisPcActive()) clearThisPcSelection();
+  }
   else if (screen === 'home') homeClearSelection();
 }
 
@@ -1733,14 +3151,99 @@ function showSnackbar(message, undoLabel, onUndo) {
     const btn = document.createElement('button');
     btn.className = 'fp-snackbar__undo fp-btn fp-btn--ghost fp-btn--sm';
     btn.textContent = undoLabel;
-    btn.addEventListener('click', () => { onUndo?.(); el.remove(); });
+    btn.addEventListener('click', () => { onUndo?.(); dismissNotice(el); });
     el.appendChild(btn);
   }
   const prog = document.createElement('div');
   prog.className = 'fp-snackbar__progress';
   el.appendChild(prog);
+  const before = noticePlaces(container);
   container.appendChild(el);
-  setTimeout(() => el.remove(), 5200);
+  capNoticeStack(container, '.fp-snackbar');
+  noticeSlide(container, before);
+  // --timer-snackbar is also its progress bar's duration (styles.css).
+  setTimeout(() => dismissNotice(el), fpMotionMs('--timer-snackbar'));
+}
+
+// ── Notice motion (addendum §5.2 Notices) ────────────────────────────────────
+// A new notice slides up and fades in (its CSS animation); the ones already
+// stacked slide to their new places instead of jumping (FLIP); a dismissed
+// one is out of every count and every hit test at once (.fp-notice--leaving,
+// inert) while it fades and drops away, then leaves and the rest slide into
+// the gap. With animations off a dismissed notice is removed on the spot.
+
+/** Where each notice in `container` sits now (the FLIP "first"). */
+function noticePlaces(container) {
+  return fpMotionOn() ? [...container.children].map(el => [el, el.getBoundingClientRect().top]) : [];
+}
+
+/** Slides every notice that moved since `before` from its old place. */
+function noticeSlide(container, before) {
+  for (const [el, top] of before) {
+    if (el.parentElement !== container) continue;
+    const dy = top - el.getBoundingClientRect().top;
+    if (Math.abs(dy) < 0.5) continue;
+    fpAnimate(el, [{ transform: `translateY(${dy}px)` }, { transform: 'none' }], { duration: 'base', key: 'stack' });
+  }
+}
+
+/** Takes a snackbar or toast away (its timer, its ✕, Undo, the stack cap). */
+function dismissNotice(el) {
+  if (!el || !el.isConnected || fpExiting(el)) return;
+  fpPlayExit(el, [{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'translateY(8px)' }], {
+    cls: 'fp-notice--leaving', duration: 'fast', easing: 'in',
+    done: () => {
+      const container = el.parentElement;
+      const before = container ? noticePlaces(container) : [];
+      el.remove();
+      if (container) noticeSlide(container, before);
+    },
+  });
+}
+
+// At most this many snackbars / toasts show at once (pass 2 #62/#63). An
+// error is never evicted to make room for anything but another error: the
+// oldest non-error goes first (the new one included), and only an error
+// arriving with nothing but errors on screen pushes the oldest error out.
+// An error toast leaves on its own after --timer-toast-error — long enough to read
+// a path in it, short enough that repeated failures cannot bury the window —
+// paused while the pointer or focus is on it, and has a dismiss button.
+// The lives are --timer-toast / --timer-toast-error and the least time left
+// after a pause --timer-toast-resume (styles.css, read through fpMotionMs).
+const NOTICE_MAX = 3;
+function capNoticeStack(container, sel, isKeep = () => false) {
+  // A notice already on its way out no longer counts.
+  let items = [...container.querySelectorAll(`${sel}:not(.fp-notice--leaving)`)];
+  while (items.length > NOTICE_MAX) {
+    const victim = items.find(el => !isKeep(el)) || items[0];
+    dismissNotice(victim);
+    items = items.filter(el => el !== victim);
+  }
+}
+/** Removes `el` after `ms`; with `pausable`, the clock stops while the
+ * pointer is over it or focus is inside it, and restarts (at least
+ * --timer-toast-resume) once both have left. */
+function scheduleNoticeRemoval(el, ms, pausable) {
+  let remaining = ms;
+  let started = performance.now();
+  let timer = setTimeout(() => dismissNotice(el), ms);
+  if (!pausable) return;
+  const pause = () => {
+    if (!timer) return;
+    clearTimeout(timer);
+    timer = 0;
+    remaining -= performance.now() - started;
+  };
+  const resume = () => {
+    if (timer || !el.isConnected || fpExiting(el) || el.matches(':hover') || el.contains(document.activeElement)) return;
+    started = performance.now();
+    remaining = Math.max(remaining, fpMotionMs('--timer-toast-resume'));
+    timer = setTimeout(() => dismissNotice(el), remaining);
+  };
+  el.addEventListener('pointerenter', pause);
+  el.addEventListener('focusin', pause);
+  el.addEventListener('pointerleave', resume);
+  el.addEventListener('focusout', e => { if (!el.contains(e.relatedTarget)) setTimeout(resume, 0); });
 }
 
 // ── Toast ────────────────────────────────────────────────────────────────────────
@@ -1751,30 +3254,74 @@ function showToast(message, variant = '') {
   if (!container) return;
   const el = document.createElement('div');
   el.className = 'fp-toast' + (variant ? ` fp-toast--${variant}` : '');
+  if (variant === 'error') el.setAttribute('role', 'alert');
   // message is frequently API error text (formatApiError()) now that fileops
   // routes every failure through here — escape it before inserting.
   el.innerHTML = `<span>${escapeHtml(message)}</span>`;
   if (variant === 'error') {
     const btn = document.createElement('button');
-    btn.className = 'fp-btn fp-btn--ghost fp-btn--sm';
+    btn.className = 'fp-btn fp-btn--ghost fp-btn--sm fp-toast__dismiss';
     btn.textContent = '✕';
-    btn.addEventListener('click', () => el.remove());
-    btn.style.marginLeft = 'auto';
+    btn.title = 'Dismiss';
+    btn.setAttribute('aria-label', 'Dismiss');
+    btn.addEventListener('click', () => dismissNotice(el));
     el.appendChild(btn);
-  } else {
-    setTimeout(() => el.remove(), 5000);
   }
+  const before = noticePlaces(container);
   container.appendChild(el);
+  capNoticeStack(container, '.fp-toast', t => t.classList.contains('fp-toast--error'));
+  noticeSlide(container, before);
+  if (el.isConnected && !fpExiting(el)) {
+    scheduleNoticeRemoval(el, fpMotionMs(variant === 'error' ? '--timer-toast-error' : '--timer-toast'), variant === 'error');
+  }
 }
 
-async function triggerScan(path) {
-  showToast('Scanning…', 'default');
-  try {
-    const data = await API.post('/scan', path ? { path } : {}, { signal: AbortSignal.timeout(60000) });
-    showSnackbar(`Scan complete — ${data.count} file${data.count !== 1 ? 's' : ''} indexed`);
-    await openBrowserAt(data.path);
-  } catch (err) {
-    showToast(`Scan failed: ${formatApiError(err)}`, 'error');
+// ── Refresh (Stage 2D §7) ─────────────────────────────────────────────────────
+// One 360° spin of the toolbar icon and one quick opacity dip of the list.
+// Classes come off on a timer (not animationend), so they never stick when
+// the motion gate removes the animation (animations off). Durations come
+// from the CSS tokens (--motion-refresh-spin / -dip) so the timers that take
+// the classes off can never disagree with the animations.
+function refreshFxMs() {
+  return { spin: fpMotionMs('--motion-refresh-spin'), dip: fpMotionMs('--motion-refresh-dip') };
+}
+const _refreshFxTimers = { spin: 0, dip: 0 };
+
+function restartClassAnimation(el, cls, ms, timerKey) {
+  if (!el) return;
+  clearTimeout(_refreshFxTimers[timerKey]);
+  el.classList.remove(cls);
+  void el.offsetWidth; // restart the animation when it is already running
+  el.classList.add(cls);
+  _refreshFxTimers[timerKey] = setTimeout(() => el.classList.remove(cls), ms);
+}
+
+/**
+ * The single entry point for Ctrl+R, F5, the toolbar Refresh button and the
+ * empty-area menu's Refresh (Stage 2D §7.1). Re-lists what the active tab
+ * shows, in place: a folder is re-fetched and patched (scroll, selection,
+ * anchor, focus, view and size stay), search results are re-run, Home
+ * re-fetches its data. Every other tab is marked stale and revalidates when
+ * it is next activated.
+ */
+async function refreshAll() {
+  const tab = activeTab();
+  if (!tab) return;
+  // Other tabs need no mark: activating a tab always revalidates its
+  // listing (activateTab), so a refresh reaches them when they are shown.
+  const onBrowser = browserScreenActive();
+  restartClassAnimation(document.getElementById('btn-refresh'), 'is-spinning', refreshFxMs().spin, 'spin');
+  if (onBrowser) {
+    // This PC re-reads the drives and patches the cards in place (§7.1 #4).
+    if (thisPcActive()) {
+      restartClassAnimation(document.getElementById('thispc-view'), 'is-refreshing', refreshFxMs().dip, 'dip');
+      await refreshThisPc();
+      return;
+    }
+    restartClassAnimation(document.getElementById('list-scroll'), 'is-refreshing', refreshFxMs().dip, 'dip');
+    await refreshDirectory();
+  } else if (tab.screen === 'home') {
+    await Promise.all([loadRecent(), loadFavorites()]);
   }
 }
 
@@ -1800,7 +3347,8 @@ async function checkBackend() {
   };
   try {
     const data = await API.get('/health', null, { signal: AbortSignal.timeout(2000) });
-    window.__fpHealth = data; // read by settings.js's Data-pane "Writes" line
+    window.__fpHealth = data; // read by settings.js's Data-pane "Writes" line and About pane
+    if (document.getElementById('settings-pane-about')?.offsetParent) renderAboutPane();
     // /health is the ONE route the backend's token middleware exempts, so a
     // 200 here does not prove our X-FilePlus-Token is the one it wants. It
     // does report whether auth is on; when it is and the bridge handed us no
@@ -1847,7 +3395,10 @@ async function refreshBackendData() {
   // fpLoadKnownFolders() returns its cache when already populated; drop it so
   // a reconnect actually re-fetches (on the failing path it was never set).
   delete window.__fpKnownFolders;
-  await fpLoadKnownFolders();
+  // The generic folder bitmap is learned by the prewarm (icons.js), which
+  // skips folders until the known-folders map exists: a map that failed at
+  // startup and arrives only now must prewarm again (Stage 2D §12 sweep).
+  if (await fpLoadKnownFolders()) fpPrewarmIconSizes();
   await Promise.allSettled([loadDrives(), loadPins(), loadSidebarTags()]);
   loadQuickAccess();
   if (activeTab()?.screen === 'home') { loadRecent(); loadFavorites(); }
@@ -1895,27 +3446,69 @@ async function loadDrives() {
     console.warn('[fp-drives] failed to load drives:', formatApiError(err));
     return;
   }
-  window.__fpDrives = driveList; // driveDisplayLabel() reads this synchronously
-  container.innerHTML = driveList.map(renderDriveItem).join('');
+  setDriveList(driveList);
 }
 
+/**
+ * The one drive model (Stage 2D §8): the sidebar's This PC list, the This PC
+ * page and the drive crumb all read window.__fpDrives.
+ * When the same drives come back (only their free space moved), every row and
+ * card is patched in place — no icon repaints, no lost highlight.
+ */
+function setDriveList(list) {
+  window.__fpDrives = list; // driveDisplayLabel() reads this synchronously
+  const container = document.getElementById('sb-drives');
+  if (container) {
+    const rows = [...container.querySelectorAll(':scope > .fp-sidebar__drive-item')];
+    const same = rows.length === list.length && rows.every((r, i) => {
+      const item = r.querySelector('.fp-sidebar__item');
+      return item && item.dataset.path === list[i].mount
+        && item.querySelector('.fp-sidebar__item__label')?.textContent === driveDisplayName(list[i]);
+    });
+    if (same) rows.forEach((r, i) => patchDriveItem(r, list[i]));
+    else {
+      container.innerHTML = list.map(renderDriveItem).join('');
+      const tab = activeTab();
+      if (tab) updateSidebarActive(tab.screen === 'browser' ? tab.path : tab.screen);
+    }
+  }
+  if (thisPcActive()) renderThisPC(list);
+}
+
+/** A sidebar drive row: the shared name, a 3px usage bar (--bad above 90%)
+ * tucked under the label, and a tooltip of the full name over "X free of Y"
+ * — the page's own numbers. */
 function renderDriveItem(d) {
-  const letter = d.letter || '';
-  const label = (d.label || '').trim();
-  const labelText = label ? `${letter} ${label}` : `${letter} Drive`;
-  const pct = d.total_bytes > 0 ? Math.round((d.used_bytes / d.total_bytes) * 100) : 0;
-  const usageTitle = `${formatSize(d.used_bytes)} / ${formatSize(d.total_bytes)} used`;
+  const letter = driveLetterOf(d);
+  const labelText = driveDisplayName(d);
+  const full = driveIsNearlyFull(d) ? ' fp-sidebar__drive-bar__fill--full' : '';
   return `<div class="fp-sidebar__drive-item">
     <button class="fp-sidebar__item" data-screen="browser" data-path="${escapeHtml(d.mount)}"
-            data-action="navigate-path" title="${escapeHtml(labelText)}">
-      <svg class="fp-icon fp-icon--16 fp-sidebar__drive-icon" aria-hidden="true"><use href="#fp-drive"></use></svg>
+            data-action="navigate-path" title="${escapeHtml(driveItemTitle(d))}">
+      ${fpShellItemIcon({ path: d.mount, is_dir: true }, sidebarIconPx(), 'drive', 'fp-sidebar__drive-icon')}
       <span class="fp-sidebar__drive-letter" aria-hidden="true">${escapeHtml(letter)}</span>
       <span class="fp-sidebar__item__label">${escapeHtml(labelText)}</span>
     </button>
-    <div class="fp-sidebar__drive-bar" title="${escapeHtml(usageTitle)}">
-      <div class="fp-sidebar__drive-bar__fill" style="width:${pct}%"></div>
+    <div class="fp-sidebar__drive-bar" aria-hidden="true">
+      <div class="fp-sidebar__drive-bar__fill${full}" style="width:${drivePercentUsed(d)}%"></div>
     </div>
   </div>`;
+}
+
+/** "Label (C:)" over "X GB free of Y GB" (the bar under the label paints
+ * over the item's bottom edge, so it carries no tooltip of its own). */
+function driveItemTitle(d) {
+  return `${driveDisplayName(d)}\n${driveFreeText(d)}`;
+}
+
+function patchDriveItem(row, d) {
+  const item = row.querySelector('.fp-sidebar__item');
+  const fill = row.querySelector('.fp-sidebar__drive-bar__fill');
+  if (item) item.title = driveItemTitle(d);
+  if (!fill) return;
+  const width = `${drivePercentUsed(d)}%`;
+  if (fill.style.width !== width) fill.style.width = width;
+  fill.classList.toggle('fp-sidebar__drive-bar__fill--full', driveIsNearlyFull(d));
 }
 
 async function loadPins() {
@@ -1935,7 +3528,7 @@ function renderPinItem(pin) {
   const label = pin.label || pathBaseName(pin.path) || pin.path;
   return `<button class="fp-sidebar__item" data-screen="browser" data-path="${escapeHtml(pin.path)}"
           data-pin-id="${pin.id}" data-action="navigate-path" title="${escapeHtml(pin.path)}">
-    <svg class="fp-icon fp-icon--16" aria-hidden="true"><use href="#fp-folder"></use></svg>
+    ${fpShellItemIcon({ path: pin.path, is_dir: true }, sidebarIconPx(), 'folder')}
     <span class="fp-sidebar__item__label">${escapeHtml(label)}</span>
   </button>`;
 }
@@ -1953,6 +3546,7 @@ async function loadSidebarTags() {
   const chips = document.getElementById('sb-tags-chips');
   const section = document.getElementById('sb-tags');
   const label = document.getElementById('sb-tags-label');
+  const divider = document.getElementById('sb-tags-divider');
   if (!chips) return;
   let tags;
   try {
@@ -1965,6 +3559,7 @@ async function loadSidebarTags() {
     console.warn('[fp-tags] failed to load tags:', formatApiError(err));
     if (section) section.hidden = true;
     if (label) label.hidden = true;
+    if (divider) divider.hidden = true;
     return;
   }
   window.__fpTags = Array.isArray(tags) ? tags : [];
@@ -1975,6 +3570,7 @@ async function loadSidebarTags() {
   const empty = top.length === 0;
   if (section) section.hidden = empty;
   if (label) label.hidden = empty;
+  if (divider) divider.hidden = empty;
   chips.innerHTML = top.map(t => `<button class="fp-chip" data-action="filter-by-tag"
       data-tag="${escapeHtml(t.name)}" title="Search This PC for tag: ${escapeHtml(t.name)}">
       ${escapeHtml(t.name)} <span class="fp-chip__count">${t.count}</span>
@@ -2027,7 +3623,7 @@ function renderQuickAccessItem(f) {
   const label = f.name || pathBaseName(f.path) || f.id;
   return `<button class="fp-sidebar__item" data-screen="browser" data-path="${escapeHtml(f.path)}"
           data-known-id="${escapeHtml(f.id)}" data-action="navigate-path" title="${escapeHtml(label)}">
-    ${icon(symbol, 'fp-icon--16')}
+    ${fpShellItemIcon({ path: f.path, is_dir: true }, sidebarIconPx(), symbol)}
     <span class="fp-sidebar__item__label">${escapeHtml(label)}</span>
   </button>`;
 }
@@ -2072,15 +3668,69 @@ async function setQuickAccessHidden(id, hide) {
 /** Expands/collapses the "This PC" sidebar section: rotates the chevron,
  * shows/hides #sb-drives, and (unless {persist:false}, used when restoring
  * from config at startup) saves ui.sidebar_thispc_open. */
-function setThisPcOpen(open, { persist = true } = {}) {
+function setThisPcOpen(open, { persist = true, animate = persist } = {}) {
   const chevron = document.querySelector('#sb-thispc .fp-sidebar__chevron');
   const body = document.getElementById('sb-drives');
   if (chevron) {
     chevron.setAttribute('aria-expanded', String(open));
     chevron.setAttribute('aria-label', open ? 'Collapse This PC' : 'Expand This PC');
   }
+  const wasOpen = body ? !body.hidden && !fpExiting(body) : open;
   if (body) body.hidden = !open;
   if (persist) saveSetting('ui.sidebar_thispc_open', open);
+  // The section's height eases open or shut (§5.2 Sidebar) — for a user's
+  // toggle, never the startup restore ({persist:false}, which also means
+  // animate:false). Closing keeps the drives painted (inert, .is-closing)
+  // while they fold away.
+  if (!body || !animate || wasOpen === open) return;
+  if (open) {
+    // Reopened mid-fold: grow from where the fold had got to.
+    const from = fpExiting(body) ? body.getBoundingClientRect().height : 0;
+    fpCancelExit(body);
+    const h = body.getBoundingClientRect().height;
+    if (h) fpAnimate(body, [{ height: `${from}px`, opacity: from ? 1 : 0 }, { height: `${h}px`, opacity: 1 }], { duration: 'base', key: 'fold' });
+  } else if (fpMotionOn()) {
+    // Measured while still painted (and mid-unfold, at its current height).
+    body.classList.add('is-closing');
+    const h = body.getBoundingClientRect().height;
+    body.classList.remove('is-closing');
+    fpCancelAnimation(body, 'fold');
+    if (h) {
+      fpPlayExit(body, [{ height: `${h}px`, opacity: 1 }, { height: '0px', opacity: 0 }],
+        { cls: 'is-closing', duration: 'base' });
+    }
+  }
+}
+
+// ── Overlay scrollbars (Stage 2D §9.3) ────────────────────────────────────────
+/** The panels scroll under fpOverlayScroll (overlayscroll.js) instead of a
+ * native bar: the sidebar, the inspector body and the Properties body (the
+ * §9.3 ruling), and Settings' nav and content (§12 sweep). Each element is static
+ * markup, so attaching once at startup is enough — the component's observers
+ * follow everything rendered into them later, and a panel shown from
+ * display:none re-measures through its ResizeObserver. */
+function initOverlayScrollbars() {
+  for (const el of [
+    document.querySelector('#sidebar .fp-sidebar__scroll'),
+    document.getElementById('inspector-body'),
+    document.querySelector('#properties-modal .properties__body'),
+    document.querySelector('#screen-settings .settings-nav'),
+    // Settings content, and the whole layout, which is what scrolls when a
+    // narrow screen stacks the nav above the content (styles.css).
+    document.querySelector('#screen-settings .settings-content'),
+    document.querySelector('#screen-settings .settings-layout'),
+  ]) {
+    if (el) fpOverlayScroll(el);
+  }
+  // The search dropdown scrolls inside itself when the window is short
+  // (Task 14 Q13): the overlay bar, not a permanent native one — and no fade
+  // cue, which would dissolve the popover's own bottom edge and background.
+  const searchDd = document.getElementById('search-dropdown');
+  if (searchDd) fpOverlayScroll(searchDd, { fade: false });
+  // Everything above the inspector's action row scrolls as one only when even
+  // a shrunk preview leaves the body no room (a short window at high zoom).
+  const inspectorScroll = document.getElementById('inspector-scroll');
+  if (inspectorScroll) fpOverlayScroll(inspectorScroll, { hoverRoot: document.getElementById('inspector') });
 }
 
 // ── Window controls (Electron IPC) ───────────────────────────────────────────
@@ -2090,6 +3740,25 @@ function initWindowControls() {
   document.getElementById('btn-minimize')?.addEventListener('click', () => api.minimize?.());
   document.getElementById('btn-maximize')?.addEventListener('click', () => api.maximize?.());
   document.getElementById('btn-close')?.addEventListener('click', () => api.close?.());
+  // Maximize <-> Restore: glyph, label and tooltip follow the window's real
+  // state, pushed by main on every maximize / unmaximize (pass 2 #174).
+  if (typeof api.isMaximized === 'function') setMaximizeButtonState(!!api.isMaximized());
+  api.onMaximizedChange?.(setMaximizeButtonState);
+}
+
+function setMaximizeButtonState(maximized) {
+  const btn = document.getElementById('btn-maximize');
+  if (!btn) return;
+  const label = maximized ? 'Restore' : 'Maximize';
+  btn.setAttribute('aria-label', label);
+  btn.title = label;
+  const use = btn.querySelector('use');
+  const href = maximized ? '#fp-window-restore' : '#fp-window-maximize';
+  if (!use || use.getAttribute('href') === href) return;
+  use.setAttribute('href', href);
+  // The new glyph fades in over the old one's place (§5.2 Window).
+  fpAnimate(btn.querySelector('svg'), [{ opacity: 0, transform: 'scale(.96)' }, { opacity: 1, transform: 'none' }],
+    { duration: 'fast', key: 'glyph' });
 }
 
 // ── Underline tab indicator (sub-tabs within screens) ─────────────��──────────
@@ -2120,8 +3789,14 @@ function initUnderlineTabs(container) {
     moveTabIndicator(container, tab);
     const targetPane = tab?.dataset.tab;
     container.closest('.screen')?.querySelectorAll('[data-pane]').forEach(pane => {
-      pane.style.display = pane.dataset.pane === targetPane ? '' : 'none';
+      const show = pane.dataset.pane === targetPane;
+      // A pane that comes into view fades in (§5.2 Home sub-tabs); the
+      // underline slides on its own (.fp-tabs__indicator's transition).
+      if (show && pane.style.display === 'none') fpAnimate(pane, [{ opacity: 0 }, { opacity: 1 }], { duration: 'fast', key: 'pane' });
+      pane.style.display = show ? '' : 'none';
     });
+    // Home's status bar counts the visible pane.
+    if (container.closest('#screen-home') && typeof updateStatusBar === 'function') updateStatusBar();
   }
   tabs.forEach(tab => {
     tab.addEventListener('click', () => setActive(tab));
@@ -2143,12 +3818,17 @@ function initUnderlineTabs(container) {
       ro.observe(first);
     }
   }
+  // Items can change width after that (Home's sub-tabs shrink in a narrow
+  // file area, Stage 2D §12): the underline follows the active one.
+  if (typeof ResizeObserver !== 'undefined') {
+    new ResizeObserver(() => moveTabIndicator(container)).observe(container);
+  }
 }
 
 // ── data-action global delegation ─────────────────────────────────────────────
 // In-scope actions are handled here; out-of-scope show "not implemented" stub.
 const IN_SCOPE_ACTIONS = new Set([
-  'navigate-screen', 'navigate-path', 'switch-tab', 'close-tab', 'new-tab', 'scan',
+  'navigate-screen', 'navigate-path', 'switch-tab', 'close-tab', 'new-tab',
   'toggle-sidebar', 'toggle-inspector', 'toggle-theme', 'retry-backend-connect',
   'focus-search', 'filter-by-tag', 'open-tag-canvas', 'close-tag-canvas',
   'tag-canvas-select',
@@ -2156,34 +3836,35 @@ const IN_SCOPE_ACTIONS = new Set([
   'ask-open', 'ask-close', 'ask-example',
   'nav-back', 'nav-forward', 'nav-up', 'navigate-crumb', 'nav-retry',
   // 'sort-by' is handled by initColumnSort()'s own listener (browser.js);
-  // 'select-file' only appears on the static placeholder rows in index.html,
-  // superseded by browser.js's delegated row click handler. Both are listed
-  // here purely so the data-action bubble to the global switch is a silent
-  // no-op instead of a "not yet implemented" toast.
-  'sort-by', 'select-file',
+  // listed here purely so the data-action bubble to the global switch is a
+  // silent no-op instead of a "not yet implemented" toast.
+  'sort-by',
+  // Handled by their own listeners (the caption buttons by id, the Home
+  // sub-tabs by initUnderlineTabs, the Settings theme segmented control by
+  // its settings-set-theme buttons) — silent here, not a stub toast on every
+  // click (pass 2 #186).
+  'window-minimize', 'window-maximize', 'window-close',
+  'switch-home-tab', 'settings-theme',
   'cm-open-new-tab', 'cm-unpin-sidebar', 'cm-rename-sidebar-item',
-  'open-review-bin',
   'switch-inspector-tab',
   'inspector-open', 'inspector-reveal', 'inspector-remove-tag', 'inspector-undo-op',
   'unfavorite-file', 'open-recent-file',
   'open-file', 'reveal-file', 'copy-path', 'home-toggle-favorite',
   'palette-open-file', 'palette-open-folder', 'palette-search-files',
-  'open-palette', 'close-palette', 'palette-set-mode',
   // Toolbar search (Task 14)
-  'search-clear', 'search-remove-chip', 'search-expand-filter', 'search-pick-filter',
+  'search-clear', 'search-clear-inline', 'search-remove-chip', 'search-expand-filter', 'search-pick-filter',
   'search-more-filters', 'search-more-apply', 'search-more-cancel',
   'search-history-run', 'search-history-clear', 'search-index-drives', 'search-retry',
   // Settings › Scan & Index (Task 14)
   'settings-index-add', 'settings-index-reindex', 'settings-index-remove',
   'modal-cancel', 'modal-confirm', 'modal-confirm-type',
-  'ef-filter', 'ef-sort', 'ef-toggle-pause-ai', 'ef-toggle-moving-card',
-  'scan-config-switch-mode', 'scan-baseline-confirm',
   'settings-nav', 'settings-set-theme', 'settings-set-density', 'settings-set-accent',
   'settings-set-accent-hex', 'settings-reset-accent',
-  'settings-set-show-notifications', 'settings-toggle', 'settings-set-click-mode',
+  'settings-set-show-notifications', 'settings-set-animations', 'settings-toggle', 'settings-set-click-mode',
   'settings-set-icon-source', 'settings-quick-access-toggle', 'settings-set-backspace-deletes',
   'settings-empty-trash',
-  'settings-set-font-scale', 'settings-reset-shortcuts',
+  // Settings › About / Data (Task 12a)
+  'settings-open-logs', 'settings-clear-icon-cache', 'settings-clear-recent',
   // Handled by the 'input'/'change' listeners at the bottom of this file, not
   // by a click case — listed so a click on the slider is a silent no-op.
   'settings-inspector-width',
@@ -2193,12 +3874,13 @@ const IN_SCOPE_ACTIONS = new Set([
   'cm-cut', 'cm-copy', 'cm-paste', 'cm-paste-here', 'cm-rename', 'cm-delete',
   'cm-new-folder', 'cm-new-file', 'cm-refresh', 'refresh-directory',
   'cm-favorite', 'cm-pin-sidebar', 'cm-index-folder', 'cm-properties', 'cm-toggle-hidden',
-  'cm-view-list', 'cm-view-grid', 'cm-sort-name', 'cm-sort-modified',
+  'cm-view-xl', 'cm-view-large', 'cm-view-medium', 'cm-view-small',
+  'cm-view-list', 'cm-view-details', 'cm-view-tiles', 'cm-view-content', 'cm-sort-name', 'cm-sort-modified',
   // View/Sort toolbar dropdowns + their checked items (Task 10)
   'open-view-menu', 'open-sort-menu',
-  'view-xl', 'view-large', 'view-medium', 'view-small', 'view-list', 'view-details',
+  'view-xl', 'view-large', 'view-medium', 'view-small', 'view-list', 'view-details', 'view-tiles', 'view-content',
   'toggle-show-hidden', 'toggle-show-extensions', 'toggle-dynamic-media',
-  'sort-name', 'sort-modified', 'sort-type', 'sort-size', 'sort-asc', 'sort-desc',
+  'sort-name', 'sort-created', 'sort-modified', 'sort-accessed', 'sort-type', 'sort-size', 'sort-asc', 'sort-desc',
   // Properties panel (Task 13)
   'inspector-more', 'inspector-properties', 'switch-properties-tab',
   'props-apply', 'props-close', 'props-open-with', 'props-advanced',
@@ -2220,7 +3902,14 @@ function switchInspectorTab(name) {
   // min-height (styles.css .inspector__panes) is what keeps geometry from
   // jittering between a short pane (e.g. "Select a file") and a tall one.
   inspector.querySelectorAll('.fp-inspector__pane').forEach(p => {
-    p.hidden = p.dataset.pane !== name;
+    const show = p.dataset.pane === name;
+    // A pane that comes into view (Preview / Tags / History) fades in
+    // (§5.2 Inspector); re-applying the tab already shown does nothing.
+    if (show && p.hidden && inspector.classList.contains('inspector--open')) {
+      p.hidden = false;
+      fpAnimate(p, [{ opacity: 0 }, { opacity: 1 }], { duration: 'fast', key: 'pane' });
+    }
+    p.hidden = !show;
   });
   // Switching to a single-file pane also restores the chrome that multi mode
   // hid (updateInspector('multi') hides both) — otherwise the Inspector ends
@@ -2250,6 +3939,10 @@ function toggleShowHidden() {
 document.addEventListener('click', e => {
   const btn = e.target.closest('[data-action]');
   if (!btn) return;
+  // A disabled control now takes the pointer (its tooltip and not-allowed
+  // cursor show, pass 2 #58), so a click that does reach one — a synthetic
+  // click, a descendant hit — is refused here as well as by the browser.
+  if (btn.disabled) return;
   const action = btn.dataset.action;
 
   switch (action) {
@@ -2267,12 +3960,12 @@ document.addEventListener('click', e => {
       break;
     }
     // This PC (Task 9): thispc-open sits on the section-head row itself and
-    // opens the drives listing (openBrowserAt(null), tab label "This PC");
+    // opens the This PC page (Stage 2D §8, tab label "This PC");
     // thispc-toggle sits on the nested chevron button, so a click there is
     // caught by this case first (closest() returns the innermost match) and
     // never falls through to thispc-open.
     case 'thispc-open':
-      openBrowserAt(null);
+      openBrowserAt(THISPC);
       break;
     case 'thispc-toggle': {
       const expanded = btn.getAttribute('aria-expanded') !== 'false';
@@ -2301,13 +3994,14 @@ document.addEventListener('click', e => {
       // seeds "home" before the first real updateBreadcrumb) — loadDirectory()
       // would relabel the tab and flip it to the Browser screen synchronously,
       // before the backend's 400 for a driveless path is even known (#13).
-      if (browserScreenActive() && isAbsolutePath(btn.dataset.path)) loadDirectory(btn.dataset.path);
+      // The This PC crumb carries the THISPC sentinel (Stage 2D §8).
+      if (browserScreenActive() && (isAbsolutePath(btn.dataset.path) || btn.dataset.path === THISPC)) loadDirectory(btn.dataset.path);
       break;
     case 'nav-retry':
       if (browserScreenActive()) retryLoad();
       break;
     case 'refresh-directory':
-      refreshDirectory();
+      refreshAll();
       break;
     case 'switch-tab':
       // btn IS the .fp-tab itself — it's the only data-action="switch-tab"
@@ -2328,9 +4022,6 @@ document.addEventListener('click', e => {
       break;
     case 'zoom-reset':
       zoomReset();
-      break;
-    case 'scan':
-      triggerScan(btn.dataset.path || null);
       break;
     case 'toggle-sidebar':
       toggleSidebar();
@@ -2357,7 +4048,7 @@ document.addEventListener('click', e => {
       ];
       searchState.scope = 'pc';
       renderSearchChips();
-      // In narrow-toolbar mode the chips are display:none until the bar is
+      // In the collapsed toolbar the chips are display:none until the bar is
       // expanded, so the two chips that define this search were invisible and
       // unremovable (pass 2 #97). Same call addChip() makes after every pick.
       focusSearchInput({ keepDropdownClosed: true });
@@ -2367,6 +4058,20 @@ document.addEventListener('click', e => {
     // ── Toolbar search (Task 14) ──────────────────────────────────
     case 'search-clear':
       clearSearch();
+      break;
+    case 'search-clear-inline':
+      // The bar's own ×: clears and, on a full bar, leaves the caret in it
+      // (Explorer); on a collapsed bar the emptied bar folds away.
+      clearSearch();
+      if (document.getElementById('toolbar')?.dataset.search !== 'collapsed') {
+        focusSearchInput({ keepDropdownClosed: true });
+      } else {
+        // The × just folded away with the bar: focus goes back to the
+        // list, never left on a hidden button.
+        const row = browserState.focus ? findListRow(browserState.focus) : null;
+        if (row) row.focus({ preventScroll: true });
+        else focusListContainer();
+      }
       break;
     case 'search-remove-chip':
       removeChip(Number(btn.dataset.chipIndex));
@@ -2441,9 +4146,6 @@ document.addEventListener('click', e => {
       }
       break;
     }
-    case 'palette-set-mode':
-      setPaletteMode(btn.dataset.mode || 'search');
-      break;
     case 'modal-cancel':
       closeModal();
       break;
@@ -2457,55 +4159,19 @@ document.addEventListener('click', e => {
       // stays in IN_SCOPE_ACTIONS so this case is a deliberate silent no-op,
       // not a missing handler.
       break;
-    case 'scan-config-switch-mode': {
-      const conv = document.querySelector('.scan-conv');
-      const form = document.querySelector('.scan-form');
-      const switchBtn = document.getElementById('btn-scan-switch');
-      if (!conv || !form) break;
-      const goingToForm = btn.dataset.mode === 'form';
-      conv.style.display = goingToForm ? 'none' : '';
-      form.style.display = goingToForm ? '' : 'none';
-      if (switchBtn) {
-        switchBtn.textContent = goingToForm ? 'Switch to conversational' : 'Switch to structured form';
-        switchBtn.dataset.mode = goingToForm ? 'conversational' : 'form';
-      }
-      break;
-    }
-    case 'ef-filter': {
-      // Update segmented filter chips active state
-      const bar = document.getElementById('ef-filter-bar');
-      bar?.querySelectorAll('.fp-segmented__opt').forEach(opt => {
-        opt.classList.toggle('active', opt.dataset.filter === btn.dataset.filter);
-      });
-      // INTEGRATION: filter file list by state
-      break;
-    }
-    case 'scan-baseline-confirm':
-      openModal('warn', {
-        title: 'Create baseline snapshot',
-        body: 'FilePlus will take a snapshot of your current folder structure before scanning. This lets you restore to the current state at any time. The snapshot runs in the background and takes about 30 seconds.',
-        confirmLabel: 'Create baseline & scan',
-        // INTEGRATION: onConfirm → POST /scan/start (after POST /snapshots/baseline)
-      });
-      break;
-    case 'ef-sort':
-      // INTEGRATION: sort file list by column
-      break;
-    case 'ef-toggle-pause-ai':
-      // INTEGRATION: toggle AI processing pause
-      break;
-    case 'ef-toggle-moving-card': {
-      const card = document.getElementById('ef-moving-card');
-      if (card) card.style.display = card.style.display === 'none' ? '' : 'none';
-      break;
-    }
-    case 'open-review-bin':
-      switchScreen('review-bin');
-      break;
     case 'settings-nav':
       switchSettingsPane(btn.dataset.pane);
-      if (btn.dataset.pane === 'data') updateWritesStatusLine();
       if (btn.dataset.pane === 'scan-index') loadIndexStatus();
+      break;
+    // Settings › About / Data (Stage 2D Task 12a) — settings.js.
+    case 'settings-open-logs':
+      openLogsFolder();
+      break;
+    case 'settings-clear-icon-cache':
+      clearIconCachesEverywhere();
+      break;
+    case 'settings-clear-recent':
+      clearRecentList();
       break;
     case 'settings-set-theme':
       applyTheme(btn.dataset.theme || btn.dataset.val);
@@ -2561,24 +4227,19 @@ document.addEventListener('click', e => {
         },
       });
       break;
-    case 'settings-set-font-scale': {
-      const scale = btn.dataset.scale;
-      // Font scale applied as CSS zoom; for Ctrl+/- Electron native zoom is used instead.
-      document.documentElement.style.zoom = scale;
-      localStorage.setItem('fp-zoom', scale);
-      break;
-    }
-    case 'settings-reset-shortcuts':
-      // INTEGRATION: reset to default keybindings
-      break;
     case 'switch-inspector-tab':
       switchInspectorTab(btn.dataset.tab);
       break;
+    // The Inspector's action row: aria-disabled (no single selection) keeps
+    // the tooltip but does nothing.
     case 'inspector-open':
-      inspectorOpenSelected();
+      if (btn.getAttribute('aria-disabled') !== 'true') inspectorOpenSelected();
+      break;
+    case 'open-file-with':
+      if (btn.getAttribute('aria-disabled') !== 'true') inspectorOpenWithSelected();
       break;
     case 'inspector-reveal':
-      inspectorRevealSelected();
+      if (btn.getAttribute('aria-disabled') !== 'true') inspectorRevealSelected();
       break;
     case 'inspector-remove-tag': {
       const tagId = btn.dataset.tagId;
@@ -2603,12 +4264,15 @@ document.addEventListener('click', e => {
         if (r !== row) r.classList.remove('fp-row--selected');
       });
       row.classList.add('fp-row--selected');
+      updateStatusBar();
       // Populate the (browser-screen) inspector through the SAME pipeline a
       // Browser selection uses. updateInspector('single', …) only rewrote the
       // header: the meta grid, preview, tag chips and History stayed on the
       // previously-inspected file, and _inspectorFileId with them — so the
-      // Tags pane then tagged that other file (pass 2 #75).
-      showInspectorFor(path);
+      // Tags pane then tagged that other file (pass 2 #75). An item that is
+      // gone since gets the panel's own "moved or deleted" state, no fetch.
+      if (row.hasAttribute('data-missing')) showInspectorMissing(path);
+      else showInspectorFor(path);
       break;
     }
     // Home hover actions (Recent + Favorites rows) and the home-row context
@@ -2853,7 +4517,7 @@ document.addEventListener('click', e => {
       fileops.newFile(contextTargetDir()).catch(fileopsReported);
       break;
     case 'cm-refresh':
-      refreshDirectory();
+      refreshAll();
       break;
     // Task 11: toggles the WHOLE selection (design spec §4.2 — "any count").
     // "Remove" only when every selected path is already favorited (matching
@@ -2927,6 +4591,24 @@ document.addEventListener('click', e => {
       if (path) openProperties(path);
       break;
     }
+    // A drive's menu (Stage 2D §8): the card or sidebar row right-clicked.
+    case 'cm-drive-open':
+      if (contextMenuTarget?.dataset?.path) openBrowserAt(contextMenuTarget.dataset.path);
+      break;
+    case 'cm-drive-open-tab': {
+      const drivePath = contextMenuTarget?.dataset?.path;
+      if (drivePath) { openNewTab(); openBrowserAt(drivePath); }
+      break;
+    }
+    case 'cm-drive-properties':
+      thisPcProperties(contextMenuTarget?.dataset?.path);
+      break;
+    case 'cm-thispc-view-tiles':
+      setThisPcLayout('tiles');
+      break;
+    case 'cm-thispc-view-details':
+      setThisPcLayout('details');
+      break;
     case 'inspector-more':
       showContextMenu(0, 0, INSPECTOR_MORE_MENU_ITEMS, { anchor: btn });
       break;
@@ -2970,16 +4652,10 @@ document.addEventListener('click', e => {
     case 'cm-toggle-hidden':
       toggleShowHidden();
       break;
-    case 'cm-view-list':
-      // Empty-area menu's "View → Details" — maps to the View menu's own
-      // Details item (the renamed columns view).
-      setViewMode('details', { manual: true });
-      break;
-    case 'cm-view-grid':
-      // Empty-area menu's "View → Grid" — maps to the View menu's Medium
-      // icons (the grid default scale).
-      setListScale(1);
-      setViewMode('grid', { manual: true });
+    // The empty-area menu's View flyout — the same eight as the View menu.
+    case 'cm-view-xl': case 'cm-view-large': case 'cm-view-medium': case 'cm-view-small':
+    case 'cm-view-list': case 'cm-view-details': case 'cm-view-tiles': case 'cm-view-content':
+      applyViewChoice(action.slice('cm-view-'.length));
       break;
     case 'cm-sort-name':
       applySort('name', (browserState.sort.key === 'name' && browserState.sort.dir === 'asc') ? 'desc' : 'asc');
@@ -2992,30 +4668,15 @@ document.addEventListener('click', e => {
     case 'open-view-menu':
       showContextMenu(0, 0, VIEW_MENU_ITEMS, { anchor: btn, ctx: menuContext() });
       break;
+    case 'open-toolbar-more':
+      openToolbarMoreMenu(btn);
+      break;
     case 'open-sort-menu':
       showContextMenu(0, 0, SORT_MENU_ITEMS, { anchor: btn, ctx: menuContext() });
       break;
-    case 'view-xl':
-      setListScale(2);
-      setViewMode('grid', { manual: true });
-      break;
-    case 'view-large':
-      setListScale(1.5);
-      setViewMode('grid', { manual: true });
-      break;
-    case 'view-medium':
-      setListScale(1);
-      setViewMode('grid', { manual: true });
-      break;
-    case 'view-small':
-      setListScale(0.75);
-      setViewMode('grid', { manual: true });
-      break;
-    case 'view-list':
-      setViewMode('list', { manual: true });
-      break;
-    case 'view-details':
-      setViewMode('details', { manual: true });
+    case 'view-xl': case 'view-large': case 'view-medium': case 'view-small':
+    case 'view-list': case 'view-details': case 'view-tiles': case 'view-content':
+      applyViewChoice(action.slice('view-'.length));
       break;
     case 'toggle-show-hidden':
       toggleShowHidden();
@@ -3039,8 +4700,14 @@ document.addEventListener('click', e => {
     case 'sort-name':
       applySort('name', browserState.sort.dir);
       break;
+    case 'sort-created':
+      applySort('created', browserState.sort.dir);
+      break;
     case 'sort-modified':
       applySort('modified', browserState.sort.dir);
+      break;
+    case 'sort-accessed':
+      applySort('accessed', browserState.sort.dir);
       break;
     case 'sort-type':
       applySort('type', browserState.sort.dir);
@@ -3057,7 +4724,11 @@ document.addEventListener('click', e => {
 
     default:
       if (!IN_SCOPE_ACTIONS.has(action)) {
-        // Stub: log and show toast for out-of-scope actions
+        // Unreachable from any shipped control: scripts/check_menu_cases.js
+        // fails verify on a data-action with no case, and
+        // stage2d-placeholders.spec.js clicks every visible control and
+        // asserts this counter stays 0 (Stage 2D Task 12a).
+        window.__fpStubHits = (window.__fpStubHits || 0) + 1;
         console.log(`[FilePlus] data-action stub: ${action}`, btn.dataset);
         showToast(`Action "${action}" — not yet implemented`, 'action');
       }
@@ -3087,6 +4758,10 @@ document.addEventListener('change', e => {
   if (t.dataset.action === 'settings-set-show-notifications') {
     setNotificationsEnabled(t.checked);
     saveSetting('ui.notifications', t.checked);
+    return;
+  }
+  if (t.dataset.action === 'settings-set-animations') {
+    fpSetMotion(t.checked);
     return;
   }
   if (t.dataset.action === 'settings-toggle' && t.dataset.setting === 'show-extensions') {
@@ -3194,7 +4869,9 @@ function initTabDrag(tab) {
     // the reference node, or already immediately before it) is not a reorder —
     // don't announce one (pass 2 #157).
     if (ref !== _dragTab && _dragTab.nextSibling !== ref) {
+      const before = [...tabbar.querySelectorAll(':scope > .fp-tab')].map(t => [t, t.getBoundingClientRect().left]);
       tabbar.insertBefore(_dragTab, ref);
+      tabReorderMotion(before, _dragTab);
       _tabDragReordered = true;
     }
     tab.classList.remove('fp-tab--drag-over-before', 'fp-tab--drag-over-after');
@@ -3217,7 +4894,16 @@ function initTabbarScroll() {
     tabbar.scrollLeft += delta;
   }, { passive: false });
   tabbar.addEventListener('scroll', updateTabbarOverflow);
-  window.addEventListener('resize', updateTabbarOverflow);
+  // The strip's own width changes without any window resize too — the
+  // header's identity card follows the sidebar (collapse, expand, a resize
+  // drag) and the device name — so the fade watches the strip itself.
+  // (updateTabbarOverflow only toggles a mask: no layout, no observer loop.)
+  // A strip that narrows keeps the active tab in view too (Task 8 Q4): it
+  // is never left under the fade or scrolled off by a resize. (Scrolling
+  // changes no size, so this cannot loop.)
+  const onResize = () => { keepActiveTabInView(); updateTabbarOverflow(); };
+  if (typeof ResizeObserver === 'function') new ResizeObserver(onResize).observe(tabbar);
+  else window.addEventListener('resize', onResize);
   // Tablist keyboard model (pass 2 #158): the active tab is the single tab
   // stop (roving tabindex, createTabElement/activateTab), Arrow keys move
   // along the strip, Home/End jump to its ends, Delete closes.
@@ -3241,10 +4927,103 @@ function initTabbarScroll() {
   updateTabbarOverflow();
 }
 
+// ── Mouse presses on chrome keep keyboard focus (Explorer's model) ───────────
+// A click on a toolbar, header-bar or sidebar control acts (its click handler
+// runs as usual) but does not take keyboard focus from where it was — the
+// file list, usually — so the next Enter or arrow key still goes to the list
+// (Stage 2D Task 7). Done by handing focus straight back when a press
+// focuses such a control, not by cancelling mousedown: the tabs are native
+// HTML5 drag sources, which a cancelled mousedown would never start. Text
+// fields (the search bar, an inline tab rename) take focus as normal. A
+// keyboard user who Tabs to a control still activates it with Enter/Space.
+const CHROME_FOCUS_REGIONS = '#toolbar, #header, #sidebar';
+let _chromePressPrevFocus = undefined;
+function initChromeMouseFocus() {
+  document.addEventListener('mousedown', e => {
+    _chromePressPrevFocus = undefined;
+    const t = e.target;
+    if (!(t instanceof Element) || !t.closest(CHROME_FOCUS_REGIONS)) return;
+    if (t.closest('input, textarea, select, [contenteditable="true"], #search-wrap')) return;
+    _chromePressPrevFocus = document.activeElement;
+  }, true);
+  document.addEventListener('focusin', e => {
+    if (_chromePressPrevFocus === undefined) return;
+    const prev = _chromePressPrevFocus;
+    _chromePressPrevFocus = undefined;
+    const t = e.target;
+    if (!(t instanceof Element) || !t.closest(CHROME_FOCUS_REGIONS)) return;
+    if (prev && prev !== t && prev !== document.body && prev.isConnected && !prev.closest?.(CHROME_FOCUS_REGIONS)) {
+      prev.focus({ preventScroll: true });
+      // prev can refuse focus (hidden, disabled or inert since the press):
+      // then the control still must not keep it (Stage 2D §12 sweep).
+      if (document.activeElement === t) t.blur();
+    } else {
+      t.blur();
+    }
+  }, true);
+  // A press is over when the button comes up — or when it became a native
+  // drag (a tab), which swallows the mouseup: a record left behind would
+  // pull a LATER keyboard focus on the chrome back to the list.
+  const endPress = () => { _chromePressPrevFocus = undefined; };
+  for (const type of ['mouseup', 'pointerup', 'dragstart', 'dragend']) document.addEventListener(type, endPress, true);
+}
+
+// ── Press feedback (addendum §5.2 Buttons & toggles) ─────────────────────────
+// A pressed button shows it (styles.css: the pressed fill, and with
+// animations on a quick scale to .97). On the chrome — header bar, toolbar,
+// sidebar — the mouse-focus model above hands focus back during the press,
+// and Chromium then drops :active from the button itself (only its icon
+// keeps it), so the press never showed there. .fp-pressed is the same state
+// kept by hand: on from the primary button's press until it comes up, is
+// cancelled, the pointer leaves the button, or the window loses focus (an
+// Alt+Tab mid-press never delivers the pointerup).
+const PRESSABLE = '.fp-btn, .fp-button, .fp-icon-btn, .fp-circle-btn, .fp-ask, .fp-caption';
+function initPressFeedback() {
+  document.addEventListener('pointerdown', e => {
+    if (e.button !== 0) return;
+    const btn = e.target instanceof Element ? e.target.closest(PRESSABLE) : null;
+    if (!btn || btn.disabled || btn.getAttribute('aria-disabled') === 'true') return;
+    btn.classList.add('fp-pressed');
+    const release = () => {
+      btn.classList.remove('fp-pressed');
+      document.removeEventListener('pointerup', release, true);
+      document.removeEventListener('pointercancel', release, true);
+      btn.removeEventListener('pointerleave', release);
+      window.removeEventListener('blur', release);
+    };
+    document.addEventListener('pointerup', release, true);
+    document.addEventListener('pointercancel', release, true);
+    btn.addEventListener('pointerleave', release);
+    window.addEventListener('blur', release);
+  }, true);
+}
+
 // ── Keyboard shortcuts ────────────────────────────────────────────────────────
 document.addEventListener('keydown', e => {
+  // Ctrl+R / F5 — refresh in place (Stage 2D §7.1). There is no Electron menu
+  // any more, so nothing else would reload the page; preventDefault anyway so
+  // the keys never reach anything but refreshAll(). A modal dialog keeps them.
+  const ctrlR = (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && (e.key === 'r' || e.key === 'R');
+  if (ctrlR || e.key === 'F5') {
+    e.preventDefault();
+    if (!e.repeat && !(typeof anyScrimOpen === 'function' && anyScrimOpen())) refreshAll();
+    return;
+  }
   // ⌘K / Ctrl+K — command palette
   if ((e.metaKey || e.ctrlKey) && e.key === 'k') { e.preventDefault(); openPalette(); }
+  // Ctrl+F — the search bar (Explorer's key). In the collapsed toolbar it
+  // opens in flow, pushing the path left (addendum §2). Not behind a dialog.
+  // Never from another text field (inline rename, Ask File+, Settings):
+  // Ctrl+F there belongs to that field.
+  if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && (e.key === 'f' || e.key === 'F')) {
+    const t = document.activeElement;
+    const editable = t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable);
+    if (!editable || t.id === 'search-input') {
+      e.preventDefault();
+      if (!(typeof anyScrimOpen === 'function' && anyScrimOpen())) focusSearchInput();
+      return;
+    }
+  }
   // Ctrl+B — sidebar
   if ((e.metaKey || e.ctrlKey) && e.key === 'b') { e.preventDefault(); toggleSidebar(); }
   // ⌘I / Ctrl+I — inspector
@@ -3257,8 +5036,12 @@ document.addEventListener('keydown', e => {
   if ((e.metaKey || e.ctrlKey) && (e.key === '-' || e.key === '_')) { e.preventDefault(); zoomOut(); }
   // Ctrl+0 — reset zoom
   if ((e.metaKey || e.ctrlKey) && e.key === '0') { e.preventDefault(); zoomReset(); }
-  // Ctrl+Shift+R — Review Bin
-  if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'R') { e.preventDefault(); switchScreen('review-bin'); }
+  // Ctrl+, — Settings (the sidebar's Settings tooltip and the status bar
+  // both advertise it). Not behind a dialog.
+  if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key === ',') {
+    e.preventDefault();
+    if (!(typeof anyScrimOpen === 'function' && anyScrimOpen())) switchScreen('settings');
+  }
   // Ctrl+T — new tab
   if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key === 't') { e.preventDefault(); openNewTab(); }
   // Ctrl+W — close current tab
@@ -3307,13 +5090,29 @@ document.addEventListener('keydown', e => {
   const activeEl = document.activeElement;
   const activeTag = activeEl && activeEl.tagName;
   const isEditableTarget = activeTag === 'INPUT' || activeTag === 'TEXTAREA' || (activeEl && activeEl.isContentEditable);
-  const sidebarKeyActivation = (e.key === 'Enter' || e.key === ' ') && activeEl?.closest?.('#sidebar');
+  // The same holds for a focused toolbar or tab-strip control (a View/Sort
+  // button, a crumb, the new-tab "+", a tab): Enter/Space act on THAT
+  // control (Stage 2D Task 7) — browserKeydown's preventDefault used to
+  // swallow the button's own click and open the focused row instead. Such a
+  // control only ever holds focus because the KEYBOARD put it there: a mouse
+  // press on chrome leaves focus where it was (initChromeMouseFocus below),
+  // so after clicking Up, Enter still opens the list's row.
+  const controlKeyActivation = (e.key === 'Enter' || e.key === ' ')
+    && !!activeEl?.closest?.(CHROME_FOCUS_REGIONS);
   const browserScreenActive = document.getElementById('screen-browser')?.classList.contains('active');
-  if (browserScreenActive && !isEditableTarget && !sidebarKeyActivation && typeof browserKeydown === 'function') {
+  // An open search Filters/History dropdown owns the cursor keys: they never
+  // move the list cursor hidden behind it (search.js navigates inside it when
+  // it has focus; anywhere else the keys just close it).
+  const searchDd = document.getElementById('search-dropdown');
+  if (searchDd && !searchDd.hidden && LIST_CURSOR_KEYS.has(e.key)) {
+    if (!searchDd.contains(activeEl) && activeEl?.id !== 'search-input') closeSearchDropdown();
+    return;
+  }
+  if (browserScreenActive && !isEditableTarget && !controlKeyActivation && typeof browserKeydown === 'function') {
     browserKeydown(e);
   }
   const homeScreenActive = document.getElementById('screen-home')?.classList.contains('active');
-  if (homeScreenActive && !isEditableTarget && typeof homeKeydown === 'function') {
+  if (homeScreenActive && !isEditableTarget && !controlKeyActivation && typeof homeKeydown === 'function') {
     homeKeydown(e);
   }
 });
@@ -3329,31 +5128,56 @@ document.addEventListener('auxclick', e => {
   closeTabById(tabEl.dataset.tabId);
 });
 
-// Ctrl + scroll wheel over the file list — steps --list-scale (Task 10,
-// explorer-only zoom of just the listing), one step per gesture; anywhere
-// else it's now ignored entirely — application zoom is keyboard-only
-// (Ctrl+=/-/0 above). Throttled because trackpads (and high-resolution
-// wheels) emit dozens of wheel events per swipe; without a cooldown a single
-// flick would jump straight to the min/max scale. ~80ms matches the natural
-// pacing of one "notch" of a physical wheel without making intentional fast
-// scrolls feel sluggish.
+// Ctrl + scroll wheel over the file list — walks the view ladder (Stage 2D
+// §3.1): anywhere over #list-scroll (empty space included), the Details
+// column header or the listing notice, one step per 100
+// units of deltaY (wheel up = larger, down = smaller). Deltas accumulate, so
+// a trackpad's or a high-resolution wheel's small deltas add up to steps
+// instead of each firing one, and a fast flick is as many steps as notches —
+// no cooldown. It never zooms the app (that is Ctrl+=/-/0 only). Chromium
+// reports deltas in CSS px, which app zoom shrinks: they are scaled back to
+// screen units (× appZoom.current, the factor behind --app-zoom) so one
+// notch is one step at every zoom. The row under the
+// pointer is the scroll anchor.
+//
+// List view (column-major, horizontal scroll): a plain vertical wheel
+// scrolls sideways — Chromium would otherwise do nothing.
 {
-  let lastWheelAt = 0;
-  const COOLDOWN_MS = 80;
+  let wheelAcc = 0;
+  const screenDelta = (e) => {
+    const unit = e.deltaMode === 1 ? 100 / 3 : (e.deltaMode === 2 ? 300 : 1);
+    // Rounded to 1/1000: a 100-unit notch at 110% arrives as 90.9090907 CSS px,
+    // and × 1.1 that is 99.9999997 — one hair short of a step without it.
+    return Math.round(e.deltaY * unit * (e.deltaMode === 0 ? appZoom.current : 1) * 1000) / 1000;
+  };
   document.addEventListener('wheel', e => {
-    if (!(e.ctrlKey || e.metaKey)) return;
-    if (!e.target.closest('#list-scroll')) return; // outside the list: ignore
-    e.preventDefault(); // suppress the default page-scroll while scaling
-    const now = performance.now();
-    if (now - lastWheelAt < COOLDOWN_MS) return;
-    lastWheelAt = now;
-    stepListScale(e.deltaY < 0 ? 1 : -1);
+    const listScroll = e.target.closest && e.target.closest('#list-scroll');
+    if (e.ctrlKey || e.metaKey) {
+      // The file area is the listing plus the strips above it that belong to
+      // it: the Details column header and the listing notice.
+      // The This PC page too: there it switches tiles <-> details (§8).
+      if (!listScroll && !(e.target.closest && e.target.closest('#list-head, #list-notice, #thispc-view'))) return;
+      e.preventDefault();
+      wheelAcc += screenDelta(e);
+      while (wheelAcc <= -100) { wheelAcc += 100; stepView(1, { anchorEl: e.target }); }
+      while (wheelAcc >= 100) { wheelAcc -= 100; stepView(-1, { anchorEl: e.target }); }
+      return;
+    }
+    wheelAcc = 0;
+    if (listScroll && browserState.view === 'list' && !e.deltaX && e.deltaY) {
+      e.preventDefault();
+      listScroll.scrollLeft += e.deltaY * (e.deltaMode === 1 ? 100 / 3 : (e.deltaMode === 2 ? listScroll.clientWidth : 1));
+    }
   }, { passive: false });
 }
 
 // ── Context menu event listener (A.10) ────────────────────────────────────────
 document.addEventListener('contextmenu', e => {
   e.preventDefault();
+  // A modal is up: the app behind it is not there to act on. No menu (it
+  // would open under the scrim, unreachable) and no deselect of the
+  // selection the modal may be about.
+  if (anyScrimOpen()) return;
   // Right-click on open space clears the active selection too (design spec
   // §3.5), same rule as the mousedown handler above — checked directly
   // against the target rather than gated on contextMenuType === 'empty-area'
@@ -3364,7 +5188,13 @@ document.addEventListener('contextmenu', e => {
   contextMenuType = getMenuTypeForTarget(e.target);
   contextMenuTarget = contextMenuType === 'sidebar-item'
     ? e.target.closest('.fp-sidebar__item[data-pin-id], .fp-sidebar__item[data-known-id]')
-    : e.target;
+    : contextMenuType === 'drive'
+      ? e.target.closest('.fp-drive-card[data-path], .fp-sidebar__item[data-path]')
+      : e.target;
+  // Right-click on a This PC card selects it, like a click.
+  if (contextMenuType === 'drive' && contextMenuTarget?.classList.contains('fp-drive-card')) {
+    selectThisPcCard(contextMenuTarget.dataset.path);
+  }
   // Right-click on a row that isn't already selected selects it alone before
   // the menu opens; right-click within an existing multi-selection leaves it
   // untouched so batch actions (Task 4) apply to the whole selection.
@@ -3382,6 +5212,7 @@ document.addEventListener('contextmenu', e => {
       const pane = row.closest('.home-pane');
       pane?.querySelectorAll('.fp-row--selected').forEach(r => { if (r !== row) r.classList.remove('fp-row--selected'); });
       row.classList.add('fp-row--selected');
+      updateStatusBar();
     }
   }
 
@@ -3395,7 +5226,7 @@ document.addEventListener('contextmenu', e => {
 });
 
 // ── Init ───────────────────────────────────────────────────────────────────────
-document.addEventListener('DOMContentLoaded', async () => {
+async function fpInitApp() {
   // Idempotent belt-and-braces: icons.js already installs the sprite
   // synchronously at parse time (see its own DOMContentLoaded fallback for
   // the case this script somehow ran before <body> existed); calling again
@@ -3423,8 +5254,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   updateInspector('none');
   initSidebarResize();
   restoreSidebarState();
+  initOverlayScrollbars();
   initSearch();
-  initToolbarNarrowMode();
+  initToolbarLayout();
+  initChromeMouseFocus();
+  initPressFeedback();
   // Tab strip: wheel-to-scrollLeft, the overflow hint, and the tablist's own
   // keyboard model (pass 2 #156/#158). The seed tab is already in the DOM, so
   // this also has to run after seedInitialTab().
@@ -3505,16 +5339,19 @@ document.addEventListener('DOMContentLoaded', async () => {
     // listener's own element (the section-head row itself), not a
     // descendant, was the real key target (Task 9 review, fix round 1).
     if (e.target !== e.currentTarget) return;
-    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openBrowserAt(null); }
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openBrowserAt(THISPC); }
   });
 
-  // Sync the status-bar zoom pill with Electron's persisted zoom factor
-  updateZoomPill();
+  // (The zoom pill and --app-zoom were synced from Electron's persisted zoom
+  // factor when app.js loaded — syncAppZoom, above.)
 
   // Init column sort cycling, marquee selection, and row click/dblclick (A.3.1, Task 3)
   initColumnSort();
   initMarqueeSelection();
   initRowInteractions();
+  initThisPcView();
+  // View ladder layout: List's rows-per-column follows the pane's height.
+  initViewLayout();
 
   // Drag and drop: rows onto folder rows / sidebar items / breadcrumb crumbs /
   // the Up button, on pointer events (Task 12 — dragdrop.js; the three HTML5
@@ -3525,10 +5362,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   initHomeRowInteractions();
   initFavoritesDragDrop();
 
-  // View mode is no longer restored from sessionStorage here — ui.view_mode/
-  // ui.list_scale (config) are applied by applySettingsFromConfig() below,
-  // and every real navigation re-decides the view itself (loadDirectory()'s
-  // dynamic-media-view check, Task 10).
+  // The view is decided per folder on every navigation (browser.js
+  // decideView — ui.folder_views, the media share, else Details); the old
+  // global ui.view_mode/ui.list_scale are deleted once in
+  // applySettingsFromConfig.
 
   // Init underline tabs in any pre-existing tab containers
   document.querySelectorAll('.fp-tabs').forEach(initUnderlineTabs);
@@ -3556,14 +5393,25 @@ document.addEventListener('DOMContentLoaded', async () => {
   // loaders run together. Each step degrades to a harmless no-op on backend
   // failure, and every request is bounded by apiTimeout() so a backend that
   // has bound its port but not finished starting can't stall init forever.
+  // Static markup only — no data needed, so a failed load cannot skip it.
+  initSettingsNavSelect();
+  initSegmentedGlide();
   try {
     await loadConfig();
     applySettingsFromConfig();
     restoreSettingsPane();
+    // The saved state is all applied (sidebar, theme, zoom, panel widths,
+    // inspector): from two frames on, changes animate again.
+    fpEndBoot();
     // Before the first listing renders: iconFor() decides the special folder
     // icons (Desktop, Downloads, …) by matching a path against this map, and
     // falls back to guessing from the folder's name until it has loaded.
     await fpLoadKnownFolders();
+    // Windows-icon mode: learn the generic folder icon before the first
+    // listing needs it (Stage 2D §4.2). Its votes wait for the known-folder
+    // map above, and /health's own prewarm may have run before the saved
+    // icon source or that map was known.
+    fpPrewarmIconSizes();
     await Promise.allSettled([loadDrives(), loadPins(), loadSidebarTags()]);
     loadQuickAccess();
     await checkCrashRecovery();
@@ -3573,27 +5421,42 @@ document.addEventListener('DOMContentLoaded', async () => {
     // init with no trace at all.
     console.warn('[fp-init] startup data load failed:', err);
   }
+  fpEndBoot();   // a no-op if the config step already lifted it
+  // Startup has finished applying what it loaded (config, known folders,
+  // drives, pins, tags, Quick Access). The Electron harness waits for this
+  // before a test acts: acting earlier raced the config landing — a settings
+  // re-apply or a sidebar re-render under a click (Task 11 flakes).
+  window.__fpInitDone = true;
 
   // ── A.17 Edge case INTEGRATION stubs ──────────────────────────────────────
-  // #2  External folder missing on navigation → show fp-error-banner "This folder no longer exists"
-  //     INTEGRATION: catch 404/ENOENT from GET /ls?path=... → toggle .fp-error-banner in browser screen
+  // (#2 missing folder on navigation and #8 drop onto a sidebar folder are
+  // built: failNavigation / showErrorBanner in browser.js, dragdrop.js.)
   // #6  Files added to Everything Folder while tray is closed → update count badge on next open
   //     INTEGRATION: GET /ef/count on tray show event → update #tray-rb-badge
-  // #8  Drop file onto sidebar folder → accept drag event, call POST /move (requires approval)
-  //     INTEGRATION: sidebar items need dragover + drop listeners → openModal('move', {src, dest})
-  // #9  Inspector opened on a file that has been deleted externally → show preview fail state
-  //     INTEGRATION: GET /file/preview?path=... → on 404 show commented preview-fail HTML
+  // (#9, an inspector item deleted externally, is built: GET /file and
+  // /preview answer {exists: false} and the panel says "Moved or deleted".)
   // #12 Scan starts while one is already running → show toast "Scan already in progress"
-  //     INTEGRATION: POST /scan/start → if 409 response → showToast('Scan already running', 'warn')
+  //     INTEGRATION: POST /scan → if 409 response → showToast('Scan already running', 'warn')
   // #13 Ollama model not downloaded when classification starts → show error banner with install CTA
   //     INTEGRATION: GET /ai/status → if model_status !== 'ready' → show #banner-ai-offline
+}
+
+// Startup. Whatever happens in it — a throw anywhere, not only in the
+// config step — html.fp-booting is lifted (fpEndBoot is idempotent), so a
+// failed start can never leave the app with animations stuck off (Task 8).
+document.addEventListener('DOMContentLoaded', async () => {
+  try {
+    await fpInitApp();
+  } finally {
+    fpEndBoot();
+  }
 });
 
 /**
  * Crash recovery (Task 4): GET /operations/pending returns whatever the
  * backend's startup reconciliation classified as left mid-flight by an
- * abnormal shutdown ([] once reconciliation has run with nothing pending —
- * always [] until Task 9 wires reconcile_pending() into the API's lifespan).
+ * abnormal shutdown ([] when nothing was pending). reconcile_pending() runs
+ * on every startup, inside the API's lifespan (backend/api.py).
  * Non-empty → one line per row: op type, source → dest, resolution.
  */
 async function checkCrashRecovery() {

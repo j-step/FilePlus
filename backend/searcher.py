@@ -284,7 +284,7 @@ def search_tree(root: Path, filters: SearchFilters, *, budget_s: float = 4.0,
                 results.append({
                     "path": path_str, "name": entry.name, "is_dir": is_dir,
                     "size": size, "modified": modified, "created": created,
-                    "ext": ext, "match": spans,
+                    "accessed": st.st_atime, "ext": ext, "match": spans,
                 })
                 if len(results) >= limit:
                     truncated = True

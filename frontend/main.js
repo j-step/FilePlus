@@ -4,11 +4,13 @@
  * Creates the application window, configures security settings,
  * and wires up the dev-tools shortcut.
  */
-const { app, BrowserWindow, ipcMain, nativeTheme, nativeImage, shell, dialog, clipboard } = require('electron');
+const { app, BrowserWindow, Menu, ipcMain, nativeTheme, nativeImage, shell, dialog, clipboard } = require('electron');
+const fs   = require('fs');
 const path = require('path');
+const { pathToFileURL } = require('url');
 const os   = require('os');
 const { spawn } = require('child_process');
-const { resolveApiPort, resolveApiToken } = require('./envToken');
+const { resolveApiPort, resolveApiToken, resolveAppEnv, devToolsAllowed } = require('./envToken');
 const { LruCache, iconCacheKey, isSafeLocalPath, normalizeWinPath, clampPx } = require('./iconCache');
 const { resolveLogDir, createFileLogger, consoleLevelName } = require('./logger');
 
@@ -67,12 +69,17 @@ function apiToken() {
 // with nothing anywhere saying why.
 const API_PORT = resolveApiPort(REPO_DIR, process.env);
 
+// FILEPLUS_ENV, read the way backend/config.py reads it. F12 opens DevTools
+// in dev and test only (Stage 2D §7.1); a prod build has no DevTools key.
+const APP_ENV = resolveAppEnv(REPO_DIR, process.env);
+const DEVTOOLS_ALLOWED = devToolsAllowed(APP_ENV);
+
 // Mica needs Windows 11 22H2 (build 22621). Elsewhere Electron ignores the option
 // and the renderer paints solid --bg-chrome.
 const MICA_AVAILABLE = process.platform === 'win32' && Number(os.release().split('.')[2] || 0) >= 22621;
 
 // ── Icon / thumbnail bridge (Stage 2C Task 4; sizing rewritten pass 2 —
-// icon-design.md §4.2) ───────────────────────────────────────────────────
+// docs/superpowers/specs/2026-09-14-stage-2c-pass-2-icon-design.md §4.2) ──
 // Two separate byte-budgeted LRUs: file icons are small and numerous (folder
 // chrome, list rows); thumbnails are bigger images but there are fewer
 // distinct sizes in play at once (grid view). Values: {url, px, exact} for
@@ -128,6 +135,13 @@ const thumbQueue = makeQueue(THUMBNAIL_CONCURRENCY, { lifo: true });
 globalThis.__fpMainIconStats = { shellCalls: 0, thumbCalls: 0, batches: 0 };
 
 function createWindow() {
+  // No application menu (Stage 2D §7.1). Electron's default one carries
+  // accelerators the app must not have: Ctrl+R / Ctrl+Shift+R reload the page
+  // (every tab lost), Ctrl+Shift+I opens DevTools, Ctrl+W closes the window,
+  // its own zoom keys, and Alt shows a menu bar. Every shortcut FilePlus wants
+  // is handled in the renderer; copy/cut/paste/select-all/undo in text fields
+  // are Chromium's own and need no Edit menu.
+  Menu.setApplicationMenu(null);
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
@@ -145,12 +159,31 @@ function createWindow() {
     autoHideMenuBar: true,
   });
 
+  // A renderer-initiated navigation away from the app (a file dropped onto
+  // the window, a stray link) would replace the whole UI and lose every tab;
+  // only the app's own page may load. window.open never makes a window.
+  const pageKey = (u) => { try { return decodeURI(String(u).split('#')[0]).toLowerCase(); } catch (_e) { return String(u); } };
+  const indexKey = pageKey(pathToFileURL(path.join(__dirname, 'index.html')).href);
+  mainWindow.webContents.on('will-navigate', (event, legacyUrl) => {
+    // Electron 41 puts the url on the event; the positional argument is the
+    // older form, kept as a fallback.
+    const url = (event && event.url) || legacyUrl;
+    if (pageKey(url) !== indexKey) {
+      event.preventDefault();
+      mainLog.warn(`blocked navigation to ${url}`);
+    }
+  });
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    mainLog.warn(`blocked window.open(${url})`);
+    return { action: 'deny' };
+  });
+
   // F12 toggles DevTools. before-input-event (not globalShortcut): a global
   // shortcut is an OS-level accelerator that fires even when FilePlus has no
   // focus, so registering F12 there took the key away from every other
   // application on the machine for as long as FilePlus was running.
   mainWindow.webContents.on('before-input-event', (_event, input) => {
-    if (input.type === 'keyDown' && input.key === 'F12'
+    if (DEVTOOLS_ALLOWED && input.type === 'keyDown' && input.key === 'F12'
         && !input.control && !input.alt && !input.shift && !input.meta) {
       mainWindow.webContents.toggleDevTools();
     }
@@ -186,6 +219,14 @@ function createWindow() {
     rendererLog.info(`--- page loaded: ${mainWindow.webContents.getURL().replace(/^file:\/\/\/?/, '')}`);
   });
   mainWindow.on('unresponsive', () => mainLog.warn('window unresponsive'));
+  // The header bar's maximize caption button turns into Restore while the
+  // window is maximized, however it got there (the button, a header-bar
+  // double-click, Win+Up, a snap) — pass 2 #174. win-is-maximized answers
+  // the renderer's first ask at startup.
+  const sendMaximized = () => {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('win-maximized', mainWindow.isMaximized());
+  };
+  for (const ev of ['maximize', 'unmaximize', 'restore']) mainWindow.on(ev, sendMaximized);
   mainWindow.on('closed', () => mainLog.info('window closed'));
 
   mainWindow.loadFile(path.join(__dirname, 'index.html'));
@@ -209,22 +250,21 @@ app.whenReady().then(() => {
     else mainWindow?.maximize();
   });
   ipcMain.on('win-close', () => mainWindow?.close());
+  ipcMain.on('win-is-maximized', (event) => { event.returnValue = !!mainWindow?.isMaximized(); });
 
-  // Zoom via Electron native webContents — avoids the layout-cut-off problem of CSS zoom
-  ipcMain.on('win-zoom-in', () => {
-    if (!mainWindow) return;
-    const cur = mainWindow.webContents.getZoomFactor();
-    const next = ZOOM_STEPS.find(s => s > cur + 0.001) ?? ZOOM_STEPS[ZOOM_STEPS.length - 1];
-    mainWindow.webContents.setZoomFactor(next);
-  });
-  ipcMain.on('win-zoom-out', () => {
-    if (!mainWindow) return;
-    const cur = mainWindow.webContents.getZoomFactor();
-    const prev = [...ZOOM_STEPS].reverse().find(s => s < cur - 0.001) ?? ZOOM_STEPS[0];
-    mainWindow.webContents.setZoomFactor(prev);
-  });
-  ipcMain.on('win-zoom-reset', () => {
-    mainWindow?.webContents.setZoomFactor(1.0);
+  // App zoom (Stage 2D §5). ZOOM_STEPS is the one step list: the renderer
+  // reads it (win-zoom-steps), picks the next step and eases there through
+  // the preload's zoomTo, which ends with win-zoom-to. webContents zoom (not
+  // CSS zoom) scales the whole viewport, and Electron persists it per page,
+  // so the factor survives a restart.
+  ipcMain.on('win-zoom-steps', (event) => { event.returnValue = ZOOM_STEPS; });
+  ipcMain.handle('win-zoom-to', (_event, factor) => {
+    if (!mainWindow) return 1.0;
+    const f = Number(factor);
+    if (Number.isFinite(f)) {
+      mainWindow.webContents.setZoomFactor(Math.min(ZOOM_STEPS[ZOOM_STEPS.length - 1], Math.max(ZOOM_STEPS[0], f)));
+    }
+    return mainWindow.webContents.getZoomFactor();
   });
   ipcMain.on('win-zoom-get', (event) => {
     event.returnValue = mainWindow ? mainWindow.webContents.getZoomFactor() : 1.0;
@@ -248,6 +288,33 @@ app.whenReady().then(() => {
 
   ipcMain.on('mica-available', (event) => { event.returnValue = MICA_AVAILABLE; });
 
+  // Animations launch override (Stage 2D addendum §5.3): --fp-motion=on|off
+  // decides html[data-motion] at startup instead of the saved setting. Only
+  // the test harness passes it, so every spec starts deterministic (off)
+  // unless it asks for motion; '' (no switch) leaves it to ui.animations.
+  ipcMain.on('get-motion-override', (event) => {
+    const v = app.commandLine.getSwitchValue('fp-motion');
+    event.returnValue = v === 'on' || v === 'off' ? v : '';
+  });
+
+  // Settings › About / Data (Stage 2D Task 12a). The app version comes from
+  // package.json through app.getVersion(); the log folder is the one this
+  // process writes main.log/renderer.log to (FILEPLUS_LOG_DIR, else <repo>/logs
+  // — logger.js resolveLogDir), so "Open logs folder" always opens the files
+  // a bug report needs, never a hardcoded path.
+  ipcMain.on('get-app-info', (event) => {
+    event.returnValue = { version: app.getVersion(), logDir: LOG_DIR };
+  });
+  ipcMain.handle('open-log-dir', async () => {
+    try { fs.mkdirSync(LOG_DIR, { recursive: true }); } catch (_) { /* openPath reports it */ }
+    const err = await shell.openPath(LOG_DIR);
+    if (err) mainLog.warn(`open logs folder failed: ${err}`);
+    return err;
+  });
+  // Empties both main-process LRUs ("Clear icon and thumbnail cache"); the
+  // renderer clears its own and the backend's. Counts are what was dropped.
+  ipcMain.handle('clear-icon-caches', () => ({ icons: iconCache.clear(), thumbnails: thumbnailCache.clear() }));
+
   ipcMain.on('set-theme-source', (_e, mode) => {
     nativeTheme.themeSource = ['dark', 'light'].includes(mode) ? mode : 'system';
   });
@@ -264,7 +331,7 @@ app.whenReady().then(() => {
   });
   ipcMain.on('clipboard-write-text', (_e, t) => { if (typeof t === 'string') clipboard.writeText(t); });
 
-  // File icon (Windows-icon sharpness fix, pass 2 — icon-design.md §4.2).
+  // File icon (Windows-icon sharpness fix, pass 2 — 2026-09-14 icon design §4.2).
   // app.getFileIcon's own {size} option is a coarse 'small'/'normal'/'large'
   // enum: small = 16*S px, normal = large = 32*S px for extension groups
   // (16/32/48 regardless of S for .exe/.dll/.ico — the per-file branch).
