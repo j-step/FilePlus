@@ -15,7 +15,7 @@
 // opaque backing for the blur to work on".
 const path = require('path');
 const { test, expect } = require('@playwright/test');
-const { launchApp, apiGet, shot, expectNoErrors, SHOTS } = require('./harness/app');
+const { launchApp, apiGet, shot, rowByName, expectNoErrors, SHOTS } = require('./harness/app');
 
 test.setTimeout(180_000);
 
@@ -173,6 +173,105 @@ test('§3: every scrimmed surface covers the whole window above every layer and 
     expect(htmlBg).toBe('rgba(0, 0, 0, 0)');
     await page.evaluate((t) => applyTheme(t), themeWas);
     await app.evaluate(({ BrowserWindow }, [w, h]) => BrowserWindow.getAllWindows()[0].setSize(w, h), sizeWas);
+  } finally {
+    await app.close();
+  }
+  expectNoErrors(errors);
+});
+
+// §3 review fix round 1: "a scrim is open" has one source of truth —
+// fpSetScrim keeps display + aria-hidden in step and mirrors the count onto
+// html[data-scrim-open], which anyScrimOpen() and the Mica backing both read.
+test('§3: html[data-scrim-open] follows every scrim through every way in and out; the Mica backing goes with it', async () => {
+  const { app, page, errors } = await launchApp();
+  try {
+    const root = (await apiGet('/fs/list/root')).path;
+    await page.evaluate((p) => openBrowserAt(p), `${root}\\Bulk`);
+    await settled(page);
+    await page.evaluate(() => { document.documentElement.dataset.mica = 'on'; });
+    const state = () => page.evaluate(() => ({
+      attr: document.documentElement.dataset.scrimOpen ?? null,
+      any: anyScrimOpen(),
+      bg: getComputedStyle(document.documentElement).backgroundColor,
+    }));
+    const closed = { attr: null, any: false, bg: 'rgba(0, 0, 0, 0)' };
+    const isOpen = (s) => s.attr === '1' && s.any === true && s.bg !== 'rgba(0, 0, 0, 0)';
+
+    const surfaces = [
+      ['properties', '#properties-modal-scrim', '#properties-modal', (p) => openProperties(p), `${root}\\Bulk\\bulk-001.txt`],
+      ['confirm modal', '#modal-scrim', '#modal', () => openModal('danger', { title: 'Delete?', body: 'Probe.' })],
+      ['more filters', '#search-filters-scrim', '#search-filters-modal', () => openMoreFilters()],
+      ['command palette', '#palette-scrim', '#palette', () => openPalette()],
+      ['tag canvas', '#tag-canvas-scrim', '#tag-canvas', () => openTagCanvas()],
+    ];
+    expect(await state()).toEqual(closed);
+    for (const [name, sel, , open, arg] of surfaces) {
+      for (const how of ['Escape', 'backdrop click']) {
+        await page.evaluate(open, arg);
+        await expect(page.locator(sel), name).toBeVisible();
+        expect(isOpen(await state()), `${name}: open`).toBe(true);
+        if (how === 'Escape') await page.keyboard.press('Escape');
+        else await page.mouse.click(4, 300); // the scrim's left edge, outside every dialog
+        await expect(page.locator(sel), `${name}: ${how} closes it`).toBeHidden();
+        expect(await state(), `${name}: closed by ${how}`).toEqual(closed);
+        expect(await page.locator(sel).getAttribute('aria-hidden')).toBe('true');
+      }
+    }
+    // Nested: a confirm over Properties keeps the backing until the last closes.
+    await page.evaluate((p) => openProperties(p), `${root}\\Bulk\\bulk-001.txt`);
+    await expect(page.locator('#properties-modal-scrim')).toBeVisible();
+    await page.evaluate(() => openModal('warn', { title: 'Nested', body: 'Probe.' }));
+    expect((await state()).attr).toBe('2');
+    await page.evaluate(() => closeModal());
+    expect(isOpen(await state())).toBe(true);
+    await page.evaluate(() => closeModal()); // a second close miscounts nothing
+    expect((await state()).attr).toBe('1');
+    await page.evaluate(() => closeProperties());
+    expect(await state()).toEqual(closed);
+  } finally {
+    await app.close();
+  }
+  expectNoErrors(errors);
+});
+
+// §3 review fix round 1: a right-click inside an open modal neither opens the
+// app's context menu (it would sit under the scrim, unreachable) nor clears
+// the file selection behind the modal.
+test('§3: a right-click while a modal is open opens no menu and keeps the selection', async () => {
+  const { app, page, errors } = await launchApp();
+  try {
+    const root = (await apiGet('/fs/list/root')).path;
+    await page.evaluate((p) => openBrowserAt(p), `${root}\\Bulk`);
+    await settled(page);
+    await rowByName(page, 'bulk-002.txt').click();
+    await settled(page);
+    const selection = () => page.evaluate(() => [...browserState.selection].map((p) => p.split('\\').pop()));
+    expect(await selection()).toEqual(['bulk-002.txt']);
+
+    const surfaces = [
+      ['properties', '#properties-modal-scrim', '#properties-modal', (p) => openProperties(p), `${root}\\Bulk\\bulk-002.txt`],
+      ['more filters', '#search-filters-scrim', '#search-filters-modal', () => openMoreFilters()],
+      ['command palette', '#palette-scrim', '#palette', () => openPalette()],
+    ];
+    for (const [name, sel, dialog, open, arg] of surfaces) {
+      await page.evaluate(open, arg);
+      await expect(page.locator(sel)).toBeVisible();
+      const box = await page.locator(dialog).boundingBox();
+      // Inside the dialog, then on the bare scrim over the file list.
+      for (const [x, y] of [[box.x + 12, box.y + box.height / 2], [4, 300]]) {
+        await page.mouse.click(x, y, { button: 'right' });
+        await frames(page);
+        await expect(page.locator('#context-menu'), `${name}: no context menu`).toBeHidden();
+        expect(await selection(), `${name}: selection kept`).toEqual(['bulk-002.txt']);
+        await expect(page.locator(sel), `${name}: still open`).toBeVisible();
+      }
+      await page.keyboard.press('Escape');
+      await expect(page.locator(sel)).toBeHidden();
+    }
+    // With no modal, the right-click menu still works.
+    await rowByName(page, 'bulk-002.txt').click({ button: 'right' });
+    await expect(page.locator('#context-menu')).toBeVisible();
+    await page.keyboard.press('Escape');
   } finally {
     await app.close();
   }

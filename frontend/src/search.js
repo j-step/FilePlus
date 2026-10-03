@@ -895,8 +895,7 @@ function openMoreFilters() {
   check('search-filter-hidden', !!searchChipValue('hidden'));
   check('search-filter-whole-word', !!searchChipValue('whole_word'));
 
-  scrim.style.display = 'flex';
-  scrim.removeAttribute('aria-hidden');
+  fpSetScrim(scrim, true);
   // closeSearchDropdown() above hid the button that had focus, so without this
   // document.activeElement falls back to <body> — which app.js's global
   // keydown does not treat as "typing", sending Delete/F2/Ctrl+Z straight
@@ -907,8 +906,7 @@ function openMoreFilters() {
 function closeMoreFilters() {
   const scrim = document.getElementById('search-filters-scrim');
   if (!scrim) return;
-  scrim.style.display = 'none';
-  scrim.setAttribute('aria-hidden', 'true');
+  fpSetScrim(scrim, false);
 }
 
 /** Reads the modal back into the chip set. The `in:` chip is untouched — the

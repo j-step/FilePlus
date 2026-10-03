@@ -1283,16 +1283,14 @@ function initToolbarLayout() {
 // ── Command palette ───────────────────────────────���──────────────────────��─────
 function openPalette() {
   if (!paletteScrim) return;
-  paletteScrim.style.display = 'flex';
-  paletteScrim.removeAttribute('aria-hidden');
+  fpSetScrim(paletteScrim, true);
   if (paletteInput) { paletteInput.value = ''; paletteInput.focus(); }
   paletteResetToCommands();
 }
 
 function closePalette() {
   if (!paletteScrim) return;
-  paletteScrim.style.display = 'none';
-  paletteScrim.setAttribute('aria-hidden', 'true');
+  fpSetScrim(paletteScrim, false);
 }
 
 // ── Palette → toolbar search (Task 14, design §8.5) ────────────────────
@@ -1370,15 +1368,13 @@ function handlePaletteAction(btn) {
 function openTagCanvas() {
   const scrim = document.getElementById('tag-canvas-scrim');
   if (!scrim) return;
-  scrim.style.display = 'flex';
-  scrim.removeAttribute('aria-hidden');
+  fpSetScrim(scrim, true);
 }
 
 function closeTagCanvas() {
   const scrim = document.getElementById('tag-canvas-scrim');
   if (!scrim) return;
-  scrim.style.display = 'none';
-  scrim.setAttribute('aria-hidden', 'true');
+  fpSetScrim(scrim, false);
 }
 
 // ── Ask File+ (Task 15, design spec §9) ─────────────────────────────────────
@@ -1523,18 +1519,14 @@ function openModal(type, config = {}) {
 
   _modalOnClose = typeof config.onClose === 'function' ? config.onClose : null;
 
-  scrim.style.display = 'flex';
-  scrim.removeAttribute('aria-hidden');
+  fpSetScrim(scrim, true);
 }
 
 function closeModal() {
   const scrim = document.getElementById('modal-scrim');
   const onClose = _modalOnClose;
   _modalOnClose = null;
-  if (scrim) {
-    scrim.style.display = 'none';
-    scrim.setAttribute('aria-hidden', 'true');
-  }
+  fpSetScrim(scrim, false);
   if (onClose) onClose();
 }
 
@@ -4447,6 +4439,10 @@ document.addEventListener('auxclick', e => {
 // ── Context menu event listener (A.10) ────────────────────────────────────────
 document.addEventListener('contextmenu', e => {
   e.preventDefault();
+  // A modal is up: the app behind it is not there to act on. No menu (it
+  // would open under the scrim, unreachable) and no deselect of the
+  // selection the modal may be about.
+  if (anyScrimOpen()) return;
   // Right-click on open space clears the active selection too (design spec
   // §3.5), same rule as the mousedown handler above — checked directly
   // against the target rather than gated on contextMenuType === 'empty-area'

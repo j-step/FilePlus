@@ -14,7 +14,7 @@
 //     below the next tier. No literal numbers, no other custom property.
 //  4. No z-index anywhere else: none in index.html (style attributes or
 //     <style>), none set from frontend/src/*.js, main.js or preload.js
-//     (style.zIndex, setProperty('z-index'), cssText).
+//     (style.zIndex, a { zIndex } object, setProperty('z-index'), cssText).
 //
 // Exits 1 and prints every violation.
 const fs = require('fs');
@@ -28,7 +28,7 @@ const CSS_PATH = path.join(SRC, 'styles.css');
 // Lowest to highest. Keep in step with the :root block in styles.css.
 const SCALE = [
   '--z-base', '--z-local', '--z-raised', '--z-overlay-scroll', '--z-marquee', '--z-header',
-  '--z-sidebar-resize', '--z-popover', '--z-dropdown', '--z-menu', '--z-tooltip', '--z-drag',
+  '--z-sidebar-resize', '--z-popover', '--z-dropdown', '--z-menu', '--z-drag',
   '--z-scrim', '--z-modal', '--z-notice',
 ];
 
@@ -118,7 +118,9 @@ const jsFiles = fs.readdirSync(SRC).filter((f) => f.endsWith('.js') && f !== 'ic
 for (const file of jsFiles) {
   const lines = fs.readFileSync(file, 'utf8').split('\n');
   lines.forEach((line, i) => {
-    if (/\.zIndex\b|setProperty\(\s*['"]z-index|z-index\s*:/.test(line) && !/^\s*(\/\/|\*)/.test(line)) {
+    // style.zIndex = …, a { zIndex: … } object (Object.assign, fpAnimate
+    // keyframes), setProperty('z-index', …), z-index: in cssText / strings.
+    if (/\bzIndex\b|['"`]z-index['"`]|z-index\s*:/.test(line) && !/^\s*(\/\/|\*)/.test(line)) {
       fail(`${path.relative(ROOT, file)}:${i + 1} sets a z-index — use a class whose z-index is a --z-* tier`);
     }
   });

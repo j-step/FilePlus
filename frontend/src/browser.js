@@ -2899,15 +2899,29 @@ function initRowInteractions() {
  * contenteditable has focus. F2/Delete/Ctrl+C/X/V/Z/Y belong to Task 4.
  */
 function anyScrimOpen() {
-  return [...document.querySelectorAll('.fp-scrim')].some(el => {
-    if (el.hidden) return false;
-    // Every scrim in index.html ships with style="display:none" and is shown
-    // by setting it to 'flex'; getComputedStyle is the fallback for one that
-    // is driven by a class instead.
-    return el.style.display
-      ? el.style.display !== 'none'
-      : getComputedStyle(el).display !== 'none';
-  });
+  return _fpOpenScrims.size > 0;
+}
+
+// ── The modal scrim: one source of truth (addendum §3) ───────────────────────
+// Every .fp-scrim (palette, Tag Canvas, confirm/conflict modal, More filters,
+// Properties) is shown and hidden ONLY through fpSetScrim. It keeps display
+// and aria-hidden in step and mirrors the number of open scrims onto
+// html[data-scrim-open] — the one signal that anyScrimOpen() and the Mica
+// backing in styles.css (the window gets its solid chrome under a scrim, so
+// the blur has paint everywhere) both read. A Set, so a repeated open or
+// close never miscounts, and nested scrims keep the backing until the last
+// one closes.
+const _fpOpenScrims = new Set();
+
+/** Shows (`open` true) or hides the scrim element `el`. */
+function fpSetScrim(el, open) {
+  if (!el) return;
+  el.style.display = open ? 'flex' : 'none';
+  if (open) { el.removeAttribute('aria-hidden'); _fpOpenScrims.add(el); }
+  else { el.setAttribute('aria-hidden', 'true'); _fpOpenScrims.delete(el); }
+  const html = document.documentElement;
+  if (_fpOpenScrims.size) html.dataset.scrimOpen = String(_fpOpenScrims.size);
+  else delete html.dataset.scrimOpen;
 }
 
 /** True when a real (non-collapsed) text selection exists on the page — a

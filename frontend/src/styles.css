@@ -83,7 +83,6 @@
   --z-popover: 200;        /* popovers, the Ask File+ popout, dropdowns */
   --z-dropdown: 300;       /* the search dropdown (its overlay bar +1) */
   --z-menu: 600;           /* context menus; each flyout one above its parent */
-  --z-tooltip: 700;
   --z-drag: 800;           /* the drag badge that follows the pointer */
   /* The modal scrim: one full-window layer at <body> level, above every
      layer above, so it blurs and dims all of them evenly. */
@@ -474,8 +473,11 @@ html[data-mica="on"] .fp-sidebar { background: transparent; }
    where the backdrop is transparent (the Mica title bar and sidebar) the
    sharp text stayed visible through the blur. With an opaque root the blur
    has real paint everywhere and the whole window reads the same under the
-   scrim. Every scrim opener removes aria-hidden; every closer puts it back. */
-html[data-mica="on"]:has(> body > .fp-scrim:not([aria-hidden="true"])) { background: var(--bg-chrome); }
+   scrim. html[data-scrim-open] is set by fpSetScrim (browser.js), the one
+   way a scrim opens or closes. The backing fades in with the scrim's own
+   fade (same token, under the motion switch). */
+html[data-mica="on"] { transition: background-color var(--motion-fast) var(--ease-out); }
+html[data-mica="on"][data-scrim-open] { background: var(--bg-chrome); }
 
 button, input, select, textarea {
   font: inherit;
@@ -3119,22 +3121,6 @@ body.is-dragging { cursor: default; }
 /* -----------------------------------------------------------------------------
    22. TOOLTIP (Section 26)
    ----------------------------------------------------------------------------- */
-/* === fp-tooltip === */
-.fp-tooltip {
-  display: inline-block;
-  padding: var(--s-6) var(--s-10);
-  background: var(--bg-raised);
-  color: var(--text-primary);
-  border: 1px solid var(--border-mid);
-  border-radius: var(--r-card);
-  box-shadow: var(--shadow-popover);
-  font: 400 var(--t-small) var(--font-ui);
-  pointer-events: none;
-  white-space: nowrap;
-  z-index: var(--z-tooltip);
-  animation: fp-tooltip-in var(--motion-fast) var(--ease-standard);
-}
-.fp-tooltip svg, .fp-tooltip .icon { width: 12px; height: 12px; }
 @keyframes fp-tooltip-in { from { opacity: 0; } to { opacity: 1; } }
 
 /* -----------------------------------------------------------------------------

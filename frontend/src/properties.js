@@ -147,7 +147,7 @@ async function openProperties(path) {
   if (applyBtn) applyBtn.disabled = true;
 
   const scrim = document.getElementById('properties-modal-scrim');
-  if (scrim) { scrim.style.display = 'flex'; scrim.removeAttribute('aria-hidden'); }
+  fpSetScrim(scrim, true);
   // Re-measure now the modal is actually laid out: offsetLeft/offsetWidth are
   // 0 while it is display:none, so the reset above could only park the
   // underline at width 0.
@@ -157,8 +157,7 @@ async function openProperties(path) {
 function closeProperties() {
   const scrim = document.getElementById('properties-modal-scrim');
   if (!scrim) return;
-  scrim.style.display = 'none';
-  scrim.setAttribute('aria-hidden', 'true');
+  fpSetScrim(scrim, false);
   _propsSeq++;
   _propsPath = null;
   _propsData = null;
