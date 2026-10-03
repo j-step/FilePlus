@@ -1233,3 +1233,48 @@ test('with the switch off, menus, dialogs, popovers and notices open and close i
   }
   expect(errors).toEqual([]);
 });
+
+test('key repeat (a held Ctrl+T / Ctrl+W / Ctrl+B / Ctrl+I) acts at every step and starts no animation per step (§5.1 rule 4)', async () => {
+  const { app, page, errors } = await launchApp({ motion: true });
+  try {
+    await installMotionProbes(page);
+    await settled(page);
+    const r = await page.evaluate(() => {
+      const press = (key, repeat) => document.body.dispatchEvent(new KeyboardEvent('keydown', {
+        key, code: `Key${key.toUpperCase()}`, ctrlKey: true, repeat, bubbles: true, cancelable: true }));
+      // Script-driven motion (fpAnimate) — the per-step animations rule 4
+      // is about. (A tab's 60 ms fill transition just retargets.)
+      const scripted = (root = document) => (root === document ? document.getAnimations() : root.getAnimations({ subtree: true }))
+        .filter((a) => a.constructor.name === 'Animation').length;
+      const n0 = tabs.list.length;
+      for (let i = 0; i < 4; i++) press('t', true);
+      const afterT = { added: tabs.list.length - n0, running: scripted() };
+      for (let i = 0; i < 3; i++) press('w', true);
+      const afterW = { left: tabs.list.length - n0, ghosts: document.querySelectorAll('.fp-tab-ghost').length,
+        running: scripted() };
+      press('i', true);
+      const ins = document.getElementById('inspector');
+      const afterI = { closing: ins.classList.contains('inspector--closing'), running: scripted(ins) };
+      press('i', true);
+      press('b', true);
+      const afterB = { collapsed: document.getElementById('sidebar').classList.contains('fp-sidebar--collapsed'),
+        running: scripted(document.getElementById('sidebar')) };
+      press('b', true);
+      return { afterT, afterW, afterI, afterB };
+    });
+    expect(r.afterT).toEqual({ added: 4, running: 0 });
+    expect(r.afterW).toEqual({ left: 1, ghosts: 0, running: 0 });
+    expect(r.afterI).toEqual({ closing: false, running: 0 });
+    expect(r.afterB).toEqual({ collapsed: true, running: 0 });
+    // The first press of a key (not a repeat) still animates.
+    const first = await page.evaluate(() => {
+      document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 't', code: 'KeyT', ctrlKey: true, bubbles: true, cancelable: true }));
+      return document.querySelector(`.fp-tab[data-tab-id="${tabs.activeId}"]`).getAnimations().length;
+    });
+    expect(first).toBeGreaterThan(0);
+  } finally {
+    await app.close();
+    await delConfig('ui.inspector_open');
+  }
+  expect(errors).toEqual([]);
+});

@@ -74,6 +74,19 @@ function fpMotionMs(name) {
   return t.ms(name, t.durations.base);
 }
 
+// Rule 4 (§5.1): key repeat is continuous input. A held Ctrl+W, Ctrl+T,
+// Ctrl+B, Ctrl+I, arrow or Delete never starts an animation per step: the
+// task a repeated keydown runs in is marked, and every fpAnimate() in it is
+// instant (returns null, an exit finishes at once). The mark is set before
+// any other keydown listener runs (window, capture) and cleared at the next
+// task.
+let _fpKeyRepeatTask = false;
+window.addEventListener('keydown', e => {
+  if (!e.repeat || _fpKeyRepeatTask) return;
+  _fpKeyRepeatTask = true;
+  setTimeout(() => { _fpKeyRepeatTask = false; }, 0);
+}, true);
+
 // Animations fpAnimate() started that may still be running: cancelled the
 // moment the switch goes off. Per element, one animation per key.
 const _fpLiveAnimations = new Set();
@@ -104,7 +117,7 @@ function fpAnimate(el, keyframes, { duration = 'fast', easing = 'out', key = 'de
   let slots = _fpAnimationsByEl.get(el);
   const prev = slots && slots.get(key);
   if (prev) { slots.delete(key); _fpLiveAnimations.delete(prev); prev.cancel(); }
-  if (!fpMotionOn() || typeof el.animate !== 'function') return null;
+  if (!fpMotionOn() || _fpKeyRepeatTask || typeof el.animate !== 'function') return null;
   const t = fpMotionTokens();
   const ceiling = t.durations.slow;
   let ms = t.durations.fast;
